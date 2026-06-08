@@ -504,6 +504,9 @@ pub fn build(
     // ── Signature landmarks: one per biome region (frozen spire, pyramid, trilithon, …) ──
     crate::ruins::populate_landmarks(commands, meshes, std_mats);
 
+    // ── River bridges: plank decks at a few crossings (also nav-grid walkable spans). ──
+    crate::bridges::populate(commands, meshes, std_mats);
+
     // No distant horizon hills — open ocean fading into fog reads cleaner.
 }
 

@@ -34,7 +34,9 @@ impl Grid for ForestGrid {
     }
     fn standable(&self, ix: i32, iz: i32) -> bool {
         let (wx, wz) = tile_world_centre(ix, iz);
-        ground_at_world(wx, wz).is_some() // land (not water / off-map)
+        // Land (not water / off-map) OR a bridge deck spanning the river — so A* (and the night
+        // invaders) can cross the water at a crossing instead of routing all the way around.
+        ground_at_world(wx, wz).is_some() || crate::bridges::is_on_bridge(wx, wz)
     }
     fn obstacle_tile(&self, ix: i32, iz: i32) -> bool {
         let (wx, wz) = tile_world_centre(ix, iz);

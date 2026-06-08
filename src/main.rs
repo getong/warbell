@@ -5,6 +5,7 @@
 
 mod audio;
 mod biome;
+mod bridges;
 mod biome_desert;
 mod biome_forest;
 mod biome_rocky;
