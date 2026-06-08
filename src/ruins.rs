@@ -143,7 +143,123 @@ pub fn build_trilithon_mesh() -> Mesh {
     merged(parts)
 }
 
-// ── Giant dead tree ───────────────────────────────────────────────────────────
+// ── Frozen spire (snow landmark) ────────────────────────────────────────────────
+
+/// A cluster of pale-blue ice crystals: a tall central prism capped by a cone, ringed by
+/// four shorter leaning shards on a frosted base. ~3.4u tall, base at y=0.
+pub fn build_frozen_spire_mesh() -> Mesh {
+    const ICE: u32 = 0xa9d2f0;
+    const PALE: u32 = 0xdcf0fb;
+    const DEEP: u32 = 0x6fa6d6;
+    let mut parts: Vec<Mesh> = Vec::new();
+    // Frosted base disc.
+    parts.push(tinted(box_at(1.6, 0.26, 1.6, Vec3::new(0.0, 0.13, 0.0)), lin(PALE)));
+    // Central prism + cone cap.
+    parts.push(tinted(box_at(0.5, 2.4, 0.5, Vec3::new(0.0, 0.26 + 1.2, 0.0)), lin(ICE)));
+    parts.push(tinted(
+        Cone { radius: 0.36, height: 0.9 }.mesh().build().translated_by(Vec3::new(0.0, 0.26 + 2.4 + 0.45, 0.0)),
+        lin(PALE),
+    ));
+    // Four leaning flanking shards.
+    for i in 0..4 {
+        let ang = i as f32 * std::f32::consts::FRAC_PI_2 + 0.4;
+        let (sx, sz) = (ang.cos() * 0.62, ang.sin() * 0.62);
+        let h = 1.1 + (i as f32 * 0.22);
+        let lean = Quat::from_rotation_y(ang) * Quat::from_rotation_z(0.28);
+        parts.push(tinted(
+            Cuboid::new(0.26, h, 0.26)
+                .mesh()
+                .build()
+                .translated_by(Vec3::new(0.0, h * 0.5, 0.0))
+                .rotated_by(lean)
+                .translated_by(Vec3::new(sx, 0.26, sz)),
+            lin(if i % 2 == 0 { ICE } else { DEEP }),
+        ));
+    }
+    merged(parts)
+}
+
+// ── Sunken pyramid (desert landmark) ─────────────────────────────────────────────
+
+/// A weathered stepped sandstone pyramid, partly buried, with a dark capstone. ~2.4u tall,
+/// base at y=0.
+pub fn build_sunken_pyramid_mesh() -> Mesh {
+    const SAND: u32 = 0xd9c08a;
+    const SAND_DK: u32 = 0xb89a5e;
+    const CAP: u32 = 0x8a6f3a;
+    let mut parts: Vec<Mesh> = Vec::new();
+    let steps: [(f32, f32, u32); 3] = [(3.0, 0.55, SAND), (2.2, 0.55, SAND_DK), (1.4, 0.55, SAND)];
+    let mut y = 0.0;
+    for &(w, h, hex) in &steps {
+        parts.push(tinted(box_at(w, h, w, Vec3::new(0.0, y + h * 0.5, 0.0)), lin(hex)));
+        y += h;
+    }
+    parts.push(tinted(box_at(0.6, 0.5, 0.6, Vec3::new(0.0, y + 0.25, 0.0)), lin(CAP))); // capstone
+    // A leaning half-buried slab beside it for a ruined feel.
+    parts.push(tinted(
+        Cuboid::new(0.4, 1.6, 0.9)
+            .mesh()
+            .build()
+            .rotated_by(Quat::from_rotation_z(0.5))
+            .translated_by(Vec3::new(2.0, 0.4, 0.4)),
+        lin(SAND_DK),
+    ));
+    merged(parts)
+}
+
+// ── Per-biome placement (combined world map) ─────────────────────────────────────
+
+/// Plant one signature landmark in each biome region of the combined map. Reject-samples a
+/// clear, on-land tile of the target biome (away from camps/castle), mirroring the wildlife/ore
+/// placement. Called from `worldmap::build`.
+pub fn populate_landmarks(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+) {
+    use crate::biome::{Biome, BiomeEntity};
+    let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.92, ..default() });
+    // (biome, mesh, scale) — one landmark each.
+    let specs: [(Biome, Mesh, f32); 5] = [
+        (Biome::Snow, build_frozen_spire_mesh(), 1.4),
+        (Biome::Desert, build_sunken_pyramid_mesh(), 1.3),
+        (Biome::Rocky, build_trilithon_mesh(), 1.3),
+        (Biome::Forest, build_giant_dead_tree_mesh(), 1.2),
+        (Biome::Swamp, build_giant_dead_tree_mesh(), 1.1),
+    ];
+    let mut rng: u32 = 0x1a2b_3c4d;
+    for (biome, mesh, scale) in specs {
+        let handle = meshes.add(mesh);
+        let mut placed = false;
+        for _ in 0..4000 {
+            let x = crate::wildlife::rng_range(&mut rng, -crate::worldmap::GX + 6.0, crate::worldmap::GX - 6.0);
+            let z = crate::wildlife::rng_range(&mut rng, -crate::worldmap::GZ + 6.0, crate::worldmap::GZ - 6.0);
+            if crate::worldmap::biome_at_world(x, z) != Some(biome)
+                || crate::worldmap::ground_at_world(x, z).is_none()
+                || crate::blockers::is_blocked(x, z)
+                || crate::camps::in_clearing(x, z)
+                || crate::castle::in_footprint(x, z)
+            {
+                continue;
+            }
+            let y = crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
+            let yaw = crate::wildlife::rng_range(&mut rng, 0.0, std::f32::consts::TAU);
+            commands.spawn((
+                Mesh3d(handle.clone()),
+                MeshMaterial3d(mat.clone()),
+                Transform::from_xyz(x, y, z)
+                    .with_rotation(Quat::from_rotation_y(yaw))
+                    .with_scale(Vec3::splat(scale)),
+                BiomeEntity,
+            ));
+            placed = true;
+            break;
+        }
+        if !placed {
+            info!("landmark: no spot found for {:?}", biome);
+        }
+    }
+}
 
 /// A tall bare gnarled dead tree, ~5u to the branch tips, base at y=0. A dark flared
 /// root collar grounds a tapered trunk (three stacked, narrowing cylinder segments,

@@ -501,6 +501,9 @@ pub fn build(
     // ── Castle defenses: tower/archer/ballista fire emitters (upgrade-gated at runtime) ──
     crate::defenses::populate_defenders(commands, meshes, std_mats);
 
+    // ── Signature landmarks: one per biome region (frozen spire, pyramid, trilithon, …) ──
+    crate::ruins::populate_landmarks(commands, meshes, std_mats);
+
     // No distant horizon hills — open ocean fading into fog reads cleaner.
 }
 
