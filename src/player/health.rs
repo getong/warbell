@@ -11,6 +11,8 @@ use super::{Hero, HeroHealth, PendingHeroDamage, PlayerRes, HERO_SCALE};
 const BLOCK_MITIGATION: f32 = 0.2; // a blocked hit deals 20% (and costs stamina)
 const BLOCK_HIT_STAMINA: f32 = 18.0; // stamina spent absorbing one blocked hit
 const RESPAWN_DELAY: f64 = 1.6; // s down before the hero rises again (succession lands in P5)
+/// Seconds the hero takes to keel over once slain (the death "crumple", like the orks').
+const DEATH_FALL_SECS: f32 = 0.55;
 
 pub fn apply_hero_damage(
     time: Res<Time>,
@@ -25,6 +27,7 @@ pub fn apply_hero_damage(
     mut cues: MessageWriter<AudioCue>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
     mut feedback: ResMut<crate::combat_fx::HitFeedback>,
+    mut fell: MessageWriter<crate::succession_fx::HeirFell>,
 ) {
     let Ok((mut hero, mut tf, mut hh)) = hero_q.single_mut() else {
         pending.0 = 0.0;
@@ -90,6 +93,11 @@ pub fn apply_hero_damage(
             let gate = crate::castle::gate_centers()[0];
             let pos = Vec2::new(gate.x, gate.y - 3.0);
             let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
+            // Mark the fall: a grave where the hero lies + a soul wisp to the rising heir.
+            fell.write(crate::succession_fx::HeirFell {
+                grave_at: Vec3::new(hero.pos.x, hero.y, hero.pos.y),
+                rise_at: Vec3::new(pos.x, y, pos.y),
+            });
             hero.pos = pos;
             hero.y = y;
             hero.facing = 0.0;
@@ -105,4 +113,26 @@ pub fn apply_hero_damage(
             hh.blocking = false;
         }
     }
+}
+
+/// Hero death "crumple": once slain (`dead_since` set), keel over backward and sink — the same
+/// read as the orks' `Dying` fade, but on the persistent hero entity (respawn rights the pose).
+/// Runs last in the gated chain so it overrides `player_move`'s idle-corpse transform; on the
+/// respawn frame `apply_hero_damage` has already cleared `dead_since` + reset the pose, so this
+/// no-ops and the heir stands upright.
+pub fn hero_death_anim(
+    time: Res<Time>,
+    player: Res<PlayerRes>,
+    mut hero_q: Query<(&Hero, &mut Transform)>,
+) {
+    let Some(t0) = player.0.dead_since else { return };
+    let Ok((hero, mut tf)) = hero_q.single_mut() else { return };
+    let t = (time.elapsed_secs() as f64 - t0) as f32;
+    // Ease-out the fall, then hold flat for the rest of the down-time.
+    let k = (t / DEATH_FALL_SECS).clamp(0.0, 1.0);
+    let eased = 1.0 - (1.0 - k) * (1.0 - k);
+    let lie = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2 * eased); // tip onto the back
+    tf.rotation = Quat::from_rotation_y(hero.facing) * lie;
+    // Settle the root a touch into the ground so the laid-out body rests on the turf.
+    tf.translation = Vec3::new(hero.pos.x, hero.y - 0.15 * eased, hero.pos.y);
 }
