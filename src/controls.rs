@@ -40,6 +40,7 @@ fn fly_camera(
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
     motion: Res<AccumulatedMouseMotion>,
+    egui_wants: Res<crate::debug_panel::EguiWantsPointer>,
     mut cam_q: Query<(&mut Transform, &mut FlyCam)>,
     mut cursor_q: Query<&mut CursorOptions, With<PrimaryWindow>>,
 ) {
@@ -47,9 +48,12 @@ fn fly_camera(
     if *mode != crate::player::PlayMode::FreeRoam {
         return;
     }
+    // Don't grab the cursor / look around while the debug panel owns the pointer (so dragging
+    // a slider can't rotate the view).
+    let over_ui = egui_wants.0;
     // Grab/hide the cursor only while the right button is held, restore on release.
     if let Ok(mut cursor) = cursor_q.single_mut() {
-        if buttons.just_pressed(MouseButton::Right) {
+        if buttons.just_pressed(MouseButton::Right) && !over_ui {
             cursor.grab_mode = CursorGrabMode::Locked;
             cursor.visible = false;
         }
@@ -59,7 +63,7 @@ fn fly_camera(
         }
     }
 
-    let looking = buttons.pressed(MouseButton::Right);
+    let looking = buttons.pressed(MouseButton::Right) && !over_ui;
     let dt = time.delta_secs();
 
     for (mut tf, mut cam) in &mut cam_q {

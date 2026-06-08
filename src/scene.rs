@@ -3,12 +3,16 @@
 //! verified Bevy 0.18 components, plus a procedural gradient-cubemap IBL and SSAO
 //! (both adapted from the working tileworld-bevy port's `lighting.rs`).
 
+use bevy::anti_alias::contrast_adaptive_sharpening::ContrastAdaptiveSharpening;
 use bevy::anti_alias::smaa::{Smaa, SmaaPreset};
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::Exposure;
 use bevy::core_pipeline::prepass::{DepthPrepass, NormalPrepass};
 use bevy::core_pipeline::tonemapping::Tonemapping;
-use bevy::light::{CascadeShadowConfigBuilder, DirectionalLightShadowMap, ShadowFilteringMethod};
+use bevy::light::{
+    CascadeShadowConfigBuilder, DirectionalLightShadowMap, ShadowFilteringMethod, VolumetricFog,
+    VolumetricLight,
+};
 use bevy::pbr::{
     Atmosphere, DistanceFog, FogFalloff, ScatteringMedium, ScreenSpaceAmbientOcclusion,
     ScreenSpaceAmbientOcclusionQualityLevel,
@@ -298,6 +302,12 @@ fn setup_camera(
         Atmosphere::earthlike(medium),
         grading,
         ShadowFilteringMethod::Gaussian,
+        // Contrast Adaptive Sharpening — re-crisps the edges SMAA softens (low-poly reads
+        // sharper). Tunable live in the Debug panel ("Render" → CAS).
+        ContrastAdaptiveSharpening { enabled: true, sharpening_strength: 0.35, denoise: false },
+        // Volumetric fog / god-rays: needs a `FogVolume` region (spawned in `visual.rs`) +
+        // `VolumetricLight` on the sun. Tunable live in the Debug panel.
+        VolumetricFog { ambient_intensity: 0.1, ..default() },
         crate::controls::FlyCam { yaw, pitch },
         // Listener for spatial wildlife audio (see `audio.rs`). `gap` = ear separation in
         // world units; scaled by the global `SpatialScale` set in `main.rs`.
@@ -325,6 +335,8 @@ fn setup_sun(mut commands: Commands) {
             shadows_enabled: true,
             ..default()
         },
+        // Cast god-rays through the `FogVolume` (volumetric light shafts).
+        VolumetricLight,
         CascadeShadowConfigBuilder {
             num_cascades: 4,
             maximum_distance: 110.0,

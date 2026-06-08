@@ -82,6 +82,7 @@ pub fn player_camera(
     feedback: Option<Res<crate::combat_fx::HitFeedback>>,
     app: Res<State<AppState>>,
     modal: Option<Res<State<Modal>>>,
+    egui_wants: Res<crate::debug_panel::EguiWantsPointer>,
 ) {
     if *mode != PlayMode::Play {
         return;
@@ -90,9 +91,11 @@ pub fn player_camera(
     let Ok(mut cam_tf) = cam_q.single_mut() else { return };
 
     // Cursor only locks while actually playing with no panel up; a modal/menu frees it so its
-    // buttons are clickable (and a button-click can't re-grab the view).
-    let interactive =
-        *app.get() == AppState::Playing && modal.map_or(true, |m| *m.get() == Modal::None);
+    // buttons are clickable (and a button-click can't re-grab the view). The debug panel
+    // (egui_wants) also blocks the grab so clicking a slider never locks + rotates the view.
+    let interactive = *app.get() == AppState::Playing
+        && modal.map_or(true, |m| *m.get() == Modal::None)
+        && !egui_wants.0;
     if let Ok(mut cur) = cursor_q.single_mut() {
         if interactive {
             if buttons.just_pressed(MouseButton::Left) && !orbit.locked {

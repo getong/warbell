@@ -48,6 +48,7 @@ mod terrain;
 mod trees;
 mod verbs;
 mod villagers;
+mod visual;
 mod water;
 mod wildlife;
 mod wind;
@@ -112,6 +113,7 @@ fn main() {
             icons::IconsPlugin, // procedural item icons (satchel + shop)
             grade::GradePlugin, // reactive low-HP/hit vignette
             dying::DyingPlugin, // shared death-fade for orks + wildlife
+            visual::VisualPlugin, // volumetric god-rays region, pollen motes, prop specular + panel knobs
         ))
         .run();
 }

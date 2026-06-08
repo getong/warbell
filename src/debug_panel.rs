@@ -11,21 +11,33 @@
 //! resources ([`SkyClock`](crate::scene::SkyClock), [`GlobalAmbientLight`],
 //! [`AudioConfig`](crate::audio::AudioConfig), [`GlobalVolume`]).
 
+use bevy::anti_alias::contrast_adaptive_sharpening::ContrastAdaptiveSharpening;
 use bevy::audio::{GlobalVolume, Volume};
+use bevy::camera::Exposure;
+use bevy::light::{FogVolume, VolumetricFog};
 use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
+use bevy::render::view::ColorGrading;
 use bevy_egui::{egui, EguiContexts, EguiPlugin, EguiPrimaryContextPass};
 
 use crate::audio::AudioConfig;
 use crate::depth_blur::DepthBlur;
 use crate::scene::{SkyClock, Sun};
+use crate::visual::VisualSettings;
 
 /// Whether the panel window is currently shown (hidden by default; F1 toggles).
 #[derive(Resource, Default)]
 struct DebugPanel {
     open: bool,
 }
+
+/// Set true (during the egui pass) whenever egui wants the pointer — i.e. the cursor is
+/// over the panel or dragging a widget. The camera controllers read this and skip their
+/// cursor-grab / mouse-look so dragging a slider never rotates the world. Updated one frame
+/// behind the camera systems, which is fine: you've hovered the panel before you click it.
+#[derive(Resource, Default)]
+pub struct EguiWantsPointer(pub bool);
 
 /// When `enabled`, the panel's sun/ambient sliders override the day-night cycle's computed
 /// values (applied after `advance_sky`). When off, the cycle drives them as normal.
@@ -50,6 +62,7 @@ impl Plugin for DebugPanelPlugin {
             // Opens on launch if `FOREST_PANEL` is set (handy for screenshots); else F1.
             .insert_resource(DebugPanel { open: std::env::var("FOREST_PANEL").is_ok() })
             .init_resource::<LightOverride>()
+            .init_resource::<EguiWantsPointer>()
             .add_systems(Update, toggle_panel)
             // The egui pass runs after `Update`, so the lighting override here lands after
             // `advance_sky` has set the cycle values — letting the panel win when enabled.
@@ -67,25 +80,44 @@ fn toggle_panel(keys: Res<ButtonInput<KeyCode>>, mut panel: ResMut<DebugPanel>) 
 fn panel_ui(
     mut contexts: EguiContexts,
     panel: Res<DebugPanel>,
-    mut cam: Query<(&mut DistanceFog, &mut DepthBlur, &mut Bloom), With<Camera3d>>,
+    mut cam: Query<
+        (
+            &mut DistanceFog,
+            &mut DepthBlur,
+            &mut Bloom,
+            &mut ColorGrading,
+            &mut Exposure,
+            &mut ContrastAdaptiveSharpening,
+            &mut VolumetricFog,
+        ),
+        With<Camera3d>,
+    >,
+    mut fog_vol: Query<&mut FogVolume>,
+    mut visual: ResMut<VisualSettings>,
     mut clock: ResMut<SkyClock>,
     mut audio_cfg: ResMut<AudioConfig>,
     mut global_vol: ResMut<GlobalVolume>,
     mut light_override: ResMut<LightOverride>,
     mut sun: Query<&mut DirectionalLight, With<Sun>>,
     mut ambient: ResMut<GlobalAmbientLight>,
+    mut egui_wants: ResMut<EguiWantsPointer>,
 ) -> Result {
+    let ctx = contexts.ctx_mut()?;
+    // Tell the camera controllers whether egui owns the pointer this frame (cursor over the
+    // panel or dragging a widget) so they don't grab the cursor / rotate the view.
+    egui_wants.0 = ctx.wants_pointer_input() || ctx.is_pointer_over_area();
     if !panel.open {
         return Ok(());
     }
-    let ctx = contexts.ctx_mut()?;
 
     egui::Window::new("Debug")
         .default_width(280.0)
         .show(ctx, |ui| {
             ui.label("F1 toggles this panel");
 
-            if let Ok((mut fog, mut blur, mut bloom)) = cam.single_mut() {
+            if let Ok((mut fog, mut blur, mut bloom, mut grading, mut exposure, mut cas, mut vfog)) =
+                cam.single_mut()
+            {
                 egui::CollapsingHeader::new("Fog").default_open(true).show(ui, |ui| {
                     // Fog uses a Linear falloff (clear within `start`, full by `end`).
                     let (mut start, mut end) = match fog.falloff {
@@ -105,6 +137,53 @@ fn panel_ui(
                     ui.add(egui::Slider::new(&mut blur.radius, 0.0..=12.0).text("blur radius"));
                     ui.add(egui::Slider::new(&mut blur.near, 0.0..=60.0).text("blur near"));
                     ui.add(egui::Slider::new(&mut bloom.intensity, 0.0..=1.0).text("bloom"));
+                });
+
+                egui::CollapsingHeader::new("Render").default_open(true).show(ui, |ui| {
+                    ui.label("Exposure / colour grade");
+                    ui.add(egui::Slider::new(&mut exposure.ev100, 7.0..=13.0).text("exposure ev100"));
+                    ui.add(egui::Slider::new(&mut grading.global.post_saturation, 0.5..=2.0).text("saturation"));
+                    ui.add(egui::Slider::new(&mut grading.shadows.contrast, 0.5..=1.5).text("shadow contrast"));
+                    ui.add(egui::Slider::new(&mut grading.midtones.contrast, 0.5..=1.5).text("mid contrast"));
+                    ui.add(egui::Slider::new(&mut grading.highlights.contrast, 0.5..=1.5).text("high contrast"));
+
+                    ui.separator();
+                    ui.label("Sharpening (CAS)");
+                    ui.checkbox(&mut cas.enabled, "CAS enabled");
+                    ui.add(egui::Slider::new(&mut cas.sharpening_strength, 0.0..=1.0).text("sharpen"));
+
+                    ui.separator();
+                    ui.label("Volumetric god-rays");
+                    ui.add(egui::Slider::new(&mut vfog.ambient_intensity, 0.0..=1.0).text("vol ambient"));
+                    ui.add(egui::Slider::new(&mut vfog.step_count, 8u32..=128).text("vol steps"));
+                    if let Ok(mut fv) = fog_vol.single_mut() {
+                        ui.add(egui::Slider::new(&mut fv.density_factor, 0.0..=0.04).text("vol density"));
+                        ui.add(egui::Slider::new(&mut fv.scattering, 0.0..=1.5).text("vol scattering"));
+                        ui.add(egui::Slider::new(&mut fv.absorption, 0.0..=1.5).text("vol absorption"));
+                        ui.add(egui::Slider::new(&mut fv.scattering_asymmetry, 0.0..=0.97).text("vol asymmetry"));
+                        ui.add(egui::Slider::new(&mut fv.light_intensity, 0.0..=4.0).text("vol light"));
+                    }
+
+                    ui.separator();
+                    ui.label("Pollen + prop specular");
+                    // Temp-then-write so the resource is only marked changed on an actual edit
+                    // (the apply system iterates materials, so we don't want per-frame churn).
+                    let mut glow = visual.pollen_glow;
+                    if ui.add(egui::Slider::new(&mut glow, 0.0..=8.0).text("pollen glow")).changed() {
+                        visual.pollen_glow = glow;
+                    }
+                    let mut pspeed = visual.pollen_speed;
+                    if ui.add(egui::Slider::new(&mut pspeed, 0.0..=3.0).text("pollen speed")).changed() {
+                        visual.pollen_speed = pspeed;
+                    }
+                    let mut rough = visual.prop_roughness;
+                    if ui.add(egui::Slider::new(&mut rough, 0.0..=1.0).text("prop roughness")).changed() {
+                        visual.prop_roughness = rough;
+                    }
+                    let mut refl = visual.prop_reflectance;
+                    if ui.add(egui::Slider::new(&mut refl, 0.0..=1.0).text("prop reflectance")).changed() {
+                        visual.prop_reflectance = refl;
+                    }
                 });
             }
 
