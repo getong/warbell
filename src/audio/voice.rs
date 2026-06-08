@@ -12,7 +12,7 @@ use bevy::prelude::*;
 
 use crate::biome::Biome;
 
-use super::{frand, pick, AudioConfig, AudioCue};
+use super::{frand, pick, AudioConfig, AudioCue, HeroEvent, HeroLineGates};
 
 /// Seconds between any two exertion grunts, so combat doesn't spam the hero's voice.
 const GRUNT_MIN_GAP: f32 = 1.6;
@@ -31,6 +31,8 @@ pub(crate) struct VoiceBank {
     deaths: Vec<Handle<AudioSource>>,
     /// (biome, line clip) — small fixed list, looked up by linear scan (`Biome` isn't `Hash`).
     lines: Vec<(Biome, Handle<AudioSource>)>,
+    /// (event, line clip) — the hero's one-off spoken reactions (stone/chest/rescue/night/hurt/home).
+    events: Vec<(HeroEvent, Handle<AudioSource>)>,
 }
 
 /// Mouth bookkeeping — last grunt time + when the current line stops blocking grunts.
@@ -54,12 +56,21 @@ pub(crate) fn setup_voice(asset: Res<AssetServer>, mut commands: Commands) {
         (Biome::Desert, asset.load("audio/vo/desert.ogg")),
         (Biome::Swamp, asset.load("audio/vo/swamp.ogg")),
     ];
+    let events = vec![
+        (HeroEvent::FirstStone, asset.load("audio/vo/stone.ogg")),
+        (HeroEvent::ChestOpen, asset.load("audio/vo/chest.ogg")),
+        (HeroEvent::FirstRescue, asset.load("audio/vo/rescue.ogg")),
+        (HeroEvent::NightWarning, asset.load("audio/vo/night.ogg")),
+        (HeroEvent::LowHp, asset.load("audio/vo/hurt.ogg")),
+        (HeroEvent::Home, asset.load("audio/vo/home.ogg")),
+    ];
     commands.insert_resource(VoiceBank {
         swings: ["audio/player-swing-1.ogg", "audio/player-swing-2.ogg"].iter().map(|f| asset.load(*f)).collect(),
         jump: asset.load("audio/player-jump-1.ogg"),
         hurts: ["audio/player-hurt-1.ogg", "audio/player-hurt-2.ogg", "audio/player-hurt-3.ogg"].iter().map(|f| asset.load(*f)).collect(),
         deaths: ["audio/player-death-1.ogg", "audio/player-death-2.ogg"].iter().map(|f| asset.load(*f)).collect(),
         lines,
+        events,
     });
     commands.init_resource::<HeroMouth>();
 }
@@ -70,6 +81,7 @@ pub(crate) fn play_voice_cues(
     mut commands: Commands,
     bank: Res<VoiceBank>,
     mut mouth: ResMut<HeroMouth>,
+    mut gates: ResMut<HeroLineGates>,
     mut seed: Local<u32>,
     existing: Query<Entity, With<HeroVoiceTag>>,
     mut cues: MessageReader<AudioCue>,
@@ -109,6 +121,28 @@ pub(crate) fn play_voice_cues(
                 if let Some(h) = bank.lines.iter().find(|(bb, _)| *bb == b).map(|(_, h)| h) {
                     mouth.line_until = now + LINE_GUARD;
                     pending = Some((h.clone(), cfg.narration_vol, true));
+                }
+            }
+            AudioCue::HeroEvent(ev) => {
+                // "Once per run" gate for the first-time / home lines; the rest are repeatable
+                // (NightWarning is gated once-per-prep upstream in `siege`).
+                let blocked = match ev {
+                    HeroEvent::FirstStone if gates.first_stone => true,
+                    HeroEvent::FirstRescue if gates.first_rescue => true,
+                    HeroEvent::Home if gates.home => true,
+                    _ => false,
+                };
+                if !blocked {
+                    if let Some(h) = bank.events.iter().find(|(e, _)| *e == ev).map(|(_, h)| h) {
+                        match ev {
+                            HeroEvent::FirstStone => gates.first_stone = true,
+                            HeroEvent::FirstRescue => gates.first_rescue = true,
+                            HeroEvent::Home => gates.home = true,
+                            _ => {}
+                        }
+                        mouth.line_until = now + LINE_GUARD;
+                        pending = Some((h.clone(), cfg.narration_vol, true));
+                    }
                 }
             }
             _ => {}

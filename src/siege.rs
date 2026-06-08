@@ -258,6 +258,9 @@ const SPAWN_RING: f32 = 30.0;
 const KEEP_ATTACK_RANGE: f32 = 14.0;
 /// Keep damage per invader hit (on the ork's normal strike cooldown).
 const KEEP_DAMAGE: f32 = 9.0;
+/// An invader spots + diverts onto a town-guard within this range (instead of marching the keep),
+/// so guards actually intercept the horde rather than being ignored.
+const GUARD_ENGAGE: f32 = 8.0;
 /// Keep total HP — tuned so an unopposed early wave threatens it over the night and a late wave
 /// razes it fast, but the hero thinning the horde saves it.
 pub const KEEP_MAX_HP: f32 = 1000.0;
@@ -336,7 +339,8 @@ impl Plugin for SiegePlugin {
             // Sim — frozen behind any panel / outside Playing.
             .add_systems(
                 Update,
-                (run_director, invader_brain, siege_controls).run_if(in_state(Modal::None)),
+                (run_director, invader_brain, siege_controls, night_warning)
+                    .run_if(in_state(Modal::None)),
             )
             // HUD keeps drawing while frozen.
             .add_systems(Update, update_siege_hud)
@@ -349,6 +353,25 @@ impl Plugin for SiegePlugin {
 
 /// Reset the siege to a fresh run (keeping the chosen difficulty): clear the field, rearm
 /// the director, heal the keep. Runs when a new run begins (start-screen / game-over exit).
+/// Fire the hero's "night is coming" line once, when the prep day has ~15 s left. Gated per
+/// prep day by the *next* wave index so each night gets exactly one warning.
+fn night_warning(
+    siege: Res<Siege>,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
+    mut warned_wave: Local<i32>,
+) {
+    if siege.phase == GamePhase::Prep
+        && siege.prep_seconds_left > 0.0
+        && siege.prep_seconds_left <= 15.0
+    {
+        let next_wave = siege.wave_index + 1;
+        if *warned_wave != next_wave {
+            *warned_wave = next_wave;
+            cues.write(crate::audio::AudioCue::HeroEvent(crate::audio::HeroEvent::NightWarning));
+        }
+    }
+}
+
 fn reset_siege(
     mut siege: ResMut<Siege>,
     mut keep: ResMut<KeepHp>,
@@ -509,8 +532,13 @@ fn invader_brain(
     siege: Res<Siege>,
     mut keep: ResMut<KeepHp>,
     mut pending: ResMut<PendingHeroDamage>,
+    mut guard_dmg: ResMut<crate::villagers::GuardDamage>,
     mut bolts: ResMut<BoltSpawns>,
     mut commands: Commands,
+    guards: Query<
+        (Entity, &Transform, &crate::villagers::Guard),
+        (Without<WaveInvader>, Without<crate::dying::Dying>),
+    >,
     mut q: Query<
         (
             Entity,
@@ -529,19 +557,48 @@ fn invader_brain(
     let dt = time.delta_secs().min(0.05);
     let now = time.elapsed_secs();
 
+    // Living guards this frame (downed ones aren't worth diverting onto).
+    let live_guards: Vec<(Entity, Vec2)> = guards
+        .iter()
+        .filter(|(_, _, g)| !g.is_downed())
+        .map(|(e, tf, _)| (e, Vec2::new(tf.translation.x, tf.translation.z)))
+        .collect();
+
     for (e, mut o, mut inv, mut path, mut tf, hp) in &mut q {
         o.atk_cd -= dt;
         // Berserker frenzy: faster march + quicker strikes under 40% HP (incl. the boss).
         let frenzied = o.variant == OrkVariant::Berserker && hp.hp < hp.max * 0.4;
         let dist_keep = o.pos.distance(KEEP_POS);
-        // No leash: head for the keep, but turn on the hero if he blocks the way.
+        // Target priority: the hero if he's close, else the nearest guard in the way, else the
+        // keep. So invaders FIGHT the town-guards instead of walking past them.
         let see_hero = hero.alive && o.pos.distance(hero.pos) < orks::ORK_SIGHT;
-        let target = if see_hero { hero.pos } else { KEEP_POS };
+        let guard_tgt: Option<(Entity, Vec2)> = if see_hero {
+            None
+        } else {
+            let mut best: Option<(Entity, Vec2, f32)> = None;
+            for (ge, gp) in &live_guards {
+                let d = o.pos.distance(*gp);
+                if d < GUARD_ENGAGE && best.is_none_or(|(_, _, bd)| d < bd) {
+                    best = Some((*ge, *gp, d));
+                }
+            }
+            best.map(|(ge, gp, _)| (ge, gp))
+        };
+        let target = if see_hero {
+            hero.pos
+        } else if let Some((_, gp)) = guard_tgt {
+            gp
+        } else {
+            KEEP_POS
+        };
         let atk_range = if o.shaman { orks::SHAMAN_CAST_RANGE } else { orks::ORK_ATTACK_RANGE };
         let at_hero = see_hero && o.pos.distance(hero.pos) < atk_range;
-        let at_keep = !see_hero && dist_keep <= KEEP_ATTACK_RANGE;
+        let at_guard = guard_tgt.is_some_and(|(_, gp)| o.pos.distance(gp) < atk_range);
+        let at_keep = !see_hero && guard_tgt.is_none() && dist_keep <= KEEP_ATTACK_RANGE;
+        // Chasing a target (hero/guard) uses cheap direct steering; only the keep march paths A*.
+        let chase_direct = see_hero || guard_tgt.is_some();
 
-        if at_hero || at_keep {
+        if at_hero || at_guard || at_keep {
             o.moving = false;
             // Turn to face the target at a capped rate.
             let to = target - o.pos;
@@ -564,6 +621,14 @@ fn invader_brain(
                         o.atk_cd = orks::ORK_ATTACK_CD * frenzy_cd;
                         pending.0 += orks::variant_melee(o.variant);
                     }
+                } else if at_guard {
+                    // Trading blows with a town-guard (armour blunts the hit).
+                    o.atk_cd =
+                        if o.shaman { orks::SHAMAN_CAST_CD } else { orks::ORK_ATTACK_CD * frenzy_cd };
+                    if let Some((ge, _)) = guard_tgt {
+                        let dmg = orks::variant_melee(o.variant) * crate::villagers::GUARD_ARMOR_MULT;
+                        guard_dmg.0.push((ge, dmg));
+                    }
                 } else {
                     // Hammering the keep.
                     o.atk_cd =
@@ -573,9 +638,9 @@ fn invader_brain(
             }
         } else {
             // Pick the immediate step target. Marching the KEEP follows an A* route through the
-            // gates (replanned on a throttle); chasing the hero stays cheap direct steering
-            // (he's close — ORK_SIGHT 9 — and moves every frame, so pathing him is churn).
-            let step_target = if see_hero {
+            // gates (replanned on a throttle); chasing the hero/guard stays cheap direct steering
+            // (they're close and move every frame, so pathing them is churn).
+            let step_target = if chase_direct {
                 target
             } else {
                 if path.cursor >= path.waypoints.len()

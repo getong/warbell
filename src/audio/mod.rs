@@ -32,6 +32,24 @@ pub enum Surface {
     Stone,
 }
 
+/// A one-off **spoken reaction** by the hero (the "mouth"), distinct from the per-biome
+/// [`AudioCue::HeroLine`]. Ported from the old game's `sayHeroLine(key, …)` event lines.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum HeroEvent {
+    /// First ore broken this run ("stone → defenses").
+    FirstStone,
+    /// A chest was opened (repeatable).
+    ChestOpen,
+    /// First camp freed this run ("the rescued become militia").
+    FirstRescue,
+    /// Prep is nearly over — night is coming (once per prep day).
+    NightWarning,
+    /// HP crossed the danger threshold (repeatable).
+    LowHp,
+    /// Returned to the castle after roaming the wilderness (once this run).
+    Home,
+}
+
 /// A one-shot audio request. Gameplay writes these via `MessageWriter<AudioCue>`; [`sfx`] and
 /// [`voice`] each read the whole stream and handle their own subset.
 #[derive(Message, Clone, Copy)]
@@ -83,7 +101,25 @@ pub enum AudioCue {
     CampRescue,
     /// Hero HP crossed the low threshold.
     LowHp,
+    /// A one-off spoken reaction by the hero (see [`HeroEvent`]); handled by [`voice`].
+    HeroEvent(HeroEvent),
 }
+
+/// Per-run gates for the "once" event voice lines (the old game's `spoken` key-set). Reset on
+/// a fresh run. `been_away` latches the home-return line: it can only fire after the hero has
+/// roamed past [`AWAY_RADIUS`] from the castle.
+#[derive(Resource, Default)]
+pub(crate) struct HeroLineGates {
+    pub first_stone: bool,
+    pub first_rescue: bool,
+    pub home: bool,
+    pub been_away: bool,
+}
+
+/// Castle is at the world origin; the hero must roam beyond this, then return inside
+/// [`HOME_RADIUS`], to trigger the home-return line.
+const AWAY_RADIUS: f32 = 34.0;
+const HOME_RADIUS: f32 = 16.0;
 
 /// Combat-music driver. Ork AI sets `fighting = true` while any ork hunts / strikes the hero;
 /// [`music`] eases the combat layer in/out from it.
@@ -139,6 +175,7 @@ impl Plugin for GameAudioPlugin {
         app.init_resource::<AudioConfig>()
             .init_resource::<MusicState>()
             .init_resource::<synth::StingBank>()
+            .init_resource::<HeroLineGates>()
             .add_message::<AudioCue>()
             .add_systems(
                 Startup,
@@ -162,9 +199,43 @@ impl Plugin for GameAudioPlugin {
                     sfx::play_cues,
                     voice::play_voice_cues,
                     detect_player_events,
+                    detect_home_return,
                     synth::debug_play_stings,
                 ),
-            );
+            )
+            // Fresh run: clear the once-per-run voice gates (mirrors siege's reset).
+            .add_systems(
+                OnExit(crate::game_state::AppState::StartScreen),
+                reset_hero_line_gates,
+            )
+            .add_systems(OnExit(crate::game_state::AppState::GameOver), reset_hero_line_gates);
+    }
+}
+
+fn reset_hero_line_gates(mut gates: ResMut<HeroLineGates>) {
+    *gates = HeroLineGates::default();
+}
+
+/// Emit the home-return line: once the hero has roamed past [`AWAY_RADIUS`] from the castle
+/// (origin) and comes back inside [`HOME_RADIUS`] during prep. Fires at most once per run
+/// (gated by [`HeroLineGates::home`], which `voice` sets when the clip actually plays).
+fn detect_home_return(
+    hero: Query<&crate::player::Hero>,
+    siege: Option<Res<crate::siege::Siege>>,
+    mut gates: ResMut<HeroLineGates>,
+    mut cues: MessageWriter<AudioCue>,
+) {
+    let Ok(hero) = hero.single() else { return };
+    let d = hero.pos.length();
+    if d > AWAY_RADIUS {
+        gates.been_away = true;
+    }
+    if gates.been_away && !gates.home && d < HOME_RADIUS {
+        let in_prep =
+            siege.map(|s| matches!(s.phase, crate::siege::GamePhase::Prep)).unwrap_or(true);
+        if in_prep {
+            cues.write(AudioCue::HeroEvent(HeroEvent::Home));
+        }
     }
 }
 
@@ -188,7 +259,8 @@ fn detect_player_events(
     }
     let low = p.max_hp > 0.0 && p.hp > 0.0 && p.hp <= p.max_hp * 0.35;
     if low && !*was_low {
-        cues.write(AudioCue::LowHp);
+        cues.write(AudioCue::LowHp); // synth danger bleep
+        cues.write(AudioCue::HeroEvent(HeroEvent::LowHp)); // hero's pained line over it
     }
     *was_low = low;
 }

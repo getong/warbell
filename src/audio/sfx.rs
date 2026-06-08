@@ -14,10 +14,12 @@ use super::{jitter, pick, AudioConfig, AudioCue, Surface};
 #[derive(Resource)]
 pub(crate) struct SfxBank {
     swing: Handle<AudioSource>,
-    hit: Handle<AudioSource>,
+    /// Impact clips — picked at random per hit (the old game's `sword-hit-var-{1,2,3}`).
+    hits: Vec<Handle<AudioSource>>,
     block: Handle<AudioSource>,
     ui: Handle<AudioSource>,
-    foot_dirt: Handle<AudioSource>,
+    /// Dirt footstep variants (the old `footstep-dirt-var-{1,2,3}`); snow/stone are single clips.
+    foot_dirt: Vec<Handle<AudioSource>>,
     foot_snow: Handle<AudioSource>,
     foot_stone: Handle<AudioSource>,
     ork_grunts: Vec<Handle<AudioSource>>,
@@ -27,10 +29,16 @@ pub(crate) struct SfxBank {
 pub(crate) fn setup_sfx(asset: Res<AssetServer>, mut commands: Commands) {
     commands.insert_resource(SfxBank {
         swing: asset.load("audio/sword-swing.ogg"),
-        hit: asset.load("audio/sword-hit.ogg"),
+        hits: ["audio/sword-hit-1.ogg", "audio/sword-hit-2.ogg", "audio/sword-hit-3.ogg"]
+            .iter()
+            .map(|f| asset.load(*f))
+            .collect(),
         block: asset.load("audio/block.ogg"),
         ui: asset.load("audio/menu-select.ogg"),
-        foot_dirt: asset.load("audio/footstep-dirt.ogg"),
+        foot_dirt: ["audio/footstep-dirt-1.ogg", "audio/footstep-dirt-2.ogg", "audio/footstep-dirt-3.ogg"]
+            .iter()
+            .map(|f| asset.load(*f))
+            .collect(),
         foot_snow: asset.load("audio/footstep-snow.ogg"),
         foot_stone: asset.load("audio/footstep-stone.ogg"),
         ork_grunts: ["audio/ork-grunt-1.ogg", "audio/ork-grunt-2.ogg", "audio/ork-grunt-3.ogg", "audio/monster-snarl.ogg", "audio/monster-growl.ogg"]
@@ -89,12 +97,12 @@ pub(crate) fn play_cues(
             AudioCue::Impact { kill } => {
                 let v = if kill { 0.62 } else { 0.50 } * sfx;
                 let p = if kill { jitter(&mut seed, 0.06) * 0.85 } else { jitter(&mut seed, 0.08) };
-                one_shot(&mut commands, bank.hit.clone(), v, p);
+                one_shot(&mut commands, pick(&bank.hits, &mut seed), v, p);
             }
             AudioCue::Block => one_shot(&mut commands, bank.block.clone(), 0.45 * sfx, jitter(&mut seed, 0.1)),
             AudioCue::Footstep { surface, landing } => {
                 let clip = match surface {
-                    Surface::Dirt => bank.foot_dirt.clone(),
+                    Surface::Dirt => pick(&bank.foot_dirt, &mut seed),
                     Surface::Snow => bank.foot_snow.clone(),
                     Surface::Stone => bank.foot_stone.clone(),
                 };

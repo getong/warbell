@@ -77,21 +77,35 @@ pub struct Guard {
     hp: f32,
     max: f32,
     atk_cd: f32,
-    hurt_cd: f32,
     pub downed: bool,
     post: Vec2,
 }
 
-// Guard combat tuning (TS values ÷~4.2 into forest's combat units).
-const GUARD_MAX_HP: f32 = 40.0;
-const GUARD_DAMAGE: f32 = 3.0;
+impl Guard {
+    /// Down guards aren't worth an invader's attention (read by the invader AI's targeting).
+    pub fn is_downed(&self) -> bool {
+        self.downed
+    }
+}
+
+// Guard combat tuning. Guards now take damage ONLY from invaders that actually strike them
+// (via [`GuardDamage`]) — no more self-inflicted melt — so they're beefier + hit harder and a
+// pair can win a 1v1 but a wave still overwhelms them.
+const GUARD_MAX_HP: f32 = 65.0;
+const GUARD_DAMAGE: f32 = 9.0;
 const GUARD_DEFEND_RADIUS: f32 = 12.0;
 const GUARD_MELEE: f32 = 1.6;
 const GUARD_SPEED: f32 = 2.4;
 const GUARD_ATTACK_CD: f32 = 1.0;
-/// How often a guard eats a return blow while toe-to-toe with an invader.
-const GUARD_HURT_CD: f32 = 1.1;
-const GUARD_INCOMING: f32 = 7.0; // damage a guard takes per traded blow
+
+/// Damage invaders have dealt town-guards this frame (`(guard entity, amount)`), pushed by the
+/// invader AI in `siege.rs` and drained into guard HP by [`guard_combat`]. The mirror of the
+/// hero's [`crate::player::PendingHeroDamage`] — combat stays store-mediated, no collision events.
+#[derive(Resource, Default)]
+pub struct GuardDamage(pub Vec<(Entity, f32)>);
+
+/// Invader melee is blunted this much against an armoured guard (vs the hero) — guards soak.
+pub const GUARD_ARMOR_MULT: f32 = 0.6;
 
 // ── Plugin + systems ───────────────────────────────────────────────────────────────
 
@@ -110,6 +124,7 @@ const CAMP_HOME_R: f32 = 6.0;
 impl Plugin for VillagersPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RescuedCamps>()
+            .init_resource::<GuardDamage>()
             .add_systems(Update, villager_limbs) // limb anim keeps running while frozen
             .add_systems(OnExit(crate::game_state::AppState::StartScreen), reset_rescues)
             .add_systems(OnExit(crate::game_state::AppState::GameOver), reset_rescues)
@@ -244,6 +259,7 @@ fn camp_rescue(
             scale: 1.2,
         });
         cues.write(crate::audio::AudioCue::CampRescue);
+        cues.write(crate::audio::AudioCue::HeroEvent(crate::audio::HeroEvent::FirstRescue));
     }
 }
 
@@ -320,8 +336,9 @@ fn villager_brain(time: Res<Time>, mut q: Query<(&mut Villager, &mut Transform),
 fn guard_combat(
     time: Res<Time>,
     siege: Res<crate::siege::Siege>,
+    mut incoming: ResMut<GuardDamage>,
     mut commands: Commands,
-    mut guards: Query<(&mut Guard, &mut Villager, &mut Transform), Without<crate::orks::WaveInvader>>,
+    mut guards: Query<(Entity, &mut Guard, &mut Villager, &mut Transform), Without<crate::orks::WaveInvader>>,
     mut invaders: Query<
         (Entity, &Transform, &mut crate::player::Health),
         (With<crate::orks::WaveInvader>, Without<Guard>, Without<crate::dying::Dying>),
@@ -334,7 +351,20 @@ fn guard_combat(
         invaders.iter().map(|(e, tf, _)| (e, Vec2::new(tf.translation.x, tf.translation.z))).collect();
     let mut dealt: Vec<(Entity, f32)> = Vec::new();
 
-    for (mut g, mut v, mut tf) in &mut guards {
+    // Sum the invader strikes landed on each guard this frame, then drain the channel.
+    let mut hurt: std::collections::HashMap<Entity, f32> = std::collections::HashMap::new();
+    for (e, dmg) in incoming.0.drain(..) {
+        *hurt.entry(e).or_insert(0.0) += dmg;
+    }
+
+    for (self_e, mut g, mut v, mut tf) in &mut guards {
+        // Take any strikes invaders landed on this guard this frame.
+        if let Some(d) = hurt.get(&self_e) {
+            g.hp -= *d;
+            if g.hp <= 0.0 {
+                g.downed = true;
+            }
+        }
         if !in_wave {
             // Dawn: heal, rise, and stroll back to the post.
             g.hp = g.max;
@@ -356,7 +386,6 @@ fn guard_combat(
             v.moving = false;
         } else {
             g.atk_cd -= dt;
-            g.hurt_cd -= dt;
             // Nearest invader within the defend radius.
             let mut best: Option<(Entity, Vec2, f32)> = None;
             for (e, p) in &inv {
@@ -376,13 +405,6 @@ fn guard_combat(
                     if g.atk_cd <= 0.0 {
                         g.atk_cd = GUARD_ATTACK_CD;
                         dealt.push((te, GUARD_DAMAGE));
-                    }
-                    if g.hurt_cd <= 0.0 {
-                        g.hurt_cd = GUARD_HURT_CD;
-                        g.hp -= GUARD_INCOMING;
-                        if g.hp <= 0.0 {
-                            g.downed = true;
-                        }
                     }
                 } else {
                     let cur_y = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
@@ -655,7 +677,6 @@ fn spawn(
             hp: GUARD_MAX_HP,
             max: GUARD_MAX_HP,
             atk_cd: 0.0,
-            hurt_cd: 0.0,
             downed: false,
             post: home,
         });

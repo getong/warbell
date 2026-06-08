@@ -46,8 +46,8 @@ pub(crate) fn load_voices(asset: Res<AssetServer>, mut commands: Commands) {
     add(Species::Goat, 0.9, &["audio/goat-1.ogg", "audio/goat-2.ogg"]);
     add(Species::Rabbit, 0.7, &["audio/rabbit.ogg"]);
     add(Species::PolarBear, 1.3, &["audio/bear-growl.ogg", "audio/bear-roar.ogg"]);
-    add(Species::Dog, 0.8, &["audio/dog-1.ogg", "audio/dog-2.ogg"]);
-    add(Species::Cat, 0.7, &["audio/cat-1.ogg", "audio/cat-2.ogg"]);
+    add(Species::Dog, 0.8, &["audio/dog-1.ogg", "audio/dog-2.ogg", "audio/dog-3.ogg", "audio/dog-4.ogg"]);
+    add(Species::Cat, 0.7, &["audio/cat-1.ogg", "audio/cat-2.ogg", "audio/cat-3.ogg", "audio/cat-4.ogg"]);
     // Wolf / Boar / Elk: no recordings yet → silent (no entry).
     commands.insert_resource(Voices(m));
 }

@@ -61,6 +61,8 @@ impl Plugin for VerbsPlugin {
                     mine_ore,
                     forage_pickup,
                     forage_respawn,
+                    apple_harvest,
+                    apple_regrow,
                     chest_interact,
                     chest_respawn,
                     animal_drops,
@@ -126,6 +128,7 @@ fn mine_ore(
                     scale: 1.1,
                 });
                 cues.write(AudioCue::OreShatter);
+                cues.write(AudioCue::HeroEvent(crate::audio::HeroEvent::FirstStone));
                 commands.entity(e).despawn();
             } else {
                 cues.write(AudioCue::Impact { kill: false });
@@ -277,7 +280,7 @@ fn forage_respawn(time: Res<Time>, mut q: Query<(&mut Forage, &mut Visibility)>)
 }
 
 /// Seed marsh herbs over the swamp + forage apples over the forest (called from
-/// `worldmap::build`). Herb = a green sprig, apple = a small red fruit on the ground.
+/// `worldmap::build`). Herb = a green sprig; apples hang on standout apple TREES you strip whole.
 pub fn populate_forage(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -292,22 +295,55 @@ pub fn populate_forage(
     });
     seed_forage(commands, &herb_mesh, &herb_mat, "marsh_herb", 0.9, crate::biome::Biome::Swamp, 13, 0x4e_b5_1c_0d);
 
-    // Forest apples: standout apple TREES (permanent scenery) with a few fallen apples to gather
-    // at each one's base — so it reads as "go to the apple tree to pick apples".
-    let apple_mesh = meshes.add(Sphere::new(0.13).mesh().ico(2).unwrap());
+    // Forest apples: standout apple TREES (permanent scenery) carrying a cluster of apples that
+    // you strip the WHOLE tree at once by walking up — the apples pop off in a satisfying burst.
+    let apple_mesh = meshes.add(Sphere::new(0.11).mesh().ico(2).unwrap());
     let apple_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.80, 0.16, 0.13),
-        emissive: LinearRgba::rgb(0.18, 0.02, 0.02),
+        base_color: Color::srgb(0.82, 0.16, 0.13),
+        emissive: LinearRgba::rgb(0.20, 0.02, 0.02),
         perceptual_roughness: 0.5,
         ..default()
     });
     let tree_mesh = meshes.add(apple_tree_mesh());
     let tree_mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.85, ..default() });
+    // Stash the apple mesh/mat so the harvest pop can fling matching motes.
+    commands.insert_resource(AppleAssets { fruit_mesh: apple_mesh.clone(), fruit_mat: apple_mat.clone() });
     populate_apple_orchard(commands, &tree_mesh, &tree_mat, &apple_mesh, &apple_mat);
 }
 
-/// Scatter standout apple trees across the forest. Each tree is permanent set-dressing; a few
-/// gatherable apple forage nodes ring its base (regrowing fallen fruit).
+/// Canopy positions (tree-local) the gatherable apples hang at — also where they pop from.
+const APPLE_SPOTS: [(f32, f32, f32); 6] = [
+    (0.34, 0.84, 0.28),
+    (-0.36, 0.88, 0.14),
+    (0.10, 0.74, 0.42),
+    (0.40, 1.04, -0.08),
+    (-0.22, 1.10, 0.28),
+    (0.04, 1.22, 0.04),
+];
+
+/// A whole apple tree you strip at once: walk inside `harvest_r` → all apples pop off into the
+/// bag, then the tree regrows them after a delay. `ready` gates re-harvest during regrow.
+#[derive(Component)]
+struct AppleTree {
+    harvest_r: f32,
+    apples: u32,
+    ready: bool,
+    harvested_at: f32,
+}
+
+/// One apple hanging on a tree (a child of the [`AppleTree`] entity); hidden while regrowing.
+#[derive(Component)]
+struct AppleFruit;
+
+/// The apple mesh + material, reused for the harvest "pop" motes.
+#[derive(Resource, Clone)]
+struct AppleAssets {
+    fruit_mesh: Handle<Mesh>,
+    fruit_mat: Handle<StandardMaterial>,
+}
+
+/// Scatter standout apple trees across the forest. Each tree carries a cluster of [`AppleFruit`]
+/// children stripped whole by [`apple_harvest`] and regrown by [`apple_regrow`].
 fn populate_apple_orchard(
     commands: &mut Commands,
     tree_mesh: &Handle<Mesh>,
@@ -332,27 +368,101 @@ fn populate_apple_orchard(
         }
         let y = worldmap::ground_at_world(x, z).unwrap_or(0.0);
         let yaw = crate::wildlife::rng_range(&mut rng, 0.0, std::f32::consts::TAU);
-        commands.spawn((
-            Mesh3d(tree_mesh.clone()),
-            MeshMaterial3d(tree_mat.clone()),
-            Transform::from_xyz(x, y, z).with_rotation(Quat::from_rotation_y(yaw)),
-            crate::biome::BiomeEntity,
-        ));
-        for _ in 0..3 {
-            let ang = crate::wildlife::rng_range(&mut rng, 0.0, std::f32::consts::TAU);
-            let r = crate::wildlife::rng_range(&mut rng, 0.5, 1.2);
-            let (ax, az) = (x + ang.cos() * r, z + ang.sin() * r);
-            let ay = worldmap::ground_at_world(ax, az).unwrap_or(y) + 0.13;
-            commands.spawn((
-                Mesh3d(apple_mesh.clone()),
-                MeshMaterial3d(apple_mat.clone()),
-                Transform::from_xyz(ax, ay, az),
-                Visibility::Visible,
-                Forage { item_id: "apple", harvest_r: 0.9, collected: false, collected_at: 0.0 },
+        commands
+            .spawn((
+                Mesh3d(tree_mesh.clone()),
+                MeshMaterial3d(tree_mat.clone()),
+                Transform::from_xyz(x, y, z).with_rotation(Quat::from_rotation_y(yaw)),
                 crate::biome::BiomeEntity,
-            ));
+                AppleTree { harvest_r: 2.0, apples: APPLE_SPOTS.len() as u32, ready: true, harvested_at: 0.0 },
+            ))
+            .with_children(|p| {
+                for (ax, ay, az) in APPLE_SPOTS {
+                    p.spawn((
+                        Mesh3d(apple_mesh.clone()),
+                        MeshMaterial3d(apple_mat.clone()),
+                        Transform::from_xyz(ax, ay, az),
+                        Visibility::Visible,
+                        AppleFruit,
+                    ));
+                }
+            });
+        if placed == 0 {
+            info!("APPLETREE0 x={x:.1} z={z:.1} y={y:.1}"); // TEMP locator for verification
         }
         placed += 1;
+    }
+}
+
+/// Strip a whole apple tree on approach: inside `harvest_r` (bag-room permitting) bank every
+/// apple at once, pop each fruit off into a flying-mote burst, and start the regrow timer.
+#[allow(clippy::too_many_arguments)]
+fn apple_harvest(
+    time: Res<Time>,
+    hero: Res<HeroState>,
+    mut inv: ResMut<Inventory>,
+    mut toasts: ResMut<Toasts>,
+    mut cues: MessageWriter<AudioCue>,
+    mut floats: ResMut<crate::combat_fx::FloatQueue>,
+    assets: Option<Res<AppleAssets>>,
+    mut commands: Commands,
+    mut trees: Query<(&mut AppleTree, &GlobalTransform, &Children)>,
+    mut fruit: Query<(&Transform, &mut Visibility), With<AppleFruit>>,
+) {
+    if !hero.alive {
+        return;
+    }
+    let now = time.elapsed_secs();
+    for (mut tree, gt, children) in &mut trees {
+        if !tree.ready {
+            continue;
+        }
+        let tp = gt.translation();
+        if Vec2::new(tp.x, tp.z).distance(hero.pos) > tree.harvest_r {
+            continue;
+        }
+        if !try_grant(&mut inv.0, &mut toasts.0, "apple", tree.apples as i64, now as f64) {
+            continue; // bag full — leave the fruit on the tree
+        }
+        tree.ready = false;
+        tree.harvested_at = now;
+        // Pop each apple off where it hangs.
+        for &c in children {
+            if let Ok((ltf, mut vis)) = fruit.get_mut(c) {
+                *vis = Visibility::Hidden;
+                if let Some(a) = &assets {
+                    let wp = gt.transform_point(ltf.translation);
+                    crate::player::spawn_motes(&mut commands, &a.fruit_mesh, &a.fruit_mat, wp, 3, 2.4, 1.0, 0.55);
+                }
+            }
+        }
+        floats.0.push(FloatReq {
+            world: Vec3::new(tp.x, tp.y + 1.7, tp.z),
+            text: format!("+{} apples", tree.apples),
+            color: Color::srgb(0.95, 0.45, 0.30),
+            scale: 1.2,
+        });
+        cues.write(AudioCue::Forage);
+    }
+}
+
+/// Regrow a stripped tree's apples once the respawn delay has elapsed.
+fn apple_regrow(
+    time: Res<Time>,
+    mut trees: Query<(&mut AppleTree, &Children)>,
+    mut fruit: Query<&mut Visibility, With<AppleFruit>>,
+) {
+    let now = time.elapsed_secs();
+    for (mut tree, children) in &mut trees {
+        if tree.ready || now - tree.harvested_at < FORAGE_RESPAWN {
+            continue;
+        }
+        tree.ready = true;
+        for &c in children {
+            if let Ok(mut vis) = fruit.get_mut(c) {
+                *vis = Visibility::Visible;
+            }
+        }
     }
 }
 
@@ -490,6 +600,8 @@ fn chest_interact(
         floats.0.push(FloatReq { world: head, text: format!("+{gold} gold"), color: crate::combat_fx::col_kill(), scale: 1.1 });
         cues.write(AudioCue::ChestOpen);
         cues.write(AudioCue::Gold); // a coin chime layered over the chest creak
+        cues.write(AudioCue::HeroEvent(crate::audio::HeroEvent::ChestOpen)); // hero muses
+
         chest.opened = true;
         chest.opened_at = now;
         for &c in children {
@@ -706,28 +818,14 @@ fn apple_tree_mesh() -> Mesh {
     let trunk = lin(0x6b4a2a);
     let leaf = lin(0x4f9c3a);
     let leaf_hi = lin(0x74c64c);
-    let apple = lin(0xcf2f26);
-    let mut parts = vec![
+    // Trunk + canopy only — the apples are separate child entities so they can pop off.
+    cgroup(vec![
         ccyl(0.11, 0.74, v(0.0, 0.37, 0.0), Quat::IDENTITY, trunk),
         csph(0.44, v(0.0, 0.98, 0.0), leaf),
         csph(0.34, v(0.30, 0.88, 0.12), leaf_hi),
         csph(0.32, v(-0.28, 0.90, -0.10), leaf),
         csph(0.30, v(0.06, 1.20, -0.16), leaf_hi),
-    ];
-    for (ax, ay, az) in [
-        (0.36, 0.82, 0.30),
-        (-0.38, 0.84, 0.18),
-        (0.12, 0.74, 0.44),
-        (0.42, 1.04, -0.10),
-        (-0.22, 1.08, 0.30),
-        (0.02, 1.24, 0.06),
-        (-0.42, 1.00, -0.18),
-        (0.26, 1.14, 0.26),
-        (0.30, 0.70, -0.28),
-    ] {
-        parts.push(csph(0.075, v(ax, ay, az), apple));
-    }
-    cgroup(parts)
+    ])
 }
 
 // ─── Hunting: per-species drops + ground pickups ───────────────────────────────────
