@@ -3,21 +3,21 @@
 //! verified Bevy 0.18 components, plus a procedural gradient-cubemap IBL and SSAO
 //! (both adapted from the working tileworld-bevy port's `lighting.rs`).
 
-use bevy::anti_alias::contrast_adaptive_sharpening::ContrastAdaptiveSharpening;
 use bevy::anti_alias::smaa::{Smaa, SmaaPreset};
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::Exposure;
 use bevy::core_pipeline::prepass::{DepthPrepass, NormalPrepass};
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::light::{
-    CascadeShadowConfigBuilder, DirectionalLightShadowMap, ShadowFilteringMethod, VolumetricFog,
-    VolumetricLight,
+    CascadeShadowConfigBuilder, DirectionalLightShadowMap, FogVolume, ShadowFilteringMethod,
+    VolumetricFog, VolumetricLight,
 };
 use bevy::pbr::{
     Atmosphere, DistanceFog, FogFalloff, ScatteringMedium, ScreenSpaceAmbientOcclusion,
     ScreenSpaceAmbientOcclusionQualityLevel,
 };
 use bevy::post_process::bloom::Bloom;
+use bevy::post_process::dof::{DepthOfField, DepthOfFieldMode};
 use bevy::prelude::*;
 use bevy::render::render_resource::{
     Extent3d, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension,
@@ -49,7 +49,7 @@ impl Plugin for ScenePlugin {
                 day_secs: day_seconds(),
             })
             .add_systems(Startup, (setup_camera, setup_sun))
-            .add_systems(Update, advance_sky);
+            .add_systems(Update, (advance_sky, drive_dof_focus));
     }
 }
 
@@ -99,8 +99,11 @@ fn start_t() -> f32 {
 // countdown (a glance tells you how long until night), the night holds through the whole wave,
 // and end screens snap to daylight. The clock EASES toward the target so dusk/dawn fall over a
 // few seconds.
-const T_DAWN: f32 = 0.08; // low morning sun (east) at prep start
-const T_DUSK: f32 = 0.42; // low evening sun (west) as the prep timer ends (still above horizon)
+// The 150s prep day (siege PREP_DURATION) maps to the sun's full arc: ~5:00 low golden
+// morning (east) → 13:00 noon (overhead) → ~21:00 low golden evening (west). Wider than
+// before so the sun visibly rises and sets across the day instead of hanging mid-high.
+const T_DAWN: f32 = 0.03; // ~5:00 — low sunrise sun, east horizon
+const T_DUSK: f32 = 0.47; // ~21:00 — low sunset sun, west horizon
 const T_NIGHT: f32 = 0.75; // midnight — held for the whole wave
 const T_NOON: f32 = 0.25; // end-screen daylight
 const DAY_LERP_RATE: f32 = 0.7; // ease speed toward the target (≈ a few-second dusk/dawn)
@@ -258,18 +261,19 @@ fn setup_camera(
     let (yaw, pitch, _) = cam_tf.rotation.to_euler(EulerRot::YXZ);
 
     // Richer grade: saturation + a touch of contrast (the AgX/flat look needs both).
+    // Defaults dialed in from the live panel.
     let mut grading = ColorGrading::default();
-    grading.global.post_saturation = 1.30;
-    grading.shadows.contrast = 0.96; // lift crushed shadows (was 1.10 — too dark)
-    grading.midtones.contrast = 1.14;
-    grading.highlights.contrast = 1.08;
+    grading.global.post_saturation = 1.45;
+    grading.shadows.contrast = 1.06;
+    grading.midtones.contrast = 1.32;
+    grading.highlights.contrast = 1.18;
 
     commands.spawn((
         Camera3d::default(),
         Projection::from(PerspectiveProjection { fov: 50f32.to_radians(), ..default() }),
         cam_tf,
         Hdr,
-        Exposure { ev100: 10.1 },
+        Exposure { ev100: 10.60 },
         Tonemapping::AgX,
         // SSAO + SMAA path (mutually exclusive with MSAA). Bevy's built-in DepthOfField is
         // gone — it silently no-op'd next to SSAO and only did a single focal plane. Depth
@@ -283,10 +287,18 @@ fn setup_camera(
         },
         DepthPrepass,
         NormalPrepass,
-        Bloom { intensity: 0.16, ..Bloom::NATURAL },
-        // Custom distance depth-blur: sharp within `clear` tiles, ramps to a soft far
-        // field. Tunable live via FOREST_BLUR="clear,full,radius". Runs after tonemapping.
-        crate::depth_blur::settings_from_env(),
+        Bloom { intensity: 0.30, ..Bloom::NATURAL },
+        // Real CoC **bokeh** depth-of-field (Bevy built-in, native Vulkan) — the proper
+        // system the old game used: a focal plane (auto-focused on the player by
+        // `drive_dof_focus`) with the fore/background softening into a creamy bokeh. Lower
+        // `aperture_f_stops` = more blur; tunable live in F1 → Blur+Bloom.
+        DepthOfField {
+            mode: DepthOfFieldMode::Bokeh,
+            focal_distance: 28.0,
+            aperture_f_stops: 2.4,
+            max_circle_of_confusion_diameter: 72.0,
+            ..default()
+        },
         DistanceFog {
             color: SKY,
             directional_light_color: Color::srgb(1.0, 0.93, 0.78),
@@ -301,13 +313,15 @@ fn setup_camera(
     .insert((
         Atmosphere::earthlike(medium),
         grading,
+        // Volumetric sun shafts (god rays) — the modern, integrated replacement for the TS
+        // screen-space `GodRays` pass. Lit by the sun's `VolumetricLight` inside the `FogVolume`
+        // spawned in `setup_sun`. `jitter = 0` since we run SMAA, not TAA (jitter needs temporal
+        // resolve); `ambient_intensity` is high so the (mostly unlit) thin fog reads as bright
+        // sky-haze rather than a dark absorbing mass — only the sun's shafts add brightness.
+        VolumetricFog { ambient_intensity: 1.0, jitter: 0.0, step_count: 56, ..default() },
         ShadowFilteringMethod::Gaussian,
-        // Contrast Adaptive Sharpening — re-crisps the edges SMAA softens (low-poly reads
-        // sharper). Tunable live in the Debug panel ("Render" → CAS).
-        ContrastAdaptiveSharpening { enabled: true, sharpening_strength: 0.35, denoise: false },
-        // Volumetric fog / god-rays: needs a `FogVolume` region (spawned in `visual.rs`) +
-        // `VolumetricLight` on the sun. Tunable live in the Debug panel.
-        VolumetricFog { ambient_intensity: 0.1, ..default() },
+        // Toon edge-outline (runs before the blur): crisp object silhouettes. Tunable in F1.
+        crate::outline::default_outline(),
         crate::controls::FlyCam { yaw, pitch },
         // Listener for spatial wildlife audio (see `audio.rs`). `gap` = ear separation in
         // world units; scaled by the global `SpatialScale` set in `main.rs`.
@@ -326,6 +340,28 @@ fn env_cam() -> Option<Transform> {
     }
 }
 
+/// Auto-focus the bokeh DoF on the player (Play mode) or a fixed mid-ground plane
+/// (free-cam) — mirrors the old game's DofDriver (focusDistance = camera→player distance),
+/// so the hero stays sharp while the fore/background melt into bokeh.
+fn drive_dof_focus(
+    mode: Res<crate::player::PlayMode>,
+    mut cam_q: Query<(&GlobalTransform, &mut DepthOfField), With<Camera3d>>,
+    hero_q: Query<&crate::player::Hero>,
+) {
+    let Ok((cam_tf, mut dof)) = cam_q.single_mut() else {
+        return;
+    };
+    let target = if *mode == crate::player::PlayMode::Play {
+        hero_q
+            .single()
+            .map(|h| cam_tf.translation().distance(Vec3::new(h.pos.x, h.y + 1.0, h.pos.y)))
+            .unwrap_or(28.0)
+    } else {
+        28.0 // free-cam: a fixed mid-ground focal plane
+    };
+    dof.focal_distance = target;
+}
+
 fn setup_sun(mut commands: Commands) {
     commands.spawn((
         Sun,
@@ -335,7 +371,8 @@ fn setup_sun(mut commands: Commands) {
             shadows_enabled: true,
             ..default()
         },
-        // Cast god-rays through the `FogVolume` (volumetric light shafts).
+        // Cast volumetric light shafts through the `FogVolume` below — the sun's half of the
+        // god-rays effect (the camera's `VolumetricFog` is the other half).
         VolumetricLight,
         CascadeShadowConfigBuilder {
             num_cascades: 4,
@@ -346,6 +383,19 @@ fn setup_sun(mut commands: Commands) {
         .build(),
         // High, slightly-side sun → bright blue daytime sky + soft directional shadows.
         Transform::from_xyz(16.0, 40.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
+
+    // A single big fog box enclosing the island + the air above it; the sun's shafts only
+    // render inside this volume. Low `density_factor` keeps it subtle (gentle haze + shafts,
+    // not pea-soup); raised toward the canopy height so beams read between the trees.
+    commands.spawn((
+        FogVolume {
+            density_factor: 0.012, // very thin — just enough to catch shafts, not murk the view
+            absorption: 0.05,      // low: don't darken what's seen through the volume
+            scattering: 0.5,
+            ..default()
+        },
+        Transform::from_xyz(0.0, 18.0, 0.0).with_scale(Vec3::new(320.0, 50.0, 320.0)),
     ));
 }
 
