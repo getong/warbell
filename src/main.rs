@@ -21,7 +21,6 @@ mod debug_panel;
 mod decor;
 mod defenses;
 mod dying;
-mod depth_blur;
 mod distant;
 mod economy;
 mod game_state;
@@ -33,6 +32,7 @@ mod inventory;
 mod navgrid;
 mod orbs;
 mod orks;
+mod outline;
 mod palette;
 mod particles;
 mod player;
@@ -58,14 +58,19 @@ use bevy::audio::{AudioPlugin, SpatialScale};
 use bevy::prelude::*;
 
 fn main() {
+    // Screenshot harness window: render at a fixed high resolution + scale-factor 1.0 so the
+    // captured PNG is crisp. (A small/low-res capture minifies the ground detail texture to a
+    // washed-out pale mean — the real game at native res looks lush.)
+    let mut window = Window { title: "Tileworld Biomes — Bevy".into(), ..default() };
+    if std::env::var("FOREST_SHOT").is_ok() {
+        window.resolution =
+            bevy::window::WindowResolution::new(1920, 1080).with_scale_factor_override(1.0);
+    }
     App::new()
         .add_plugins(
             DefaultPlugins
                 .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        title: "Tileworld Biomes — Bevy".into(),
-                        ..default()
-                    }),
+                    primary_window: Some(window),
                     ..default()
                 })
                 // Shrink the world→audio distance scale so spatial falloff is gentle enough
@@ -89,13 +94,12 @@ fn main() {
             biome::BiomePlugin,     // orchestrates ground/scatter/backdrop/particles
             particles::ParticlePlugin,
             decor::DecorPlugin, // firefly bob system (decor itself spawned per-biome)
-            depth_blur::DepthBlurPlugin, // custom distance depth-blur post pass
             distant::DistantPlugin,
         ))
         .add_plugins((
             wind::WindPlugin,
             wildlife::WildlifePlugin,   // ambient animals: wander/graze/startle + limb anim
-            audio::GameAudioPlugin,     // event-driven: wildlife calls, combat/UI sfx, hero voice, music, ambience
+            audio::GameAudioPlugin,     // event-driven SFX/voice/music/ambience (wav feature on)
             castle::CastlePlugin,       // central castle (built in worldmap) + chimney smoke
             orks::OrksPlugin,           // camp warbands: idle/patrol AI + biped limb anim
             projectile::ProjectilePlugin, // shaman homing bolts (drains BoltSpawns)
@@ -114,6 +118,7 @@ fn main() {
             grade::GradePlugin, // reactive low-HP/hit vignette
             dying::DyingPlugin, // shared death-fade for orks + wildlife
             visual::VisualPlugin, // volumetric god-rays region, pollen motes, prop specular + panel knobs
+            outline::OutlinePlugin, // toon edge-outline post pass (crisp object silhouettes)
         ))
         .run();
 }
