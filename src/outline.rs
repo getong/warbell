@@ -1,13 +1,11 @@
-//! Custom **distance depth-blur** post-process — the reliable replacement for Bevy's
-//! built-in `DepthOfField` (which silently no-ops alongside SSAO and only does a single
-//! focal plane). A fullscreen pass after tonemapping reads the prepass depth, turns it
-//! into a camera distance, and blurs the colour by an amount that is ZERO inside `clear`
-//! tiles and ramps to `radius` px by `full` tiles — exactly the "sharp nearby, soft in
-//! the distance" the three.js build had. Coexists fine with SSAO (it only *reads* depth).
+//! Toon **outline** post-process — darkens object/feature edges so each low-poly object
+//! reads with a crisp defined silhouette (the reference's "every object pops" look). A
+//! fullscreen pass after tonemapping that samples the prepass depth + normal, detects
+//! discontinuities (silhouettes via depth, hard creases via normals) and darkens them.
 //!
-//! Built straight off the Bevy 0.18 `custom_post_processing` example (RenderStartup
-//! pipeline init, `BindGroupLayoutDescriptor` in the cache, `FullscreenShader`), with one
-//! extra binding: the prepass depth texture (`ViewPrepassTextures::depth_view`).
+//! Built on the same Bevy 0.18 `custom_post_processing` pattern as [`crate::depth_blur`],
+//! with one extra binding: the prepass NORMAL texture (`ViewPrepassTextures::normal_view`).
+//! Runs BEFORE the depth-blur so distant outlines soften with the DoF.
 
 use bevy::{
     core_pipeline::{
@@ -35,45 +33,39 @@ use bevy::{
     },
 };
 
-const SHADER_ASSET_PATH: &str = "shaders/depth_blur.wgsl";
-/// Camera near plane (Bevy `PerspectiveProjection` default) — used to turn reverse-z depth
-/// into an eye-forward distance: `dist = near / ndc_depth`.
+const SHADER_ASSET_PATH: &str = "shaders/outline.wgsl";
 const NEAR: f32 = 0.1;
 
-/// Per-camera depth-blur settings (also the shader uniform). Tiles for clear/full, pixels
-/// for radius.
+/// Per-camera outline settings (also the shader uniform).
 #[derive(Component, Default, Clone, Copy, ExtractComponent, ShaderType)]
-pub struct DepthBlur {
-    /// Tiles fully sharp around the camera.
-    pub clear: f32,
-    /// Tiles at which blur reaches `radius`.
-    pub full: f32,
-    /// Max blur radius, in pixels.
-    pub radius: f32,
+pub struct Outline {
+    /// Edge sample offset, in pixels (line thickness).
+    pub thickness: f32,
+    /// Relative depth jump that counts as a silhouette edge.
+    pub depth_threshold: f32,
+    /// `1 - dot(normal)` break that counts as a crease edge.
+    pub normal_threshold: f32,
+    /// How dark the outline goes (0 = off, 1 = black).
+    pub strength: f32,
     /// Camera near plane (depth → distance).
     pub near: f32,
 }
 
-/// Build the camera's [`DepthBlur`] from `FOREST_BLUR="clear,full,radius"` (tiles,tiles,px),
-/// else sensible defaults for the enlarged island.
-pub fn settings_from_env() -> DepthBlur {
-    let (clear, full, radius) = std::env::var("FOREST_BLUR")
-        .ok()
-        .and_then(|s| {
-            let v: Vec<f32> = s.split(',').filter_map(|p| p.trim().parse().ok()).collect();
-            (v.len() == 3).then_some((v[0], v[1], v[2]))
-        })
-        .unwrap_or((60.0, 150.0, 18.0));
-    DepthBlur { clear, full, radius, near: NEAR }
+/// A SUBTLE default: silhouette-only (a high `normal_threshold` suppresses the per-facet
+/// crease lines that read cel-shaded), low strength — objects are gently defined against
+/// what's behind them, not cartoon-outlined. Crank it (or lower the crease sens) in the F1
+/// panel if you want a bolder toon look; set strength 0 to disable entirely.
+pub fn default_outline() -> Outline {
+    Outline { thickness: 1.2, depth_threshold: 0.06, normal_threshold: 1.3, strength: 0.15, near: NEAR }
 }
 
-pub struct DepthBlurPlugin;
+pub struct OutlinePlugin;
 
-impl Plugin for DepthBlurPlugin {
+impl Plugin for OutlinePlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
-            ExtractComponentPlugin::<DepthBlur>::default(),
-            UniformComponentPlugin::<DepthBlur>::default(),
+            ExtractComponentPlugin::<Outline>::default(),
+            UniformComponentPlugin::<Outline>::default(),
         ));
 
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
@@ -81,26 +73,27 @@ impl Plugin for DepthBlurPlugin {
         };
         render_app.add_systems(RenderStartup, init_pipeline);
         render_app
-            .add_render_graph_node::<ViewNodeRunner<DepthBlurNode>>(Core3d, DepthBlurLabel)
+            .add_render_graph_node::<ViewNodeRunner<OutlineNode>>(Core3d, OutlineLabel)
+            // After tonemapping (Bevy's bokeh DoF already ran in HDR: Bloom → DoF → Tonemapping).
             .add_render_graph_edges(
                 Core3d,
-                (Node3d::Tonemapping, DepthBlurLabel, Node3d::EndMainPassPostProcessing),
+                (Node3d::Tonemapping, OutlineLabel, Node3d::EndMainPassPostProcessing),
             );
     }
 }
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
-struct DepthBlurLabel;
+struct OutlineLabel;
 
 #[derive(Default)]
-struct DepthBlurNode;
+struct OutlineNode;
 
-impl ViewNode for DepthBlurNode {
+impl ViewNode for OutlineNode {
     type ViewQuery = (
         &'static ViewTarget,
         &'static ViewPrepassTextures,
-        &'static DepthBlur,
-        &'static DynamicUniformIndex<DepthBlur>,
+        &'static Outline,
+        &'static DynamicUniformIndex<Outline>,
     );
 
     fn run(
@@ -110,34 +103,36 @@ impl ViewNode for DepthBlurNode {
         (view_target, prepass, _settings, settings_index): QueryItem<Self::ViewQuery>,
         world: &World,
     ) -> Result<(), NodeRunError> {
-        let pipeline_res = world.resource::<DepthBlurPipeline>();
+        let pipeline_res = world.resource::<OutlinePipeline>();
         let pipeline_cache = world.resource::<PipelineCache>();
         let Some(pipeline) = pipeline_cache.get_render_pipeline(pipeline_res.pipeline_id) else {
             return Ok(());
         };
-        let uniforms = world.resource::<ComponentUniforms<DepthBlur>>();
+        let uniforms = world.resource::<ComponentUniforms<Outline>>();
         let Some(settings_binding) = uniforms.uniforms().binding() else {
             return Ok(());
         };
-        // No prepass depth this frame → nothing to key blur on; skip (pass-through).
-        let Some(depth_view) = prepass.depth_view() else {
+        // Needs BOTH prepass textures; skip (pass-through) if either is missing this frame.
+        let (Some(depth_view), Some(normal_view)) = (prepass.depth_view(), prepass.normal_view())
+        else {
             return Ok(());
         };
 
         let post_process = view_target.post_process_write();
         let bind_group = render_context.render_device().create_bind_group(
-            "depth_blur_bind_group",
+            "outline_bind_group",
             &pipeline_cache.get_bind_group_layout(&pipeline_res.layout),
             &BindGroupEntries::sequential((
                 post_process.source,
                 &pipeline_res.sampler,
                 depth_view,
+                normal_view,
                 settings_binding.clone(),
             )),
         );
 
         let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
-            label: Some("depth_blur_pass"),
+            label: Some("outline_pass"),
             color_attachments: &[Some(RenderPassColorAttachment {
                 view: post_process.destination,
                 depth_slice: None,
@@ -157,7 +152,7 @@ impl ViewNode for DepthBlurNode {
 }
 
 #[derive(Resource)]
-struct DepthBlurPipeline {
+struct OutlinePipeline {
     layout: BindGroupLayoutDescriptor,
     sampler: Sampler,
     pipeline_id: CachedRenderPipelineId,
@@ -171,14 +166,15 @@ fn init_pipeline(
     pipeline_cache: Res<PipelineCache>,
 ) {
     let layout = BindGroupLayoutDescriptor::new(
-        "depth_blur_bind_group_layout",
+        "outline_bind_group_layout",
         &BindGroupLayoutEntries::sequential(
             ShaderStages::FRAGMENT,
             (
                 texture_2d(TextureSampleType::Float { filterable: true }),
                 sampler(SamplerBindingType::Filtering),
                 texture_depth_2d(),
-                uniform_buffer::<DepthBlur>(true),
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                uniform_buffer::<Outline>(true),
             ),
         ),
     );
@@ -186,12 +182,11 @@ fn init_pipeline(
     let shader = asset_server.load(SHADER_ASSET_PATH);
     let vertex_state = fullscreen_shader.to_vertex_state();
     let pipeline_id = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
-        label: Some("depth_blur_pipeline".into()),
+        label: Some("outline_pipeline".into()),
         layout: vec![layout.clone()],
         vertex: vertex_state,
         fragment: Some(FragmentState {
             shader,
-            // HDR camera → the post-process ping-pong textures are Rgba16Float.
             targets: vec![Some(ColorTargetState {
                 format: TextureFormat::Rgba16Float,
                 blend: None,
@@ -201,5 +196,5 @@ fn init_pipeline(
         }),
         ..default()
     });
-    commands.insert_resource(DepthBlurPipeline { layout, sampler, pipeline_id });
+    commands.insert_resource(OutlinePipeline { layout, sampler, pipeline_id });
 }

@@ -12,7 +12,7 @@ mod block;
 mod camera;
 mod combat;
 
-pub(crate) use combat::{spawn_burst, spawn_heal_burst, CombatFx, Health};
+pub(crate) use combat::{spawn_burst, spawn_heal_burst, spawn_motes, CombatFx, Health};
 mod health;
 mod model;
 mod movement;
@@ -162,6 +162,7 @@ impl Plugin for PlayerPlugin {
                     combat::player_attack,
                     combat::ensure_combat_health,
                     health::apply_hero_damage,
+                    health::hero_death_anim, // keel-over pose; last so it owns the dead transform
                 )
                     .chain()
                     .run_if(in_state(crate::game_state::Modal::None)),

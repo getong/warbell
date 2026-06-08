@@ -387,9 +387,6 @@ fn populate_apple_orchard(
                     ));
                 }
             });
-        if placed == 0 {
-            info!("APPLETREE0 x={x:.1} z={z:.1} y={y:.1}"); // TEMP locator for verification
-        }
         placed += 1;
     }
 }

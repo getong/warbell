@@ -13,10 +13,22 @@ const ARM_FORWARD: f32 = 0.5;
 
 pub fn hero_anim(
     time: Res<Time>,
+    player: Res<super::PlayerRes>,
     hero_q: Query<(&Hero, &HeroHealth, &Children)>,
     mut parts: Query<(&HeroPart, &mut Transform)>,
 ) {
     let Ok((hero, hh, children)) = hero_q.single() else { return };
+    // Slain: let the limbs go slack (no walk/idle swing) while the body keels over.
+    if !player.0.is_alive() {
+        for &child in children {
+            let Ok((part, mut tf)) = parts.get_mut(child) else { continue };
+            tf.rotation = match part.limb {
+                HeroLimb::ArmR => Quat::from_rotation_x(-ARM_FORWARD * 0.5),
+                _ => Quat::IDENTITY,
+            };
+        }
+        return;
+    }
     let t = time.elapsed_secs();
     let dt = time.delta_secs();
     let m = hero.moving_amt;

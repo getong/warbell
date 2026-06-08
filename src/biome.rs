@@ -28,8 +28,8 @@ use crate::water::WaterMaterial;
 
 /// Distance fog: clear within this many tiles of the camera, ramping to full by [`FOG_FULL`].
 /// Pushed out ×1.4 with the enlarged island so view distance keeps pace.
-const FOG_CLEAR: f32 = 70.0;
-const FOG_FULL: f32 = 160.0;
+const FOG_CLEAR: f32 = 85.0;
+const FOG_FULL: f32 = 190.0;
 
 /// Scatter density multipliers — the original TS game was denser. `SCATTER_DENSITY`
 /// scales every main-class per-tile chance; `COVER_DENSITY` scales the ground-cover
@@ -423,7 +423,10 @@ pub fn scatter_region(
     // so the renderer auto-batches them into few draw calls.
     let mat = materials.add(StandardMaterial {
         base_color: Color::WHITE,
-        perceptual_roughness: 0.9,
+        // Glossier + a touch more reflectance so props catch a soft sun/sky highlight
+        // (form-giving specular), instead of reading dead-matte. Tunable live in F1 → Render.
+        perceptual_roughness: 0.62,
+        reflectance: 0.5,
         ..default()
     });
 

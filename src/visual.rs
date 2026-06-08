@@ -1,22 +1,19 @@
 //! Extra visual polish + the live-tunable state behind the Debug panel's "Render" section.
 //!
-//! Adds three things on top of the existing pipeline (camera post-fx lives in `scene.rs`):
-//!   * a big **`FogVolume`** region so the sun (a `VolumetricLight`) casts god-rays /
-//!     light-shafts through gaps in the canopy (the camera carries `VolumetricFog`);
-//!   * drifting **pollen / dust motes** that catch the light — "living air", great with the
-//!     volumetrics;
+//! Adds two things on top of the existing pipeline (camera post-fx lives in `scene.rs`):
+//!   * drifting **pollen / dust motes** that catch the light — "living air";
 //!   * a global **prop specular** tweak (roughness / reflectance) so the matte low-poly
 //!     props pick up a little form-giving highlight.
 //!
 //! Tunables live in [`VisualSettings`]; the Debug panel mutates it and
 //! [`apply_visual_settings`] pushes the pollen-glow + prop-specular changes onto the
-//! materials. The `FogVolume`, camera `VolumetricFog`, CAS, colour-grade and exposure are
-//! mutated directly on their live components by the panel.
+//! materials. Colour-grade + exposure are mutated directly on their live components by the
+//! panel.
 
-use bevy::light::{FogVolume, NotShadowCaster};
+use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 
-const POLLEN_COUNT: usize = 150;
+const POLLEN_COUNT: usize = 60;
 const TAU: f32 = std::f32::consts::TAU;
 /// Warm pollen glow colour (sRGB → linear in the emissive so bloom catches it).
 const POLLEN_TINT: Color = Color::srgb(1.0, 0.93, 0.7);
@@ -36,7 +33,7 @@ pub struct VisualSettings {
 
 impl Default for VisualSettings {
     fn default() -> Self {
-        Self { pollen_glow: 2.5, pollen_speed: 1.0, prop_roughness: 0.85, prop_reflectance: 0.30 }
+        Self { pollen_glow: 2.5, pollen_speed: 1.0, prop_roughness: 0.62, prop_reflectance: 0.50 }
     }
 }
 
@@ -59,31 +56,108 @@ pub struct VisualPlugin;
 impl Plugin for VisualPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<VisualSettings>()
-            .add_systems(Startup, (spawn_fog_volume, spawn_pollen))
-            .add_systems(Update, (drift_pollen, apply_visual_settings));
+            .add_systems(Startup, (spawn_pollen, spawn_clouds))
+            .add_systems(Update, (drift_pollen, drift_clouds, apply_visual_settings));
     }
 }
 
-/// One big box of uniform fog covering the play patch + the air above it. With a
-/// `VolumetricLight` sun + the camera's `VolumetricFog`, the sun casts shafts through gaps
-/// in the canopy. Density etc. are tuned live via the panel (`Query<&mut FogVolume>`).
-fn spawn_fog_volume(mut commands: Commands) {
-    commands.spawn((
-        FogVolume {
-            // Density is per-unit extinction, so it must stay TINY for a big box (a long view
-            // ray through dense fog goes black — that includes rays to the sky). With this
-            // ~70u box, ~0.006 gives subtle atmosphere; crank `vol density` (≤0.04) + `vol
-            // scattering` in the Debug panel for dramatic god-rays toward a low sun.
-            density_factor: 0.006,
-            scattering: 0.6,
-            absorption: 0.2,
-            scattering_asymmetry: 0.80,
-            ..default()
-        },
-        // Box just large enough to cover the 32×32 patch + margin (keeps view-ray path
-        // lengths bounded so the fog stays subtle instead of blacking out the horizon).
-        Transform::from_xyz(0.0, 8.0, 0.0).with_scale(Vec3::new(72.0, 30.0, 72.0)),
-    ));
+// ── Low-poly clouds ────────────────────────────────────────────────────────────────
+//
+// Fluffy clouds in the game's own flat-shaded style: each cloud is a merged cluster of
+// squashed white icosphere puffs, lit by the sun (bright top, sky-blue IBL fill on the
+// underside) with a little emissive so it never reads as a grey blob. They drift slowly on
+// the wind and wrap around, filling the previously-empty sky.
+
+const CLOUD_DRIFT: f32 = 0.6; // world units / sec
+const CLOUD_BOUND: f32 = 130.0; // wrap-around half-extent in X
+
+#[derive(Component)]
+struct Cloud;
+
+/// One cloud = 6–9 flattened white puffs clustered into a lozenge. `seed` varies the shape.
+fn build_cloud_mesh(seed: u32) -> Mesh {
+    let mut s = seed;
+    let mut next = move || {
+        s = s.wrapping_add(0x6d2b_79f5);
+        let mut t = s;
+        t = (t ^ (t >> 15)).wrapping_mul(t | 1);
+        t ^= t.wrapping_add((t ^ (t >> 7)).wrapping_mul(t | 61));
+        ((t ^ (t >> 14)) as f32) / 4_294_967_296.0
+    };
+    let n = 6 + (next() * 4.0) as usize;
+    let mut parts: Vec<Mesh> = Vec::new();
+    for _ in 0..n {
+        let rad = 0.8 + next() * 0.7;
+        let dx = (next() * 2.0 - 1.0) * 2.4;
+        let dz = (next() * 2.0 - 1.0) * 1.1;
+        let dy = next() * 0.4;
+        parts.push(
+            Sphere::new(rad)
+                .mesh()
+                .ico(1)
+                .expect("ico detail in range")
+                .scaled_by(Vec3::new(1.0, 0.6, 1.0))
+                .translated_by(Vec3::new(dx, dy, dz)),
+        );
+    }
+    let mut it = parts.into_iter();
+    let mut base = it.next().expect("at least one puff");
+    for p in it {
+        base.merge(&p).expect("cloud puffs share attributes");
+    }
+    base.duplicate_vertices();
+    base.compute_flat_normals();
+    base
+}
+
+/// Scatter a few dozen clouds across the sky over the patch. Deterministic, persists across
+/// biome switches. Lit white material with a touch of emissive so undersides stay bright.
+fn spawn_clouds(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut mats: ResMut<Assets<StandardMaterial>>,
+) {
+    let cloud_mat = mats.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 1.0, 1.0),
+        // Small white emissive keeps the shaded side bright (clouds, not grey rocks).
+        emissive: LinearRgba::rgb(0.35, 0.37, 0.42),
+        perceptual_roughness: 1.0,
+        ..default()
+    });
+    let shapes: Vec<Handle<Mesh>> = (0..4).map(|v| meshes.add(build_cloud_mesh(0x1234 + v * 977))).collect();
+
+    let mut seed = 0xC10D_u32;
+    let mut next = || {
+        seed = seed.wrapping_add(0x6d2b_79f5);
+        let mut t = seed;
+        t = (t ^ (t >> 15)).wrapping_mul(t | 1);
+        t ^= t.wrapping_add((t ^ (t >> 7)).wrapping_mul(t | 61));
+        ((t ^ (t >> 14)) as f32) / 4_294_967_296.0
+    };
+    for _ in 0..32 {
+        let x = -CLOUD_BOUND + next() * (CLOUD_BOUND * 2.0);
+        let z = -120.0 + next() * 240.0;
+        let y = 42.0 + next() * 38.0;
+        let s = 5.0 + next() * 10.0;
+        commands.spawn((
+            Mesh3d(shapes[(next() * 4.0) as usize % 4].clone()),
+            MeshMaterial3d(cloud_mat.clone()),
+            Transform::from_xyz(x, y, z).with_scale(Vec3::splat(s)),
+            NotShadowCaster,
+            Cloud,
+        ));
+    }
+}
+
+/// Slow wind drift on the clouds; wrap back around once they sail past the far edge.
+fn drift_clouds(time: Res<Time>, mut q: Query<&mut Transform, With<Cloud>>) {
+    let dx = CLOUD_DRIFT * time.delta_secs();
+    for mut tf in &mut q {
+        tf.translation.x += dx;
+        if tf.translation.x > CLOUD_BOUND {
+            tf.translation.x -= CLOUD_BOUND * 2.0;
+        }
+    }
 }
 
 /// Scatter ~150 small unlit emissive motes across the patch, drifting slowly. Deterministic
@@ -169,7 +243,9 @@ fn apply_visual_settings(
         .filter_map(|(id, m)| {
             let c = m.base_color.to_linear();
             let white = c.red > 0.85 && c.green > 0.85 && c.blue > 0.85;
-            (white && !m.unlit).then_some(id)
+            // White, opaque, non-emissive prop mats only (skips clouds = emissive, wisps =
+            // unlit, tinted set-pieces = non-white).
+            (white && !m.unlit && m.emissive == LinearRgba::BLACK).then_some(id)
         })
         .collect();
     for id in ids {

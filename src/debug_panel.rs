@@ -11,18 +11,17 @@
 //! resources ([`SkyClock`](crate::scene::SkyClock), [`GlobalAmbientLight`],
 //! [`AudioConfig`](crate::audio::AudioConfig), [`GlobalVolume`]).
 
-use bevy::anti_alias::contrast_adaptive_sharpening::ContrastAdaptiveSharpening;
 use bevy::audio::{GlobalVolume, Volume};
 use bevy::camera::Exposure;
-use bevy::light::{FogVolume, VolumetricFog};
 use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::post_process::bloom::Bloom;
+use bevy::post_process::dof::DepthOfField;
 use bevy::prelude::*;
 use bevy::render::view::ColorGrading;
 use bevy_egui::{egui, EguiContexts, EguiPlugin, EguiPrimaryContextPass};
 
 use crate::audio::AudioConfig;
-use crate::depth_blur::DepthBlur;
+use crate::outline::Outline;
 use crate::scene::{SkyClock, Sun};
 use crate::visual::VisualSettings;
 
@@ -81,18 +80,9 @@ fn panel_ui(
     mut contexts: EguiContexts,
     panel: Res<DebugPanel>,
     mut cam: Query<
-        (
-            &mut DistanceFog,
-            &mut DepthBlur,
-            &mut Bloom,
-            &mut ColorGrading,
-            &mut Exposure,
-            &mut ContrastAdaptiveSharpening,
-            &mut VolumetricFog,
-        ),
+        (&mut DistanceFog, &mut DepthOfField, &mut Bloom, &mut ColorGrading, &mut Exposure, &mut Outline),
         With<Camera3d>,
     >,
-    mut fog_vol: Query<&mut FogVolume>,
     mut visual: ResMut<VisualSettings>,
     mut clock: ResMut<SkyClock>,
     mut audio_cfg: ResMut<AudioConfig>,
@@ -115,7 +105,7 @@ fn panel_ui(
         .show(ctx, |ui| {
             ui.label("F1 toggles this panel");
 
-            if let Ok((mut fog, mut blur, mut bloom, mut grading, mut exposure, mut cas, mut vfog)) =
+            if let Ok((mut fog, mut dof, mut bloom, mut grading, mut exposure, mut outline)) =
                 cam.single_mut()
             {
                 egui::CollapsingHeader::new("Fog").default_open(true).show(ui, |ui| {
@@ -131,11 +121,11 @@ fn panel_ui(
                     }
                 });
 
-                egui::CollapsingHeader::new("Blur + Bloom").show(ui, |ui| {
-                    ui.add(egui::Slider::new(&mut blur.clear, 0.0..=300.0).text("blur clear"));
-                    ui.add(egui::Slider::new(&mut blur.full, 0.0..=600.0).text("blur full"));
-                    ui.add(egui::Slider::new(&mut blur.radius, 0.0..=12.0).text("blur radius"));
-                    ui.add(egui::Slider::new(&mut blur.near, 0.0..=60.0).text("blur near"));
+                egui::CollapsingHeader::new("Bokeh DoF + Bloom").show(ui, |ui| {
+                    // Focus distance is auto-driven onto the player (drive_dof_focus); these
+                    // tune the blur. Lower f-stops = shallower focus = more bokeh.
+                    ui.add(egui::Slider::new(&mut dof.aperture_f_stops, 0.4..=16.0).text("aperture f (low=blurry)"));
+                    ui.add(egui::Slider::new(&mut dof.max_circle_of_confusion_diameter, 0.0..=128.0).text("max blur px"));
                     ui.add(egui::Slider::new(&mut bloom.intensity, 0.0..=1.0).text("bloom"));
                 });
 
@@ -148,21 +138,11 @@ fn panel_ui(
                     ui.add(egui::Slider::new(&mut grading.highlights.contrast, 0.5..=1.5).text("high contrast"));
 
                     ui.separator();
-                    ui.label("Sharpening (CAS)");
-                    ui.checkbox(&mut cas.enabled, "CAS enabled");
-                    ui.add(egui::Slider::new(&mut cas.sharpening_strength, 0.0..=1.0).text("sharpen"));
-
-                    ui.separator();
-                    ui.label("Volumetric god-rays");
-                    ui.add(egui::Slider::new(&mut vfog.ambient_intensity, 0.0..=1.0).text("vol ambient"));
-                    ui.add(egui::Slider::new(&mut vfog.step_count, 8u32..=128).text("vol steps"));
-                    if let Ok(mut fv) = fog_vol.single_mut() {
-                        ui.add(egui::Slider::new(&mut fv.density_factor, 0.0..=0.04).text("vol density"));
-                        ui.add(egui::Slider::new(&mut fv.scattering, 0.0..=1.5).text("vol scattering"));
-                        ui.add(egui::Slider::new(&mut fv.absorption, 0.0..=1.5).text("vol absorption"));
-                        ui.add(egui::Slider::new(&mut fv.scattering_asymmetry, 0.0..=0.97).text("vol asymmetry"));
-                        ui.add(egui::Slider::new(&mut fv.light_intensity, 0.0..=4.0).text("vol light"));
-                    }
+                    ui.label("Outline (crisp edges)");
+                    ui.add(egui::Slider::new(&mut outline.strength, 0.0..=1.0).text("outline strength"));
+                    ui.add(egui::Slider::new(&mut outline.thickness, 1.0..=4.0).text("outline thickness"));
+                    ui.add(egui::Slider::new(&mut outline.depth_threshold, 0.005..=0.2).text("silhouette sens"));
+                    ui.add(egui::Slider::new(&mut outline.normal_threshold, 0.1..=1.2).text("crease sens"));
 
                     ui.separator();
                     ui.label("Pollen + prop specular");

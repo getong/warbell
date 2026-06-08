@@ -51,8 +51,8 @@ pub fn spawn(
     let (count, radius, color, emissive, alpha, vel, sway, y_lo, y_hi, mist) = match kind {
         ParticleKind::Snow => (520u32, 0.07, Color::srgb(1.0, 1.0, 1.0), 0.0, 1.0, Vec3::new(0.0, -1.7, 0.0), 0.7, 0.0, 16.0, false),
         ParticleKind::Dust => (240, 0.06, Color::srgb(0.85, 0.74, 0.52), 0.0, 0.8, Vec3::new(0.9, 0.05, 0.4), 0.5, 0.15, 3.0, false),
-        ParticleKind::Fireflies => (90, 0.08, Color::srgb(1.0, 0.95, 0.45), 7.0, 1.0, Vec3::ZERO, 0.9, 0.4, 2.2, false),
-        ParticleKind::Pollen => (300, 0.045, Color::srgb(1.0, 0.96, 0.7), 0.6, 0.9, Vec3::new(0.1, 0.28, 0.05), 0.6, 0.2, 6.0, false),
+        ParticleKind::Fireflies => (32, 0.08, Color::srgb(1.0, 0.95, 0.45), 7.0, 1.0, Vec3::ZERO, 0.9, 0.4, 2.2, false),
+        ParticleKind::Pollen => (150, 0.045, Color::srgb(1.0, 0.96, 0.7), 0.6, 0.9, Vec3::new(0.1, 0.28, 0.05), 0.6, 0.2, 6.0, false),
         ParticleKind::Mist => (70, 3.2, Color::srgb(0.82, 0.86, 0.84), 0.0, 0.10, Vec3::new(0.35, 0.0, 0.2), 0.25, 0.25, 1.2, true),
         ParticleKind::None => unreachable!(),
     };

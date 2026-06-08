@@ -9,6 +9,7 @@ use bevy::prelude::*;
 
 use crate::audio::AudioCue;
 use crate::biome::Biome;
+use crate::orks::Ork;
 use crate::{blockers, steer, worldmap};
 
 use super::{Hero, HeroState, PendingHeroDamage, PlayMode, PlayerRes};
@@ -54,6 +55,7 @@ pub fn player_move(
     keys: Res<ButtonInput<KeyCode>>,
     mut hero_q: Query<(&mut Hero, &mut Transform), Without<Camera3d>>,
     cam_q: Query<&Transform, (With<Camera3d>, Without<Hero>)>,
+    orks: Query<&Ork>,
     mut state: ResMut<HeroState>,
     mut pending: ResMut<PendingHeroDamage>,
     mut feedback: ResMut<crate::combat_fx::HitFeedback>,
@@ -142,6 +144,25 @@ pub fn player_move(
         }
         let want = move_dir.x.atan2(move_dir.z);
         hero.facing = lerp_angle(hero.facing, want, (dt * TURN_RATE).min(1.0));
+    }
+
+    // ── Body-collision vs orks: shove the hero out of any overlap so he can't clip through one
+    // (one-way push — the ork holds its ground). Slides along the same standable/blocker rule. ──
+    for o in &orks {
+        let min_d = PLAYER_R + o.body_r;
+        let to = hero.pos - o.pos;
+        let d = to.length();
+        if d > 1e-4 && d < min_d {
+            let push = to / d * (min_d - d);
+            let nx = hero.pos.x + push.x;
+            let nz = hero.pos.y + push.y;
+            if steer::can_stand(nx, hero.pos.y, PLAYER_R, cur_y) && !blockers::is_blocked(nx, hero.pos.y) {
+                hero.pos.x = nx;
+            }
+            if steer::can_stand(hero.pos.x, nz, PLAYER_R, cur_y) && !blockers::is_blocked(hero.pos.x, nz) {
+                hero.pos.y = nz;
+            }
+        }
     }
 
     // ── Vertical: jump + gravity + ground snap ──

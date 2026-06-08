@@ -234,6 +234,15 @@ struct OrkPart {
     kind: PartKind,
 }
 
+/// A glowing ork eye (emissive sphere child of the ork root) — menacing pinpoints that read at
+/// night when the rest of the ork goes dark. Tagged so `combat_fx`'s per-ork skin-clone leaves
+/// its emissive material alone (it would otherwise overwrite the glow with the body skin).
+#[derive(Component)]
+pub(crate) struct OrkEye;
+
+/// Tree-local eye positions on the ork root (the head's eye boxes lifted to the root frame).
+const EYE_OFFS: [Vec3; 2] = [Vec3::new(-0.08, 1.12, 0.24), Vec3::new(0.08, 1.12, 0.24)];
+
 /// Tags a night-wave invader (vs a leashed camp ork). Spawned + driven by `siege.rs`; the
 /// camp [`ork_brain`] skips these via `Without<WaveInvader>` so the two AIs stay separate.
 /// Carries the stuck-cull idle tracking (idle far from the keep → reaped so a wave can't hang).
@@ -734,11 +743,18 @@ struct Template {
 pub struct Armory {
     mat: Handle<StandardMaterial>,
     tmpl: Vec<((OrkVariant, Faction), Template)>,
+    eye_mesh: Handle<Mesh>,
+    eye_mat: Handle<StandardMaterial>,
 }
 
 impl Armory {
-    /// Build all 8 variant×faction ork meshes against the shared vertex-colour `mat`.
-    pub fn new(meshes: &mut Assets<Mesh>, mat: Handle<StandardMaterial>) -> Armory {
+    /// Build all 8 variant×faction ork meshes against the shared vertex-colour `mat`, plus the
+    /// shared glowing-eye mesh/material (an unlit hot-amber emissive → bloom catches it at night).
+    pub fn new(
+        meshes: &mut Assets<Mesh>,
+        materials: &mut Assets<StandardMaterial>,
+        mat: Handle<StandardMaterial>,
+    ) -> Armory {
         let mut tmpl = Vec::new();
         for faction in [Faction::Red, Faction::Blue] {
             for variant in VARIANTS {
@@ -754,7 +770,14 @@ impl Armory {
                 ));
             }
         }
-        Armory { mat, tmpl }
+        let eye_mesh = meshes.add(Sphere::new(0.05).mesh().ico(1).unwrap());
+        let eye_mat = materials.add(StandardMaterial {
+            base_color: Color::srgb(1.0, 0.78, 0.18),
+            emissive: LinearRgba::rgb(6.0, 2.2, 0.3), // hot amber → glows + blooms
+            unlit: true,
+            ..default()
+        });
+        Armory { mat, tmpl, eye_mesh, eye_mat }
     }
 
     fn template(&self, variant: OrkVariant, faction: Faction) -> &Template {
@@ -829,6 +852,15 @@ impl Armory {
                     MeshMaterial3d(self.mat.clone()),
                     Transform::from_translation(*pivot),
                     OrkPart { kind: *kind },
+                ));
+            }
+            // Two glowing eyes — the menacing night-glow.
+            for off in EYE_OFFS {
+                p.spawn((
+                    Mesh3d(self.eye_mesh.clone()),
+                    MeshMaterial3d(self.eye_mat.clone()),
+                    Transform::from_translation(off),
+                    OrkEye,
                 ));
             }
         });

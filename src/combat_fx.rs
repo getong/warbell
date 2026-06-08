@@ -269,12 +269,22 @@ fn ensure_ork_skin(
     mut mats: ResMut<Assets<StandardMaterial>>,
     orks: Query<(Entity, &Children), (With<Ork>, Without<OrkSkin>)>,
     child_mats: Query<&MeshMaterial3d<StandardMaterial>>,
+    eyes: Query<(), With<crate::orks::OrkEye>>,
 ) {
     for (e, children) in &orks {
-        let Some(shared) = children.iter().find_map(|c| child_mats.get(c).ok()) else { continue };
+        // Base skin = a NON-eye child's material (the shared white body mat); the glowing eyes
+        // keep their own emissive material untouched (else the whole ork would flash amber).
+        let Some(shared) =
+            children.iter().filter(|c| eyes.get(*c).is_err()).find_map(|c| child_mats.get(c).ok())
+        else {
+            continue;
+        };
         let Some(base) = mats.get(&shared.0).cloned() else { continue };
         let own = mats.add(base);
         for &c in children {
+            if eyes.get(c).is_ok() {
+                continue; // leave the glowing eyes alone
+            }
             if child_mats.get(c).is_ok() {
                 // `try_insert`: an ork (BiomeEntity) can be despawned the same frame it's first
                 // seen here (biome rebuild / kill), which despawns its children too.

@@ -192,7 +192,7 @@ fn advance_sky(
         // A modest moonlight floor (≈300 lux): enough for soft directional moonlight, but
         // low enough that the procedural Atmosphere sky stays dark/moody after dark. Ground
         // visibility comes from ambient + IBL below. Daytime peak (≈11 050) is unchanged.
-        light.illuminance = 600.0 + 10_450.0 * day;
+        light.illuminance = 1100.0 + 9_950.0 * day;
         // Warm at the horizon → neutral-warm overhead, then cooled toward moonlit blue as
         // the sun drops below the horizon (so the "moon" doesn't cast an orange glow).
         let warm = lerp_col(Color::srgb(1.0, 0.45, 0.22), Color::srgb(1.0, 0.95, 0.85), high);
@@ -204,13 +204,13 @@ fn advance_sky(
     // ground after dark (and ambient doesn't feed the Atmosphere sky, so it brightens the
     // ground without re-brightening the moody sky). It carries the deeper night exposure cut
     // below. (Computed from `day`, never read-back, so it can't compound frame-to-frame.)
-    ambient.brightness = 170.0 + 54.0 * day;
+    ambient.brightness = 215.0 + 54.0 * day;
     ambient.color = lerp_col(Color::srgb(0.50, 0.60, 0.95), Color::srgb(0.90, 0.93, 1.0), day);
 
     // IBL (baked daytime) dimmed at night, but kept a strong floor (≈160) so surfaces still
     // catch skylight after dark — the other half of the after-dark ground light.
     for mut env in &mut env_q {
-        env.intensity = 230.0 + (IBL_INTENSITY - 230.0) * day;
+        env.intensity = 320.0 + (IBL_INTENSITY - 320.0) * day;
     }
 
     // Darken night at the GRADE stage. Camera `Exposure` only scales PBR lighting, but
@@ -220,7 +220,7 @@ fn advance_sky(
     let night_stops = std::env::var("FOREST_NIGHT")
         .ok()
         .and_then(|s| s.trim().parse::<f32>().ok())
-        .unwrap_or(1.5);
+        .unwrap_or(1.0);
     for mut g in &mut grade_q {
         g.global.exposure = -night * night_stops;
     }

@@ -243,6 +243,32 @@ pub fn spawn_point(i: u32, keep: Vec2, max_ring: f32, standable: impl Fn(f32, f3
     best
 }
 
+/// Where a keep-marching invader actually paths: a standable point just inside the nearest gate.
+/// The keep origin sits inside the solid keep box, so A* straight to it fails and the invader
+/// wedges at the wall; stepping 4u in from the gate gap lands it in the courtyard, within batter
+/// range of the keep.
+fn keep_march_goal(from: Vec2) -> Vec2 {
+    let gate = crate::castle::gate_centers()
+        .into_iter()
+        .min_by(|a, b| from.distance_squared(*a).total_cmp(&from.distance_squared(*b)))
+        .unwrap_or(KEEP_POS);
+    gate + (KEEP_POS - gate).normalize_or_zero() * 4.0
+}
+
+/// Index of the nearest guard within `engage` of `from`, if any — the guard an invader diverts
+/// onto instead of marching the keep. Pure so the hero > guard > keep priority is unit-tested
+/// without the ECS (the invader brain maps the index back to the guard entity).
+pub fn nearest_guard_in_range(from: Vec2, guards: &[Vec2], engage: f32) -> Option<usize> {
+    let mut best: Option<(usize, f32)> = None;
+    for (i, gp) in guards.iter().enumerate() {
+        let d = from.distance(*gp);
+        if d < engage && best.is_none_or(|(_, bd)| d < bd) {
+            best = Some((i, d));
+        }
+    }
+    best.map(|(i, _)| i)
+}
+
 // ════════════════════════════════════════════════════════════════════════════════════
 // ECS layer — feeds the pure core above world state and applies its actions (the
 // side-effecting half of the TS `WaveDirector.tsx`), plus the keep, the invader march AI,
@@ -396,7 +422,7 @@ fn setup_invader_armory(
         perceptual_roughness: 0.9,
         ..default()
     });
-    commands.insert_resource(InvaderArmory(orks::Armory::new(&mut meshes, mat)));
+    commands.insert_resource(InvaderArmory(orks::Armory::new(&mut meshes, &mut materials, mat)));
 }
 
 /// Spawn one invader at `ring_index` on the spawn ring, with `hp` HP — home-anchored at the keep
@@ -563,6 +589,7 @@ fn invader_brain(
         .filter(|(_, _, g)| !g.is_downed())
         .map(|(e, tf, _)| (e, Vec2::new(tf.translation.x, tf.translation.z)))
         .collect();
+    let guard_positions: Vec<Vec2> = live_guards.iter().map(|(_, p)| *p).collect();
 
     for (e, mut o, mut inv, mut path, mut tf, hp) in &mut q {
         o.atk_cd -= dt;
@@ -575,14 +602,7 @@ fn invader_brain(
         let guard_tgt: Option<(Entity, Vec2)> = if see_hero {
             None
         } else {
-            let mut best: Option<(Entity, Vec2, f32)> = None;
-            for (ge, gp) in &live_guards {
-                let d = o.pos.distance(*gp);
-                if d < GUARD_ENGAGE && best.is_none_or(|(_, _, bd)| d < bd) {
-                    best = Some((*ge, *gp, d));
-                }
-            }
-            best.map(|(ge, gp, _)| (ge, gp))
+            nearest_guard_in_range(o.pos, &guard_positions, GUARD_ENGAGE).map(|i| live_guards[i])
         };
         let target = if see_hero {
             hero.pos
@@ -643,13 +663,18 @@ fn invader_brain(
             let step_target = if chase_direct {
                 target
             } else {
+                // A* the keep march to a STANDABLE point just inside the nearest gate — the keep
+                // origin sits inside the solid keep box, so pathing straight to it fails and the
+                // invader wedges at the wall ("just there, can't approach"). The gate-interior
+                // goal threads them through the gap into batter range.
+                let keep_goal = keep_march_goal(o.pos);
                 if path.cursor >= path.waypoints.len()
                     || now >= path.next_replan
-                    || path.goal_cached.distance(target) > 2.0
+                    || path.goal_cached.distance(keep_goal) > 2.0
                 {
-                    path.waypoints = crate::navgrid::path_to(o.pos, target);
+                    path.waypoints = crate::navgrid::path_to(o.pos, keep_goal);
                     path.cursor = 0;
-                    path.goal_cached = target;
+                    path.goal_cached = keep_goal;
                     // Stagger replans across the horde so they don't all path on one frame.
                     path.next_replan = now + 0.75 + (e.to_bits() % 16) as f32 * 0.05;
                 }
@@ -658,9 +683,9 @@ fn invader_brain(
                 {
                     path.cursor += 1;
                 }
-                // Next waypoint, or the straight keep aim if there's no route (fallback to old
-                // behaviour — the stuck-net still reaps a wedged invader).
-                path.waypoints.get(path.cursor).copied().unwrap_or(target)
+                // Next waypoint, or the gate-interior aim if there's no route (fallback — the
+                // stuck-net still reaps a wedged invader).
+                path.waypoints.get(path.cursor).copied().unwrap_or(keep_goal)
             };
 
             // March toward the step target, steering around props/cliffs (faster than a patrol).
@@ -986,5 +1011,38 @@ mod tests {
         let a = spawn_point(0, keep, 30.0, |_, _| true);
         let b = spawn_point(1, keep, 30.0, |_, _| true);
         assert!(a.distance(b) > 1.0, "successive spawns don't stack");
+    }
+
+    #[test]
+    fn invader_diverts_onto_the_nearest_guard_in_range() {
+        let from = Vec2::new(0.0, 0.0);
+        let guards = [Vec2::new(3.0, 0.0), Vec2::new(6.0, 0.0)];
+        // Both inside GUARD_ENGAGE (8) → pick the closer (index 0).
+        assert_eq!(nearest_guard_in_range(from, &guards, GUARD_ENGAGE), Some(0));
+        // Closer guard now further than the second → pick index 1.
+        let guards2 = [Vec2::new(7.5, 0.0), Vec2::new(2.0, 0.0)];
+        assert_eq!(nearest_guard_in_range(from, &guards2, GUARD_ENGAGE), Some(1));
+    }
+
+    #[test]
+    fn keep_march_goal_lands_inside_batter_range() {
+        // From any spawn-ring bearing, the gate-interior goal sits within KEEP_ATTACK_RANGE of the
+        // keep (so reaching it = battering it) and off the keep origin (a valid, standable A* goal).
+        for i in 0..16 {
+            let a = i as f32 * 0.4;
+            let from = Vec2::new(a.cos(), a.sin()) * SPAWN_RING;
+            let g = keep_march_goal(from);
+            assert!(g.distance(KEEP_POS) <= KEEP_ATTACK_RANGE, "goal {g:?} out of batter range");
+            assert!(g.distance(KEEP_POS) > 2.0, "goal must clear the keep box");
+        }
+    }
+
+    #[test]
+    fn invader_ignores_guards_outside_engage_range() {
+        let from = Vec2::ZERO;
+        let far = [Vec2::new(9.0, 0.0), Vec2::new(0.0, 12.0)]; // both > GUARD_ENGAGE (8)
+        assert_eq!(nearest_guard_in_range(from, &far, GUARD_ENGAGE), None);
+        // No guards at all → march the keep.
+        assert_eq!(nearest_guard_in_range(from, &[], GUARD_ENGAGE), None);
     }
 }

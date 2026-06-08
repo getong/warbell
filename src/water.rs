@@ -172,18 +172,20 @@ pub fn spawn_river(
                 (river_color & 0xff) as f32 / 255.0,
                 0.85,
             ),
-            perceptual_roughness: 0.34, // matte-ish → soft sheen, not a sharp mirror
+            // Glossier → sharper sun-glint sparkle + crisper sky reflection (stylised stream).
+            perceptual_roughness: 0.14,
             metallic: 0.0,
-            reflectance: 0.5,
+            reflectance: 0.7,
             alpha_mode: AlphaMode::Blend,
             cull_mode: None, // visible if the fly-cam dips below the surface
             ..default()
         },
         extension: WaterExt {
             params: WaterParams {
-                // Basic: small gentle wave — low amplitude, low frequency, slow scroll.
-                params: Vec4::new(0.12, 0.8, 0.5, 0.0),
-                sky_tint: Vec4::new(0.70, 0.82, 0.93, 0.0),
+                // (amplitude, frequency, scroll speed, fresnel strength) — a bit more wave
+                // movement + a brighter sky-tinted fresnel rim at grazing angles.
+                params: Vec4::new(0.18, 0.9, 0.7, 0.6),
+                sky_tint: Vec4::new(0.62, 0.86, 1.0, 0.0),
             },
         },
     });

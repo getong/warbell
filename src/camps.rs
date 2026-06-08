@@ -215,7 +215,7 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut
     });
     let smoke_puff = meshes.add(Sphere::new(0.5).mesh().ico(1).unwrap());
 
-    let armory = orks::Armory::new(meshes, mat.clone());
+    let armory = orks::Armory::new(meshes, materials, mat.clone());
 
     for (camp, site) in sites.iter().enumerate() {
         let rot_q = Quat::from_rotation_y(site.rot);
