@@ -67,6 +67,8 @@ const DRY_GRASS: u32 = 0xb9a866; // sparse dry grass blade
 const DRY_GRASS_TIP: u32 = 0xd6c684; // pale dry grass tip
 const SUCC_GREEN: u32 = 0x6fa84e; // tiny succulent rosette
 const SUCC_FLOWER: u32 = 0xe88ad0; // tiny succulent bloom
+const DESERT_BLOOM_ORANGE: u32 = 0xe6862a; // brittlebush / desert-marigold orange
+const DESERT_STEM: u32 = 0x7a8a3a; // dry grey-green bloom stem
 
 /// Saguaros are authored ~1.35u tall; the scatter scales them up so they tower.
 const CACTUS_SCALE: f32 = 1.6;
@@ -127,6 +129,23 @@ fn cyl_up(r: f32, h: f32, cy: f32, res: u32, c: u32) -> Mesh {
 /// An upright cylinder centred at an arbitrary `center` (not just on the Y axis).
 fn cyl_up_at(r: f32, h: f32, center: Vec3, c: u32) -> Mesh {
     tinted(Cylinder::new(r, h).mesh().resolution(6).build().translated_by(center), lin(c))
+}
+
+/// A flattened ellipsoid "paddle" (a prickly-pear pad): an ico-sphere stretched wide on
+/// X / tall on Y / thin on Z, tilted about Z then yawed about Y, centred at `center`.
+/// ico detail 1 so the silhouette reads as a smooth oval pad once flat-shaded.
+fn pad(rx: f32, ry: f32, rz: f32, tilt: f32, yaw: f32, center: Vec3, c: u32) -> Mesh {
+    tinted(
+        Sphere::new(1.0)
+            .mesh()
+            .ico(1)
+            .expect("ico detail in range")
+            .scaled_by(Vec3::new(rx, ry, rz))
+            .rotated_by(Quat::from_rotation_z(tilt))
+            .rotated_by(Quat::from_rotation_y(yaw))
+            .translated_by(center),
+        lin(c),
+    )
 }
 
 // ─── Saguaro cactus (the TREE class) ──────────────────────────────────────────────
@@ -294,6 +313,52 @@ fn build_dead_bush_mesh(variant: u32) -> Mesh {
     flat_shaded(merged(parts))
 }
 
+// ─── Prickly-pear / opuntia cactus (a non-tree class) ────────────────────────────
+
+/// **Prickly-pear (opuntia)** — a clump of flat green paddle pads sprouting off one
+/// another, studded with pale spine flecks and topped with a few red "tuna" fruit and a
+/// yellow bloom. A wholly different cactus silhouette from the columnar saguaro. Base at
+/// y=0, ~0.7u tall before the scatter scales it. `variant` varies the pad count / lean.
+fn build_prickly_pear_mesh(variant: u32) -> Mesh {
+    let flip = if variant % 2 == 0 { 1.0_f32 } else { -1.0 };
+    let mut parts: Vec<Mesh> = Vec::new();
+
+    // Base pad — a broad upright paddle resting on the ground.
+    parts.push(pad(0.24, 0.30, 0.07, 0.0, 0.25, y(0.29), CACTUS_MID));
+    // Two pads growing off its upper shoulders, tilted out and yawed apart.
+    parts.push(pad(0.20, 0.26, 0.06, flip * 0.55, 0.5, Vec3::new(-flip * 0.20, 0.50, 0.05), CACTUS_DARK));
+    parts.push(pad(0.19, 0.25, 0.06, -flip * 0.50, -0.4, Vec3::new(flip * 0.21, 0.54, -0.04), CACTUS_LIGHT));
+    // A smaller crowning pad (variant 0 only) for a fuller clump.
+    if variant % 2 == 0 {
+        parts.push(pad(0.14, 0.18, 0.05, 0.2, 0.8, Vec3::new(0.02, 0.74, 0.02), CACTUS_MID));
+    }
+
+    // Pale spine flecks dotted over the front faces of the pads (tiny boxes on a spiral).
+    let pad_faces = [
+        (Vec3::new(0.0, 0.29, 0.0), 0.20_f32, 0.27_f32),
+        (Vec3::new(-flip * 0.20, 0.50, 0.05), 0.16, 0.22),
+        (Vec3::new(flip * 0.21, 0.54, -0.04), 0.15, 0.21),
+    ];
+    for (centre, sx, sy) in pad_faces {
+        for i in 0..5 {
+            let a = i as f32 * 2.399_963_2; // golden angle
+            let t = (i as f32 + 0.5) / 5.0;
+            let off = Vec3::new(a.cos() * sx * (1.0 - t) * 0.8, (t - 0.5) * sy * 1.4, 0.075);
+            parts.push(tinted(
+                Cuboid::new(0.016, 0.016, 0.016).mesh().build().translated_by(centre + off),
+                lin(CACTUS_SPINE),
+            ));
+        }
+    }
+
+    // A few red "tuna" fruit perched on the top rims + one yellow bloom.
+    parts.push(ball_at(0.05, Vec3::new(-flip * 0.20, 0.74, 0.04), 0.7, FLOWER_RED));
+    parts.push(ball_at(0.045, Vec3::new(flip * 0.21, 0.78, -0.04), 0.7, FLOWER_RED));
+    parts.push(ball_at(0.038, Vec3::new(0.0, 0.84, 0.02), 0.7, FLOWER_YELLOW));
+
+    flat_shaded(merged(parts))
+}
+
 // ─── Sun-bleached rocks + the odd bone/skull (a non-tree class) ──────────────────
 
 /// **Bleached rock / bone** — `variant` 0/1 are pale faceted boulders (a body lump +
@@ -408,6 +473,63 @@ fn build_succulent_mesh() -> Mesh {
     flat_shaded(merged(parts))
 }
 
+/// **Desert ground litter** (cover) — the little splashes of life on the sand. `variant`:
+/// 0 = a brittlebush cluster of small orange blooms on dry stems, 1 = a single yellow
+/// desert poppy, 2 = a couple of bleached crossed twigs. Very low (≤0.12u), base at y=0.
+fn build_desert_litter_mesh(variant: u32) -> Mesh {
+    match variant % 3 {
+        // Brittlebush — a small cluster of orange blooms on short grey-green stems.
+        0 => {
+            let mut parts: Vec<Mesh> = Vec::new();
+            for i in 0..4 {
+                let a = (i as f32 / 4.0) * TAU;
+                let (bx, bz) = (a.cos() * 0.05, a.sin() * 0.05);
+                let h = 0.08 + (i % 2) as f32 * 0.03;
+                parts.push(cyl_up_at(0.008, h, Vec3::new(bx, h * 0.5, bz), DESERT_STEM));
+                parts.push(ball_at(0.028, Vec3::new(bx, h, bz), 0.6, DESERT_BLOOM_ORANGE));
+                parts.push(ball_at(0.012, Vec3::new(bx, h + 0.012, bz), 0.7, FLOWER_YELLOW));
+            }
+            flat_shaded(merged(parts))
+        }
+        // Yellow desert poppy — a single small flower: yellow petal ring + a red centre.
+        1 => {
+            let head_y = 0.10;
+            let mut parts = vec![
+                tinted(
+                    Cone { radius: 0.008, height: head_y }.mesh().build().translated_by(y(head_y * 0.5)),
+                    lin(DESERT_STEM),
+                ),
+                ball_at(0.018, y(head_y), 0.7, FLOWER_RED),
+            ];
+            for i in 0..6 {
+                let a = (i as f32 / 6.0) * TAU;
+                parts.push(ball_at(0.024, Vec3::new(a.cos() * 0.035, head_y, a.sin() * 0.035), 0.45, FLOWER_YELLOW));
+            }
+            flat_shaded(merged(parts))
+        }
+        // Bleached crossed twigs lying on the sand.
+        _ => {
+            let twig = |len: f32, rot_y: f32, c: u32| -> Mesh {
+                tinted(
+                    Cylinder::new(0.01, len)
+                        .mesh()
+                        .resolution(4)
+                        .build()
+                        .rotated_by(Quat::from_rotation_z(FRAC_PI_2))
+                        .rotated_by(Quat::from_rotation_y(rot_y))
+                        .translated_by(y(0.012)),
+                    lin(c),
+                )
+            };
+            flat_shaded(merged(vec![
+                twig(0.14, 0.3, TWIG_TAN),
+                twig(0.11, 1.4, TWIG_DARK),
+                ball_at(0.02, y(0.015), 0.5, TWIG_DARK),
+            ]))
+        }
+    }
+}
+
 // ── Config ────────────────────────────────────────────────────────────────────────
 
 pub fn config() -> BiomeConfig {
@@ -467,6 +589,13 @@ pub fn config() -> BiomeConfig {
                 scale: (0.8, 1.4),
                 tree: false,
             },
+            // Prickly-pear / opuntia — clumps of flat green pads with red fruit.
+            PropClass {
+                variants: (0..2).map(|v| (build_prickly_pear_mesh(v), 1.0)).collect(),
+                chance: 0.018,
+                scale: (0.8, 1.4),
+                tree: false,
+            },
             // Bleached rocks + the odd bone/skull.
             PropClass {
                 variants: vec![
@@ -496,6 +625,13 @@ pub fn config() -> BiomeConfig {
                 variants: vec![(build_succulent_mesh(), 1.0)],
                 chance: 0.05,
                 scale: (0.7, 1.2),
+                tree: false,
+            },
+            // Desert litter — brittlebush blooms, desert poppies, bleached twigs.
+            PropClass {
+                variants: (0..3).map(|v| (build_desert_litter_mesh(v), 1.0)).collect(),
+                chance: 0.10,
+                scale: (0.7, 1.3),
                 tree: false,
             },
         ],

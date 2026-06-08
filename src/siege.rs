@@ -412,6 +412,7 @@ fn run_director(
     mut lives: ResMut<crate::succession::Lives>,
     armory: Option<Res<InvaderArmory>>,
     invaders: Query<Entity, With<WaveInvader>>,
+    alive_invaders: Query<(), (With<WaveInvader>, Without<crate::dying::Dying>)>,
     mut commands: Commands,
 ) {
     let now = time.elapsed_secs();
@@ -435,7 +436,7 @@ fn run_director(
         return; // end states are frozen (reset with R)
     }
 
-    let alive = invaders.iter().count() as u32;
+    let alive = alive_invaders.iter().count() as u32; // fading corpses don't count → wave clears
     let mods = mods_for(siege.difficulty);
     let res = step_wave_director(&WaveStepInput {
         phase: siege.phase,
@@ -510,14 +511,17 @@ fn invader_brain(
     mut pending: ResMut<PendingHeroDamage>,
     mut bolts: ResMut<BoltSpawns>,
     mut commands: Commands,
-    mut q: Query<(
-        Entity,
-        &mut orks::Ork,
-        &mut WaveInvader,
-        &mut crate::navgrid::InvaderPath,
-        &mut Transform,
-        &Health,
-    )>,
+    mut q: Query<
+        (
+            Entity,
+            &mut orks::Ork,
+            &mut WaveInvader,
+            &mut crate::navgrid::InvaderPath,
+            &mut Transform,
+            &Health,
+        ),
+        Without<crate::dying::Dying>,
+    >,
 ) {
     if siege.phase != GamePhase::Wave {
         return;
@@ -612,7 +616,7 @@ fn invader_brain(
             inv.last_pos = o.pos;
             inv.idle_since = now;
         } else if dist_keep > STUCK_SAFE_RANGE && now - inv.idle_since >= STUCK_TIMEOUT {
-            commands.entity(e).try_despawn();
+            crate::dying::begin_dying(&mut commands, e, now); // a wedged invader fades out
             continue;
         }
 
@@ -692,7 +696,7 @@ fn setup_siege_hud(mut commands: Commands) {
 fn update_siege_hud(
     siege: Res<Siege>,
     keep: Res<KeepHp>,
-    invaders: Query<&WaveInvader>,
+    invaders: Query<&WaveInvader, Without<crate::dying::Dying>>,
     mut keep_q: Query<&mut Node, (With<KeepHpFill>, Without<PhaseFill>)>,
     mut phase_q: Query<(&mut Node, &mut BackgroundColor), (With<PhaseFill>, Without<KeepHpFill>)>,
 ) {

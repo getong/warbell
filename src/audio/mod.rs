@@ -17,6 +17,7 @@ mod animals;
 mod footsteps;
 mod music;
 mod sfx;
+pub(crate) mod synth;
 mod voice;
 
 use bevy::prelude::*;
@@ -63,6 +64,25 @@ pub enum AudioCue {
     OrkGrunt(Vec3),
     /// Warband alert roar at a world position (hero enters a camp clearing).
     OrkRoar(Vec3),
+    // ── Procedural stings (synth-baked, handled by `sfx` via [`synth::StingBank`]) ──
+    /// Ore boulder shattered.
+    OreShatter,
+    /// Chest lid opened.
+    ChestOpen,
+    /// Herb / loot picked up.
+    Forage,
+    /// Hero gained a level.
+    LevelUp,
+    /// Gold collected.
+    Gold,
+    /// Shop purchase confirmed.
+    ShopBuy,
+    /// Night wave summoned (war bell).
+    WarBell,
+    /// Camp captive freed.
+    CampRescue,
+    /// Hero HP crossed the low threshold.
+    LowHp,
 }
 
 /// Combat-music driver. Ork AI sets `fighting = true` while any ork hunts / strikes the hero;
@@ -118,6 +138,7 @@ impl Plugin for GameAudioPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AudioConfig>()
             .init_resource::<MusicState>()
+            .init_resource::<synth::StingBank>()
             .add_message::<AudioCue>()
             .add_systems(
                 Startup,
@@ -126,6 +147,7 @@ impl Plugin for GameAudioPlugin {
                     ambience::setup_ambience,
                     music::setup_music,
                     sfx::setup_sfx,
+                    synth::bake_stings,
                     voice::setup_voice,
                 ),
             )
@@ -139,9 +161,35 @@ impl Plugin for GameAudioPlugin {
                     music::update_music,
                     sfx::play_cues,
                     voice::play_voice_cues,
+                    detect_player_events,
                 ),
             );
     }
+}
+
+/// Emit the level-up + low-HP stings off the hero's progression (no single call site for these).
+fn detect_player_events(
+    player: Res<crate::player::PlayerRes>,
+    mut cues: MessageWriter<AudioCue>,
+    mut init: Local<bool>,
+    mut last_level: Local<i64>,
+    mut was_low: Local<bool>,
+) {
+    let p = &player.0;
+    if !*init {
+        *init = true;
+        *last_level = p.level;
+        *was_low = false;
+    }
+    if p.level > *last_level {
+        *last_level = p.level;
+        cues.write(AudioCue::LevelUp);
+    }
+    let low = p.max_hp > 0.0 && p.hp > 0.0 && p.hp <= p.max_hp * 0.35;
+    if low && !*was_low {
+        cues.write(AudioCue::LowHp);
+    }
+    *was_low = low;
 }
 
 // ── Tiny shared RNG (xorshift) — clip picks + pitch jitter without pulling a crate. ──

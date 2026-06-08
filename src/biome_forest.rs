@@ -80,20 +80,29 @@ pub fn config() -> BiomeConfig {
         ],
         cover: vec![
             PropClass { variants: vec![(gc::build_grass_tuft_mesh(), 1.0)], chance: 0.15, scale: (0.45, 0.7), tree: false },
-            PropClass { variants: vec![(gc::build_clover_mesh(), 1.0)], chance: 0.40, scale: (0.7, 1.2), tree: false },
+            PropClass { variants: vec![(gc::build_clover_mesh(), 1.0)], chance: 0.30, scale: (0.7, 1.2), tree: false },
             PropClass {
-                variants: (0..2).map(|v| (gc::build_mushroom_mesh(v), 1.0)).collect(),
+                variants: (0..4).map(|v| (gc::build_mushroom_mesh(v), 1.0)).collect(),
                 chance: 0.13,
                 scale: (0.7, 1.2),
                 tree: false,
             },
+            // Wildflowers — the meadow's life. 7 colour/shape variants (pink/yellow/white
+            // daisies, red poppies, blue cornflowers, violets), denser than before.
             PropClass {
-                variants: (0..3).map(|v| (gc::build_flower_mesh(v), 1.0)).collect(),
-                chance: 0.12,
+                variants: (0..gc::NUM_FLOWER_VARIANTS).map(|v| (gc::build_flower_mesh(v), 1.0)).collect(),
+                chance: 0.20,
                 scale: (0.8, 1.3),
                 tree: false,
             },
             PropClass { variants: vec![(gc::build_fern_mesh(), 1.0)], chance: 0.08, scale: (0.7, 1.1), tree: false },
+            // Forest-floor litter — pinecones, acorns, pebbles, fallen leaves.
+            PropClass {
+                variants: (0..gc::NUM_LITTER_VARIANTS).map(|v| (gc::build_floor_litter_mesh(v), 1.0)).collect(),
+                chance: 0.08,
+                scale: (0.7, 1.25),
+                tree: false,
+            },
         ],
         cover_per_tile: 2,
 

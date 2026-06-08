@@ -206,7 +206,7 @@ fn drive_hp_bars(
     mut commands: Commands,
     assets: Res<HpBarAssets>,
     cam_q: Query<&GlobalTransform, With<Camera3d>>,
-    orks: Query<(&GlobalTransform, &Health, Option<&HurtFlash>), Or<(With<Ork>, With<crate::wildlife::Animal>)>>,
+    orks: Query<(&GlobalTransform, &Health, Option<&HurtFlash>, Option<&crate::dying::Dying>), Or<(With<Ork>, With<crate::wildlife::Animal>)>>,
     mut bars: Query<(Entity, &HpBar, &mut Transform, &mut Visibility, &Children)>,
     mut fgs: Query<(&mut Transform, &mut MeshMaterial3d<StandardMaterial>), (With<HpBarFg>, Without<HpBar>)>,
 ) {
@@ -214,10 +214,14 @@ fn drive_hp_bars(
     let Ok(cam_tf) = cam_q.single() else { return };
     let cam_pos = cam_tf.translation();
     for (bar_e, bar, mut tf, mut vis, children) in &mut bars {
-        let Ok((ork_gt, hp, hurt)) = orks.get(bar.ork) else {
+        let Ok((ork_gt, hp, hurt, dying)) = orks.get(bar.ork) else {
             commands.entity(bar_e).despawn();
             continue;
         };
+        if dying.is_some() {
+            *vis = Visibility::Hidden; // no bar over a crumpling corpse
+            continue;
+        }
         let ratio = (hp.hp / hp.max).clamp(0.0, 1.0);
         if ratio >= 1.0 {
             *vis = Visibility::Hidden;

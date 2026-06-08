@@ -16,6 +16,7 @@ use crate::critters::Species;
 use crate::economy::Bank;
 use crate::game_state::Modal;
 use crate::inventory::{try_grant, Inventory, Toasts};
+use crate::palette::lin;
 use crate::player::{HeroState, PlayerRes};
 use crate::worldmap;
 
@@ -124,7 +125,7 @@ fn mine_ore(
                     color: Color::srgb(0.82, 0.82, 0.88),
                     scale: 1.1,
                 });
-                cues.write(AudioCue::Impact { kill: true });
+                cues.write(AudioCue::OreShatter);
                 commands.entity(e).despawn();
             } else {
                 cues.write(AudioCue::Impact { kill: false });
@@ -237,7 +238,7 @@ fn forage_pickup(
             f.collected = true;
             f.collected_at = now;
             *vis = Visibility::Hidden;
-            cues.write(AudioCue::UiSelect);
+            cues.write(AudioCue::Forage);
         }
     }
 }
@@ -411,7 +412,8 @@ fn chest_interact(
             try_grant(&mut inv.0, &mut toasts.0, id, 1, now as f64);
         }
         floats.0.push(FloatReq { world: head, text: format!("+{gold} gold"), color: crate::combat_fx::col_kill(), scale: 1.1 });
-        cues.write(AudioCue::UiSelect);
+        cues.write(AudioCue::ChestOpen);
+        cues.write(AudioCue::Gold); // a coin chime layered over the chest creak
         chest.opened = true;
         chest.opened_at = now;
         for &c in children {
@@ -451,17 +453,14 @@ pub fn populate_chests(
     materials: &mut Assets<StandardMaterial>,
 ) {
     const CHEST_COUNT: u32 = 12;
-    let base_mesh = meshes.add(Cuboid::new(0.72, 0.44, 0.52).mesh().build());
-    let lid_mesh = meshes.add(Cuboid::new(0.74, 0.16, 0.54).mesh().build());
-    let wood = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.45, 0.30, 0.16),
-        perceptual_roughness: 0.8,
-        ..default()
-    });
-    let lid_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.52, 0.36, 0.20),
-        emissive: LinearRgba::rgb(0.12, 0.08, 0.01), // faint gold trim
-        perceptual_roughness: 0.7,
+    // Vertex-coloured (flat-shaded) chest: a rounded iron-banded lid on a strapped wooden body
+    // with a brass lock and stub feet. One white material tints by vertex colour, so body + lid
+    // batch into two meshes shared across all chests.
+    let base_mesh = meshes.add(chest_body_mesh());
+    let lid_mesh = meshes.add(chest_lid_mesh());
+    let chest_mat = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        perceptual_roughness: 0.78,
         ..default()
     });
 
@@ -485,23 +484,99 @@ pub fn populate_chests(
         let factor = forest_frontier(x, z);
         let parent = commands
             .spawn((
-                Transform::from_xyz(x, y + 0.22, z),
+                Transform::from_xyz(x, y, z),
                 Visibility::Visible,
                 Chest { cache, opened: false, opened_at: 0.0, factor },
                 crate::biome::BiomeEntity,
             ))
             .id();
         commands.entity(parent).with_children(|p| {
-            p.spawn((Mesh3d(base_mesh.clone()), MeshMaterial3d(wood.clone()), Transform::default()));
+            p.spawn((Mesh3d(base_mesh.clone()), MeshMaterial3d(chest_mat.clone()), Transform::default()));
+            // Lid pivots on the back-top edge (its entity origin), so the open-tilt swings the
+            // front up and back like a real hinge.
             p.spawn((
                 Mesh3d(lid_mesh.clone()),
-                MeshMaterial3d(lid_mat.clone()),
-                Transform::from_xyz(0.0, 0.30, 0.0),
+                MeshMaterial3d(chest_mat.clone()),
+                Transform::from_xyz(0.0, 0.40, -0.25),
                 ChestLid,
             ));
         });
         placed += 1;
     }
+}
+
+// ─── Chest model (vertex-coloured, flat-shaded) ─────────────────────────────────────
+//
+// Authored in parent-local space with the body resting on the ground (bottom at y=0). The lid
+// is a SEPARATE child whose entity origin sits on the back-top hinge edge — `chest_lid_mesh`
+// builds the lid forward of that origin (+Z = front) so the hinge rotation reads naturally.
+
+const CW_BODY: u32 = 0x6b4a2a; // chest wood (body)
+const CW_LID: u32 = 0x7a5530; // chest wood (lid — lighter)
+const CW_IRON: u32 = 0x2c2c34; // dark iron straps / bands
+const CW_BRASS: u32 = 0xc9962f; // brass lock + clasp
+const CW_FOOT: u32 = 0x3a2818; // dark stub feet
+
+/// Strapped wooden body: a box with iron side-bands, a brass lock plate, a top rim and four
+/// stub feet. Bottom sits at local y=0 so it rests on the ground.
+fn chest_body_mesh() -> Mesh {
+    let iron = lin(CW_IRON);
+    cgroup(vec![
+        cbx(0.70, 0.40, 0.50, v(0.0, 0.20, 0.0), lin(CW_BODY)), // body
+        cbx(0.74, 0.05, 0.54, v(0.0, 0.40, 0.0), iron),         // top rim band
+        cbx(0.07, 0.42, 0.54, v(-0.24, 0.20, 0.0), iron),       // left strap (wraps front↔back)
+        cbx(0.07, 0.42, 0.54, v(0.24, 0.20, 0.0), iron),        // right strap
+        cbx(0.18, 0.20, 0.04, v(0.0, 0.27, 0.26), lin(CW_BRASS)), // front lock plate
+        cbx(0.04, 0.07, 0.06, v(0.0, 0.25, 0.28), iron),        // keyhole
+        cbx(0.10, 0.10, 0.10, v(-0.28, 0.05, 0.18), lin(CW_FOOT)), // feet
+        cbx(0.10, 0.10, 0.10, v(0.28, 0.05, 0.18), lin(CW_FOOT)),
+        cbx(0.10, 0.10, 0.10, v(-0.28, 0.05, -0.18), lin(CW_FOOT)),
+        cbx(0.10, 0.10, 0.10, v(0.28, 0.05, -0.18), lin(CW_FOOT)),
+    ])
+}
+
+/// Rounded barrel lid: a wooden log (cylinder laid along X) framed by three iron hoop-bands and
+/// a brass clasp at the front. Built around the hinge origin, extending forward (+Z).
+fn chest_lid_mesh() -> Mesh {
+    let along_x = rz(std::f32::consts::FRAC_PI_2); // stand the cylinder's Y-axis up along X
+    let iron = lin(CW_IRON);
+    let hoop = |x: f32| ccyl(0.245, 0.05, v(x, 0.0, 0.25), along_x, iron);
+    cgroup(vec![
+        ccyl(0.23, 0.70, v(0.0, 0.0, 0.25), along_x, lin(CW_LID)), // rounded lid log
+        hoop(-0.30),                                               // end hoop
+        hoop(0.30),                                                // end hoop
+        hoop(0.0),                                                 // centre hoop
+        cbx(0.14, 0.12, 0.06, v(0.0, -0.10, 0.47), lin(CW_BRASS)), // front clasp (meets lock)
+    ])
+}
+
+// Local flat-shaded mesh helpers (vertex-coloured; mirror the camps/orks prop builders).
+fn v(x: f32, y: f32, z: f32) -> Vec3 {
+    Vec3::new(x, y, z)
+}
+fn rz(a: f32) -> Quat {
+    Quat::from_rotation_z(a)
+}
+fn ctint(mut m: Mesh, c: [f32; 4]) -> Mesh {
+    let n = m.count_vertices();
+    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![c; n]);
+    m
+}
+fn cbx(w: f32, h: f32, d: f32, off: Vec3, c: [f32; 4]) -> Mesh {
+    ctint(Cuboid::new(w, h, d).mesh().build().translated_by(off), c)
+}
+fn ccyl(r: f32, h: f32, off: Vec3, rot: Quat, c: [f32; 4]) -> Mesh {
+    ctint(Cylinder::new(r, h).mesh().resolution(12).build().rotated_by(rot).translated_by(off), c)
+}
+fn cgroup(parts: Vec<Mesh>) -> Mesh {
+    let mut it = parts.into_iter();
+    let mut base = it.next().expect("at least one part");
+    for p in it {
+        base.merge(&p).expect("chest parts share attributes");
+    }
+    base.duplicate_vertices();
+    base.compute_flat_normals();
+    base
 }
 
 // ─── Hunting: per-species drops + ground pickups ───────────────────────────────────

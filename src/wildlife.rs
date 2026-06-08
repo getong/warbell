@@ -28,8 +28,13 @@ pub struct WildlifePlugin;
 
 impl Plugin for WildlifePlugin {
     fn build(&self, app: &mut App) {
+        app.init_resource::<RespawnQueue>();
         app.add_systems(Update, animal_limbs); // limb anim keeps running while frozen
-        app.add_systems(Update, animal_brain.run_if(in_state(crate::game_state::Modal::None)));
+        app.add_systems(
+            Update,
+            (animal_brain, enqueue_respawn, drain_respawns)
+                .run_if(in_state(crate::game_state::Modal::None)),
+        );
     }
 }
 
@@ -75,8 +80,21 @@ pub struct Animal {
     atk_cd: f32,
     /// When hunting, the prey entity being chased (None = hunting the hero / not hunting).
     hunt_prey: Option<Entity>,
+    /// Elapsed-seconds until which a struck predator stays latched onto the hero (0 = calm).
+    aggro_until: f32,
     pub(crate) rng: u32,
 }
+
+/// Inserted by combat on a surviving animal it struck — a predator latches onto the hero
+/// (struck-enrage). `animal_brain` reads it once, then removes it.
+#[derive(Component)]
+pub struct Struck;
+
+/// Seconds a struck predator stays enraged + locked onto the hero.
+const STRUCK_LATCH: f32 = 6.0;
+/// Respawn delays — a slain animal's species reappears nearby after this.
+const ANIMAL_RESPAWN: f32 = 35.0;
+const PREDATOR_RESPAWN: f32 = 50.0;
 
 /// Marks an articulated child part + how it animates.
 #[derive(Component)]
@@ -92,10 +110,11 @@ fn animal_brain(
     hero: Res<crate::player::HeroState>,
     mut pending: ResMut<crate::player::PendingHeroDamage>,
     mut commands: Commands,
-    mut q: Query<(Entity, &mut Animal, &mut Transform)>,
+    mut q: Query<(Entity, &mut Animal, &mut Transform, Option<&Struck>), Without<crate::dying::Dying>>,
 ) {
     let dt = time.delta_secs().min(0.05);
     let tw = time.elapsed_secs_wrapped();
+    let now = time.elapsed_secs();
     let cam_xz = cam.single().ok().map(|g| {
         let t = g.translation();
         Vec2::new(t.x, t.z)
@@ -105,23 +124,33 @@ fn animal_brain(
     // predators hunt the nearest prey, prey flee the nearest predator. Read-only pre-pass.
     let snap: Vec<(Entity, Vec2, bool, bool)> = q
         .iter()
-        .map(|(e, a, _)| (e, a.pos, predator_stats(a.species).is_some(), is_prey(a.species)))
+        .map(|(e, a, _, _)| (e, a.pos, predator_stats(a.species).is_some(), is_prey(a.species)))
         .collect();
     // Prey caught by a predator this frame (eaten → despawned after the loop).
     let mut eaten: Vec<Entity> = Vec::new();
 
-    for (self_e, mut a, mut tf) in &mut q {
+    for (self_e, mut a, mut tf, struck) in &mut q {
         a.timer -= dt;
         a.atk_cd -= dt;
 
         let pred = predator_stats(a.species);
+        // Struck-enrage: a wounded predator (incl. the boar) latches onto the hero for a beat.
+        if struck.is_some() {
+            commands.entity(self_e).remove::<Struck>();
+            if pred.is_some() {
+                a.aggro_until = now + STRUCK_LATCH;
+            }
+        }
         if let Some((aggro_r, _)) = pred {
             // ── Predator: hunt the nearest prey in range; failing that, the hero — but only
-            // while near home (~26u) so a pack doesn't trail a target across the whole island. ──
+            // while near home (~26u) so a pack doesn't trail a target across the whole island.
+            // A recently-struck predator stays locked on the hero (ignores leash). ──
             let near_home = a.pos.distance(a.home) < 26.0;
             let mut tgt: Option<(Vec2, Option<Entity>)> = None;
             let mut best = aggro_r;
-            if near_home {
+            if hero.alive && now < a.aggro_until {
+                tgt = Some((hero.pos, None));
+            } else if near_home {
                 for (pe, pp, _ispred, isprey) in &snap {
                     if !*isprey || *pe == self_e {
                         continue;
@@ -293,6 +322,53 @@ fn animal_limbs(
     }
 }
 
+/// Queue a respawn for each player-slain animal (reads combat's `AnimalKilled` message).
+fn enqueue_respawn(
+    time: Res<Time>,
+    mut kills: MessageReader<crate::verbs::AnimalKilled>,
+    mut queue: ResMut<RespawnQueue>,
+) {
+    let now = time.elapsed_secs();
+    for k in kills.read() {
+        let delay = if predator_stats(k.species).is_some() { PREDATOR_RESPAWN } else { ANIMAL_RESPAWN };
+        queue.0.push(RespawnSlot { species: k.species, home: Vec2::new(k.at.x, k.at.z), at: now + delay });
+    }
+}
+
+/// Respawn each due animal of its species near its death spot, reusing the kept spawn templates.
+fn drain_respawns(
+    time: Res<Time>,
+    assets: Option<Res<WildlifeAssets>>,
+    mut queue: ResMut<RespawnQueue>,
+    mut commands: Commands,
+    mut rng: Local<u32>,
+) {
+    let Some(assets) = assets else { return };
+    if *rng == 0 {
+        *rng = 0x51ed_270b;
+    }
+    let now = time.elapsed_secs();
+    let r = &mut *rng;
+    queue.0.retain(|slot| {
+        if now < slot.at {
+            return true;
+        }
+        if let (Some(plan), Some(tmpl)) =
+            (PLANS.iter().find(|p| p.species == slot.species), assets.template(slot.species))
+        {
+            for _ in 0..14 {
+                let jx = slot.home.x + rng_range(r, -3.0, 3.0);
+                let jz = slot.home.y + rng_range(r, -3.0, 3.0);
+                if valid(plan.place, jx, jz) {
+                    spawn_one(&mut commands, &assets.mat, tmpl, plan, jx, jz, slot.home, next_u32(r));
+                    break;
+                }
+            }
+        }
+        false // drop the slot whether or not placement succeeded
+    });
+}
+
 fn pick_wander(a: &mut Animal) {
     let ang = rng01(&mut a.rng) * std::f32::consts::TAU;
     let r = rng_range(&mut a.rng, a.wander_r * 0.3, a.wander_r);
@@ -390,9 +466,33 @@ const PLANS: [Plan; 10] = [
 ];
 
 /// Per-species uploaded meshes, ready to clone-spawn.
+#[derive(Clone)]
 struct Template {
     torso: Handle<Mesh>,
     parts: Vec<(PartKind, Vec3, Handle<Mesh>)>,
+}
+
+/// Retained spawn assets (shared material + per-species templates) so a slain animal's species
+/// can be respawned later. Inserted by [`populate`].
+#[derive(Resource)]
+struct WildlifeAssets {
+    mat: Handle<StandardMaterial>,
+    templates: Vec<(Species, Template)>,
+}
+impl WildlifeAssets {
+    fn template(&self, s: Species) -> Option<&Template> {
+        self.templates.iter().find(|(sp, _)| *sp == s).map(|(_, t)| t)
+    }
+}
+
+/// Pending wildlife respawns — a slain animal's species reappears near its death spot.
+#[derive(Resource, Default)]
+struct RespawnQueue(Vec<RespawnSlot>);
+struct RespawnSlot {
+    species: Species,
+    home: Vec2,
+    /// Elapsed-seconds when the replacement is due.
+    at: f32,
 }
 
 /// Spawn the whole wildlife population. Called from `worldmap::build` (combined map only).
@@ -410,6 +510,7 @@ pub fn populate(
     });
 
     let mut rng: u32 = 0x0a17_5eed;
+    let mut templates: Vec<(Species, Template)> = Vec::new();
 
     for plan in PLANS {
         let spec = critters::build(plan.species);
@@ -455,7 +556,10 @@ pub fn populate(
         if placed < plan.count {
             info!("wildlife: placed {}/{} {:?}", placed, plan.count, plan.species);
         }
+        templates.push((plan.species, tmpl));
     }
+    // Retain the templates + material so slain animals can be respawned.
+    commands.insert_resource(WildlifeAssets { mat, templates });
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -497,6 +601,7 @@ fn spawn_one(
         timer: rng_range(&mut rng, 0.5, 4.0),
         atk_cd: 0.0,
         hunt_prey: None,
+        aggro_until: 0.0,
         rng,
     };
 

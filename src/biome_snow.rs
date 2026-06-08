@@ -49,6 +49,19 @@ const ROCK_BODY: u32 = 0x7e8b99; // blue-grey frost rock
 const ROCK_DARK: u32 = 0x66727f; // shadowed rock base
 const ROCK_LIGHT: u32 = 0x97a3b0; // lit rock facet
 
+// Snowman (bałwan) — bright stacked snow body + coal face/buttons, carrot nose, twig
+// arms (reuse BIRCH_TWIG), a red knitted scarf and a dark bucket hat.
+const SNOWMAN_BODY: u32 = 0xfbfdff; // bright packed-snow body (= SNOW_CAP_HI, kept explicit)
+const COAL: u32 = 0x1d1d22; // coal eyes / mouth / buttons
+const CARROT: u32 = 0xe8721f; // carrot nose
+const SCARF: u32 = 0xc0392b; // red knitted scarf
+const HAT: u32 = 0x2a2a30; // dark bucket hat
+
+// Winter ground litter — holly (dark leaves + red berries), frosted pinecone, ice shard.
+const HOLLY_LEAF: u32 = 0x2f6b3a; // dark holly-leaf green
+const HOLLY_BERRY: u32 = 0xcc2a2a; // bright red holly berry
+const PINECONE_BROWN: u32 = 0x6e5038; // brown pinecone scales
+
 // Frozen-pond ice (FrozenSpire family): pale crystal blue.
 const ICE_PALE: u32 = 0xbfe0f4; // pale ice surface tint
 const ICE_RIM: u32 = 0x9cc3e0; // darker frosted rim
@@ -281,6 +294,97 @@ fn build_boulder_mesh(variant: u32) -> Mesh {
     }
 }
 
+// ── Snowman (bałwan) ──────────────────────────────────────────────────────────────
+//
+// The charming centrepiece: three stacked bright-snow balls (big → mid → head), a coal
+// face (two eyes + an arc-of-coal smile), an orange carrot nose, two bare twig arms
+// fanning up-and-out, a red scarf wound at the neck with a hanging tail, and a dark
+// bucket hat. Base flush at y=0, ~1.15u tall (incl. hat) before the scatter scales it.
+// Built facing +Z; the scatter gives it a random yaw. Single merged vertex-coloured mesh.
+fn build_snowman_mesh() -> Mesh {
+    let mut parts: Vec<Mesh> = Vec::new();
+
+    // ── Body: three stacked near-round snow balls (lightly squashed so they read packed).
+    // Centres chosen so each ball overlaps the one below (no gap), bottom resting on y=0.
+    let bottom_cy = 0.285;
+    parts.push(ball_at(0.30, y(bottom_cy), 0.95, SNOWMAN_BODY));
+    let mid_cy = 0.58;
+    parts.push(ball_at(0.225, y(mid_cy), 0.96, SNOWMAN_BODY));
+    let head_cy = 0.84;
+    parts.push(ball_at(0.165, y(head_cy), 0.97, SNOWMAN_BODY));
+
+    // ── Face (on the +Z front of the head): two coal eyes + a carrot nose + a coal smile.
+    let face_z = 0.135;
+    parts.push(ball_at(0.028, Vec3::new(0.06, head_cy + 0.03, face_z), 0.9, COAL));
+    parts.push(ball_at(0.028, Vec3::new(-0.06, head_cy + 0.03, face_z), 0.9, COAL));
+    // Carrot nose — a slim cone pointing +Z (built apex-up, tipped 90° about X).
+    parts.push(tinted(
+        Cone { radius: 0.034, height: 0.18 }
+            .mesh()
+            .resolution(6)
+            .build()
+            .rotated_by(Quat::from_rotation_x(FRAC_PI_2))
+            .translated_by(Vec3::new(0.0, head_cy - 0.01, face_z + 0.02)),
+        lin(CARROT),
+    ));
+    // Coal smile — five small coal dots in a downward arc below the nose.
+    for i in 0..5 {
+        let t = (i as f32 / 4.0) * 2.0 - 1.0; // -1..1 across the mouth
+        let mx = t * 0.085;
+        let my = head_cy - 0.075 - (1.0 - t * t) * 0.018; // dip toward the centre → a smile
+        parts.push(ball_at(0.016, Vec3::new(mx, my, face_z + 0.005), 0.9, COAL));
+    }
+
+    // ── Coal buttons down the front of the mid ball.
+    for &(by, bz) in &[(mid_cy + 0.06, 0.205_f32), (mid_cy - 0.04, 0.215), (mid_cy - 0.13, 0.20)] {
+        parts.push(ball_at(0.022, Vec3::new(0.0, by, bz), 0.9, COAL));
+    }
+
+    // ── Twig arms — a bare twig fanning up-and-out from each side of the mid ball, each
+    // with a small forked branchlet. Build along +Y, lean out (Z) ±, lift to shoulder.
+    for side in [1.0_f32, -1.0] {
+        let shoulder = Vec3::new(side * 0.20, mid_cy + 0.04, 0.0);
+        let lean = Quat::from_rotation_z(side * -1.15); // splay outward + up
+        let arm = Cylinder::new(0.016, 0.40)
+            .mesh()
+            .resolution(4)
+            .build()
+            .translated_by(y(0.20))
+            .rotated_by(lean)
+            .translated_by(shoulder);
+        parts.push(tinted(arm, lin(BIRCH_TWIG)));
+        // A short forked branchlet near the arm's tip.
+        let tip = shoulder + lean * Vec3::new(0.0, 0.40, 0.0);
+        let fork = Cylinder::new(0.011, 0.16)
+            .mesh()
+            .resolution(4)
+            .build()
+            .translated_by(y(0.08))
+            .rotated_by(Quat::from_rotation_z(side * -0.5))
+            .translated_by(tip);
+        parts.push(tinted(fork, lin(BIRCH_TWIG)));
+    }
+
+    // ── Red scarf — a drum wound at the neck (between head and mid ball) + a hanging tail.
+    let neck = 0.735;
+    parts.push(cyl_up(0.155, 0.075, neck, 10, SCARF));
+    // Tail — a thin red box hanging down the front-left of the body.
+    parts.push(tinted(
+        Cuboid::new(0.07, 0.26, 0.03)
+            .mesh()
+            .build()
+            .translated_by(Vec3::new(0.10, neck - 0.14, 0.135)),
+        lin(SCARF),
+    ));
+
+    // ── Dark bucket hat on the crown: a wide thin brim + a tapered crown drum.
+    let head_top = head_cy + 0.165 * 0.97;
+    parts.push(cyl_up(0.205, 0.035, head_top - 0.01, 12, HAT)); // brim
+    parts.push(cyl_up(0.135, 0.20, head_top + 0.10, 10, HAT)); // crown
+
+    flat_shaded(merged(parts))
+}
+
 // ── Ground cover: snow tuft + ice glint ─────────────────────────────────────────
 
 /// A tiny snow tuft — a low cluster of three white-blue specks (wind-packed snow nub).
@@ -299,6 +403,52 @@ fn build_ice_glint_mesh() -> Mesh {
         ball_at(0.06, y(0.012), 0.18, ICE_PALE),
         ball_at(0.035, Vec3::new(0.04, 0.02, 0.0), 0.3, SNOW_CAP_HI),
     ]))
+}
+
+/// Winter ground litter (cover). `variant`: 0 = a holly sprig (dark leaves + red berries +
+/// a snow dab), 1 = a snow-capped pinecone, 2 = a tiny pale-blue ice-shard cluster. Very
+/// low (≤0.13u), base at y=0 — the colourful little touches that dress the snowfield.
+fn build_winter_litter_mesh(variant: u32) -> Mesh {
+    let tau = std::f32::consts::TAU;
+    match variant % 3 {
+        // Holly sprig — four dark flattened leaves around a few red berries + a snow dab.
+        0 => {
+            let mut parts: Vec<Mesh> = Vec::new();
+            for i in 0..4 {
+                let a = (i as f32 / 4.0) * tau;
+                parts.push(ball_at(0.05, Vec3::new(a.cos() * 0.06, 0.03, a.sin() * 0.06), 0.28, HOLLY_LEAF));
+            }
+            parts.push(ball_at(0.022, y(0.05), 0.9, HOLLY_BERRY));
+            parts.push(ball_at(0.020, Vec3::new(0.03, 0.05, 0.0), 0.9, HOLLY_BERRY));
+            parts.push(ball_at(0.020, Vec3::new(-0.02, 0.05, 0.025), 0.9, HOLLY_BERRY));
+            parts.push(ball_at(0.04, Vec3::new(0.05, 0.02, -0.04), 0.4, SNOW_CAP_HI));
+            flat_shaded(merged(parts))
+        }
+        // Snow-capped pinecone — a stack of brown balls with a bright snow tip.
+        1 => flat_shaded(merged(vec![
+            ball_at(0.045, y(0.04), 1.15, PINECONE_BROWN),
+            ball_at(0.036, y(0.085), 1.15, PINECONE_BROWN),
+            ball_at(0.026, y(0.115), 1.1, SNOW_CAP_HI),
+        ])),
+        // Ice-shard cluster — a few small pale-blue pointed cones poking up.
+        _ => {
+            let mut parts: Vec<Mesh> = Vec::new();
+            for i in 0..3 {
+                let a = (i as f32 / 3.0) * tau + 0.4;
+                let h = 0.10 + (i % 2) as f32 * 0.05;
+                let shard = Cone { radius: 0.022, height: h }
+                    .mesh()
+                    .resolution(5)
+                    .build()
+                    .translated_by(y(h * 0.5))
+                    .rotated_by(Quat::from_rotation_z(0.2 * (i as f32 - 1.0)))
+                    .translated_by(Vec3::new(a.cos() * 0.04, 0.0, a.sin() * 0.04));
+                parts.push(tinted(shard, lin(ICE_PALE)));
+            }
+            parts.push(ball_at(0.03, y(0.02), 0.4, SNOW_CAP_HI));
+            flat_shaded(merged(parts))
+        }
+    }
 }
 
 // ── A snow-laden bare dead tree for the pond ring ────────────────────────────────
@@ -396,6 +546,14 @@ pub fn config() -> BiomeConfig {
                 scale: (0.6, 1.5),
                 tree: false,
             },
+            // Snowman (bałwan) — a rare charming centrepiece, sprinkled sparsely (~10 per
+            // patch). Kept LAST so it never becomes the tree-too-close fallback.
+            PropClass {
+                variants: vec![(build_snowman_mesh(), 1.0)],
+                chance: 0.007,
+                scale: (0.9, 1.2),
+                tree: false,
+            },
         ],
         cover: vec![
             // Snow tufts everywhere; sparser ice glints.
@@ -409,6 +567,13 @@ pub fn config() -> BiomeConfig {
                 variants: vec![(build_ice_glint_mesh(), 1.0)],
                 chance: 0.10,
                 scale: (0.6, 1.2),
+                tree: false,
+            },
+            // Winter litter — holly berries, snow-capped pinecones, ice shards.
+            PropClass {
+                variants: (0..3).map(|v| (build_winter_litter_mesh(v), 1.0)).collect(),
+                chance: 0.09,
+                scale: (0.7, 1.3),
                 tree: false,
             },
         ],

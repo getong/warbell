@@ -35,6 +35,18 @@ const SHRUB_DRY: u32 = 0x7c7a3e; // olive-brown dry shrub body
 const SHRUB_DRY_DARK: u32 = 0x5f5d2c; // shadowed shrub skirt
 const SHRUB_DEAD: u32 = 0x9a8c52; // bleached dead-grass tips
 
+// Crystal / geode cluster — saturated gem colours jutting from a small grey rock, the one
+// splash of colour in the grey biome. Two themes (amethyst / teal) keyed off the variant.
+const CRYSTAL_AMETHYST: u32 = 0x9b59d0; // amethyst body
+const CRYSTAL_AMETHYST_DK: u32 = 0x6f3fa0; // shaded amethyst facet
+const CRYSTAL_TEAL: u32 = 0x33c2ae; // teal body
+const CRYSTAL_TEAL_DK: u32 = 0x2493a0; // shaded teal facet
+const CRYSTAL_TIP: u32 = 0xe6dcf6; // pale near-white lit crystal tip
+
+// Lichen — the only living colour creeping over the stone (rusty orange + pale green).
+const LICHEN_ORANGE: u32 = 0xc88a3a; // rusty orange lichen crust
+const LICHEN_GREEN: u32 = 0x8a9a4a; // pale lichen green
+
 const PEBBLE_GREY: u32 = 0x9a9085; // scree pebble
 const PEBBLE_WARM: u32 = 0x8a7a64; // warmer scree pebble
 const DRYTUFT_BASE: u32 = 0x86813f; // dry ground tuft base
@@ -254,6 +266,65 @@ pub fn build_dry_shrub_mesh(variant: u32) -> Mesh {
     flat_shaded(merged(parts))
 }
 
+// ── Crystal / geode cluster (scatter — the one colour accent) ────────────────────
+// A small grey rock base with a fan of 6-sided crystal shards (hex prism + pointed cap)
+// jutting up at mixed tilts/sizes, in saturated amethyst or teal with a pale lit tip.
+// Vertex-colour only (no emissive) so it still batches on the shared material. Base at
+// y=0, ~0.6u tall. `variant` switches the gem theme.
+
+/// One crystal shard: a 6-sided prism capped with a 6-sided point, tilted + yawed off the
+/// base, in `body`/`tip` linear colours. Returned as one merged (2-part) mesh.
+fn crystal_shard(r: f32, h: f32, tilt: f32, yaw: f32, base: Vec3, body: [f32; 4], tip: [f32; 4]) -> Mesh {
+    let rot = Quat::from_rotation_y(yaw) * Quat::from_rotation_z(tilt);
+    let prism = tinted(
+        Cylinder::new(r, h).mesh().resolution(6).build().translated_by(y(h * 0.5)).rotated_by(rot).translated_by(base),
+        body,
+    );
+    let cap_h = r * 2.4;
+    let cap = tinted(
+        Cone { radius: r * 1.02, height: cap_h }
+            .mesh()
+            .resolution(6)
+            .build()
+            .translated_by(y(h + cap_h * 0.5))
+            .rotated_by(rot)
+            .translated_by(base),
+        tip,
+    );
+    merged(vec![prism, cap])
+}
+
+pub fn build_crystal_mesh(variant: u32) -> Mesh {
+    // Theme: amethyst (even) vs teal (odd), each with a darker shaded accent shard.
+    let (body, body_dk) = if variant % 2 == 0 {
+        (lin(CRYSTAL_AMETHYST), lin(CRYSTAL_AMETHYST_DK))
+    } else {
+        (lin(CRYSTAL_TEAL), lin(CRYSTAL_TEAL_DK))
+    };
+    let tip = lin(CRYSTAL_TIP);
+
+    let mut parts = vec![
+        // Small grey host rock the crystals erupt from.
+        facet_at(0.22, y(0.10), 0.62, lin(STONE_DARK)),
+        facet_at(0.15, Vec3::new(0.13, 0.09, 0.05), 0.7, lin(STONE_BODY)),
+        facet_at(0.12, Vec3::new(-0.12, 0.07, -0.06), 0.7, lin_scaled(STONE_DARK, 1.05)),
+    ];
+
+    // A tall central shard + four shorter ones leaning out around it.
+    parts.push(crystal_shard(0.06, 0.42, 0.0, 0.0, y(0.14), body, tip));
+    let shards = [
+        (0.05_f32, 0.30_f32, 0.40_f32, 0.6_f32, Vec3::new(0.12, 0.12, 0.04), body_dk),
+        (0.045, 0.26, -0.42, 2.1, Vec3::new(-0.13, 0.11, 0.05), body),
+        (0.04, 0.22, 0.34, 3.6, Vec3::new(0.05, 0.10, -0.13), body_dk),
+        (0.038, 0.20, -0.30, 5.0, Vec3::new(-0.06, 0.10, -0.10), body),
+    ];
+    for (r, h, tilt, yaw, base, c) in shards {
+        parts.push(crystal_shard(r, h, tilt, yaw, base, c, tip));
+    }
+
+    flat_shaded(merged(parts))
+}
+
 // ── Scree pebble cluster (scatter) ───────────────────────────────────────────────
 // A flat spread of several tiny faceted stones — broken rock litter. Base at y=0,
 // very low. Two variants vary the count / spread.
@@ -270,6 +341,30 @@ pub fn build_scree_mesh(variant: u32) -> Mesh {
         parts.push(facet_at(0.055, Vec3::new(0.16, 0.03, -0.05), 0.6, lin_scaled(PEBBLE_WARM, 1.05)));
     }
     flat_shaded(merged(parts))
+}
+
+// ── Rocky ground litter (cover) ──────────────────────────────────────────────────
+// The little colour accents on the stony floor. `variant`: 0 = a small stone crusted
+// with rusty-orange + pale-green lichen, 1 = a tiny crystal sprinkle (a grey nub with a
+// couple of small amethyst/teal shards). Very low (≤0.12u), base at y=0.
+fn build_rocky_litter_mesh(variant: u32) -> Mesh {
+    match variant % 2 {
+        // Lichen-crusted stone — a grey facet nub with flat lichen splotches on top.
+        0 => flat_shaded(merged(vec![
+            facet_at(0.08, y(0.05), 0.6, lin(STONE_BODY)),
+            facet_at(0.05, Vec3::new(0.06, 0.04, 0.02), 0.6, lin_scaled(STONE_DARK, 1.05)),
+            facet_at(0.045, Vec3::new(0.0, 0.085, 0.0), 0.22, lin(LICHEN_ORANGE)),
+            facet_at(0.035, Vec3::new(0.05, 0.072, 0.03), 0.22, lin(LICHEN_GREEN)),
+            facet_at(0.028, Vec3::new(-0.04, 0.066, -0.03), 0.22, lin(LICHEN_ORANGE)),
+        ])),
+        // Mini crystal sprinkle — small amethyst + teal shards on a dark stone nub.
+        _ => {
+            let mut parts = vec![facet_at(0.06, y(0.04), 0.6, lin(STONE_DARK))];
+            parts.push(crystal_shard(0.025, 0.10, 0.0, 0.0, y(0.06), lin(CRYSTAL_AMETHYST), lin(CRYSTAL_TIP)));
+            parts.push(crystal_shard(0.02, 0.08, 0.4, 2.0, Vec3::new(0.04, 0.05, 0.02), lin(CRYSTAL_TEAL), lin(CRYSTAL_TIP)));
+            flat_shaded(merged(parts))
+        }
+    }
 }
 
 // ── Ground cover meshes ──────────────────────────────────────────────────────────
@@ -382,6 +477,16 @@ pub fn config() -> BiomeConfig {
                 scale: (0.7, 1.5),
                 tree: false,
             },
+            // Crystal / geode clusters — the lone colour accent (amethyst / teal). Sparse.
+            PropClass {
+                variants: vec![
+                    (build_crystal_mesh(0), 1.0),
+                    (build_crystal_mesh(1), 0.8),
+                ],
+                chance: 0.014,
+                scale: (0.7, 1.5),
+                tree: false,
+            },
         ],
         cover: vec![
             PropClass {
@@ -394,6 +499,13 @@ pub fn config() -> BiomeConfig {
                 variants: vec![(build_cover_drytuft_mesh(), 1.0)],
                 chance: 0.22,
                 scale: (0.7, 1.2),
+                tree: false,
+            },
+            // Rocky litter — lichen-crusted stones + tiny crystal sprinkles (colour).
+            PropClass {
+                variants: (0..2).map(|v| (build_rocky_litter_mesh(v), 1.0)).collect(),
+                chance: 0.10,
+                scale: (0.7, 1.3),
                 tree: false,
             },
         ],

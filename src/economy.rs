@@ -452,6 +452,7 @@ fn shop_interact(
     mut player: ResMut<PlayerRes>,
     mut inv: ResMut<Inventory>,
     mut toasts: ResMut<Toasts>,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
     mut buttons: Query<(&Interaction, &ShopItemButton, &mut BackgroundColor)>,
     mut header: Query<&mut Text, With<ShopHeader>>,
 ) {
@@ -467,6 +468,7 @@ fn shop_interact(
                 if player.0.gold >= price && inv.0.has_room_for(&[item.id]) {
                     player.0.spend_gold(price, false);
                     try_grant(&mut inv.0, &mut toasts.0, item.id, 1, now);
+                    cues.write(crate::audio::AudioCue::ShopBuy);
                 }
             }
             break;

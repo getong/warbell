@@ -65,10 +65,28 @@ const SWAMP_ROCK_MOSS: u32 = 0x47633a; // moss accent on the boulder
 const LILY_PAD: u32 = 0x3a6a40; // murky lily-pad green
 const LILY_PAD_EDGE: u32 = 0x294d2e; // darker pad rim
 const MOSS_PATCH: u32 = 0x4a6a38; // ground moss carpet patch
+const BOG_COTTON: u32 = 0xeef0e6; // fluffy white bog-cotton head
+const SWAMP_FLOWER: u32 = 0xcdb6e6; // pale lilac marsh flower
+const SWAMP_FLOWER_CORE: u32 = 0xe8d27a; // pale gold flower centre
 
 // Will-o'-wisp glow (sickly green; sRGB → linear in the emissive so it blooms).
 const WISP_GLOW: Color = Color::srgb(0.45, 1.0, 0.55);
 const WISP_EMISSIVE: f32 = 55.0;
+
+// Glowing mushroom cluster — pale cool stems (on the shared white mat) under
+// bioluminescent caps (their own emissive mat so they bloom, like the wisps).
+const GLOWMUSH_STEM: u32 = 0xcfe8e0; // pale cool stem
+const GLOWMUSH_GLOW: Color = Color::srgb(0.35, 1.0, 0.82); // teal-green cap glow
+const GLOWMUSH_EMISSIVE: f32 = 26.0;
+/// Local layout of one cluster: (dx, dz, scale) per mushroom. Shared by the stem + cap
+/// builders so caps land exactly on their stems.
+const GLOWMUSH_SPOTS: [(f32, f32, f32); 5] = [
+    (0.0, 0.0, 1.3),
+    (0.16, 0.06, 0.9),
+    (-0.13, 0.10, 0.8),
+    (0.05, -0.14, 0.7),
+    (-0.08, -0.05, 0.55),
+];
 
 // ── Mesh helpers (verbatim from trees.rs / decor.rs) ─────────────────────────────────
 
@@ -420,6 +438,42 @@ fn build_swamp_mushroom_mesh() -> Mesh {
     ]))
 }
 
+/// **Swamp ground accent** (cover). `variant`: 0 = bog cotton (green stems topped with
+/// fluffy white heads), 1 = a pale lilac marsh flower (petal ring + gold core). The soft
+/// pale touches that lift the murky floor. Base at y=0, ~0.14–0.24u tall.
+fn build_swamp_cover_extra_mesh(variant: u32) -> Mesh {
+    match variant % 2 {
+        // Bog cotton — three green stems each tipped with a fluffy white head.
+        0 => {
+            let mut parts: Vec<Mesh> = Vec::new();
+            for i in 0..3 {
+                let a = (i as f32 / 3.0) * TAU;
+                let (bx, bz) = (a.cos() * 0.04, a.sin() * 0.04);
+                let h = 0.18 + (i % 2) as f32 * 0.05;
+                parts.push(cyl_up(0.010, h, h * 0.5, 5, REED_STALK).translated_by(Vec3::new(bx, 0.0, bz)));
+                parts.push(ball_at(0.04, Vec3::new(bx, h, bz), 0.85, BOG_COTTON));
+            }
+            flat_shaded(merged(parts))
+        }
+        // Pale lilac marsh flower — a slim stem, gold core, ring of pale petals.
+        _ => {
+            let head_y = 0.14;
+            let mut parts = vec![
+                tinted(
+                    Cone { radius: 0.009, height: head_y }.mesh().build().translated_by(y(head_y * 0.5)),
+                    lin(REED_STALK_DK),
+                ),
+                ball_at(0.016, y(head_y), 0.7, SWAMP_FLOWER_CORE),
+            ];
+            for i in 0..5 {
+                let a = (i as f32 / 5.0) * TAU;
+                parts.push(ball_at(0.026, Vec3::new(a.cos() * 0.038, head_y, a.sin() * 0.038), 0.5, SWAMP_FLOWER));
+            }
+            flat_shaded(merged(parts))
+        }
+    }
+}
+
 /// A flat lily-pad-ish disc — a darker rim under a green top, lying flat on the muck.
 /// The `Circle` mesh lies in the XY plane (normal +Z); rotate −90° about X to lie flat.
 fn build_lily_disc_mesh() -> Mesh {
@@ -493,6 +547,48 @@ fn build_hollow_dead_tree_mesh() -> Mesh {
     parts.push(ball_at(0.24, Vec3::new(-radius * 0.5, 1.8, radius * 0.2), 0.7, STUMP_MOSS));
 
     flat_shaded(merged(parts))
+}
+
+// ── Glowing mushroom cluster (a swamp landmark accent, split by material) ─────────────
+//
+// A cluster of 5 mushrooms of mixed size. The STEMS are a separate pale vertex-coloured
+// mesh (rides the shared white mat); the CAPS are a separate mesh carrying NO colour
+// attribute, so an emissive glow material lights them up and feeds bloom. The two meshes
+// share `GLOWMUSH_SPOTS`, so a cap sits exactly atop each stem when spawned at one
+// transform. Base flush at y=0.
+
+/// Pale stems for the glowmush cluster (shared white vertex-colour mat).
+fn build_glowmush_stems_mesh() -> Mesh {
+    let mut parts: Vec<Mesh> = Vec::new();
+    for &(dx, dz, s) in &GLOWMUSH_SPOTS {
+        let sh = 0.14 * s;
+        parts.push(cyl_up(0.03 * s, sh, sh * 0.5, 6, GLOWMUSH_STEM).translated_by(Vec3::new(dx, 0.0, dz)));
+    }
+    flat_shaded(merged(parts))
+}
+
+/// Glowing caps for the glowmush cluster — domed squashed blobs with NO colour attribute
+/// (the emissive material owns the colour). Built to match the stem layout/heights.
+fn build_glowmush_caps_mesh() -> Mesh {
+    let mut parts: Vec<Mesh> = Vec::new();
+    for &(dx, dz, s) in &GLOWMUSH_SPOTS {
+        let sh = 0.14 * s;
+        parts.push(
+            Sphere::new(0.085 * s)
+                .mesh()
+                .ico(0)
+                .expect("ico detail in range")
+                .scaled_by(Vec3::new(1.0, 0.6, 1.0))
+                .translated_by(Vec3::new(dx, sh, dz)),
+        );
+    }
+    // Merge raw (no ATTRIBUTE_COLOR on any part) then flat-shade for crisp facets.
+    let mut it = parts.into_iter();
+    let mut base = it.next().expect("at least one cap");
+    for p in it {
+        base.merge(&p).expect("glowmush caps share attributes");
+    }
+    flat_shaded(base)
 }
 
 // ── BiomeConfig ──────────────────────────────────────────────────────────────────────
@@ -583,6 +679,13 @@ pub fn config() -> BiomeConfig {
                 scale: (0.7, 1.3),
                 tree: false,
             },
+            // Soft pale floor accents — bog cotton + lilac marsh flowers.
+            PropClass {
+                variants: (0..2).map(|v| (build_swamp_cover_extra_mesh(v), 1.0)).collect(),
+                chance: 0.10,
+                scale: (0.7, 1.3),
+                tree: false,
+            },
         ],
         cover_per_tile: 2,
 
@@ -665,5 +768,52 @@ pub fn landmarks(
             NotShadowCaster,
             BiomeEntity,
         ));
+    }
+
+    // ── Glowing mushroom clusters — pale stems (shared white mat) under bioluminescent
+    // caps (emissive mat → bloom). Spread across the patch with a local Mulberry32 RNG,
+    // skipping the river column and the open centre framing. ~14 clusters.
+    let glow_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.40, 0.95, 0.82),
+        emissive: LinearRgba::from(GLOWMUSH_GLOW) * GLOWMUSH_EMISSIVE,
+        unlit: true,
+        ..default()
+    });
+    let stems = meshes.add(build_glowmush_stems_mesh());
+    let caps = meshes.add(build_glowmush_caps_mesh());
+
+    let mut seed = 0x51ed_2a17_u32;
+    let mut next = || {
+        seed = seed.wrapping_add(0x6d2b_79f5);
+        let mut t = seed;
+        t = (t ^ (t >> 15)).wrapping_mul(t | 1);
+        t ^= t.wrapping_add((t ^ (t >> 7)).wrapping_mul(t | 61));
+        ((t ^ (t >> 14)) as f32) / 4_294_967_296.0
+    };
+    let mut placed = 0;
+    for _ in 0..160 {
+        if placed >= 14 {
+            break;
+        }
+        let x = -14.0 + next() * 28.0;
+        let z = -14.0 + next() * 28.0;
+        // Skip the river band and the open framing in front of the camera.
+        if crate::water::on_river(x, z) || (x * x + z * z) < 9.0 {
+            continue;
+        }
+        let tf = Transform {
+            translation: Vec3::new(x, 0.0, z),
+            rotation: Quat::from_rotation_y(next() * TAU),
+            scale: Vec3::splat(0.85 + next() * 0.7),
+        };
+        commands.spawn((Mesh3d(stems.clone()), MeshMaterial3d(mat.clone()), tf, BiomeEntity));
+        commands.spawn((
+            Mesh3d(caps.clone()),
+            MeshMaterial3d(glow_mat.clone()),
+            tf,
+            NotShadowCaster,
+            BiomeEntity,
+        ));
+        placed += 1;
     }
 }

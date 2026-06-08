@@ -20,6 +20,7 @@ mod critters;
 mod debug_panel;
 mod decor;
 mod defenses;
+mod dying;
 mod depth_blur;
 mod distant;
 mod economy;
@@ -110,6 +111,7 @@ fn main() {
         .add_plugins((
             icons::IconsPlugin, // procedural item icons (satchel + shop)
             grade::GradePlugin, // reactive low-HP/hit vignette
+            dying::DyingPlugin, // shared death-fade for orks + wildlife
         ))
         .run();
 }

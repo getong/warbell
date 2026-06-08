@@ -5,6 +5,7 @@ use bevy::prelude::*;
 use tileworld_core::buff_store::BuffKind;
 use tileworld_core::inventory::{item_def, QuickSlot};
 
+use crate::icons::IconAtlas;
 use crate::inventory::{Buffs, Inventory, Toasts};
 use crate::player::{HeroHealth, PlayerRes};
 
@@ -16,12 +17,40 @@ struct StaminaFill;
 struct XpFill;
 #[derive(Component)]
 struct ResourceText;
-/// Pickup-toast column (top-right).
+
+/// Which derived quick-slot a node belongs to.
+#[derive(Clone, Copy, PartialEq)]
+enum SlotKind {
+    Food,
+    Resist,
+    Power,
+    Haste,
+}
+impl SlotKind {
+    fn key(self) -> char {
+        match self {
+            SlotKind::Food => 'Q',
+            SlotKind::Resist => 'Z',
+            SlotKind::Power => 'X',
+            SlotKind::Haste => 'C',
+        }
+    }
+}
+/// A quick-slot's icon (its `ImageNode` handle + display are swapped each frame).
 #[derive(Component)]
-struct ToastText;
-/// Quick-bar + active-buff line (bottom-centre).
+struct QuickSlotIcon(SlotKind);
+/// A quick-slot's key/count label.
 #[derive(Component)]
-struct QuickText;
+struct QuickSlotText(SlotKind);
+/// The active-buff timers line under the quick-bar.
+#[derive(Component)]
+struct BuffLineText;
+/// The toast column container (rows are cleared + respawned each frame).
+#[derive(Component)]
+struct ToastRoot;
+/// One toast row (despawned + rebuilt each frame).
+#[derive(Component)]
+struct ToastRow;
 
 pub struct HudPlugin;
 
@@ -123,98 +152,164 @@ fn setup_inv_hud(mut commands: Commands) {
                 TextColor(Color::srgba(0.85, 0.86, 0.92, 0.65)),
             ));
         });
-    // Top-right pickup toasts.
-    commands
-        .spawn(Node {
+    // Top-right pickup-toast column (rows spawned dynamically into this container).
+    commands.spawn((
+        Node {
             position_type: PositionType::Absolute,
             right: Val::Px(18.0),
             top: Val::Px(18.0),
             flex_direction: FlexDirection::Column,
             align_items: AlignItems::End,
+            row_gap: Val::Px(4.0),
             ..default()
-        })
-        .with_children(|p| {
-            p.spawn((
-                Text::new(""),
-                TextFont { font_size: 18.0, ..default() },
-                TextColor(Color::srgb(0.95, 0.86, 0.5)),
-                ToastText,
-            ));
-        });
-    // Bottom-centre quick-bar.
+        },
+        ToastRoot,
+    ));
+    // Bottom-centre quick-bar: a row of 4 icon slots + a buff-timer line beneath.
     commands
         .spawn(Node {
             position_type: PositionType::Absolute,
             bottom: Val::Px(16.0),
             width: Val::Percent(100.0),
-            justify_content: JustifyContent::Center,
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            row_gap: Val::Px(4.0),
             ..default()
         })
-        .with_children(|p| {
-            p.spawn((
+        .with_children(|col| {
+            col.spawn(Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(14.0), ..default() })
+                .with_children(|row| {
+                    for kind in [SlotKind::Food, SlotKind::Resist, SlotKind::Power, SlotKind::Haste] {
+                        row.spawn((
+                            Node {
+                                flex_direction: FlexDirection::Column,
+                                align_items: AlignItems::Center,
+                                padding: UiRect::all(Val::Px(4.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)),
+                        ))
+                        .with_children(|slot| {
+                            slot.spawn((
+                                Node {
+                                    width: Val::Px(28.0),
+                                    height: Val::Px(28.0),
+                                    display: Display::None, // shown once a real handle is assigned
+                                    ..default()
+                                },
+                                ImageNode::new(Handle::default()),
+                                QuickSlotIcon(kind),
+                            ));
+                            slot.spawn((
+                                Text::new(format!("{} -", kind.key())),
+                                TextFont { font_size: 14.0, ..default() },
+                                TextColor(Color::srgb(0.88, 0.9, 0.95)),
+                                QuickSlotText(kind),
+                            ));
+                        });
+                    }
+                });
+            col.spawn((
                 Text::new(""),
-                TextFont { font_size: 16.0, ..default() },
-                TextColor(Color::srgb(0.88, 0.9, 0.95)),
-                QuickText,
+                TextFont { font_size: 14.0, ..default() },
+                TextColor(Color::srgb(0.7, 0.85, 1.0)),
+                BuffLineText,
             ));
         });
 }
 
-/// Render the pickup-toast stack (auto-dismissing past 4s) + the four quick-slots and any
-/// active buff timers. Polls the inventory/buff/toast resources each frame.
-#[allow(clippy::type_complexity)]
+/// Resolve which bag item feeds a quick-slot.
+fn slot_for(inv: &Inventory, kind: SlotKind) -> Option<QuickSlot> {
+    match kind {
+        SlotKind::Food => inv.0.food_slot(),
+        SlotKind::Resist => inv.0.buff_slot(BuffKind::Resist),
+        SlotKind::Power => inv.0.buff_slot(BuffKind::Power),
+        SlotKind::Haste => inv.0.buff_slot(BuffKind::Haste),
+    }
+}
+
+/// Drive the quick-bar icons/counts + buff line + the pickup-toast rows (with item icons).
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn update_inv_hud(
     time: Res<Time>,
     inv: Res<Inventory>,
     buffs: Res<Buffs>,
+    atlas: Res<IconAtlas>,
     mut toasts: ResMut<Toasts>,
-    mut toast_q: Query<&mut Text, (With<ToastText>, Without<QuickText>)>,
-    mut quick_q: Query<&mut Text, (With<QuickText>, Without<ToastText>)>,
+    mut commands: Commands,
+    mut icon_q: Query<(&QuickSlotIcon, &mut Node, &mut ImageNode)>,
+    mut count_q: Query<(&QuickSlotText, &mut Text), With<QuickSlotText>>,
+    mut buffline_q: Query<&mut Text, (With<BuffLineText>, Without<QuickSlotText>)>,
+    toast_root_q: Query<Entity, With<ToastRoot>>,
+    rows_q: Query<Entity, With<ToastRow>>,
 ) {
     let now = time.elapsed_secs() as f64;
 
-    // Auto-dismiss toasts older than 4s.
+    // ── Quick-slot icons: swap the handle + show/hide the slot. ──
+    for (slot, mut node, mut img) in &mut icon_q {
+        match slot_for(&inv, slot.0).and_then(|s| atlas.get(&s.item_id)) {
+            Some(handle) => {
+                img.image = handle;
+                node.display = Display::Flex;
+            }
+            None => node.display = Display::None,
+        }
+    }
+    // ── Quick-slot labels: "Q x3" or "Q -". ──
+    for (slot, mut text) in &mut count_q {
+        **text = match slot_for(&inv, slot.0) {
+            Some(s) => format!("{} x{}", slot.0.key(), s.count),
+            None => format!("{} -", slot.0.key()),
+        };
+    }
+    // ── Active-buff timers. ──
+    if let Ok(mut line) = buffline_q.single_mut() {
+        **line = buffs
+            .0
+            .active_buffs(now)
+            .iter()
+            .map(|a| format!("{} {:.0}s", a.kind.label(), a.remain))
+            .collect::<Vec<_>>()
+            .join("    ");
+    }
+
+    // ── Toasts: dismiss the stale, then rebuild one [icon + text] row per live toast. ──
     let expired: Vec<i64> =
         toasts.0.toasts().iter().filter(|t| now - t.born >= 4.0).map(|t| t.id).collect();
     for id in expired {
         toasts.0.remove(id);
     }
-    if let Ok(mut t) = toast_q.single_mut() {
-        **t = toasts
-            .0
-            .toasts()
-            .iter()
-            .map(|tt| {
-                let name = item_def(&tt.item_id).map(|d| d.name).unwrap_or(tt.item_id.as_str());
-                format!("+{} {}", tt.count, name)
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+    for e in &rows_q {
+        commands.entity(e).despawn(); // clear last frame's rows (children go with them)
     }
-
-    if let Ok(mut q) = quick_q.single_mut() {
-        let label = |s: Option<QuickSlot>| {
-            s.map(|q| {
-                let name = item_def(&q.item_id).map(|d| d.name).unwrap_or(q.item_id.as_str());
-                format!("{} x{}", name, q.count)
-            })
-            .unwrap_or_else(|| "-".into())
-        };
-        let mut line = format!(
-            "[Q] {}    [Z] {}    [X] {}    [C] {}",
-            label(inv.0.food_slot()),
-            label(inv.0.buff_slot(BuffKind::Resist)),
-            label(inv.0.buff_slot(BuffKind::Power)),
-            label(inv.0.buff_slot(BuffKind::Haste)),
-        );
-        let active = buffs.0.active_buffs(now);
-        if !active.is_empty() {
-            let bits: Vec<String> =
-                active.iter().map(|a| format!("{} {:.0}s", a.kind.label(), a.remain)).collect();
-            line.push('\n');
-            line.push_str(&bits.join("    "));
-        }
-        **q = line;
+    if let Ok(root) = toast_root_q.single() {
+        commands.entity(root).with_children(|col| {
+            for tt in toasts.0.toasts() {
+                let name = item_def(&tt.item_id).map(|d| d.name).unwrap_or(tt.item_id.as_str());
+                col.spawn((
+                    Node {
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(6.0),
+                        ..default()
+                    },
+                    ToastRow,
+                ))
+                .with_children(|row| {
+                    if let Some(h) = atlas.get(&tt.item_id) {
+                        row.spawn((
+                            Node { width: Val::Px(22.0), height: Val::Px(22.0), ..default() },
+                            ImageNode::new(h),
+                        ));
+                    }
+                    row.spawn((
+                        Text::new(format!("+{} {}", tt.count, name)),
+                        TextFont { font_size: 18.0, ..default() },
+                        TextColor(Color::srgb(0.95, 0.86, 0.5)),
+                    ));
+                });
+            }
+        });
     }
 }
 

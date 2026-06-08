@@ -243,7 +243,7 @@ fn camp_rescue(
             color: Color::srgb(0.5, 1.0, 0.6),
             scale: 1.2,
         });
-        cues.write(crate::audio::AudioCue::UiSelect);
+        cues.write(crate::audio::AudioCue::CampRescue);
     }
 }
 
@@ -324,7 +324,7 @@ fn guard_combat(
     mut guards: Query<(&mut Guard, &mut Villager, &mut Transform), Without<crate::orks::WaveInvader>>,
     mut invaders: Query<
         (Entity, &Transform, &mut crate::player::Health),
-        (With<crate::orks::WaveInvader>, Without<Guard>),
+        (With<crate::orks::WaveInvader>, Without<Guard>, Without<crate::dying::Dying>),
     >,
 ) {
     let dt = time.delta_secs().min(0.05);
@@ -418,7 +418,7 @@ fn guard_combat(
             if hp.hp > 0.0 {
                 hp.hp -= dmg;
                 if hp.hp <= 0.0 {
-                    commands.entity(e).try_despawn();
+                    crate::dying::begin_dying(&mut commands, e, time.elapsed_secs());
                 }
             }
         }

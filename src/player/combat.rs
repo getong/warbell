@@ -163,7 +163,7 @@ pub fn player_attack(
     mut hero_q: Query<(&mut Hero, &HeroHealth)>,
     mut targets: Query<
         (Entity, &GlobalTransform, &mut Health, Option<&mut Ork>, Option<&Animal>),
-        Or<(With<Ork>, With<Animal>)>,
+        (Or<(With<Ork>, With<Animal>)>, Without<crate::dying::Dying>),
     >,
 ) {
     let Ok((mut hero, hh)) = hero_q.single_mut() else { return };
@@ -264,8 +264,9 @@ pub fn player_attack(
             if lifesteal > 0.0 {
                 player.0.heal(lifesteal);
             }
-            // `try_despawn`: a defender bolt / biome rebuild may have already reaped this target.
-            commands.entity(e).try_despawn();
+            // Fade out (crumple) instead of popping; the target query excludes Dying so it's
+            // never re-hit / re-rewarded.
+            crate::dying::begin_dying(&mut commands, e, time.elapsed_secs());
         } else {
             // Shove a surviving ork back along the blow (harder on a crit).
             if let Some(o) = ork.as_deref_mut() {
@@ -284,6 +285,10 @@ pub fn player_attack(
                 scale: if crit { 1.2 } else { 1.0 },
             });
             commands.entity(e).insert(crate::combat_fx::HurtFlash::new(time.elapsed_secs()));
+            // A struck (surviving) animal enrages — predators latch onto the hero.
+            if animal.is_some() {
+                commands.entity(e).try_insert(crate::wildlife::Struck);
+            }
         }
     }
     // ── Cleave pass: splash a fraction of the swing to OTHER orks near a struck target ──
@@ -320,7 +325,7 @@ pub fn player_attack(
                             player.0.heal(lifesteal);
                         }
                     }
-                    commands.entity(e).try_despawn();
+                    crate::dying::begin_dying(&mut commands, e, time.elapsed_secs());
                 } else {
                     floats.0.push(crate::combat_fx::FloatReq {
                         world: head,

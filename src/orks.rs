@@ -257,7 +257,10 @@ fn ork_brain(
     mut cues: MessageWriter<crate::audio::AudioCue>,
     mut music: ResMut<crate::audio::MusicState>,
     mut was_clearing: Local<bool>,
-    mut q: Query<(Entity, &mut Ork, &mut Transform, Option<&crate::player::Health>), Without<WaveInvader>>,
+    mut q: Query<
+        (Entity, &mut Ork, &mut Transform, Option<&crate::player::Health>),
+        (Without<WaveInvader>, Without<crate::dying::Dying>),
+    >,
 ) {
     let dt = time.delta_secs().min(0.05);
     let tw = time.elapsed_secs_wrapped();
@@ -453,7 +456,7 @@ fn shaman_heal(
     time: Res<Time>,
     fx: Option<Res<crate::player::CombatFx>>,
     mut commands: Commands,
-    mut q: Query<(Entity, &mut Ork, &GlobalTransform, &mut crate::player::Health)>,
+    mut q: Query<(Entity, &mut Ork, &GlobalTransform, &mut crate::player::Health), Without<crate::dying::Dying>>,
 ) {
     let dt = time.delta_secs().min(0.05);
     // Snapshot every ork's (entity, faction, xz, hp, max) so we can target then mutate.
@@ -514,7 +517,10 @@ fn shaman_heal(
 fn ork_brawl(
     time: Res<Time>,
     mut commands: Commands,
-    mut q: Query<(Entity, &mut Ork, &mut crate::player::Health), Without<WaveInvader>>,
+    mut q: Query<
+        (Entity, &mut Ork, &mut crate::player::Health),
+        (Without<WaveInvader>, Without<crate::dying::Dying>),
+    >,
 ) {
     let dt = time.delta_secs().min(0.05);
     let snap: Vec<(Entity, Vec2)> = q.iter().map(|(e, o, _)| (e, o.pos)).collect();
@@ -534,7 +540,7 @@ fn ork_brawl(
             if h.hp > 0.0 {
                 h.hp -= dmg;
                 if h.hp <= 0.0 {
-                    commands.entity(e).try_despawn();
+                    crate::dying::begin_dying(&mut commands, e, time.elapsed_secs());
                 }
             }
         }

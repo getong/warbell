@@ -223,7 +223,7 @@ fn step_defender_bolts(
     time: Res<Time>,
     fx: Option<Res<CombatFx>>,
     mut commands: Commands,
-    invaders: Query<&Transform, (With<WaveInvader>, Without<DefenderBolt>)>,
+    invaders: Query<&Transform, (With<WaveInvader>, Without<DefenderBolt>, Without<crate::dying::Dying>)>,
     mut hp_q: Query<&mut Health>,
     mut q: Query<(Entity, &mut DefenderBolt, &mut Transform)>,
 ) {
@@ -248,9 +248,9 @@ fn step_defender_bolts(
                     if hp.hp > 0.0 {
                         hp.hp -= b.damage;
                         if hp.hp <= 0.0 {
-                            // `try_despawn`: combat / the stuck-reaper / the victory clear may
-                            // race to remove the same invader this frame — tolerate it being gone.
-                            commands.entity(b.target).try_despawn();
+                            // Fade out (idempotent — combat / stuck-reaper may race on the same
+                            // invader this frame; begin_dying tolerates it).
+                            crate::dying::begin_dying(&mut commands, b.target, time.elapsed_secs());
                         }
                     }
                 }
@@ -346,7 +346,7 @@ fn war_bell(
     }
     if keys.just_pressed(KeyCode::KeyE) && hero.pos.distance(BELL_POS) < BELL_INTERACT_DIST {
         siege.request_prep_skip();
-        cues.write(AudioCue::UiSelect);
+        cues.write(AudioCue::WarBell);
         feedback.trauma = (feedback.trauma + 0.3).min(1.0);
     }
 }
@@ -388,8 +388,9 @@ pub fn populate_defenders(
             crate::biome::BiomeEntity,
         ));
     }
-    // Ballista just outside the north gate, with a small visible engine.
-    let (bx, bz) = (0.0, -HALF_Z - 3.0);
+    // Ballista flanking the north gate (offset off the gate axis so it doesn't sit on the hero
+    // spawn / follow-cam line — the hero spawns at the gate centre, `gate.y - 3.0`).
+    let (bx, bz) = (2.6, -HALF_Z - 2.2);
     let y = crate::worldmap::ground_at_world(bx, bz).unwrap_or(0.0);
     let mesh = meshes.add(Cuboid::new(1.3, 0.5, 1.7).mesh().build());
     let mat = materials.add(StandardMaterial {

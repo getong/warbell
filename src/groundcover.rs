@@ -32,8 +32,28 @@ const FLOWER_CENTER: u32 = 0xe8c84a; // yellow flower centre (#e8c84a)
 const PETAL_PINK: u32 = 0xe88ad6; // variant 0 — pink (#e88ad6)
 const PETAL_YELLOW: u32 = 0xe6c84a; // variant 1 — yellow (#e6c84a)
 const PETAL_WHITE: u32 = 0xf2f0e4; // variant 2 — white
+const PETAL_RED: u32 = 0xd8413a; // poppy red
+const PETAL_BLUE: u32 = 0x5878d8; // cornflower blue
+const PETAL_PURPLE: u32 = 0xa861cc; // wild violet purple
+const POPPY_CORE: u32 = 0x2a1a12; // dark poppy centre
+
+/// How many flower colour/shape variants `build_flower_mesh` produces.
+pub const NUM_FLOWER_VARIANTS: u32 = 7;
 
 const CLOVER_GREEN: u32 = 0x4a8f3a; // clover leaf green
+
+// ── Forest-floor litter (pinecones, acorns, pebbles, fallen leaves) ──────────────
+const PINECONE: u32 = 0x6e4a2c; // brown pinecone scales
+const ACORN_NUT: u32 = 0x9a6536; // acorn nut body
+const ACORN_CAP: u32 = 0x5a3a1f; // darker acorn cap
+const LITTER_PEBBLE: u32 = 0x9a8f82; // small grey ground pebble
+const LITTER_PEBBLE_DK: u32 = 0x7d7466; // shadowed pebble
+const LEAF_RED: u32 = 0xc05a30; // fallen autumn leaf (rust)
+const LEAF_GOLD: u32 = 0xd0a440; // fallen autumn leaf (gold)
+const LEAF_BROWN: u32 = 0x8a6a3a; // fallen leaf (brown)
+
+/// How many forest-floor litter variants `build_floor_litter_mesh` produces.
+pub const NUM_LITTER_VARIANTS: u32 = 4;
 
 // ── Mesh helpers (verified 0.18 forms, mirrors CONTRACT §mesh-building) ────────
 
@@ -193,37 +213,91 @@ pub fn build_mushroom_mesh(variant: u32) -> Mesh {
 
 // ── Flower ───────────────────────────────────────────────────────────────────
 
-/// Flower: a thin green stem + a small bright petal head — a ring of 5 petal balls
-/// around a yellow centre. `variant`: 0 pink, 1 yellow, 2 white (anything else wraps).
-/// ~0.18u tall.
+/// Flower: a thin green stem + a small bright petal head — a ring of petal balls around a
+/// centre. `variant` (mod [`NUM_FLOWER_VARIANTS`]) picks colour + shape, so a meadow reads
+/// as a mix of pink/yellow/white daisies, red poppies, blue cornflowers and violets of
+/// varying height and petal count. ~0.16–0.24u tall.
 pub fn build_flower_mesh(variant: u32) -> Mesh {
-    let petal = match variant % 3 {
-        0 => PETAL_PINK,
-        1 => PETAL_YELLOW,
-        _ => PETAL_WHITE,
+    // (petal, centre, n_petals, head_y, ring_r, petal_r, petal_squash)
+    let (petal, center, n, head_y, ring_r, petal_r, squash) = match variant % NUM_FLOWER_VARIANTS {
+        0 => (PETAL_PINK, FLOWER_CENTER, 5, 0.16, 0.045, 0.030, 0.55),
+        1 => (PETAL_YELLOW, FLOWER_CENTER, 5, 0.16, 0.045, 0.030, 0.55),
+        2 => (PETAL_WHITE, FLOWER_CENTER, 5, 0.16, 0.045, 0.030, 0.55),
+        3 => (PETAL_RED, POPPY_CORE, 5, 0.20, 0.050, 0.036, 0.50), // poppy — taller, dark core
+        4 => (PETAL_BLUE, FLOWER_CENTER, 8, 0.18, 0.046, 0.022, 0.50), // cornflower — many petals
+        5 => (PETAL_PURPLE, FLOWER_CENTER, 6, 0.19, 0.046, 0.026, 0.55), // violet
+        _ => (PETAL_WHITE, FLOWER_CENTER, 11, 0.23, 0.052, 0.016, 0.40), // daisy — tall, thin rays
     };
-    const HEAD_Y: f32 = 0.16;
-    const RING_R: f32 = 0.045;
     let mut parts = vec![
         // Thin green stem (a slender cone from the ground up to the bloom).
         tinted(
-            Cone { radius: 0.010, height: HEAD_Y }.mesh().build().translated_by(y(HEAD_Y * 0.5)),
+            Cone { radius: 0.010, height: head_y }.mesh().build().translated_by(y(head_y * 0.5)),
             lin(FLOWER_STEM),
         ),
-        // Yellow centre disc (small squashed ball at the bloom).
-        ball_at(0.024, y(HEAD_Y), 0.7, FLOWER_CENTER),
+        // Centre disc (small squashed ball at the bloom).
+        ball_at(0.024, y(head_y), 0.7, center),
     ];
-    // Ring of 5 petals around the centre (small flattened balls).
-    for i in 0..5 {
-        let a = (i as f32 / 5.0) * std::f32::consts::TAU;
+    // Ring of petals around the centre (small flattened balls).
+    for i in 0..n {
+        let a = (i as f32 / n as f32) * std::f32::consts::TAU;
         parts.push(ball_at(
-            0.030,
-            Vec3::new(a.cos() * RING_R, HEAD_Y, a.sin() * RING_R),
-            0.55,
+            petal_r,
+            Vec3::new(a.cos() * ring_r, head_y, a.sin() * ring_r),
+            squash,
             petal,
         ));
     }
     merged(parts)
+}
+
+// ── Forest-floor litter ──────────────────────────────────────────────────────────
+
+/// Tiny forest-floor litter that makes the ground feel lived-in. `variant` (mod
+/// [`NUM_LITTER_VARIANTS`]): 0 = pinecone, 1 = acorn, 2 = pebble cluster, 3 = a few fallen
+/// autumn leaves. All very low (≤0.12u), base flush at y=0.
+pub fn build_floor_litter_mesh(variant: u32) -> Mesh {
+    match variant % NUM_LITTER_VARIANTS {
+        // Pinecone — three stacked squashed brown balls tapering to a tip.
+        0 => merged(vec![
+            ball_at(0.045, y(0.04), 1.15, PINECONE),
+            ball_at(0.036, y(0.085), 1.15, PINECONE),
+            ball_at(0.024, y(0.115), 1.1, PINECONE),
+        ]),
+        // Acorn — a rounded nut with a darker textured cap + a tiny stalk.
+        1 => merged(vec![
+            ball_at(0.040, y(0.035), 1.05, ACORN_NUT),
+            ball_at(0.044, y(0.066), 0.55, ACORN_CAP),
+            tinted(
+                Cylinder::new(0.008, 0.03).mesh().resolution(5).build().translated_by(y(0.092)),
+                lin(ACORN_CAP),
+            ),
+        ]),
+        // Pebble cluster — two or three small grey stones.
+        2 => merged(vec![
+            ball_at(0.050, y(0.028), 0.55, LITTER_PEBBLE),
+            ball_at(0.036, Vec3::new(0.06, 0.020, 0.03), 0.5, LITTER_PEBBLE_DK),
+            ball_at(0.030, Vec3::new(-0.05, 0.018, -0.04), 0.5, LITTER_PEBBLE),
+        ]),
+        // Fallen leaves — a few flat tinted discs lying on the ground, lightly overlapping.
+        _ => {
+            let leaf = |r: f32, off: Vec3, c: u32| -> Mesh {
+                tinted(
+                    Circle::new(r)
+                        .mesh()
+                        .resolution(6)
+                        .build()
+                        .rotated_by(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2))
+                        .translated_by(off),
+                    lin(c),
+                )
+            };
+            merged(vec![
+                leaf(0.06, y(0.004), LEAF_RED),
+                leaf(0.055, Vec3::new(0.07, 0.008, 0.02), LEAF_GOLD),
+                leaf(0.05, Vec3::new(-0.05, 0.012, 0.05), LEAF_BROWN),
+            ])
+        }
+    }
 }
 
 // ── Clover ────────────────────────────────────────────────────────────────────

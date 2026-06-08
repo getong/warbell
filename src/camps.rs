@@ -224,12 +224,12 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut
         let place = |local: Vec3| centre3 + rot_q * local;
 
         // Static props: (mesh, camp-local pos, local yaw, footprint half-extents (hw,hd) in the
-        // prop's own frame; (0,0) = no collision). Tents are long+thin along their ridge (local
-        // Z), so an ORIENTED box hugs the silhouette instead of a fat square.
+        // prop's own frame; (0,0) = no collision). Tents are pure set-dressing — walk-through, no
+        // blocker (they read as open lean-tos and a wall there snags the hero on approach).
         let (ta, tb) = tent_cols(site.faction);
         let solids = vec![
-            (tent_mesh(ta), v(-1.1, 0.0, -0.6), 0.3_f32, (0.45_f32, 0.85_f32)),
-            (tent_mesh(tb), v(1.3, 0.0, 0.4), -0.4, (0.45, 0.85)),
+            (tent_mesh(ta), v(-1.1, 0.0, -0.6), 0.3_f32, (0.0_f32, 0.0_f32)),
+            (tent_mesh(tb), v(1.3, 0.0, 0.4), -0.4, (0.0, 0.0)),
             (banner_mesh(site.faction), v(0.0, 0.0, 0.0), 0.0, (0.25, 0.25)),
             (spikes_mesh(), v(0.0, 0.0, 0.0), 0.0, (0.0, 0.0)),
             (cage_mesh(), v(-2.2, 0.0, 2.2), 0.6, (0.95, 0.95)),

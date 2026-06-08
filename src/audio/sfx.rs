@@ -7,6 +7,7 @@
 use bevy::audio::{PlaybackMode, Volume};
 use bevy::prelude::*;
 
+use super::synth::{Sting, StingBank};
 use super::{jitter, pick, AudioConfig, AudioCue, Surface};
 
 /// All one-shot SFX handles, loaded once at startup.
@@ -73,6 +74,7 @@ pub(crate) fn play_cues(
     mut commands: Commands,
     cfg: Res<AudioConfig>,
     bank: Res<SfxBank>,
+    stings: Res<StingBank>,
     mut seed: Local<u32>,
     mut cues: MessageReader<AudioCue>,
 ) {
@@ -108,6 +110,31 @@ pub(crate) fn play_cues(
             AudioCue::OrkRoar(pos) => {
                 let clip = pick(&bank.ork_roars, &mut seed);
                 spatial_shot(&mut commands, clip, 0.50 * voice, jitter(&mut seed, 0.08), pos);
+            }
+            // Procedural synth stings (no clip on disk — baked by `synth.rs`).
+            AudioCue::OreShatter
+            | AudioCue::ChestOpen
+            | AudioCue::Forage
+            | AudioCue::LevelUp
+            | AudioCue::Gold
+            | AudioCue::ShopBuy
+            | AudioCue::WarBell
+            | AudioCue::CampRescue
+            | AudioCue::LowHp => {
+                let sting = match *cue {
+                    AudioCue::OreShatter => Sting::OreShatter,
+                    AudioCue::ChestOpen => Sting::ChestOpen,
+                    AudioCue::Forage => Sting::Forage,
+                    AudioCue::LevelUp => Sting::LevelUp,
+                    AudioCue::Gold => Sting::Gold,
+                    AudioCue::ShopBuy => Sting::ShopBuy,
+                    AudioCue::WarBell => Sting::WarBell,
+                    AudioCue::CampRescue => Sting::CampRescue,
+                    _ => Sting::LowHp,
+                };
+                if let Some(h) = stings.handle(sting) {
+                    one_shot(&mut commands, h, sting.volume() * sfx, jitter(&mut seed, 0.05));
+                }
             }
             // Hero-mouth cues (grunts / jump / hurt / death / lines) are handled by `voice.rs`.
             _ => {}
