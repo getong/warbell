@@ -186,6 +186,14 @@ pub struct Ork {
     brawl_target: Option<Entity>,
     /// Brawl strike cooldown (s), separate from the hero-attack `atk_cd`.
     brawl_cd: f32,
+    /// Cached A* route to the hero while hunting (camp orks route around walls/props instead of
+    /// wedging on them). Invaders ignore these — they use their own `navgrid::InvaderPath`.
+    hunt_path: Vec<Vec2>,
+    hunt_cursor: usize,
+    /// Game-time to recompute the hunt path (throttled + staggered per ork).
+    hunt_replan_at: f32,
+    /// Hero position the cached path was planned for (replan once it drifts).
+    hunt_goal: Vec2,
 }
 
 /// Rival warbands trade blows when they close (`factions::orks_hostile` — Red vs Blue).
@@ -360,10 +368,33 @@ fn ork_brain(
                 }
             }
             OrkMode::Hunt => {
-                // Charge the hero faster than a patrol, steering around props/cliffs.
+                // Charge faster than a patrol, steering around props/cliffs. When chasing the
+                // HERO, follow an A* route (around walls); a rival brawl stays direct (close
+                // range, same clearing) so it doesn't thrash the pathfinder.
                 let cur_y = worldmap::ground_at_world(o.pos.x, o.pos.y).unwrap_or(tf.translation.y);
                 let speed = o.speed * 1.4 * if frenzied { 1.4 } else { 1.0 };
-                match steer::advance(o.pos, o.facing, o.target, speed * dt, o.body_r, cur_y, ORK_MAX_TURN * 1.6 * dt) {
+                let step_target = if o.brawl_target.is_none() {
+                    let now = time.elapsed_secs();
+                    if o.hunt_cursor >= o.hunt_path.len()
+                        || now >= o.hunt_replan_at
+                        || o.hunt_goal.distance(o.target) > 2.0
+                    {
+                        o.hunt_path = crate::navgrid::path_to(o.pos, o.target);
+                        o.hunt_cursor = 0;
+                        o.hunt_goal = o.target;
+                        // Stagger replans across a warband (entity-bit offset) to avoid frame spikes.
+                        o.hunt_replan_at = now + 0.6 + (self_e.to_bits() % 16) as f32 * 0.03;
+                    }
+                    while o.hunt_cursor < o.hunt_path.len()
+                        && o.pos.distance(o.hunt_path[o.hunt_cursor]) < 1.2
+                    {
+                        o.hunt_cursor += 1;
+                    }
+                    o.hunt_path.get(o.hunt_cursor).copied().unwrap_or(o.target)
+                } else {
+                    o.target
+                };
+                match steer::advance(o.pos, o.facing, step_target, speed * dt, o.body_r, cur_y, ORK_MAX_TURN * 1.6 * dt) {
                     Some(s) => {
                         o.facing = s.facing;
                         o.pos = s.pos;
@@ -775,6 +806,10 @@ impl Armory {
             kb: Vec2::ZERO,
             brawl_target: None,
             brawl_cd: 0.0,
+            hunt_path: Vec::new(),
+            hunt_cursor: 0,
+            hunt_replan_at: 0.0,
+            hunt_goal: Vec2::ZERO,
         };
 
         let scale = BASE_SCALE * st.scale;
