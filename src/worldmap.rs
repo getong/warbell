@@ -346,6 +346,12 @@ pub fn biome_at_world(wx: f32, wz: f32) -> Option<Biome> {
     tile_biome_world(wx, wz)
 }
 
+/// Is world `(x, z)` over the carved river channel (where the sea plane shows through the
+/// terrain)? The real combined-map river — `bridges` scans this to span the actual water.
+pub fn is_river_world(wx: f32, wz: f32) -> bool {
+    is_river(wx + GX, wz + GZ)
+}
+
 // ── Blended ground colour ───────────────────────────────────────────────────────
 fn lin3(hex: u32) -> [f32; 3] {
     let l = lin(hex);
@@ -385,8 +391,17 @@ fn ground_color(x: f32, z: f32) -> [f32; 4] {
     // Sandy coast fade.
     let dco = dist_from_coast(x, z) as f32;
     col = mix3(col, lin3(COL_SAND), smoothstep(3.5, 0.5, dco) * 0.85);
+    // Worn dirt approach-paths baked straight into the ground (not raised geometry — they're
+    // just a brown blend in the terrain, like the original game's roads).
+    let strength = crate::roads::road_strength(x - GX, z - GZ);
+    if strength > 0.0 {
+        col = mix3(col, lin3(ROAD_DIRT), strength * 0.85);
+    }
     [col[0], col[1], col[2], 1.0]
 }
+
+/// Trampled-earth tint blended into the ground along the gate approach-roads.
+const ROAD_DIRT: u32 = 0x8a6d44;
 
 // ── Build ────────────────────────────────────────────────────────────────────────
 #[allow(clippy::too_many_arguments)]
@@ -504,11 +519,10 @@ pub fn build(
     // ── Signature landmarks: one per biome region (frozen spire, pyramid, trilithon, …) ──
     crate::ruins::populate_landmarks(commands, meshes, std_mats);
 
-    // ── River bridges: plank decks at a few crossings (also nav-grid walkable spans). ──
+    // ── River bridges: plank decks at the real river crossings (also nav-grid walkable). ──
     crate::bridges::populate(commands, meshes, std_mats);
-
-    // ── Dirt approach-roads radiating from the castle gates (cosmetic ground ribbons). ──
-    crate::roads::populate(commands, meshes, std_mats);
+    // (Roads are NOT spawned as geometry — they're baked into the ground colour by
+    //  `ground_color` via `roads::road_strength`, so they read as a brown blend in the terrain.)
 
     // No distant horizon hills — open ocean fading into fog reads cleaner.
 }

@@ -1,8 +1,8 @@
-//! **Bridges** — plank decks spanning the meandering river at a few crossings, ported from the
-//! old game's `Bridge.tsx` / `bridges.ts`. Each is a merged vertex-coloured deck (planks + side
-//! rails + end posts) laid across the river centerline, and registers a walkable span so the
-//! nav-grid's A* (and thus the night invaders) can cross the water there instead of routing all
-//! the way around it.
+//! **Bridges** — plank decks laid across the combined map's real river. The river is a carved
+//! terrain channel (the sea plane shows through where `worldmap::is_river_world` is true), so we
+//! SCAN that channel at a few depths, find the water run's centre + width, and span it bank to
+//! bank. Each deck also registers a walkable span the nav-grid honours, so the night invaders'
+//! A* can cross at a bridge. Ports Bridge.tsx/bridges.ts, placed on the actual water.
 
 use std::sync::OnceLock;
 
@@ -11,36 +11,82 @@ use bevy::prelude::*;
 
 use crate::biome::BiomeEntity;
 use crate::palette::lin;
+use crate::worldmap::{is_river_world, GX};
 
-/// Half-length of a deck across the river (X), and half-width along the bank (Z).
-const DECK_HALF_X: f32 = 3.4;
-const DECK_HALF_Z: f32 = 1.1;
+/// Half-width along the bank (Z) of a deck.
+const DECK_HALF_Z: f32 = 1.2;
+/// Bank overhang past the water edge on each side (world units).
+const OVERHANG: f32 = 1.4;
+/// Min Z gap between successive bridges as we scan (so they spread along the river).
+const MIN_SPACING_Z: f32 = 30.0;
+/// At most this many bridges.
+const MAX_BRIDGES: usize = 3;
+/// Acceptable half-width of a river run to bridge (skip slivers + implausibly wide spans).
+const MIN_HALF: f32 = 0.6;
+const MAX_HALF: f32 = 9.0;
 
-/// The z-positions (world) at which a bridge crosses the river. Chosen to spread along the
-/// meander; each deck is centred on the river centerline `x = 6·sin(0.12·z)` at that z.
-const CROSSING_Z: [f32; 3] = [-26.0, 6.0, 34.0];
-
-/// A registered walkable span (world-space AABB on XZ) the nav-grid treats as standable.
+/// A bridge: deck centre (world XZ) + half-length across the river (X).
 #[derive(Clone, Copy)]
 struct Span {
     cx: f32,
     cz: f32,
+    half_x: f32,
 }
 
-/// River centerline X at depth `z` — mirrors `water.rs` (`x = RIVER_AMP·sin(z·RIVER_FREQ)`,
-/// AMP=6, FREQ=0.12). Kept local so bridges don't depend on water's private helpers.
-fn river_centerline_x(z: f32) -> f32 {
-    6.0 * (z * 0.12).sin()
-}
-
+/// Find the river crossings by scanning the (pure) `is_river_world` channel. Cached — the scan
+/// only reads the river formula, so it's valid any time (no built terrain needed).
 fn spans() -> &'static [Span] {
     static SPANS: OnceLock<Vec<Span>> = OnceLock::new();
-    SPANS.get_or_init(|| CROSSING_Z.iter().map(|&z| Span { cx: river_centerline_x(z), cz: z }).collect())
+    SPANS.get_or_init(|| {
+        let mut out: Vec<Span> = Vec::new();
+        let mut z = -65.0_f32;
+        while z <= 65.0 && out.len() < MAX_BRIDGES {
+            if let Some((cx, half)) = river_run_at_z(z) {
+                if out.last().is_none_or(|s| (z - s.cz).abs() >= MIN_SPACING_Z) {
+                    out.push(Span { cx, cz: z, half_x: half + OVERHANG });
+                }
+            }
+            z += 2.0;
+        }
+        out
+    })
+}
+
+/// Scan world-x at depth `z` for the longest contiguous river run; return its `(centre_x, half)`.
+fn river_run_at_z(z: f32) -> Option<(f32, f32)> {
+    let (mut best_lo, mut best_hi) = (0.0_f32, -1.0_f32);
+    let (mut lo, mut in_run) = (0.0_f32, false);
+    let mut x = -GX + 2.0;
+    let step = 0.5;
+    while x <= GX - 2.0 {
+        let wet = is_river_world(x, z);
+        if wet && !in_run {
+            in_run = true;
+            lo = x;
+        } else if !wet && in_run {
+            in_run = false;
+            if x - lo > best_hi - best_lo {
+                best_lo = lo;
+                best_hi = x;
+            }
+        }
+        x += step;
+    }
+    if in_run && (GX - 2.0) - lo > best_hi - best_lo {
+        best_lo = lo;
+        best_hi = GX - 2.0;
+    }
+    let half = (best_hi - best_lo) * 0.5;
+    if (MIN_HALF..=MAX_HALF).contains(&half) {
+        Some(((best_lo + best_hi) * 0.5, half))
+    } else {
+        None
+    }
 }
 
 /// Is `(wx, wz)` on a bridge deck? Consulted by `navgrid::standable` so A* can cross the river.
 pub fn is_on_bridge(wx: f32, wz: f32) -> bool {
-    spans().iter().any(|s| (wx - s.cx).abs() <= DECK_HALF_X && (wz - s.cz).abs() <= DECK_HALF_Z)
+    spans().iter().any(|s| (wx - s.cx).abs() <= s.half_x && (wz - s.cz).abs() <= DECK_HALF_Z)
 }
 
 // ── mesh ───────────────────────────────────────────────────────────────────────────
@@ -53,30 +99,27 @@ fn bx(w: f32, h: f32, d: f32, off: Vec3, c: u32) -> Mesh {
     tinted(Cuboid::new(w, h, d).mesh().build().translated_by(off), c)
 }
 
-/// One bridge deck mesh (local space: spans X, banks at ±DECK_HALF_X, deck top at y≈0).
-fn deck_mesh() -> Mesh {
+/// One deck mesh spanning `2·half_x` across X (local space; deck top at y≈0).
+fn deck_mesh(half_x: f32) -> Mesh {
     const LIGHT: u32 = 0x8a5a32;
     const DARK: u32 = 0x6b4222;
     const RAIL: u32 = 0x5a3a22;
-    let len = DECK_HALF_X * 2.0;
+    let len = half_x * 2.0;
     let mut parts: Vec<Mesh> = Vec::new();
-    // Plank deck — alternating light/dark boards laid across the span.
-    let planks = (len * 2.0) as i32;
+    let planks = (len * 2.0).max(4.0) as i32;
     for i in 0..planks {
-        let x = -DECK_HALF_X + (i as f32 + 0.5) / planks as f32 * len;
+        let x = -half_x + (i as f32 + 0.5) / planks as f32 * len;
         let c = if i % 2 == 0 { LIGHT } else { DARK };
         parts.push(bx(len / planks as f32 * 0.92, 0.1, DECK_HALF_Z * 2.0, Vec3::new(x, 0.0, 0.0), c));
     }
-    // Two side rails + end posts.
     for sz in [-DECK_HALF_Z, DECK_HALF_Z] {
-        parts.push(bx(len, 0.08, 0.1, Vec3::new(0.0, 0.45, sz), RAIL));
-        for sx in [-DECK_HALF_X + 0.2, DECK_HALF_X - 0.2] {
-            parts.push(bx(0.12, 0.55, 0.12, Vec3::new(sx, 0.22, sz), RAIL));
+        parts.push(bx(len, 0.08, 0.1, Vec3::new(0.0, 0.45, sz), RAIL)); // side rail
+        for sx in [-half_x + 0.2, half_x - 0.2] {
+            parts.push(bx(0.12, 0.55, 0.12, Vec3::new(sx, 0.22, sz), RAIL)); // end post
         }
     }
-    // Underbeams (so the deck reads as raised over the water).
     for sz in [-DECK_HALF_Z + 0.3, DECK_HALF_Z - 0.3] {
-        parts.push(bx(len, 0.12, 0.14, Vec3::new(0.0, -0.12, sz), DARK));
+        parts.push(bx(len, 0.12, 0.14, Vec3::new(0.0, -0.12, sz), DARK)); // underbeam
     }
     let mut it = parts.into_iter();
     let mut base = it.next().unwrap();
@@ -88,19 +131,18 @@ fn deck_mesh() -> Mesh {
     base
 }
 
-/// Spawn a deck at each river crossing. Called from `worldmap::build`.
+/// Spawn a deck at each river crossing. Called from `worldmap::build` (after terrain).
 pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) {
-    let mesh = meshes.add(deck_mesh());
     let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.85, ..default() });
     for s in spans() {
-        // Sit the deck just above the bank ground so it bridges bank-to-bank over the water gap.
-        let bank_y = crate::worldmap::ground_at_world(s.cx + DECK_HALF_X, s.cz)
-            .or_else(|| crate::worldmap::ground_at_world(s.cx - DECK_HALF_X, s.cz))
+        // Sit the deck on the bank ground (sampled just past the water on either side).
+        let bank_y = crate::worldmap::ground_at_world(s.cx + s.half_x, s.cz)
+            .or_else(|| crate::worldmap::ground_at_world(s.cx - s.half_x, s.cz))
             .unwrap_or(0.0);
         commands.spawn((
-            Mesh3d(mesh.clone()),
+            Mesh3d(meshes.add(deck_mesh(s.half_x))),
             MeshMaterial3d(mat.clone()),
-            Transform::from_xyz(s.cx, bank_y + 0.25, s.cz),
+            Transform::from_xyz(s.cx, bank_y + 0.2, s.cz),
             BiomeEntity,
         ));
     }
