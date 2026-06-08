@@ -384,6 +384,10 @@ fn predator_stats(s: Species) -> Option<(f32, f32)> {
         Species::Wolf => Some((13.0, 5.0)),
         Species::PolarBear => Some((11.0, 13.0)),
         Species::Boar => Some((8.0, 7.0)),
+        // The three biome menaces — they hunt/charge the hero on sight.
+        Species::Scorpion => Some((12.0, 8.0)), // fast, venomous, frequent stings
+        Species::BogCroc => Some((9.0, 11.0)),  // swamp ambusher, heavy bite
+        Species::Golem => Some((9.0, 16.0)),    // slow stone brute, crushing blows
         _ => None,
     }
 }
@@ -404,6 +408,7 @@ enum Place {
     Snow,
     Rock,
     Desert,
+    Swamp,
 }
 
 fn place_ok(place: Place, x: f32, z: f32) -> bool {
@@ -415,6 +420,7 @@ fn place_ok(place: Place, x: f32, z: f32) -> bool {
         Place::Snow => b == Some(Biome::Snow),
         Place::Rock => b == Some(Biome::Rocky),
         Place::Desert => b == Some(Biome::Desert),
+        Place::Swamp => b == Some(Biome::Swamp),
     }
 }
 
@@ -442,7 +448,7 @@ struct Plan {
     place: Place,
 }
 
-const PLANS: [Plan; 10] = [
+const PLANS: [Plan; 13] = [
     // Deer — grass + forest herds; skittish.
     Plan { species: Species::Deer, count: 10, cluster: 4, scale: 0.8, speed: 6.0, wander_speed: 1.6, flee_r: 14.0, wander_r: 12.0, gait: 13.0, swing: 0.7, bob: 0.06, place: Place::GrassOrForest },
     // Elk — forest herds; larger, calmer gait.
@@ -463,6 +469,12 @@ const PLANS: [Plan; 10] = [
     Plan { species: Species::Dog, count: 6, cluster: 2, scale: 0.55, speed: 5.5, wander_speed: 1.5, flee_r: 7.0, wander_r: 12.0, gait: 14.0, swing: 0.6, bob: 0.07, place: Place::GrassOrForest },
     // Cat — grassland loners; tiny, skittish, quick.
     Plan { species: Species::Cat, count: 6, cluster: 1, scale: 0.4, speed: 6.0, wander_speed: 1.4, flee_r: 12.0, wander_r: 9.0, gait: 13.0, swing: 0.5, bob: 0.06, place: Place::Grass },
+    // Scorpion — desert packs; fast venomous predator (hunts the hero).
+    Plan { species: Species::Scorpion, count: 6, cluster: 2, scale: 0.6, speed: 5.5, wander_speed: 1.5, flee_r: 0.0, wander_r: 14.0, gait: 16.0, swing: 0.65, bob: 0.04, place: Place::Desert },
+    // Bog croc — swamp ambushers; sparse, slow, heavy charge.
+    Plan { species: Species::BogCroc, count: 4, cluster: 1, scale: 0.7, speed: 4.2, wander_speed: 0.9, flee_r: 0.0, wander_r: 10.0, gait: 11.0, swing: 0.6, bob: 0.03, place: Place::Swamp },
+    // Golem — rocky-biome bruiser; very rare, slow, devastating.
+    Plan { species: Species::Golem, count: 2, cluster: 1, scale: 0.85, speed: 3.0, wander_speed: 0.7, flee_r: 0.0, wander_r: 12.0, gait: 9.0, swing: 0.45, bob: 0.03, place: Place::Rock },
 ];
 
 /// Per-species uploaded meshes, ready to clone-spawn.

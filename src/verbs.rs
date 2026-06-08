@@ -861,6 +861,9 @@ fn core_species(s: Species) -> Option<tileworld_core::animal::Species> {
         Species::Elk => C::Elk,
         Species::Goat => C::Goat,
         Species::Dog => C::Dog,
+        Species::Golem => C::Golem,
+        Species::Scorpion => C::Scorpion,
+        Species::BogCroc => C::BogCroc,
         Species::Camel | Species::Cat => return None,
     })
 }

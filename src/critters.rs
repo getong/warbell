@@ -15,7 +15,8 @@ use bevy::prelude::*;
 
 use crate::palette::lin;
 
-/// The ambient wildlife species (the TS monsters — scorpion/croc/golem — are out).
+/// The wildlife species. Includes the three TS "monsters" (Scorpion/BogCroc/Golem) — biome
+/// menaces that hunt/charge the hero (their HP/bounty/drops come from `core::animal_config`).
 /// `Hash` so `audio::Voices` can key per-species sound sets off it.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Species {
@@ -29,6 +30,9 @@ pub enum Species {
     Camel,
     Dog,
     Cat,
+    Golem,
+    Scorpion,
+    BogCroc,
 }
 
 /// What kind of articulated part this is + how it animates.
@@ -126,6 +130,9 @@ pub fn build(s: Species) -> CreatureSpec {
         Species::Camel => camel(),
         Species::Dog => dog(),
         Species::Cat => cat(),
+        Species::Golem => golem(),
+        Species::Scorpion => scorpion(),
+        Species::BogCroc => bog_croc(),
     }
 }
 
@@ -453,5 +460,112 @@ fn cat() -> CreatureSpec {
     let mut parts = legs(0.3, 0.08, 0.16, -0.16, &|| bx(0.06, 0.3, 0.06, v(0.0, -0.15, 0.0), DARK));
     parts.push(PartDef { kind: PartKind::Head, pivot: v(0.0, 0.44, 0.26), mesh: head });
     parts.push(PartDef { kind: PartKind::Tail, pivot: v(0.0, 0.34, -0.22), mesh: tail });
+    CreatureSpec { torso, parts }
+}
+
+// ─── Golem ──────────────────────────────────────────────────────────────────────────
+// Squat bipedal stone brute: blocky body crusted with moss + a glowing core, heavy smashing
+// arms (static) and two thick stone legs that lumber. Rocky-biome menace (Boar-charge AI).
+fn golem() -> CreatureSpec {
+    const STONE: u32 = 0x7d7e86;
+    const DARK: u32 = 0x5c5d64;
+    const MOSS: u32 = 0x5a6a3a;
+    const CORE: u32 = 0x7ad2ff; // bright cyan reads as a glowing heart-stone
+    let torso = group(vec![
+        bx(0.74, 0.72, 0.56, v(0.0, 0.95, 0.0), STONE),
+        bx(0.16, 0.12, 0.2, v(-0.34, 1.18, 0.0), MOSS), // shoulder moss
+        bx(0.16, 0.12, 0.2, v(0.34, 1.18, 0.0), MOSS),
+        bx(0.2, 0.22, 0.06, v(0.0, 0.96, 0.3), CORE), // chest core
+    ]);
+    let head = group(vec![
+        bx(0.42, 0.36, 0.36, v(0.0, 0.0, 0.0), STONE),
+        bx(0.4, 0.08, 0.06, v(0.0, 0.12, 0.18), DARK), // brow ridge
+        bx(0.08, 0.08, 0.03, v(-0.12, 0.02, 0.18), CORE), // glowing eyes
+        bx(0.08, 0.08, 0.03, v(0.12, 0.02, 0.18), CORE),
+    ]);
+    let arm = || {
+        group(vec![
+            bx(0.26, 0.6, 0.26, v(0.0, -0.3, 0.0), DARK),
+            bx(0.3, 0.26, 0.3, v(0.0, -0.66, 0.02), STONE), // fist
+        ])
+    };
+    let leg = || bx(0.24, 0.5, 0.26, v(0.0, -0.25, 0.0), DARK);
+    let parts = vec![
+        PartDef { kind: PartKind::Leg(1.0), pivot: v(-0.2, 0.5, 0.0), mesh: leg() },
+        PartDef { kind: PartKind::Leg(-1.0), pivot: v(0.2, 0.5, 0.0), mesh: leg() },
+        PartDef { kind: PartKind::Arm(1.0), pivot: v(-0.46, 1.16, 0.0), mesh: arm() },
+        PartDef { kind: PartKind::Arm(-1.0), pivot: v(0.46, 1.16, 0.0), mesh: arm() },
+        PartDef { kind: PartKind::Head, pivot: v(0.0, 1.32, 0.06), mesh: head },
+    ];
+    CreatureSpec { torso, parts }
+}
+
+// ─── Scorpion ─────────────────────────────────────────────────────────────────────
+// Low desert predator: flat segmented body, two pincers thrust forward, a tail that arcs
+// over the back to a glowing red stinger, and four scuttling legs. Desert-biome predator.
+fn scorpion() -> CreatureSpec {
+    const SHELL: u32 = 0x3a2a1a;
+    const DARK: u32 = 0x241a10;
+    const CLAW: u32 = 0x4a3420;
+    const STING: u32 = 0xd24a4a; // bright red venom tip
+    let torso = group(vec![
+        bx(0.48, 0.2, 0.52, v(0.0, 0.18, 0.06), SHELL), // cephalothorax
+        bx(0.42, 0.18, 0.34, v(0.0, 0.16, -0.32), DARK), // abdomen
+        // pincers thrust forward
+        bx(0.1, 0.1, 0.32, v(-0.24, 0.18, 0.42), CLAW),
+        bx(0.1, 0.1, 0.32, v(0.24, 0.18, 0.42), CLAW),
+        cone(0.07, 0.16, v(-0.24, 0.18, 0.62), rx(-1.57), DARK), // claw tips
+        cone(0.07, 0.16, v(0.24, 0.18, 0.62), rx(-1.57), DARK),
+        bx(0.05, 0.05, 0.04, v(-0.07, 0.28, 0.3), DARK), // eye bumps
+        bx(0.05, 0.05, 0.04, v(0.07, 0.28, 0.3), DARK),
+    ]);
+    // Tail arcs up-and-over (a Tail part — swishes); built rear-to-fore in part-local space.
+    let tail = group(vec![
+        bxr(0.14, 0.14, 0.22, v(0.0, 0.08, -0.06), rx(0.6), SHELL),
+        bxr(0.12, 0.12, 0.2, v(0.0, 0.24, -0.04), rx(1.2), SHELL),
+        bxr(0.1, 0.1, 0.18, v(0.0, 0.38, 0.06), rx(2.0), DARK),
+        cone(0.08, 0.2, v(0.0, 0.42, 0.18), rx(2.7), STING), // stinger
+    ]);
+    let leg = || bxr(0.06, 0.28, 0.06, v(0.0, -0.12, 0.0), rz(0.5), DARK);
+    let mut parts = legs(0.16, 0.26, 0.2, -0.16, &leg);
+    parts.push(PartDef { kind: PartKind::Tail, pivot: v(0.0, 0.18, -0.5), mesh: tail });
+    CreatureSpec { torso, parts }
+}
+
+// ─── Bog Croc ───────────────────────────────────────────────────────────────────────
+// Long, ground-hugging swamp ambusher: slung body with a spiny back ridge, splayed legs, a
+// fat tapering tail and a toothy snout. Swamp-biome menace (Boar-charge AI).
+fn bog_croc() -> CreatureSpec {
+    const HIDE: u32 = 0x3f5a36;
+    const DARK: u32 = 0x2a3d22;
+    const BELLY: u32 = 0x8a9a5a;
+    const TOOTH: u32 = 0xe8e4d0;
+    const EYE: u32 = 0xd8b020; // amber
+    let mut torso_parts = vec![
+        bx(0.5, 0.3, 1.6, v(0.0, 0.2, 0.0), HIDE),
+        bx(0.4, 0.06, 1.4, v(0.0, 0.05, 0.0), BELLY),
+        bx(0.44, 0.12, 0.5, v(0.0, 0.36, 0.4), DARK), // shoulder hump
+    ];
+    for z in [0.55f32, 0.28, 0.0, -0.28, -0.55] {
+        torso_parts.push(cone(0.06, 0.14, v(0.0, 0.36, z), Quat::IDENTITY, DARK)); // spine ridge
+    }
+    let torso = group(torso_parts);
+    let head = group(vec![
+        bx(0.3, 0.16, 0.28, v(0.0, 0.0, 0.0), HIDE), // skull
+        bx(0.28, 0.1, 0.3, v(0.0, -0.02, 0.26), HIDE), // snout
+        bx(0.24, 0.06, 0.26, v(0.0, -0.1, 0.22), DARK), // lower jaw
+        bx(0.22, 0.04, 0.04, v(0.0, -0.04, 0.38), TOOTH), // teeth
+        bx(0.05, 0.05, 0.05, v(-0.1, 0.1, 0.0), EYE),
+        bx(0.05, 0.05, 0.05, v(0.1, 0.1, 0.0), EYE),
+    ]);
+    let tail = group(vec![
+        bx(0.3, 0.22, 0.44, v(0.0, 0.0, 0.0), HIDE),
+        bx(0.22, 0.16, 0.44, v(0.0, 0.0, -0.4), DARK),
+        bx(0.12, 0.1, 0.38, v(0.0, 0.0, -0.78), DARK),
+    ]);
+    let leg = || group(vec![bx(0.16, 0.2, 0.16, v(0.0, -0.1, 0.0), DARK), bx(0.14, 0.08, 0.18, v(0.0, -0.2, 0.03), DARK)]);
+    let mut parts = legs(0.2, 0.3, 0.5, -0.5, &leg);
+    parts.push(PartDef { kind: PartKind::Head, pivot: v(0.0, 0.22, 0.9), mesh: head });
+    parts.push(PartDef { kind: PartKind::Tail, pivot: v(0.0, 0.2, -0.78), mesh: tail });
     CreatureSpec { torso, parts }
 }
