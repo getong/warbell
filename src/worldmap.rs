@@ -507,6 +507,9 @@ pub fn build(
     // ── River bridges: plank decks at a few crossings (also nav-grid walkable spans). ──
     crate::bridges::populate(commands, meshes, std_mats);
 
+    // ── Dirt approach-roads radiating from the castle gates (cosmetic ground ribbons). ──
+    crate::roads::populate(commands, meshes, std_mats);
+
     // No distant horizon hills — open ocean fading into fog reads cleaner.
 }
 

@@ -39,6 +39,7 @@ mod particles;
 mod player;
 mod projectile;
 mod props;
+mod roads;
 mod ruins;
 mod scene;
 mod sea;
