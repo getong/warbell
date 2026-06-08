@@ -36,8 +36,9 @@ pub(crate) const ORK_SIGHT: f32 = 9.0;
 pub(crate) const ORK_ATTACK_RANGE: f32 = 1.5;
 /// Max distance from its home camp an ork will pursue — keeps each warband local.
 const ORK_LEASH: f32 = 16.0;
-/// Damage per club hit (queued onto `player::PendingHeroDamage`).
-pub(crate) const ORK_DAMAGE: f32 = 8.0;
+/// Damage per club hit (queued onto `player::PendingHeroDamage`). Bumped from 8 so a swarm
+/// actually threatens the hero's (large) health pool.
+pub(crate) const ORK_DAMAGE: f32 = 14.0;
 /// Seconds between an ork's strikes.
 pub(crate) const ORK_ATTACK_CD: f32 = 1.1;
 
@@ -47,7 +48,7 @@ pub(crate) const SHAMAN_CAST_RANGE: f32 = 8.0;
 /// Seconds between bolt casts.
 pub(crate) const SHAMAN_CAST_CD: f32 = 2.1;
 /// Bolt damage (kept above the club's `ORK_DAMAGE`, as in the original).
-pub(crate) const SHAMAN_BOLT_DAMAGE: f32 = 12.0;
+pub(crate) const SHAMAN_BOLT_DAMAGE: f32 = 17.0;
 /// A shaman heals the nearest wounded ally within this range.
 const SHAMAN_HEAL_RANGE: f32 = 8.0;
 /// HP restored per heal.

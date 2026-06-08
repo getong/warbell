@@ -108,6 +108,21 @@ fn setup_hud(mut commands: Commands) {
 
 /// Pickup toasts (top-right) + the quick-bar/buff line (bottom-centre).
 fn setup_inv_hud(mut commands: Commands) {
+    // Top-left controls legend (so the panels are discoverable).
+    commands
+        .spawn(Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(18.0),
+            top: Val::Px(14.0),
+            ..default()
+        })
+        .with_children(|p| {
+            p.spawn((
+                Text::new("U Upgrades   T Shop   I Bag   R Recruit   B/E War Bell   ` Free-cam"),
+                TextFont { font_size: 14.0, ..default() },
+                TextColor(Color::srgba(0.85, 0.86, 0.92, 0.65)),
+            ));
+        });
     // Top-right pickup toasts.
     commands
         .spawn(Node {

@@ -207,6 +207,14 @@ fn spawn_start_screen(mut commands: Commands, siege: Option<Res<crate::siege::Si
             TextColor(Color::srgb(0.8, 0.85, 0.95)),
             DifficultyText,
         ));
+        p.spawn((
+            Text::new(
+                "WASD move   Shift sprint   Space jump   LMB attack   RMB block\n\
+                 U upgrades   T shop   I bag   B war bell   R recruit   ` free-cam   Esc pause",
+            ),
+            TextFont { font_size: 16.0, ..default() },
+            TextColor(Color::srgba(0.78, 0.82, 0.92, 0.85)),
+        ));
     });
 }
 

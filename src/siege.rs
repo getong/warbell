@@ -59,11 +59,13 @@ pub const WAVES: [WaveDef; 8] = [
 /// anchored so a Night-1 grunt matches a camp grunt). Scaled by `hp_scale` × the difficulty
 /// `hp_mul` at spawn.
 pub fn base_hp(v: OrkVariant) -> f32 {
+    // Bumped ~1.5× over the first pass (60/32/72/47) so the hero no longer one-/two-shots
+    // everything — fights take a few solid blows even with a weapon.
     match v {
-        OrkVariant::Grunt => 60.0,
-        OrkVariant::Scout => 32.0,
-        OrkVariant::Berserker => 72.0,
-        OrkVariant::Shaman => 47.0,
+        OrkVariant::Grunt => 90.0,
+        OrkVariant::Scout => 48.0,
+        OrkVariant::Berserker => 108.0,
+        OrkVariant::Shaman => 70.0,
     }
 }
 
@@ -255,7 +257,7 @@ const SPAWN_RING: f32 = 30.0;
 /// the gates, so it sieges the wall ring — this lets a horde bunched at the wall still do damage.
 const KEEP_ATTACK_RANGE: f32 = 14.0;
 /// Keep damage per invader hit (on the ork's normal strike cooldown).
-const KEEP_DAMAGE: f32 = 6.0;
+const KEEP_DAMAGE: f32 = 9.0;
 /// Keep total HP — tuned so an unopposed early wave threatens it over the night and a late wave
 /// razes it fast, but the hero thinning the horde saves it.
 pub const KEEP_MAX_HP: f32 = 1000.0;

@@ -97,12 +97,14 @@ const GUARD_INCOMING: f32 = 7.0; // damage a guard takes per traded blow
 
 pub struct VillagersPlugin;
 
-/// Which camps have had their captives freed (one bool per planned camp), so a cage is rescued
-/// only once. Reset on a fresh run.
+/// Per planned camp: whether its captives were freed (`done`) and whether it was ever seen
+/// populated by a living warband (`seen` — guards against auto-freeing before camps spawn).
 #[derive(Resource, Default)]
-struct RescuedCamps(Vec<bool>);
+struct RescuedCamps {
+    done: Vec<bool>,
+    seen: Vec<bool>,
+}
 
-const RESCUE_DIST: f32 = 3.2;
 const CAMP_HOME_R: f32 = 6.0;
 
 impl Plugin for VillagersPlugin {
@@ -120,7 +122,10 @@ impl Plugin for VillagersPlugin {
 }
 
 fn reset_rescues(mut r: ResMut<RescuedCamps>) {
-    for b in &mut r.0 {
+    for b in &mut r.done {
+        *b = false;
+    }
+    for b in &mut r.seen {
         *b = false;
     }
 }
@@ -166,38 +171,48 @@ fn grow_population(
     }
 }
 
-/// **F** by a cleared camp's cage frees its captives → one joins the castle as militia (a new
-/// guard) and grows the bloodline. The warband must be wiped first (no living camp ork homed
-/// near the centre). The contract-free heir-growth path.
+/// Clear a camp's warband and its captives are **automatically** freed (the TS behaviour): one
+/// joins the castle as militia (a new guard) and grows the bloodline, with a float over the cage
+/// so you see it happen. `seen` gates against freeing a camp before its orks have even spawned.
 #[allow(clippy::too_many_arguments)]
 fn camp_rescue(
-    keys: Res<ButtonInput<KeyCode>>,
-    hero: Res<crate::player::HeroState>,
     mut lives: ResMut<crate::succession::Lives>,
     mut rescued: ResMut<RescuedCamps>,
     orks: Query<&crate::orks::Ork, Without<crate::orks::WaveInvader>>,
+    mut floats: ResMut<crate::combat_fx::FloatQueue>,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyF) || !hero.alive {
-        return;
-    }
     let cages = crate::camps::cage_positions();
-    if rescued.0.len() != cages.len() {
-        rescued.0 = vec![false; cages.len()];
+    if rescued.done.len() != cages.len() {
+        rescued.done = vec![false; cages.len()];
+        rescued.seen = vec![false; cages.len()];
     }
     for (i, (cage, centre)) in cages.iter().enumerate() {
-        if rescued.0[i] || hero.pos.distance(*cage) > RESCUE_DIST {
+        if rescued.done[i] {
             continue;
         }
         if orks.iter().any(|o| o.home().distance(*centre) < CAMP_HOME_R) {
-            continue; // still guarded — clear the warband first
+            rescued.seen[i] = true; // warband still alive — this camp IS populated
+            continue;
         }
-        rescued.0[i] = true;
+        if !rescued.seen[i] {
+            continue; // never seen populated (camps not spawned yet) — don't auto-free
+        }
+        // Warband wiped → free the captives.
+        rescued.done[i] = true;
         lives.heirs += 1;
+        let y = crate::worldmap::ground_at_world(cage.x, cage.y).unwrap_or(0.0);
+        floats.0.push(crate::combat_fx::FloatReq {
+            world: Vec3::new(cage.x, y + 1.8, cage.y),
+            text: "Captives freed!  +1 heir".into(),
+            color: Color::srgb(0.5, 1.0, 0.6),
+            scale: 1.2,
+        });
+        cues.write(crate::audio::AudioCue::UiSelect);
         spawn_courtyard_guard(&mut commands, &mut meshes, &mut materials, 0x5e5c_0000u32.wrapping_add(i as u32 * 97));
-        break;
     }
 }
 
