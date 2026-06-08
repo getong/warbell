@@ -1,61 +1,160 @@
-//! Distant scenery — the horizon depth cue, now driven by the active biome's
-//! [`Backdrop`]. A ring of low-poly hill/mountain silhouettes plus an optional dark
-//! treeline band, but **only within the land arc** (`land_dir ± land_arc`); the opposite
-//! arc is left open for the [`sea`](crate::sea) to fill — "mountains/forest on one side,
-//! ocean on the other".
-//!
-//! Everything is placed FAR out (hills r ~150-260, treeline r ~95-128) so it recedes
-//! into the `DistanceFog`, baked into a few merged flat-shaded meshes (a handful of draw
-//! calls), coloured via `ATTRIBUTE_COLOR` against a shared white material, and
-//! `NotShadowCaster` + static. Colours come pre-muted toward the fog so the haze blends
-//! them the rest of the way. Deterministic (constant-seeded Mulberry32).
+//! Distant scenery — the world map's unreachable forest edge on the NORTH (-Z) shore: a
+//! river channel off the coast, a row of full-detail trees on the far bank, then a mass of
+//! low-res conifers on rising ground fading into the `DistanceFog`. The other three sides
+//! stay open ocean. Baked into a few merged flat-shaded meshes (a handful of draw calls),
+//! coloured via `ATTRIBUTE_COLOR` against a shared white material, `NotShadowCaster` +
+//! static. Deterministic (constant-seeded Mulberry32).
 
+use bevy::asset::RenderAssetUsages;
 use bevy::light::NotShadowCaster;
+use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 
-use crate::biome::{Backdrop, BiomeEntity};
+use crate::biome::BiomeEntity;
 use crate::palette::lin;
-
-// ── Ring geometry ────────────────────────────────────────────────────────────
-const HILL_COUNT: u32 = 64;
-const HILL_R_MIN: f32 = 150.0;
-const HILL_R_MAX: f32 = 250.0;
-/// Sink hill bases below y=0 so cones rise cleanly out of the fog floor.
-const HILL_SINK: f32 = 6.0;
-
-const TREE_COUNT: u32 = 720;
-const TREE_R_MIN: f32 = 95.0;
-const TREE_R_MAX: f32 = 128.0;
 
 pub struct DistantPlugin;
 
 impl Plugin for DistantPlugin {
     fn build(&self, _app: &mut App) {
-        // No systems — the biome runner calls `spawn_backdrop` on each switch.
+        // No systems — the world-map build calls `spawn_forest_edge`.
     }
 }
 
-/// Build the horizon backdrop for `b`. Hills + (optional) treeline fill only the land
-/// arc; the rest of the horizon stays open for the ocean. Tagged [`BiomeEntity`].
-pub fn spawn_backdrop(
-    b: &Backdrop,
+// ── World-map north forest edge (one side only — other 3 sides stay open ocean) ─
+// The island's NORTH (-Z) shore is a land edge instead of open sea: a river channel off
+// the coast, then a visible bank of ground that rises out of the water, carrying a mass of
+// low-poly conifers up into the fog. The other three sides keep the open ocean (+ boats).
+// North = -Z (atan2(z,x) convention).
+const EDGE_SHORE_Z: f32 = -88.0; // waterline of the far bank (island N coast ≈ -74 → ~14u river)
+const EDGE_Z_FAR: f32 = -200.0; // forest recedes to the fog horizon
+const EDGE_X_HALF: f32 = 122.0; // half-width across the north
+const EDGE_WATERLINE: f32 = -0.4; // ground meets the sea exactly here
+const EDGE_BANK_RISE: f32 = 6.0; // world-units of depth over which the shore bank climbs
+const EDGE_PLATEAU_H: f32 = 4.5; // height the bank/plateau sits above the water
+const EDGE_MAX_RISE: f32 = 18.0; // forested hill climbs this much more toward the fog
+const EDGE_BEACH_DEPTH: f32 = 7.0; // sandy band depth at the shore (visible shore strip)
+const EDGE_TREE_SETBACK: f32 = 7.0; // keep trees this far back from the water
+const EDGE_LOWRES_TREES: u32 = 1300; // low-poly conifers covering the hill
+const EDGE_BEACH: u32 = 0xbcae7e; // sandy shore at the waterline (light, reads against blue)
+const EDGE_FLOOR_DARK: u32 = 0x203619; // forest floor in shadow
+const EDGE_FLOOR_LIT: u32 = 0x35531f; // sunlit forest floor
+const SHORE_DARK: u32 = 0x18351f; // conifer shadow tone
+const SHORE_MID: u32 = 0x2a5631; // conifer body tone
+
+/// Ground height of the north forest floor at world `(x, z)`. Meets the sea at the shore,
+/// rises steeply over `EDGE_BANK_RISE` to a plateau that sits clearly above the water, then
+/// climbs into a forested hill toward the fog. Shared by the floor mesh and tree placement.
+fn edge_ground_y(x: f32, z: f32) -> f32 {
+    let depth = (EDGE_SHORE_Z - z).max(0.0); // 0 at the waterline, grows going north
+    let bank = (depth / EDGE_BANK_RISE).clamp(0.0, 1.0) * EDGE_PLATEAU_H; // steep visible bank
+    let t = (depth / (EDGE_SHORE_Z - EDGE_Z_FAR)).clamp(0.0, 1.0);
+    let hills = t * t * EDGE_MAX_RISE;
+    let bump = ((x * 0.06).sin() * 1.6 + (z * 0.05 + x * 0.025).sin() * 2.2) * t;
+    EDGE_WATERLINE + bank + hills + bump
+}
+
+/// Spawn the north forest edge: a rising ground bank + a low-poly conifer mass on it. The
+/// river is the open water between the island coast and this bank. Tagged [`BiomeEntity`],
+/// static, `NotShadowCaster`.
+pub fn spawn_forest_edge(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
+    _sea_y: f32,
 ) {
-    let mat = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        perceptual_roughness: 1.0,
-        ..default()
-    });
+    let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.8, ..default() });
 
-    let hills = meshes.add(build_hill_ring_mesh(b));
-    commands.spawn((Mesh3d(hills), MeshMaterial3d(mat.clone()), Transform::default(), NotShadowCaster, BiomeEntity));
+    // Rising ground (sandy shore → forest floor → hills) so the trees stand on real land.
+    let floor = meshes.add(build_forest_floor());
+    commands.spawn((Mesh3d(floor), MeshMaterial3d(mat.clone()), Transform::default(), NotShadowCaster, BiomeEntity));
 
-    if b.treeline {
-        let treeline = meshes.add(build_treeline_mesh(b));
-        commands.spawn((Mesh3d(treeline), MeshMaterial3d(mat), Transform::default(), NotShadowCaster, BiomeEntity));
+    // The conifer mass, set back from the water onto the bank.
+    let trees = meshes.add(build_lowres_forest());
+    commands.spawn((Mesh3d(trees), MeshMaterial3d(mat), Transform::default(), NotShadowCaster, BiomeEntity));
+}
+
+/// Rising forest-floor heightfield over the north band: sandy at the waterline, forest
+/// floor inland (vertex-coloured, flat-shaded).
+fn build_forest_floor() -> Mesh {
+    let cols = 72usize;
+    let rows = 48usize;
+    let mut r = Rng(0x0f10_2026);
+    let mut positions: Vec<[f32; 3]> = Vec::with_capacity((cols + 1) * (rows + 1));
+    let mut colors: Vec<[f32; 4]> = Vec::with_capacity((cols + 1) * (rows + 1));
+    let beach = lin(EDGE_BEACH);
+    let dark = lin(EDGE_FLOOR_DARK);
+    let lit = lin(EDGE_FLOOR_LIT);
+    for ri in 0..=rows {
+        let tz = ri as f32 / rows as f32;
+        let z = EDGE_SHORE_Z + (EDGE_Z_FAR - EDGE_SHORE_Z) * tz;
+        for ci in 0..=cols {
+            let tx = ci as f32 / cols as f32;
+            let x = -EDGE_X_HALF + 2.0 * EDGE_X_HALF * tx;
+            positions.push([x, edge_ground_y(x, z), z]);
+            // Forest-floor tone, faded to a sandy beach band right at the waterline.
+            let m = (r.next() * 0.5 + 0.5).clamp(0.0, 1.0);
+            let floor = [
+                dark[0] + (lit[0] - dark[0]) * m,
+                dark[1] + (lit[1] - dark[1]) * m,
+                dark[2] + (lit[2] - dark[2]) * m,
+                1.0,
+            ];
+            let depth = EDGE_SHORE_Z - z;
+            let shore = (depth / EDGE_BEACH_DEPTH).clamp(0.0, 1.0); // 0 = sand at water, 1 = forest
+            colors.push([
+                beach[0] + (floor[0] - beach[0]) * shore,
+                beach[1] + (floor[1] - beach[1]) * shore,
+                beach[2] + (floor[2] - beach[2]) * shore,
+                1.0,
+            ]);
+        }
     }
+    let w = cols + 1;
+    let mut indices: Vec<u32> = Vec::with_capacity(cols * rows * 6);
+    for ri in 0..rows {
+        for ci in 0..cols {
+            let a = (ri * w + ci) as u32;
+            let b = (ri * w + ci + 1) as u32;
+            let c = ((ri + 1) * w + ci) as u32;
+            let d = ((ri + 1) * w + ci + 1) as u32;
+            indices.extend_from_slice(&[a, c, b, b, c, d]);
+        }
+    }
+    let mut m = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    m.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    m.insert_indices(Indices::U32(indices));
+    flat_shaded(m)
+}
+
+/// Low-poly conifer mass covering the bank/hill, set back from the waterline. Sized 1.5×
+/// smaller than the original wall so the ground reads beneath them.
+fn build_lowres_forest() -> Mesh {
+    let mut r = Rng(0x00fe_2026);
+    let mut parts: Vec<Mesh> = Vec::new();
+    for _ in 0..EDGE_LOWRES_TREES {
+        let x = r.range(-EDGE_X_HALF, EDGE_X_HALF);
+        let z = r.range(EDGE_Z_FAR, EDGE_SHORE_Z - EDGE_TREE_SETBACK);
+        let base = Vec3::new(x, edge_ground_y(x, z), z);
+        let trunk_h = r.range(0.7, 1.3);
+        let trunk_r = r.range(0.17, 0.3);
+        let needle_h = r.range(4.7, 9.3);
+        let needle_r = r.range(1.5, 2.7);
+        let crown = if r.next() < 0.5 { SHORE_DARK } else { SHORE_MID };
+        // Trunk stub, tucked INSIDE the lower cone so nothing floats.
+        parts.push(tinted(
+            Cylinder::new(trunk_r, trunk_h).mesh().resolution(4).build().translated_by(base + Vec3::new(0.0, trunk_h * 0.5, 0.0)),
+            lin(SHORE_DARK),
+        ));
+        // Lowest cone tier sits ON the ground (skirt meets the land — no levitation gap).
+        parts.push(tinted(cone_base_y0(needle_r, needle_h, 5, base), lin(crown)));
+        parts.push(tinted(
+            cone_base_y0(needle_r * 0.62, needle_h * 0.6, 5, base + Vec3::new(0.0, needle_h * 0.45, 0.0)),
+            lin(crown),
+        ));
+    }
+    flat_shaded(merged(parts))
 }
 
 // ── Deterministic RNG (Mulberry32, same as scatter) ───────────────────────────
@@ -71,20 +170,6 @@ impl Rng {
     fn range(&mut self, lo: f32, hi: f32) -> f32 {
         lo + self.next() * (hi - lo)
     }
-}
-
-/// Shortest angular distance between two angles (radians), in `[0, π]`.
-fn ang_dist(a: f32, b: f32) -> f32 {
-    let mut d = (a - b).abs() % std::f32::consts::TAU;
-    if d > std::f32::consts::PI {
-        d = std::f32::consts::TAU - d;
-    }
-    d
-}
-
-/// True if angle `a` falls inside the land arc `dir ± arc`.
-fn in_land(a: f32, b: &Backdrop) -> bool {
-    ang_dist(a, b.land_dir) <= b.land_arc
 }
 
 // ── Mesh helpers ───────────────────────────────────────────────────────────────
@@ -118,89 +203,3 @@ fn cone_base_y0(radius: f32, height: f32, sides: u32, center: Vec3) -> Mesh {
         .translated_by(Vec3::new(0.0, height * 0.5, 0.0) + center)
 }
 
-// ── Hill / mountain silhouette ring (land arc only) ───────────────────────────
-fn build_hill_ring_mesh(b: &Backdrop) -> Mesh {
-    let mut r = Rng(0x4157_2026);
-    let mut parts: Vec<Mesh> = Vec::new();
-
-    for i in 0..HILL_COUNT {
-        let a = (i as f32 / HILL_COUNT as f32) * std::f32::consts::TAU + r.range(-0.05, 0.05);
-        // Advance the RNG identically whether or not we keep the hill, so the layout is
-        // stable; skip hills outside the land arc.
-        let rad = r.range(HILL_R_MIN, HILL_R_MAX);
-        let h = r.range(b.hill_h.0, b.hill_h.1);
-        let br = h * r.range(0.55, 0.85);
-        let sides = 5 + (i % 3);
-        if !in_land(a, b) {
-            continue;
-        }
-        let cx = a.cos() * rad;
-        let cz = a.sin() * rad;
-        let foot = Vec3::new(cx, -HILL_SINK, cz);
-
-        parts.push(tinted(cone_base_y0(br, h, sides, foot), lin(b.hill_body)));
-        parts.push(tinted(cone_base_y0(br * 1.35, h * 0.22, sides, foot), lin(b.hill_foot)));
-
-        if h > (b.hill_h.0 + b.hill_h.1) * 0.5 {
-            let cap_h = h * 0.34;
-            let cap_r = br * (cap_h / h) * 1.05;
-            let cap_foot = foot + Vec3::new(0.0, h - cap_h, 0.0);
-            parts.push(tinted(cone_base_y0(cap_r, cap_h, sides, cap_foot), lin(b.hill_cap)));
-        }
-    }
-
-    // Guard against an empty land arc (shouldn't happen, but merge needs ≥1 part).
-    if parts.is_empty() {
-        parts.push(tinted(cone_base_y0(1.0, 1.0, 5, Vec3::new(0.0, -50.0, 0.0)), lin(b.hill_body)));
-    }
-    flat_shaded(merged(parts))
-}
-
-// ── Dense conifer treeline band (land arc only) ───────────────────────────────
-fn build_treeline_mesh(b: &Backdrop) -> Mesh {
-    let mut r = Rng(0x7eed_2026);
-    let mut parts: Vec<Mesh> = Vec::new();
-
-    for i in 0..TREE_COUNT {
-        let a = (i as f32 / TREE_COUNT as f32) * std::f32::consts::TAU + r.range(-0.06, 0.06);
-        let rad = r.range(TREE_R_MIN, TREE_R_MAX);
-        let trunk_h = r.range(0.8, 1.6);
-        let trunk_r = r.range(0.18, 0.3);
-        let needle_h = r.range(5.0, 9.0);
-        let needle_r = r.range(1.6, 2.8);
-        let crown_col = if r.next() < 0.5 { b.treeline_dark } else { b.treeline_mid };
-        if !in_land(a, b) {
-            continue;
-        }
-        let cx = a.cos() * rad;
-        let cz = a.sin() * rad;
-        let base = Vec3::new(cx, 0.0, cz);
-
-        parts.push(tinted(
-            Cylinder::new(trunk_r, trunk_h)
-                .mesh()
-                .resolution(4)
-                .build()
-                .translated_by(base + Vec3::new(0.0, trunk_h * 0.5, 0.0)),
-            lin(b.treeline_dark),
-        ));
-        parts.push(tinted(
-            cone_base_y0(needle_r, needle_h, 5, base + Vec3::new(0.0, trunk_h * 0.7, 0.0)),
-            lin(crown_col),
-        ));
-        parts.push(tinted(
-            cone_base_y0(
-                needle_r * 0.62,
-                needle_h * 0.6,
-                5,
-                base + Vec3::new(0.0, trunk_h * 0.7 + needle_h * 0.45, 0.0),
-            ),
-            lin(crown_col),
-        ));
-    }
-
-    if parts.is_empty() {
-        parts.push(tinted(cone_base_y0(1.0, 1.0, 5, Vec3::new(0.0, -50.0, 0.0)), lin(b.treeline_dark)));
-    }
-    flat_shaded(merged(parts))
-}

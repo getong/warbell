@@ -94,6 +94,9 @@ pub fn populate(
             Dummy { wobble_until: 0.0, knock: Vec2::ZERO },
             BiomeEntity,
         ));
+        // Solid pell — a small base so you can't walk through it, but the hero still steps in
+        // well within HIT_RANGE to swing at it.
+        crate::blockers::add(x, z, 0.3);
     }
 }
 

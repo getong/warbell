@@ -39,6 +39,8 @@ const SWORD_BLADE: u32 = 0xd8dde6;
 const SWORD_GUARD: u32 = 0xcaa23a;
 /// Rich dyed robes that mark the wandering market traders apart from the drab peasants.
 const MERCHANT_ROBE: [u32; 2] = [0x2f6f6a, 0x7a2f3a];
+/// Dusky cloak of the wandering pilgrims who trek between the island's old landmarks.
+const PILGRIM_ROBE: u32 = 0x6a5a8a;
 
 // ── Components ───────────────────────────────────────────────────────────────────
 
@@ -72,6 +74,20 @@ struct VilPart {
     kind: PartKind,
 }
 
+/// A wandering **pilgrim** — a villager whose brain ([`pilgrim_brain`]) walks it between the
+/// island's landmarks (and back to town) instead of milling the courtyard. Hail it with **F**
+/// ([`pilgrim_hint`]) for a nudge toward the nearest landmark you've yet to find.
+#[derive(Component)]
+pub struct Pilgrim {
+    /// Current destination (a landmark or a town point), world XZ.
+    target: Vec2,
+    /// Dwell timer at a destination before choosing the next.
+    pause: f32,
+    /// Throttle so repeated F-mashing doesn't spam the same hint.
+    hint_cd: f32,
+    rng: u32,
+}
+
 /// A castle town-guard: a villager that fights invaders during a wave (chase → strike, trading
 /// blows), goes **down** at 0 HP (lies still), and is revived + walks back to its post at dawn.
 #[derive(Component)]
@@ -99,6 +115,9 @@ const GUARD_DEFEND_RADIUS: f32 = 12.0;
 const GUARD_MELEE: f32 = 1.6;
 const GUARD_SPEED: f32 = 2.4;
 const GUARD_ATTACK_CD: f32 = 1.0;
+/// Past this distance from its post a guard (a freed captive marching in from a razed camp) routes
+/// home by A* through the gates; nearer than this a revived town-guard just steers in directly.
+const GUARD_PATH_RANGE: f32 = 4.0;
 
 /// Damage invaders have dealt town-guards this frame (`(guard entity, amount)`), pushed by the
 /// invader AI in `siege.rs` and drained into guard HP by [`guard_combat`]. The mirror of the
@@ -128,13 +147,44 @@ impl Plugin for VillagersPlugin {
         app.init_resource::<RescuedCamps>()
             .init_resource::<GuardDamage>()
             .add_systems(Update, villager_limbs) // limb anim keeps running while frozen
+            .add_systems(Update, townsfolk_curfew) // ungated: peasants clear the streets at night
             .add_systems(OnExit(crate::game_state::AppState::StartScreen), reset_rescues)
             .add_systems(OnExit(crate::game_state::AppState::GameOver), reset_rescues)
             .add_systems(
                 Update,
-                (villager_brain, guard_combat, grow_population, camp_rescue, recruit)
+                (
+                    villager_brain,
+                    pilgrim_brain,
+                    pilgrim_hint,
+                    guard_combat,
+                    grow_population,
+                    camp_rescue,
+                    recruit,
+                )
                     .run_if(in_state(crate::game_state::Modal::None)),
             );
+    }
+}
+
+/// Night curfew: while a wave is on, the unarmed townsfolk — every non-guard villager: gate-folk,
+/// courtyard peasants, market traders and pilgrims — clear off the streets, leaving only the armed
+/// guards to meet the assault. They reappear at dawn (prep). Only the root visibility flips, on the
+/// phase edge; their wander brains idle on, invisibly, until morning. Guards keep their own
+/// visibility (`Without<Guard>`), so the defenders stay on post. Ungated so it also holds while the
+/// world is frozen (paused / a panel open) mid-wave.
+fn townsfolk_curfew(
+    siege: Option<Res<crate::siege::Siege>>,
+    mut last: Local<Option<bool>>,
+    mut q: Query<&mut Visibility, (With<Villager>, Without<Guard>)>,
+) {
+    let wave = siege.is_some_and(|s| s.phase == crate::siege::GamePhase::Wave);
+    if *last == Some(wave) {
+        return; // only touch visibility on the day↔night edge
+    }
+    *last = Some(wave);
+    let vis = if wave { Visibility::Hidden } else { Visibility::Visible };
+    for mut v in &mut q {
+        *v = vis;
     }
 }
 
@@ -286,8 +336,12 @@ fn recruit(
     }
 }
 
-/// Ambient townsfolk wander — guards are excluded (their AI is [`guard_combat`]).
-fn villager_brain(time: Res<Time>, mut q: Query<(&mut Villager, &mut Transform), Without<Guard>>) {
+/// Ambient townsfolk wander — guards (their AI is [`guard_combat`]) and pilgrims (their AI is
+/// [`pilgrim_brain`]) are excluded.
+fn villager_brain(
+    time: Res<Time>,
+    mut q: Query<(&mut Villager, &mut Transform), (Without<Guard>, Without<Pilgrim>)>,
+) {
     let dt = time.delta_secs().min(0.05);
     let tw = time.elapsed_secs_wrapped();
 
@@ -331,6 +385,132 @@ fn villager_brain(time: Res<Time>, mut q: Query<(&mut Villager, &mut Transform),
     }
 }
 
+/// Pilgrim AI: trek between the island's landmarks (and back to town now and then), dwelling a
+/// few seconds at each. Drives the same [`Villager`] pose fields as [`villager_brain`] but steers
+/// toward a real destination instead of wandering a home radius. Excluded from `villager_brain`.
+#[allow(clippy::type_complexity)]
+fn pilgrim_brain(
+    time: Res<Time>,
+    mut q: Query<
+        (&mut Pilgrim, &mut Villager, &mut Transform),
+        (Without<Guard>, Without<crate::landmarks::Landmark>),
+    >,
+    marks: Query<&Transform, With<crate::landmarks::Landmark>>,
+) {
+    let dt = time.delta_secs().min(0.05);
+    let tw = time.elapsed_secs_wrapped();
+    // Candidate destinations: every landmark, plus a town point so they circle back home.
+    let mut dests: Vec<Vec2> =
+        marks.iter().map(|t| Vec2::new(t.translation.x, t.translation.z)).collect();
+    dests.push(Vec2::new(0.0, 9.0));
+
+    for (mut pil, mut v, mut tf) in &mut q {
+        if pil.hint_cd > 0.0 {
+            pil.hint_cd -= dt;
+        }
+        if pil.pause > 0.0 {
+            pil.pause -= dt;
+            v.moving = false;
+        } else if (pil.target - v.pos).length() < 1.2 {
+            // Arrived — dwell, then pick the next destination.
+            pil.pause = rng_range(&mut pil.rng, 4.0, 9.0);
+            pil.target = dests[(next_u32(&mut pil.rng) as usize) % dests.len()];
+            v.moving = false;
+        } else {
+            let cur_y = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+            match steer::advance(v.pos, v.facing, pil.target, v.speed * dt, v.body_r, cur_y, VIL_MAX_TURN * dt) {
+                Some(s) => {
+                    v.facing = s.facing;
+                    v.pos = s.pos;
+                    v.moving = s.moving;
+                }
+                None => {
+                    // Wedged — dwell briefly, then strike out for a different landmark.
+                    pil.pause = rng_range(&mut pil.rng, 0.5, 1.5);
+                    pil.target = dests[(next_u32(&mut pil.rng) as usize) % dests.len()];
+                    v.moving = false;
+                }
+            }
+        }
+
+        let gy = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+        let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
+        tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
+        tf.rotation = Quat::from_rotation_y(v.facing);
+    }
+}
+
+/// **F** beside a pilgrim → a spoken nudge toward the nearest landmark you've yet to find (with a
+/// compass direction + a few coins for the road); once all are found, a parting line instead.
+#[allow(clippy::too_many_arguments)]
+fn pilgrim_hint(
+    keys: Res<ButtonInput<KeyCode>>,
+    hero: Res<crate::player::HeroState>,
+    mut player: ResMut<crate::player::PlayerRes>,
+    mut floats: ResMut<crate::combat_fx::FloatQueue>,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
+    mut pilgrims: Query<(&mut Pilgrim, &Transform)>,
+    marks: Query<(&Transform, &crate::landmarks::Landmark)>,
+) {
+    if !keys.just_pressed(KeyCode::KeyF) || !hero.alive {
+        return;
+    }
+    for (mut pil, ptf) in &mut pilgrims {
+        let pp = ptf.translation;
+        if Vec2::new(pp.x, pp.z).distance(hero.pos) > 2.5 || pil.hint_cd > 0.0 {
+            continue;
+        }
+        pil.hint_cd = 8.0;
+        let head = Vec3::new(pp.x, pp.y + 2.2, pp.z);
+        // Nearest landmark the hero hasn't discovered yet.
+        let mut best: Option<(f32, Vec2, &'static str)> = None;
+        for (t, lm) in &marks {
+            if lm.is_discovered() {
+                continue;
+            }
+            let lp = Vec2::new(t.translation.x, t.translation.z);
+            let d = lp.distance(hero.pos);
+            if best.is_none_or(|(bd, _, _)| d < bd) {
+                best = Some((d, lp, lm.name));
+            }
+        }
+        if let Some((_, lp, name)) = best {
+            let dir = compass(hero.pos, lp);
+            floats.0.push(crate::combat_fx::FloatReq {
+                world: head,
+                text: format!("\"{name} lies to the {dir}.\""),
+                color: Color::srgb(0.9, 0.95, 0.7),
+                scale: 1.0,
+            });
+            player.0.add_gold(5);
+            cues.write(crate::audio::AudioCue::Forage);
+        } else {
+            floats.0.push(crate::combat_fx::FloatReq {
+                world: head,
+                text: "\"You've seen all the old places, wanderer.\"".into(),
+                color: Color::srgb(0.9, 0.95, 0.7),
+                scale: 1.0,
+            });
+            cues.write(crate::audio::AudioCue::UiSelect);
+        }
+        return; // one hail per press
+    }
+}
+
+/// 8-wind compass word from `from` toward `to` (world XZ; −Z is north, +X is east).
+fn compass(from: Vec2, to: Vec2) -> &'static str {
+    let d = to - from;
+    if d.length_squared() < 1e-3 {
+        return "here";
+    }
+    let a = d.x.atan2(-d.y);
+    let mut i = (a / std::f32::consts::FRAC_PI_4).round() as i32 % 8;
+    if i < 0 {
+        i += 8;
+    }
+    ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"][i as usize]
+}
+
 /// Town-guard AI: during a wave, chase the nearest invader inside the defend radius and trade
 /// blows in melee (the guard's strikes wound the invader's `Health`, the invader's wound the
 /// guard); a downed guard lies still. In peacetime guards heal up + amble back to their post.
@@ -340,7 +520,10 @@ fn guard_combat(
     siege: Res<crate::siege::Siege>,
     mut incoming: ResMut<GuardDamage>,
     mut commands: Commands,
-    mut guards: Query<(Entity, &mut Guard, &mut Villager, &mut Transform), Without<crate::orks::WaveInvader>>,
+    mut guards: Query<
+        (Entity, &mut Guard, &mut Villager, &mut Transform, &mut crate::navgrid::NavPath),
+        Without<crate::orks::WaveInvader>,
+    >,
     mut invaders: Query<
         (Entity, &Transform, &mut crate::player::Health),
         (With<crate::orks::WaveInvader>, Without<Guard>, Without<crate::dying::Dying>),
@@ -348,6 +531,7 @@ fn guard_combat(
 ) {
     let dt = time.delta_secs().min(0.05);
     let tw = time.elapsed_secs_wrapped();
+    let now = time.elapsed_secs();
     let in_wave = siege.phase == crate::siege::GamePhase::Wave;
     let inv: Vec<(Entity, Vec2)> =
         invaders.iter().map(|(e, tf, _)| (e, Vec2::new(tf.translation.x, tf.translation.z))).collect();
@@ -359,7 +543,7 @@ fn guard_combat(
         *hurt.entry(e).or_insert(0.0) += dmg;
     }
 
-    for (self_e, mut g, mut v, mut tf) in &mut guards {
+    for (self_e, mut g, mut v, mut tf, mut path) in &mut guards {
         // Take any strikes invaders landed on this guard this frame.
         if let Some(d) = hurt.get(&self_e) {
             g.hp -= *d;
@@ -368,13 +552,39 @@ fn guard_combat(
             }
         }
         if !in_wave {
-            // Dawn: heal, rise, and stroll back to the post.
+            // Dawn: heal, rise, and head back to the post.
             g.hp = g.max;
             g.downed = false;
             let to_post = g.post - v.pos;
             if to_post.length() > 0.4 {
+                // Far from home (a freed captive marching in from a razed camp) → follow an A*
+                // route to the courtyard post so it threads the river crossing and the castle
+                // GATE instead of wedging on the wall. Near home (a revived town-guard) → cheap
+                // direct steer, no pathing churn. Mirrors the invader keep-march in `siege.rs`.
+                let step_target = if to_post.length() > GUARD_PATH_RANGE {
+                    if path.cursor >= path.waypoints.len()
+                        || now >= path.next_replan
+                        || path.goal_cached.distance(g.post) > 2.0
+                    {
+                        path.waypoints = crate::navgrid::path_to(v.pos, g.post);
+                        path.cursor = 0;
+                        path.goal_cached = g.post;
+                        // Stagger replans so freed captives don't all path on one frame.
+                        path.next_replan = now + 0.75 + (self_e.to_bits() % 16) as f32 * 0.05;
+                    }
+                    while path.cursor < path.waypoints.len()
+                        && v.pos.distance(path.waypoints[path.cursor]) < 1.2
+                    {
+                        path.cursor += 1;
+                    }
+                    path.waypoints.get(path.cursor).copied().unwrap_or(g.post)
+                } else {
+                    path.waypoints.clear();
+                    path.cursor = 0;
+                    g.post
+                };
                 let cur_y = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
-                if let Some(s) = steer::advance(v.pos, v.facing, g.post, GUARD_SPEED * 0.6 * dt, v.body_r, cur_y, VIL_MAX_TURN * dt) {
+                if let Some(s) = steer::advance(v.pos, v.facing, step_target, GUARD_SPEED * 0.6 * dt, v.body_r, cur_y, VIL_MAX_TURN * dt) {
                     v.facing = s.facing;
                     v.pos = s.pos;
                     v.moving = s.moving;
@@ -449,9 +659,23 @@ fn guard_combat(
     }
 }
 
-fn villager_limbs(time: Res<Time>, vils: Query<(&Villager, &Children)>, mut parts: Query<(&VilPart, &mut Transform)>) {
+/// Squared camera distance past which limb animation is skipped (fog/DoF hide the joints).
+const LIMB_CULL2: f32 = 70.0 * 70.0;
+
+fn villager_limbs(
+    time: Res<Time>,
+    cam: Query<&GlobalTransform, With<Camera3d>>,
+    vils: Query<(&Villager, &Children, &GlobalTransform)>,
+    mut parts: Query<(&VilPart, &mut Transform)>,
+) {
     let tw = time.elapsed_secs_wrapped();
-    for (v, children) in &vils {
+    let cam_p = cam.single().ok().map(|g| g.translation());
+    for (v, children, gt) in &vils {
+        if let Some(cp) = cam_p {
+            if gt.translation().distance_squared(cp) > LIMB_CULL2 {
+                continue;
+            }
+        }
         let t = tw + v.phase;
         for &child in children {
             let Ok((part, mut tf)) = parts.get_mut(child) else { continue };
@@ -611,10 +835,28 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
         Transform::from_xyz(market.x, my, market.y),
         BiomeEntity,
     ));
+    // Solid stall — the 1.8-wide counter + posts block; traders/hero walk around it.
+    crate::blockers::add_box(market.x, market.y, 0.95, 0.4);
     for i in 0..2 {
         let home = market + Vec2::new(if i == 0 { -1.6 } else { 1.6 }, 0.8);
         let kind = Kind::Peasant { skin: SKIN[i % SKIN.len()], tunic: MERCHANT_ROBE[i % 2], hat: false };
         spawn(commands, meshes, &mat, kind, home, home, 1.3, 2.4, next_u32(&mut rng));
+    }
+
+    // Two wandering pilgrims who trek between the island's landmarks, hinting the way (see
+    // `pilgrim_brain` / `pilgrim_hint`). They start just outside a gate and head off.
+    let gates = crate::castle::gate_centers();
+    for i in 0..2 {
+        let g = gates[i % gates.len()];
+        let home = g + (-g).normalize_or_zero() * 2.0;
+        let kind = Kind::Peasant { skin: SKIN[i % SKIN.len()], tunic: PILGRIM_ROBE, hat: true };
+        let e = spawn(commands, meshes, &mat, kind, home, home, 1.5, 2.0, next_u32(&mut rng));
+        commands.entity(e).insert(Pilgrim {
+            target: home,
+            pause: 0.0,
+            hint_cd: 0.0,
+            rng: next_u32(&mut rng) | 1,
+        });
     }
 }
 
@@ -686,7 +928,7 @@ fn spawn(
     speed: f32,
     wander_r: f32,
     seed: u32,
-) {
+) -> Entity {
     let s = spec(kind);
     let torso = meshes.add(s.torso);
     let parts: Vec<(PartKind, Vec3, Handle<Mesh>)> =
@@ -730,16 +972,15 @@ fn spawn(
         }
     });
 
-    // Armoured townsfolk double as town guards — they fight invaders at night.
+    // Armoured townsfolk double as town guards — they fight invaders at night. The NavPath caches
+    // an A* route home for a freed captive marching in from a far camp (see `guard_combat`).
     if matches!(kind, Kind::Guard { .. }) {
-        commands.entity(root).insert(Guard {
-            hp: GUARD_MAX_HP,
-            max: GUARD_MAX_HP,
-            atk_cd: 0.0,
-            downed: false,
-            post: home,
-        });
+        commands.entity(root).insert((
+            Guard { hp: GUARD_MAX_HP, max: GUARD_MAX_HP, atk_cd: 0.0, downed: false, post: home },
+            crate::navgrid::NavPath::default(),
+        ));
     }
+    root
 }
 
 // ── Mesh helpers ─────────────────────────────────────────────────────────────────

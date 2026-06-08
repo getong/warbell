@@ -531,6 +531,7 @@ pub fn config() -> BiomeConfig {
                 chance: 0.072,
                 scale: (0.85 * TREE_SCALE, 1.25 * TREE_SCALE),
                 tree: true,
+                block_radius: 0.0,
             },
             // Snow shrub / mound — FIRST non-tree class (the tree-too-close fallback).
             PropClass {
@@ -538,6 +539,7 @@ pub fn config() -> BiomeConfig {
                 chance: 0.055,
                 scale: (0.8, 1.45),
                 tree: false,
+                block_radius: 0.0,
             },
             // Frost boulders.
             PropClass {
@@ -545,6 +547,7 @@ pub fn config() -> BiomeConfig {
                 chance: 0.028,
                 scale: (0.6, 1.5),
                 tree: false,
+                block_radius: 0.28, // big frost boulders block; small ones walk-through
             },
             // Snowman (bałwan) — a rare charming centrepiece, sprinkled sparsely (~10 per
             // patch). Kept LAST so it never becomes the tree-too-close fallback.
@@ -553,6 +556,7 @@ pub fn config() -> BiomeConfig {
                 chance: 0.007,
                 scale: (0.9, 1.2),
                 tree: false,
+                block_radius: 0.3, // a snowman is a solid body-sized figure — don't walk through
             },
         ],
         cover: vec![
@@ -562,12 +566,14 @@ pub fn config() -> BiomeConfig {
                 chance: 0.34,
                 scale: (0.55, 1.1),
                 tree: false,
+                block_radius: 0.0,
             },
             PropClass {
                 variants: vec![(build_ice_glint_mesh(), 1.0)],
                 chance: 0.10,
                 scale: (0.6, 1.2),
                 tree: false,
+                block_radius: 0.0,
             },
             // Winter litter — holly berries, snow-capped pinecones, ice shards.
             PropClass {
@@ -575,6 +581,7 @@ pub fn config() -> BiomeConfig {
                 chance: 0.09,
                 scale: (0.7, 1.3),
                 tree: false,
+                block_radius: 0.0,
             },
         ],
         cover_per_tile: 2,

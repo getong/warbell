@@ -570,6 +570,7 @@ pub fn config() -> BiomeConfig {
                 chance: 0.045,
                 scale: (0.7, 1.25),
                 tree: false,
+                block_radius: 0.0,
             },
             // Saguaro cactus — the tree class (spacing-checked, gets wind sway).
             PropClass {
@@ -581,6 +582,7 @@ pub fn config() -> BiomeConfig {
                 chance: 0.035,
                 scale: (0.8 * CACTUS_SCALE, 1.15 * CACTUS_SCALE),
                 tree: true,
+                block_radius: 0.0,
             },
             // Barrel cactus — squat ribbed dome with a crown bloom.
             PropClass {
@@ -588,6 +590,7 @@ pub fn config() -> BiomeConfig {
                 chance: 0.03,
                 scale: (0.8, 1.4),
                 tree: false,
+                block_radius: 0.0,
             },
             // Prickly-pear / opuntia — clumps of flat green pads with red fruit.
             PropClass {
@@ -595,6 +598,7 @@ pub fn config() -> BiomeConfig {
                 chance: 0.018,
                 scale: (0.8, 1.4),
                 tree: false,
+                block_radius: 0.0,
             },
             // Bleached rocks + the odd bone/skull.
             PropClass {
@@ -606,6 +610,7 @@ pub fn config() -> BiomeConfig {
                 chance: 0.035,
                 scale: (0.6, 1.4),
                 tree: false,
+                block_radius: 0.0,
             },
         ],
         cover: vec![
@@ -614,18 +619,21 @@ pub fn config() -> BiomeConfig {
                 chance: 0.30,
                 scale: (0.7, 1.4),
                 tree: false,
+                block_radius: 0.0,
             },
             PropClass {
                 variants: vec![(build_dry_grass_mesh(), 1.0)],
                 chance: 0.12,
                 scale: (0.6, 1.1),
                 tree: false,
+                block_radius: 0.0,
             },
             PropClass {
                 variants: vec![(build_succulent_mesh(), 1.0)],
                 chance: 0.05,
                 scale: (0.7, 1.2),
                 tree: false,
+                block_radius: 0.0,
             },
             // Desert litter — brittlebush blooms, desert poppies, bleached twigs.
             PropClass {
@@ -633,6 +641,7 @@ pub fn config() -> BiomeConfig {
                 chance: 0.10,
                 scale: (0.7, 1.3),
                 tree: false,
+                block_radius: 0.0,
             },
         ],
         cover_per_tile: 2,

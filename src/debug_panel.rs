@@ -13,9 +13,11 @@
 
 use bevy::audio::{GlobalVolume, Volume};
 use bevy::camera::Exposure;
+use bevy::light::VolumetricFog;
 use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::post_process::bloom::Bloom;
-use bevy::post_process::dof::DepthOfField;
+
+use crate::dof::Dof;
 use bevy::prelude::*;
 use bevy::render::view::ColorGrading;
 use bevy_egui::{egui, EguiContexts, EguiPlugin, EguiPrimaryContextPass};
@@ -80,7 +82,15 @@ fn panel_ui(
     mut contexts: EguiContexts,
     panel: Res<DebugPanel>,
     mut cam: Query<
-        (&mut DistanceFog, &mut DepthOfField, &mut Bloom, &mut ColorGrading, &mut Exposure, &mut Outline),
+        (
+            &mut DistanceFog,
+            &mut Dof,
+            &mut Bloom,
+            &mut ColorGrading,
+            &mut Exposure,
+            &mut Outline,
+            &mut VolumetricFog,
+        ),
         With<Camera3d>,
     >,
     mut visual: ResMut<VisualSettings>,
@@ -105,8 +115,15 @@ fn panel_ui(
         .show(ctx, |ui| {
             ui.label("F1 toggles this panel");
 
-            if let Ok((mut fog, mut dof, mut bloom, mut grading, mut exposure, mut outline)) =
-                cam.single_mut()
+            if let Ok((
+                mut fog,
+                mut dof,
+                mut bloom,
+                mut grading,
+                mut exposure,
+                mut outline,
+                mut volfog,
+            )) = cam.single_mut()
             {
                 egui::CollapsingHeader::new("Fog").default_open(true).show(ui, |ui| {
                     // Fog uses a Linear falloff (clear within `start`, full by `end`).
@@ -119,13 +136,26 @@ fn panel_ui(
                     if changed {
                         fog.falloff = FogFalloff::Linear { start, end: end.max(start + 1.0) };
                     }
+                    // VolumetricFog is a SEPARATE component from DistanceFog above. Its high
+                    // `ambient_intensity` is what reads as bright white sky-haze over distant
+                    // geometry — drop this toward 0 to kill the white wash (sun shafts stay).
+                    ui.separator();
+                    ui.add(
+                        egui::Slider::new(&mut volfog.ambient_intensity, 0.0..=1.0)
+                            .text("volumetric haze (white wash)"),
+                    );
                 });
 
                 egui::CollapsingHeader::new("Bokeh DoF + Bloom").show(ui, |ui| {
                     // Focus distance is auto-driven onto the player (drive_dof_focus); these
-                    // tune the blur. Lower f-stops = shallower focus = more bokeh.
-                    ui.add(egui::Slider::new(&mut dof.aperture_f_stops, 0.4..=16.0).text("aperture f (low=blurry)"));
-                    ui.add(egui::Slider::new(&mut dof.max_circle_of_confusion_diameter, 0.0..=128.0).text("max blur px"));
+                    // tune the blur. Smaller sharp band + bigger radius = more bokeh.
+                    ui.label(format!("focal: {:.1} tiles (auto, on player)", dof.focal));
+                    ui.add(egui::Slider::new(&mut dof.range, 0.0..=80.0).text("sharp band (tiles)"));
+                    ui.add(egui::Slider::new(&mut dof.far_ramp, 10.0..=250.0).text("far falloff (big=gradual)"));
+                    ui.add(egui::Slider::new(&mut dof.max_radius, 0.0..=60.0).text("blur radius px"));
+                    let mut coc_debug = dof.debug_view > 0.5;
+                    ui.checkbox(&mut coc_debug, "show CoC (white=blurred, black=sharp)");
+                    dof.debug_view = if coc_debug { 1.0 } else { 0.0 };
                     ui.add(egui::Slider::new(&mut bloom.intensity, 0.0..=1.0).text("bloom"));
                 });
 

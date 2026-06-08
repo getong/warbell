@@ -445,6 +445,7 @@ pub fn config() -> BiomeConfig {
                 chance: 0.045,
                 scale: (0.8, 1.35),
                 tree: false,
+                block_radius: 0.0,
             },
             // Boulders — the DOMINANT class. 3 variants, big scale range.
             PropClass {
@@ -456,6 +457,7 @@ pub fn config() -> BiomeConfig {
                 chance: 0.085,
                 scale: (0.7, 2.2),
                 tree: false,
+                block_radius: 0.3, // dominant boulders — big ones block, scree-sized walk-through
             },
             // Hoodoo spires — the "tree" class (spacing-checked, no sway harm). 2 variants.
             PropClass {
@@ -466,6 +468,7 @@ pub fn config() -> BiomeConfig {
                 chance: 0.022,
                 scale: (0.9, 1.8),
                 tree: true,
+                block_radius: 0.0,
             },
             // Scree pebble clusters. 2 variants.
             PropClass {
@@ -476,6 +479,7 @@ pub fn config() -> BiomeConfig {
                 chance: 0.03,
                 scale: (0.7, 1.5),
                 tree: false,
+                block_radius: 0.0,
             },
             // Crystal / geode clusters — the lone colour accent (amethyst / teal). Sparse.
             PropClass {
@@ -486,6 +490,7 @@ pub fn config() -> BiomeConfig {
                 chance: 0.014,
                 scale: (0.7, 1.5),
                 tree: false,
+                block_radius: 0.0,
             },
         ],
         cover: vec![
@@ -494,12 +499,14 @@ pub fn config() -> BiomeConfig {
                 chance: 0.30,
                 scale: (0.6, 1.3),
                 tree: false,
+                block_radius: 0.0,
             },
             PropClass {
                 variants: vec![(build_cover_drytuft_mesh(), 1.0)],
                 chance: 0.22,
                 scale: (0.7, 1.2),
                 tree: false,
+                block_radius: 0.0,
             },
             // Rocky litter — lichen-crusted stones + tiny crystal sprinkles (colour).
             PropClass {
@@ -507,6 +514,7 @@ pub fn config() -> BiomeConfig {
                 chance: 0.10,
                 scale: (0.7, 1.3),
                 tree: false,
+                block_radius: 0.0,
             },
         ],
         cover_per_tile: 2,

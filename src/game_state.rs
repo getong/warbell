@@ -16,6 +16,11 @@
 
 use bevy::prelude::*;
 
+use crate::ui::anim::{anim, anim_btn, AnimKind};
+use crate::ui::fonts::{label, UiFonts};
+use crate::ui::theme::*;
+use crate::ui::widgets;
+
 /// Coarse run mode. Boots to `StartScreen` (unless a screenshot/demo env hook skips the menu).
 #[derive(States, Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum AppState {
@@ -57,9 +62,13 @@ impl Plugin for GameStatePlugin {
             .add_systems(OnExit(AppState::GameOver), despawn_screen::<GameOverUi>)
             .add_systems(
                 Update,
-                (start_screen_input, cycle_difficulty).run_if(in_state(AppState::StartScreen)),
+                (start_screen_input, cycle_difficulty, start_click, update_diff_seg)
+                    .run_if(in_state(AppState::StartScreen)),
             )
-            .add_systems(Update, gameover_input.run_if(in_state(AppState::GameOver)));
+            .add_systems(
+                Update,
+                (gameover_input, gameover_click).run_if(in_state(AppState::GameOver)),
+            );
     }
 }
 
@@ -126,12 +135,8 @@ fn start_screen_input(keys: Res<ButtonInput<KeyCode>>, mut next_app: ResMut<Next
 }
 
 /// On the start screen, **G** cycles the difficulty (reusing the siege bind so it doesn't clash
-/// with the dev `1-5` biome keys), updating the on-screen label.
-fn cycle_difficulty(
-    keys: Res<ButtonInput<KeyCode>>,
-    siege: Option<ResMut<crate::siege::Siege>>,
-    mut q: Query<&mut Text, With<DifficultyText>>,
-) {
+/// with the dev `1-5` biome keys). The segmented control reflects it via [`update_diff_seg`].
+fn cycle_difficulty(keys: Res<ButtonInput<KeyCode>>, siege: Option<ResMut<crate::siege::Siege>>) {
     if !keys.just_pressed(KeyCode::KeyG) {
         return;
     }
@@ -142,20 +147,22 @@ fn cycle_difficulty(
         Normal => Hard,
         Hard => Easy,
     };
-    if let Ok(mut t) = q.single_mut() {
-        **t = difficulty_line(siege.difficulty);
-    }
 }
 
-fn difficulty_line(d: crate::siege::Difficulty) -> String {
+fn diff_name(d: crate::siege::Difficulty) -> &'static str {
     use crate::siege::Difficulty::*;
-    let name = match d {
+    match d {
         Easy => "Easy",
         Normal => "Normal",
         Hard => "Hard",
-    };
-    format!("Difficulty: {name}   (G to change)")
+    }
 }
+
+const DIFFS: [crate::siege::Difficulty; 3] = [
+    crate::siege::Difficulty::Easy,
+    crate::siege::Difficulty::Normal,
+    crate::siege::Difficulty::Hard,
+];
 
 fn gameover_input(keys: Res<ButtonInput<KeyCode>>, mut next_app: ResMut<NextState<AppState>>) {
     // Enter restarts: the per-plugin OnExit(GameOver) resets (siege/keep/hero) rebuild a fresh run.
@@ -164,18 +171,26 @@ fn gameover_input(keys: Res<ButtonInput<KeyCode>>, mut next_app: ResMut<NextStat
     }
 }
 
-// ── Minimal overlays (P0.6 adds difficulty chooser + styling) ──────────────────────────
+// ── Screens (cinematic start / pause / game-over), ported from the 3js HUD ──────────────
 
 #[derive(Component)]
 struct StartScreenUi;
 #[derive(Component)]
-struct DifficultyText;
-#[derive(Component)]
 struct PausedUi;
 #[derive(Component)]
 struct GameOverUi;
+/// The "Play" button on the start screen.
+#[derive(Component)]
+struct StartPlayButton;
+/// A difficulty segment (click to select).
+#[derive(Component)]
+struct SegButton(crate::siege::Difficulty);
+/// The "Play again" button on the game-over screen.
+#[derive(Component)]
+struct AgainButton;
 
-fn overlay_root(dim: f32) -> impl Bundle {
+/// A centred full-screen scrim card root (pause / game-over).
+fn modal_root(z: i32) -> impl Bundle {
     (
         Node {
             position_type: PositionType::Absolute,
@@ -187,55 +202,297 @@ fn overlay_root(dim: f32) -> impl Bundle {
             row_gap: Val::Px(16.0),
             ..default()
         },
-        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, dim)),
-        GlobalZIndex(50),
+        BackgroundColor(SCRIM),
+        GlobalZIndex(z),
     )
 }
 
-fn title_text(s: &str, size: f32) -> impl Bundle {
-    (Text::new(s), TextFont { font_size: size, ..default() }, TextColor(Color::WHITE))
+/// The cinematic start screen: a live scene behind a left-heavy scrim, with the title block,
+/// Play button, difficulty selector (lower-left) and a controls legend (lower-right).
+fn spawn_start_screen(
+    mut commands: Commands,
+    fonts: Res<UiFonts>,
+    siege: Option<Res<crate::siege::Siege>>,
+) {
+    let cur = siege.map(|s| s.difficulty).unwrap_or(crate::siege::Difficulty::Normal);
+
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                ..default()
+            },
+            // Left-heavy cinematic scrim so the title reads while the scene stays bright at right.
+            BackgroundGradient(vec![Gradient::Linear(LinearGradient::new(
+                std::f32::consts::FRAC_PI_2, // → right
+                vec![
+                    ColorStop::new(rgba(6, 10, 20, 0.78), Val::Percent(0.0)),
+                    ColorStop::new(rgba(6, 10, 20, 0.32), Val::Percent(40.0)),
+                    ColorStop::new(rgba(6, 10, 20, 0.0), Val::Percent(72.0)),
+                ],
+            ))]),
+            GlobalZIndex(50),
+            StartScreenUi,
+        ))
+        .with_children(|root| {
+            // ── Lower-left menu column ──
+            root.spawn(Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(72.0),
+                bottom: Val::Px(80.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Start,
+                row_gap: Val::Px(12.0),
+                ..default()
+            })
+            .with_children(|m| {
+                m.spawn((label(&fonts.bold, "DEFEND THE KEEP", 12.0, KICKER), anim(AnimKind::Rise, 0.06, 0.6)));
+                // Two-line title.
+                m.spawn((
+                    Node { flex_direction: FlexDirection::Column, ..default() },
+                    anim(AnimKind::Rise, 0.12, 0.7),
+                ))
+                .with_children(|t| {
+                    for line in ["TILE", "WORLD"] {
+                        t.spawn((
+                            label(&fonts.extrabold, line, 84.0, rgb(238, 244, 255)),
+                            TextShadow { offset: Vec2::new(0.0, 6.0), color: rgba(0, 0, 0, 0.6) },
+                        ));
+                    }
+                });
+                m.spawn((label(&fonts.regular, "A knight's last stand.", 17.0, TEXT_DIM), anim(AnimKind::Rise, 0.2, 0.7)));
+                // Divider.
+                m.spawn((
+                    Node { width: Val::Px(220.0), height: Val::Px(1.0), margin: UiRect::vertical(Val::Px(6.0)), ..default() },
+                    BackgroundColor(rgba(199, 155, 106, 0.6)),
+                    anim(AnimKind::Rise, 0.3, 0.7),
+                ));
+                // Play button.
+                m.spawn((
+                    Node {
+                        padding: UiRect::axes(Val::Px(44.0), Val::Px(13.0)),
+                        border: widgets::border(1.0),
+                        border_radius: radius(11.0),
+                        ..default()
+                    },
+                    widgets::btn_primary_paint(),
+                    StartPlayButton,
+                    anim_btn(AnimKind::Rise, 0.36, 0.7),
+                ))
+                .with_children(|b| {
+                    b.spawn(label(&fonts.extrabold, "PLAY", 19.0, Color::WHITE));
+                });
+                // Difficulty selector.
+                m.spawn((
+                    Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(7.0), ..default() },
+                    anim(AnimKind::Rise, 0.34, 0.7),
+                ))
+                .with_children(|d| {
+                    d.spawn(label(&fonts.semibold, "DIFFICULTY", 11.0, KICKER));
+                    d.spawn((
+                        Node {
+                            flex_direction: FlexDirection::Row,
+                            padding: UiRect::all(Val::Px(3.0)),
+                            border: widgets::border(1.0),
+                            border_radius: radius(10.0),
+                            ..default()
+                        },
+                        BackgroundColor(rgba(14, 20, 34, 0.72)),
+                        BorderColor::all(BORDER_SOFT),
+                    ))
+                    .with_children(|seg| {
+                        for d in DIFFS {
+                            let on = d == cur;
+                            seg.spawn((
+                                Button,
+                                Interaction::default(),
+                                Node {
+                                    padding: UiRect::axes(Val::Px(20.0), Val::Px(7.0)),
+                                    border_radius: radius(7.0),
+                                    ..default()
+                                },
+                                BackgroundColor(if on { GOLD_DEEP } else { Color::NONE }),
+                                BorderColor::all(Color::NONE),
+                                SegButton(d),
+                            ))
+                            .with_children(|b| {
+                                b.spawn(label(&fonts.semibold, diff_name(d), 13.0, if on { Color::WHITE } else { TEXT_FAINT }));
+                            });
+                        }
+                    });
+                });
+            });
+
+            // ── Lower-right controls legend ──
+            root.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    right: Val::Px(36.0),
+                    bottom: Val::Px(36.0),
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::End,
+                    row_gap: Val::Px(6.0),
+                    ..default()
+                },
+                anim(AnimKind::Rise, 0.52, 0.7),
+            ))
+            .with_children(|legend| {
+                let rows: &[(&[&str], &str)] = &[
+                    (&["W", "A", "S", "D"], "Move"),
+                    (&["LMB"], "Attack"),
+                    (&["RMB"], "Block"),
+                    (&["E"], "Interact"),
+                    (&["F"], "Loot"),
+                    (&["I"], "Satchel"),
+                    (&["R"], "Recruit"),
+                    (&["Esc"], "Pause"),
+                ];
+                for (keys, desc) in rows {
+                    legend
+                        .spawn(Node { flex_direction: FlexDirection::Row, align_items: AlignItems::Center, column_gap: Val::Px(8.0), ..default() })
+                        .with_children(|row| {
+                            row.spawn(Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(3.0), ..default() })
+                                .with_children(|kc| {
+                                    for k in keys.iter() {
+                                        kc.spawn((
+                                            Node {
+                                                padding: UiRect::axes(Val::Px(7.0), Val::Px(3.0)),
+                                                border: widgets::border(1.0),
+                                                border_radius: radius(5.0),
+                                                ..default()
+                                            },
+                                            widgets::keycap_paint(),
+                                        ))
+                                        .with_children(|c| {
+                                            c.spawn(label(&fonts.bold, *k, 11.0, rgb(233, 238, 251)));
+                                        });
+                                    }
+                                });
+                            row.spawn(label(&fonts.regular, *desc, 12.0, TEXT_FAINT));
+                        });
+                }
+            });
+        });
 }
 
-fn spawn_start_screen(mut commands: Commands, siege: Option<Res<crate::siege::Siege>>) {
-    let diff = siege.map(|s| s.difficulty).unwrap_or(crate::siege::Difficulty::Normal);
-    commands.spawn((overlay_root(0.55), StartScreenUi)).with_children(|p| {
-        p.spawn(title_text("TILEWORLD", 72.0));
-        p.spawn(title_text("Press Enter to begin", 28.0));
-        p.spawn((
-            Text::new(difficulty_line(diff)),
-            TextFont { font_size: 22.0, ..default() },
-            TextColor(Color::srgb(0.8, 0.85, 0.95)),
-            DifficultyText,
-        ));
-        p.spawn((
-            Text::new(
-                "WASD move   Shift sprint   Space jump   LMB attack   RMB block\n\
-                 U upgrades   T shop   I bag   B war bell   R recruit   ` free-cam   Esc pause",
-            ),
-            TextFont { font_size: 16.0, ..default() },
-            TextColor(Color::srgba(0.78, 0.82, 0.92, 0.85)),
-        ));
+fn spawn_pause_screen(mut commands: Commands, fonts: Res<UiFonts>) {
+    commands.spawn((modal_root(50), PausedUi)).with_children(|root| {
+        root.spawn((
+            Node {
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(10.0),
+                padding: UiRect::axes(Val::Px(40.0), Val::Px(28.0)),
+                border: widgets::border(1.0),
+                border_radius: radius(R_PANEL),
+                ..default()
+            },
+            widgets::card_paint(),
+            anim(AnimKind::PopIn, 0.0, 0.26),
+        ))
+        .with_children(|c| {
+            c.spawn(label(&fonts.extrabold, "PAUSED", 40.0, TEXT));
+            c.spawn(label(&fonts.regular, "Esc to resume", 16.0, GREY));
+        });
     });
 }
 
-fn spawn_pause_screen(mut commands: Commands) {
-    commands.spawn((overlay_root(0.5), PausedUi)).with_children(|p| {
-        p.spawn(title_text("Paused", 56.0));
-        p.spawn(title_text("Esc to resume", 24.0));
-    });
-}
-
-fn spawn_gameover_screen(mut commands: Commands, siege: Option<Res<crate::siege::Siege>>) {
-    let won = matches!(siege.map(|s| s.phase), Some(crate::siege::GamePhase::Victory));
+fn spawn_gameover_screen(
+    mut commands: Commands,
+    fonts: Res<UiFonts>,
+    siege: Option<Res<crate::siege::Siege>>,
+    player: Option<Res<crate::player::PlayerRes>>,
+) {
+    let won = matches!(siege.as_deref().map(|s| s.phase), Some(crate::siege::GamePhase::Victory));
     let (title, col) = if won {
-        ("Victory", Color::srgb(0.45, 0.9, 0.45))
+        ("VICTORY", rgb(255, 231, 154))
     } else {
-        ("The keep has fallen", Color::srgb(0.9, 0.4, 0.36))
+        ("THE KEEP HAS FALLEN", rgb(255, 106, 90))
     };
-    commands.spawn((overlay_root(0.6), GameOverUi)).with_children(|p| {
-        p.spawn((Text::new(title), TextFont { font_size: 60.0, ..default() }, TextColor(col)));
-        p.spawn(title_text("Press Enter to play again", 24.0));
+    let stats = player
+        .map(|p| format!("Level {}     Gold {}", p.0.level, p.0.gold))
+        .unwrap_or_default();
+
+    commands.spawn((modal_root(50), GameOverUi)).with_children(|root| {
+        root.spawn((
+            label(&fonts.extrabold, title, 60.0, col),
+            TextShadow { offset: Vec2::new(0.0, 4.0), color: rgba(0, 0, 0, 0.8) },
+            anim(AnimKind::PopIn, 0.0, 0.6),
+        ));
+        if !stats.is_empty() {
+            root.spawn((label(&fonts.semibold, stats, 16.0, GOLD), anim(AnimKind::FloatUp, 0.2, 0.5)));
+        }
+        root.spawn((
+            Node {
+                padding: UiRect::axes(Val::Px(26.0), Val::Px(11.0)),
+                border: widgets::border(1.0),
+                border_radius: radius(R_CARD),
+                margin: UiRect::top(Val::Px(8.0)),
+                ..default()
+            },
+            widgets::btn_primary_paint(),
+            AgainButton,
+            anim_btn(AnimKind::FloatUp, 0.4, 0.5),
+        ))
+        .with_children(|b| {
+            b.spawn(label(&fonts.extrabold, "PLAY AGAIN", 15.0, Color::WHITE));
+        });
     });
+}
+
+/// Click "Play" / a difficulty segment on the start screen.
+#[allow(clippy::type_complexity)]
+fn start_click(
+    q: Query<(&Interaction, Option<&StartPlayButton>, Option<&SegButton>), Changed<Interaction>>,
+    mut next_app: ResMut<NextState<AppState>>,
+    siege: Option<ResMut<crate::siege::Siege>>,
+) {
+    let mut siege = siege;
+    for (interaction, play, seg) in &q {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        if play.is_some() {
+            next_app.set(AppState::Playing);
+        }
+        if let Some(seg) = seg {
+            if let Some(s) = siege.as_deref_mut() {
+                s.difficulty = seg.0;
+            }
+        }
+    }
+}
+
+/// Recolour the difficulty segments to match the live selection (G key or click).
+fn update_diff_seg(
+    siege: Option<Res<crate::siege::Siege>>,
+    mut q: Query<(&SegButton, &mut BackgroundColor, &Children)>,
+    mut text_q: Query<&mut TextColor>,
+) {
+    let cur = siege.map(|s| s.difficulty).unwrap_or(crate::siege::Difficulty::Normal);
+    for (seg, mut bg, children) in &mut q {
+        let on = seg.0 == cur;
+        bg.0 = if on { GOLD_DEEP } else { Color::NONE };
+        for child in children.iter() {
+            if let Ok(mut tc) = text_q.get_mut(child) {
+                tc.0 = if on { Color::WHITE } else { TEXT_FAINT };
+            }
+        }
+    }
+}
+
+/// Click "Play again" on the game-over screen.
+fn gameover_click(
+    q: Query<&Interaction, (Changed<Interaction>, With<AgainButton>)>,
+    mut next_app: ResMut<NextState<AppState>>,
+) {
+    for interaction in &q {
+        if *interaction == Interaction::Pressed {
+            next_app.set(AppState::Playing);
+        }
+    }
 }
 
 fn despawn_screen<T: Component>(mut commands: Commands, q: Query<Entity, With<T>>) {

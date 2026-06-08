@@ -20,6 +20,10 @@ use crate::orks::{self, OrkVariant, WaveInvader};
 use crate::player::{Health, HeroState, PendingHeroDamage};
 use crate::projectile::{BoltSpawn, BoltSpawns};
 use crate::steer;
+use crate::ui::anim::{anim, AnimKind};
+use crate::ui::fonts::{label, UiFonts};
+use crate::ui::theme::*;
+use crate::ui::widgets::{self, border};
 use crate::worldmap::ground_at_world;
 
 // ── Tuning (ported from waveStore.ts) ──────────────────────────────────────────────
@@ -54,19 +58,13 @@ pub const WAVES: [WaveDef; 8] = [
     WaveDef { count: 1, hp_scale: 14.0, variants: &[Berserker], spawn_interval: 0.5 }, // boss
 ];
 
-/// Per-variant base HP for a wave ork, in this scene's combat units (the camp ork is a flat
-/// 60 HP; these keep the original `orkConfig.ts` *ratios* — scout frail, berserker beefy —
-/// anchored so a Night-1 grunt matches a camp grunt). Scaled by `hp_scale` × the difficulty
-/// `hp_mul` at spawn.
+/// Per-variant base HP for a wave (and camp) ork — the **full old-game** `orkConfig.ts` values
+/// straight from core (grunt 254 / scout 136 / berserker 306 / shaman 201). The earlier ×0.35
+/// rescale left orks far too soft against a hero that's already at full old-game power (25 base
+/// dmg + weapons/crit/levels), so they're back to parity. Per-night growth still comes from
+/// `hp_scale` below (1.1·1.15^n) → orks gain HP every night exactly as in the original.
 pub fn base_hp(v: OrkVariant) -> f32 {
-    // Bumped ~1.5× over the first pass (60/32/72/47) so the hero no longer one-/two-shots
-    // everything — fights take a few solid blows even with a weapon.
-    match v {
-        OrkVariant::Grunt => 90.0,
-        OrkVariant::Scout => 48.0,
-        OrkVariant::Berserker => 108.0,
-        OrkVariant::Shaman => 70.0,
-    }
+    tileworld_core::ork_config::ork_config(orks::core_variant(v)).hp as f32
 }
 
 // ── Difficulty (ported from difficultyStore.ts) ─────────────────────────────────────
@@ -269,6 +267,35 @@ pub fn nearest_guard_in_range(from: Vec2, guards: &[Vec2], engage: f32) -> Optio
     best.map(|(i, _)| i)
 }
 
+// Stuck-ork safety net (ported intent from waveLogic.ts): an invader caught in a steering
+// local-minimum (oscillating round a prop / wall-corner, or ping-ponging between two equidistant
+// gates) never reaches the keep, so the wave never clears. The OLD net keyed on raw movement —
+// an oscillator that still inches >EPS each cycle reset the clock forever and was never reaped,
+// and it only fired beyond 16u so a courtyard wedge hung too. This net is PROGRESS-based: reap any
+// keep-marcher that hasn't gotten strictly closer to the keep within the timeout, at any range.
+/// Reap a wedged invader that hasn't made `STUCK_TIMEOUT` seconds of progress toward the keep.
+const STUCK_TIMEOUT: f32 = 20.0;
+/// An invader must close at least this much distance-to-keep to count as "still progressing".
+/// Lenient: a marching ork covers tens of units in `STUCK_TIMEOUT`, so only a truly wedged one
+/// (≈zero net gain) trips it — near-zero false positives.
+const STUCK_PROGRESS_EPS: f32 = 0.5;
+
+/// Progress-based stuck test for a keep-marching invader. `closest`/`progress_at` are its best
+/// (minimum) distance-to-keep so far and when that last improved; `dist_keep` is this frame's
+/// distance; `engaged` is true when it's attacking or actively pursuing the hero/a guard (intended
+/// behaviour, never "stuck"). Returns the updated `(closest, progress_at, reap)`: progress (or
+/// engagement) resets the clock; a pure keep-march with no gain past the timeout reaps. Pure so the
+/// "oscillator with net-zero progress still gets culled" guarantee is unit-tested without the ECS.
+pub fn stuck_step(closest: f32, progress_at: f32, dist_keep: f32, engaged: bool, now: f32) -> (f32, f32, bool) {
+    if engaged || dist_keep < closest - STUCK_PROGRESS_EPS {
+        (closest.min(dist_keep), now, false)
+    } else if now - progress_at >= STUCK_TIMEOUT {
+        (closest, progress_at, true)
+    } else {
+        (closest, progress_at, false)
+    }
+}
+
 // ════════════════════════════════════════════════════════════════════════════════════
 // ECS layer — feeds the pure core above world state and applies its actions (the
 // side-effecting half of the TS `WaveDirector.tsx`), plus the keep, the invader march AI,
@@ -294,13 +321,6 @@ pub const KEEP_MAX_HP: f32 = 1000.0;
 const KEEP_REPAIR_RATE: f32 = 12.0;
 /// The night horde's warband tint (camps use both; invaders are uniformly this).
 const INVADER_FACTION: orks::Faction = orks::Faction::Red;
-
-// Stuck-ork safety net (ported from waveLogic.ts): an invader knocked onto an isolated tile the
-// steerer can't leave never reaches the keep, so the wave never clears. Reap any that has sat
-// essentially still, far from the keep, past the timeout.
-const STUCK_TIMEOUT: f32 = 20.0;
-const STUCK_MOVE_EPS: f32 = 0.6;
-const STUCK_SAFE_RANGE: f32 = 16.0;
 
 /// The keep's vitals. Razed (hp ≤ 0) during a wave → defeat.
 #[derive(Resource)]
@@ -440,8 +460,8 @@ fn spawn_invader(
     let seed = ring_index.wrapping_mul(0x9e37_79b1) ^ (ring_index + 1);
     let e = armory.spawn(commands, variant, INVADER_FACTION, KEEP_POS, p, seed);
     commands.entity(e).insert((
-        WaveInvader { last_pos: p, idle_since: now },
-        crate::navgrid::InvaderPath::default(),
+        WaveInvader { closest: p.distance(KEEP_POS), progress_at: now },
+        crate::navgrid::NavPath::default(),
         Health { hp, max: hp },
     ));
 }
@@ -570,7 +590,7 @@ fn invader_brain(
             Entity,
             &mut orks::Ork,
             &mut WaveInvader,
-            &mut crate::navgrid::InvaderPath,
+            &mut crate::navgrid::NavPath,
             &mut Transform,
             &Health,
         ),
@@ -596,27 +616,33 @@ fn invader_brain(
         // Berserker frenzy: faster march + quicker strikes under 40% HP (incl. the boss).
         let frenzied = o.variant == OrkVariant::Berserker && hp.hp < hp.max * 0.4;
         let dist_keep = o.pos.distance(KEEP_POS);
-        // Target priority: the hero if he's close, else the nearest guard in the way, else the
-        // keep. So invaders FIGHT the town-guards instead of walking past them.
-        let see_hero = hero.alive && o.pos.distance(hero.pos) < orks::ORK_SIGHT;
-        let guard_tgt: Option<(Entity, Vec2)> = if see_hero {
-            None
+        // Target priority: invaders treat the town-guards LIKE the hero — they fight whichever of
+        // the two threats is nearer, rather than tunnelling on the hero and walking past the
+        // guards. Only with neither hero nor guard in range do they press on to the keep.
+        let hero_d = if hero.alive { o.pos.distance(hero.pos) } else { f32::INFINITY };
+        let see_hero = hero.alive && hero_d < orks::ORK_SIGHT;
+        let guard_near = nearest_guard_in_range(o.pos, &guard_positions, GUARD_ENGAGE);
+        let guard_d = guard_near.map_or(f32::INFINITY, |i| o.pos.distance(guard_positions[i]));
+        // Take a guard when one is in range and either no hero is near or the guard is the closer.
+        let guard_tgt: Option<(Entity, Vec2)> = if guard_near.is_some() && (!see_hero || guard_d <= hero_d) {
+            guard_near.map(|i| live_guards[i])
         } else {
-            nearest_guard_in_range(o.pos, &guard_positions, GUARD_ENGAGE).map(|i| live_guards[i])
+            None
         };
-        let target = if see_hero {
-            hero.pos
-        } else if let Some((_, gp)) = guard_tgt {
+        let chase_hero = see_hero && guard_tgt.is_none();
+        let target = if let Some((_, gp)) = guard_tgt {
             gp
+        } else if chase_hero {
+            hero.pos
         } else {
             KEEP_POS
         };
         let atk_range = if o.shaman { orks::SHAMAN_CAST_RANGE } else { orks::ORK_ATTACK_RANGE };
-        let at_hero = see_hero && o.pos.distance(hero.pos) < atk_range;
+        let at_hero = chase_hero && o.pos.distance(hero.pos) < atk_range;
         let at_guard = guard_tgt.is_some_and(|(_, gp)| o.pos.distance(gp) < atk_range);
-        let at_keep = !see_hero && guard_tgt.is_none() && dist_keep <= KEEP_ATTACK_RANGE;
+        let at_keep = !chase_hero && guard_tgt.is_none() && dist_keep <= KEEP_ATTACK_RANGE;
         // Chasing a target (hero/guard) uses cheap direct steering; only the keep march paths A*.
-        let chase_direct = see_hero || guard_tgt.is_some();
+        let chase_direct = chase_hero || guard_tgt.is_some();
 
         if at_hero || at_guard || at_keep {
             o.moving = false;
@@ -629,6 +655,7 @@ fn invader_brain(
             }
             if o.atk_cd <= 0.0 {
                 let frenzy_cd = if frenzied { 0.6 } else { 1.0 };
+                o.atk_anim = now; // play the club-chop / staff-jab (keep, guard, or hero)
                 if at_hero {
                     if o.shaman {
                         o.atk_cd = orks::SHAMAN_CAST_CD;
@@ -701,11 +728,15 @@ fn invader_brain(
             }
         }
 
-        // Stuck-ork safety net — movement resets the idle clock; idle + far + timed-out → reap.
-        if o.pos.distance(inv.last_pos) > STUCK_MOVE_EPS {
-            inv.last_pos = o.pos;
-            inv.idle_since = now;
-        } else if dist_keep > STUCK_SAFE_RANGE && now - inv.idle_since >= STUCK_TIMEOUT {
+        // Stuck-ork safety net — progress-based: a keep-marcher that hasn't gotten closer to the
+        // keep within the timeout is wedged (oscillating round a prop/wall, or gate-flip thrash)
+        // and fades out, so the wave can't hang. Attacking or chasing the hero/a guard counts as
+        // progress (intended behaviour, never culled). See `stuck_step`.
+        let engaged = at_hero || at_guard || at_keep || chase_hero || guard_tgt.is_some();
+        let (closest, progress_at, reap) = stuck_step(inv.closest, inv.progress_at, dist_keep, engaged, now);
+        inv.closest = closest;
+        inv.progress_at = progress_at;
+        if reap {
             crate::dying::begin_dying(&mut commands, e, now); // a wedged invader fades out
             continue;
         }
@@ -714,7 +745,8 @@ fn invader_brain(
 
         let gy = ground_at_world(o.pos.x, o.pos.y).unwrap_or(tf.translation.y);
         tf.translation = Vec3::new(o.pos.x, gy, o.pos.y);
-        tf.rotation = Quat::from_rotation_y(o.facing);
+        // Springy recoil-wobble on a blow taken — same as the camp orks.
+        tf.rotation = Quat::from_rotation_y(o.facing) * Quat::from_rotation_x(orks::recoil_tilt(o.hit_recoil, now));
     }
 }
 
@@ -734,50 +766,81 @@ fn siege_controls(keys: Res<ButtonInput<KeyCode>>, mut siege: ResMut<Siege>) {
     }
 }
 
-// ── Phase HUD (chrome-less bars, matching `hud.rs`) ──────────────────────────────────
+// ── Objective banner (top-centre), ported from the 3js `Objective` ───────────────────
 
 #[derive(Component)]
 struct KeepHpFill;
 #[derive(Component)]
 struct PhaseFill;
+#[derive(Component)]
+struct PhaseText;
+#[derive(Component)]
+struct SubText;
+#[derive(Component)]
+struct HeirText;
 
-fn setup_siege_hud(mut commands: Commands) {
-    let track_bg = Color::srgba(0.0, 0.0, 0.0, 0.55);
+fn setup_siege_hud(mut commands: Commands, fonts: Res<UiFonts>) {
+    // Full-width wrapper centres the banner card horizontally.
     commands
         .spawn(Node {
             position_type: PositionType::Absolute,
-            top: Val::Px(14.0),
-            left: Val::Percent(50.0),
-            margin: UiRect::left(Val::Px(-150.0)), // centre the 300px block
-            width: Val::Px(300.0),
-            flex_direction: FlexDirection::Column,
-            row_gap: Val::Px(5.0),
+            top: Val::Px(16.0),
+            left: Val::Px(0.0),
+            width: Val::Percent(100.0),
+            flex_direction: FlexDirection::Row,
+            justify_content: JustifyContent::Center,
             ..default()
         })
-        .with_children(|root| {
-            // Keep HP (crimson).
-            root.spawn((
-                Node { width: Val::Percent(100.0), height: Val::Px(14.0), padding: UiRect::all(Val::Px(2.0)), ..default() },
-                BackgroundColor(track_bg),
+        .with_children(|wrap| {
+            wrap.spawn((
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    row_gap: Val::Px(5.0),
+                    min_width: Val::Px(260.0),
+                    padding: UiRect::axes(Val::Px(16.0), Val::Px(8.0)),
+                    border: border(1.0),
+                    border_radius: radius(R_CARD),
+                    ..default()
+                },
+                BackgroundColor(PANEL_HUD),
+                BorderColor::all(BORDER_SOFT),
+                shadow_hud(),
+                anim(AnimKind::SlideDown, 0.0, 0.36),
             ))
-            .with_children(|t| {
-                t.spawn((
-                    Node { width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
-                    BackgroundColor(Color::srgb(0.80, 0.30, 0.26)),
-                    KeepHpFill,
-                ));
-            });
-            // Phase bar: prep = amber day-countdown; wave = crimson horde-remaining.
-            root.spawn((
-                Node { width: Val::Percent(100.0), height: Val::Px(8.0), padding: UiRect::all(Val::Px(2.0)), ..default() },
-                BackgroundColor(track_bg),
-            ))
-            .with_children(|t| {
-                t.spawn((
-                    Node { width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
-                    BackgroundColor(Color::srgb(0.95, 0.75, 0.30)),
-                    PhaseFill,
-                ));
+            .with_children(|card| {
+                card.spawn((label(&fonts.bold, "PREPARE", 12.0, GOLD), PhaseText));
+                card.spawn((label(&fonts.semibold, "", 12.0, TEXT_DIM), SubText));
+                // Phase progress bar (prep day drains / wave horde remaining).
+                card.spawn((
+                    Node { width: Val::Px(180.0), height: Val::Px(6.0), border_radius: radius(3.0), overflow: Overflow::clip(), ..default() },
+                    BackgroundColor(rgba(0, 0, 0, 0.45)),
+                ))
+                .with_children(|t| {
+                    t.spawn((
+                        Node { width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
+                        BackgroundColor(GOLD_DEEP),
+                        PhaseFill,
+                    ));
+                });
+                // Keep HP row.
+                card.spawn(Node { flex_direction: FlexDirection::Row, align_items: AlignItems::Center, column_gap: Val::Px(6.0), ..default() })
+                    .with_children(|row| {
+                        row.spawn(label(&fonts.semibold, "KEEP", 10.0, GREY));
+                        row.spawn((
+                            Node { width: Val::Px(160.0), height: Val::Px(8.0), border: border(1.0), border_radius: radius(4.0), overflow: Overflow::clip(), ..default() },
+                            BackgroundColor(rgba(0, 0, 0, 0.45)),
+                            BorderColor::all(rgba(255, 255, 255, 0.25)),
+                        ))
+                        .with_children(|t| {
+                            t.spawn((
+                                Node { width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
+                                widgets::vgrad(rgb(111, 208, 255), rgb(42, 143, 214)),
+                                KeepHpFill,
+                            ));
+                        });
+                    });
+                card.spawn((label(&fonts.bold, "", 11.0, rgb(159, 211, 160)), HeirText));
             });
         });
 }
@@ -786,33 +849,62 @@ fn setup_siege_hud(mut commands: Commands) {
 fn update_siege_hud(
     siege: Res<Siege>,
     keep: Res<KeepHp>,
+    lives: Res<crate::succession::Lives>,
     invaders: Query<&WaveInvader, Without<crate::dying::Dying>>,
     mut keep_q: Query<&mut Node, (With<KeepHpFill>, Without<PhaseFill>)>,
     mut phase_q: Query<(&mut Node, &mut BackgroundColor), (With<PhaseFill>, Without<KeepHpFill>)>,
+    mut ptext: Query<&mut Text, (With<PhaseText>, Without<SubText>, Without<HeirText>)>,
+    mut stext: Query<&mut Text, (With<SubText>, Without<HeirText>)>,
+    mut htext: Query<&mut Text, With<HeirText>>,
 ) {
     if let Ok(mut n) = keep_q.single_mut() {
         n.width = Val::Percent((keep.hp / keep.max * 100.0).clamp(0.0, 100.0));
     }
+    let total = WAVES.len();
+    let (label_s, sub_s) = match siege.phase {
+        GamePhase::Prep => {
+            let night = (siege.wave_index + 2).max(1);
+            let secs = siege.prep_seconds_left.max(0.0) as i64;
+            (format!("PREPARE — NIGHT {night} / {total}"), format!("{}:{:02} until nightfall", secs / 60, secs % 60))
+        }
+        GamePhase::Wave => {
+            let night = (siege.wave_index + 1).max(1);
+            let alive = invaders.iter().count();
+            (format!("NIGHT {night} / {total}"), format!("{alive} orks remain"))
+        }
+        GamePhase::Victory => ("VICTORY".into(), String::new()),
+        GamePhase::Defeat => ("THE KEEP HAS FALLEN".into(), String::new()),
+    };
+    if let Ok(mut t) = ptext.single_mut() {
+        **t = label_s;
+    }
+    if let Ok(mut t) = stext.single_mut() {
+        **t = sub_s;
+    }
+    if let Ok(mut t) = htext.single_mut() {
+        **t = format!("{} heir{} in reserve", lives.heirs, if lives.heirs == 1 { "" } else { "s" });
+    }
+
     let Ok((mut n, mut col)) = phase_q.single_mut() else { return };
     match siege.phase {
         GamePhase::Prep => {
             let p = prep_progress(siege.prep_seconds_left, mods_for(siege.difficulty));
             n.width = Val::Percent(((1.0 - p) * 100.0).clamp(0.0, 100.0)); // full day → drains to night
-            col.0 = Color::srgb(0.95, 0.75, 0.30);
+            col.0 = GOLD_DEEP;
         }
         GamePhase::Wave => {
             let count = effective_count(siege.wave_index.max(0) as usize, mods_for(siege.difficulty));
             let alive = invaders.iter().count() as u32;
             n.width = Val::Percent((alive as f32 / count as f32 * 100.0).clamp(0.0, 100.0));
-            col.0 = Color::srgb(0.85, 0.22, 0.22);
+            col.0 = RED;
         }
         GamePhase::Victory => {
             n.width = Val::Percent(100.0);
-            col.0 = Color::srgb(0.40, 0.85, 0.40);
+            col.0 = rgb(102, 217, 102);
         }
         GamePhase::Defeat => {
             n.width = Val::Percent(100.0);
-            col.0 = Color::srgb(0.30, 0.30, 0.30);
+            col.0 = rgb(77, 77, 77);
         }
     }
 }
@@ -1035,6 +1127,33 @@ mod tests {
             assert!(g.distance(KEEP_POS) <= KEEP_ATTACK_RANGE, "goal {g:?} out of batter range");
             assert!(g.distance(KEEP_POS) > 2.0, "goal must clear the keep box");
         }
+    }
+
+    #[test]
+    fn stuck_step_resets_clock_on_progress() {
+        // Got 1u closer (> EPS) → progress: closest drops, clock resets to now, no reap.
+        let (c, t, reap) = stuck_step(10.0, 0.0, 9.0, false, 5.0);
+        assert_eq!((c, t, reap), (9.0, 5.0, false));
+    }
+
+    #[test]
+    fn stuck_step_reaps_a_net_zero_oscillator() {
+        // The regression the old movement-based net missed: an ork that keeps moving (so the old
+        // idle clock kept resetting) but never beats its closest approach. No gain past timeout → reap.
+        let closest = 10.0;
+        // Wobbling just shy of `closest` — never < closest - EPS, so never counts as progress.
+        let (_, _, before) = stuck_step(closest, 0.0, 10.2, false, STUCK_TIMEOUT - 1.0);
+        assert!(!before, "not yet timed out");
+        let (_, _, after) = stuck_step(closest, 0.0, 10.2, false, STUCK_TIMEOUT);
+        assert!(after, "net-zero progress past the timeout must reap");
+    }
+
+    #[test]
+    fn stuck_step_never_reaps_while_engaged() {
+        // Chasing the hero far from the keep (dist_keep growing) past the timeout must NOT reap —
+        // engagement is intended behaviour, not stuck. Clock resets even with no keep-ward gain.
+        let (c, t, reap) = stuck_step(8.0, 0.0, 25.0, true, STUCK_TIMEOUT + 10.0);
+        assert_eq!((c, t, reap), (8.0, STUCK_TIMEOUT + 10.0, false));
     }
 
     #[test]

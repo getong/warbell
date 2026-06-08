@@ -31,6 +31,10 @@ pub struct CampsPlugin;
 impl Plugin for CampsPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Update, (flicker_flames, drift_smoke));
+        app.add_systems(
+            Update,
+            respawn_warbands.run_if(in_state(crate::game_state::Modal::None)),
+        );
     }
 }
 
@@ -56,6 +60,23 @@ pub struct Cage {
 
 /// Index of the cage within the per-camp `solids` vec in [`build`].
 const CAGE_SOLID: usize = 4;
+
+/// Seconds after a camp's warband is wiped before it repopulates (TS `OrkCamp.tsx`'s
+/// `CAMP_RESPAWN_DELAY`).
+const CAMP_RESPAWN_DELAY: f32 = 60.0;
+/// The hero must be at least this far (world units) from a camp for it to repopulate, so a cleared
+/// warband returns OUT OF SIGHT rather than in front of the player (TS `CAMP_RESPAWN_FAR` = 40).
+const CAMP_RESPAWN_FAR: f32 = 40.0;
+
+/// The prebuilt ork [`orks::Armory`] kept alive past [`build`] so a wiped warband can respawn, plus
+/// each camp's clear timestamp (`Some(t)` once it has zero living orks, `None` while populated).
+/// Captives are deliberately NOT tracked here — a freed cage stays open and empty, matching the
+/// original: a camp's prisoners are a one-time rescue, the warband a renewable threat.
+#[derive(Resource)]
+struct CampWarbands {
+    armory: orks::Armory,
+    cleared_at: Vec<Option<f32>>,
+}
 
 fn flicker_flames(time: Res<Time>, mut q: Query<(&Flicker, &mut Transform)>) {
     let t = time.elapsed_secs();
@@ -245,10 +266,11 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut
                 BiomeEntity,
             ));
             if idx == CAGE_SOLID {
-                // The cage: tag it for rescue-despawn, and register NO blocker (the blocker set
-                // is append-only with no removal — one here would leave a phantom wall after the
-                // cage opens). A hollow, walkable cage is fine.
+                // The cage: tag it for rescue-despawn. It blocks like any solid prop — you walk
+                // UP TO it to rescue, not through it. The blocker set is append-only, so the husk
+                // left after the cage opens stays solid too (a closed→open cage is a fine wall).
                 e.insert(Cage { camp });
+                crate::blockers::add_obb(world.x, world.z, hw, hd, site.rot + lyaw);
             } else if hw > 0.0 && hd > 0.0 {
                 crate::blockers::add_obb(world.x, world.z, hw, hd, site.rot + lyaw);
             }
@@ -280,6 +302,66 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut
             let world = place(v(lx, 0.0, lz));
             let seed = site.seed.wrapping_add((i as u32).wrapping_mul(0x9e37_79b1));
             armory.spawn(commands, *variant, site.faction, site.centre, Vec2::new(world.x, world.z), seed);
+        }
+    }
+
+    // Keep the armory + per-camp clear timers alive so `respawn_warbands` can repopulate a wiped
+    // camp off-screen after a cooldown (the cage + its captives are NOT respawned).
+    commands.insert_resource(CampWarbands { armory, cleared_at: vec![None; sites.len()] });
+}
+
+/// Respawn a camp's whole warband (one of each variant at its ring offset, home-anchored to the
+/// camp centre) — the same layout [`build`] lays down, from the kept-alive armory.
+fn spawn_warband(commands: &mut Commands, armory: &orks::Armory, site: &CampSite) {
+    let rot_q = Quat::from_rotation_y(site.rot);
+    let cy = worldmap::ground_at_world(site.centre.x, site.centre.y).unwrap_or(0.0);
+    let centre3 = Vec3::new(site.centre.x, cy, site.centre.y);
+    for (i, variant) in VARIANTS.iter().enumerate() {
+        let (lx, lz) = WARBAND[i];
+        let world = centre3 + rot_q * v(lx, 0.0, lz);
+        let seed = site.seed.wrapping_add((i as u32).wrapping_mul(0x9e37_79b1));
+        armory.spawn(commands, *variant, site.faction, site.centre, Vec2::new(world.x, world.z), seed);
+    }
+}
+
+/// Repopulate cleared ork camps — the port of TS `OrkCamp.tsx`'s respawn. A camp whose warband has
+/// been wiped starts a [`CAMP_RESPAWN_DELAY`] cooldown; once it elapses AND the hero is at least
+/// [`CAMP_RESPAWN_FAR`] away (so the warband returns unseen), the whole warband respawns. Only the
+/// orks come back: the prisoner cage stays open, the apples/chests run their own respawn timers
+/// (`verbs.rs`), so a re-cleared camp yields no fresh captives — just a renewed fight.
+fn respawn_warbands(
+    time: Res<Time>,
+    hero: Res<crate::player::HeroState>,
+    wb: Option<ResMut<CampWarbands>>,
+    orks_q: Query<&orks::Ork, (Without<orks::WaveInvader>, Without<crate::dying::Dying>)>,
+    mut commands: Commands,
+) {
+    let Some(mut wb) = wb else { return };
+    let sites = plan();
+    if sites.is_empty() || wb.cleared_at.len() != sites.len() {
+        return;
+    }
+    let now = time.elapsed_secs();
+    // Living warband orks per camp (invaders + fading corpses excluded by the query filter).
+    let mut alive = vec![0u32; sites.len()];
+    for o in &orks_q {
+        let h = o.home();
+        if let Some(i) = sites.iter().position(|s| s.centre.distance(h) < 1.0) {
+            alive[i] += 1;
+        }
+    }
+    for (i, site) in sites.iter().enumerate() {
+        if alive[i] > 0 {
+            wb.cleared_at[i] = None; // still populated — reset the clear clock
+            continue;
+        }
+        let Some(cleared) = wb.cleared_at[i] else {
+            wb.cleared_at[i] = Some(now); // just went quiet — start the cooldown
+            continue;
+        };
+        if now - cleared >= CAMP_RESPAWN_DELAY && hero.pos.distance(site.centre) > CAMP_RESPAWN_FAR {
+            spawn_warband(&mut commands, &wb.armory, site);
+            wb.cleared_at[i] = None;
         }
     }
 }

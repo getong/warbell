@@ -14,8 +14,11 @@ use super::{jitter, pick, AudioConfig, AudioCue, Surface};
 #[derive(Resource)]
 pub(crate) struct SfxBank {
     swing: Handle<AudioSource>,
-    /// Impact clips — picked at random per hit (the old game's `sword-hit-var-{1,2,3}`).
-    hits: Vec<Handle<AudioSource>>,
+    /// The meaty blade-on-flesh impact (old `sword-hit-var-2`) — every creature/ork hit uses
+    /// THIS one clip, pitch-jittered so repeats don't sound canned (old game's rule).
+    flesh: Handle<AudioSource>,
+    /// Metallic chips (old `sword-hit-var-{1,3}`) — picked at random for chipping stone (ore).
+    chips: Vec<Handle<AudioSource>>,
     block: Handle<AudioSource>,
     ui: Handle<AudioSource>,
     /// Dirt footstep variants (the old `footstep-dirt-var-{1,2,3}`); snow/stone are single clips.
@@ -24,12 +27,17 @@ pub(crate) struct SfxBank {
     foot_stone: Handle<AudioSource>,
     ork_grunts: Vec<Handle<AudioSource>>,
     ork_roars: Vec<Handle<AudioSource>>,
+    /// Aggressive beast snarls played when a wild predator bites the hero (Wolf/Boar/Scorpion/
+    /// BogCroc have no recorded voice, so they share these). Pitch-jittered per bite.
+    beast_snarls: Vec<Handle<AudioSource>>,
+    beast_roars: Vec<Handle<AudioSource>>,
 }
 
 pub(crate) fn setup_sfx(asset: Res<AssetServer>, mut commands: Commands) {
     commands.insert_resource(SfxBank {
         swing: asset.load("audio/sword-swing.ogg"),
-        hits: ["audio/sword-hit-1.ogg", "audio/sword-hit-2.ogg", "audio/sword-hit-3.ogg"]
+        flesh: asset.load("audio/sword-hit-2.ogg"),
+        chips: ["audio/sword-hit-1.ogg", "audio/sword-hit-3.ogg"]
             .iter()
             .map(|f| asset.load(*f))
             .collect(),
@@ -46,6 +54,11 @@ pub(crate) fn setup_sfx(asset: Res<AssetServer>, mut commands: Commands) {
             .map(|f| asset.load(*f))
             .collect(),
         ork_roars: ["audio/ork-roar.ogg", "audio/wave-start-roar.ogg"].iter().map(|f| asset.load(*f)).collect(),
+        beast_snarls: ["audio/monster-snarl.ogg", "audio/monster-growl.ogg", "audio/bear-growl.ogg"]
+            .iter()
+            .map(|f| asset.load(*f))
+            .collect(),
+        beast_roars: ["audio/bear-roar.ogg", "audio/monster-growl.ogg"].iter().map(|f| asset.load(*f)).collect(),
     });
 }
 
@@ -95,9 +108,15 @@ pub(crate) fn play_cues(
         match *cue {
             AudioCue::Swing => one_shot(&mut commands, bank.swing.clone(), 0.30 * sfx, jitter(&mut seed, 0.12)),
             AudioCue::Impact { kill } => {
+                // Always the one flesh clip; a kill plays it louder + a touch lower (heavier).
                 let v = if kill { 0.62 } else { 0.50 } * sfx;
                 let p = if kill { jitter(&mut seed, 0.06) * 0.85 } else { jitter(&mut seed, 0.08) };
-                one_shot(&mut commands, pick(&bank.hits, &mut seed), v, p);
+                one_shot(&mut commands, bank.flesh.clone(), v, p);
+            }
+            // Metallic chip per ore pick-swing — random clang + wide pitch jitter so a long mine
+            // never repeats the same note (old game's `playPick`).
+            AudioCue::OreChip => {
+                one_shot(&mut commands, pick(&bank.chips, &mut seed), 0.5 * sfx, jitter(&mut seed, 0.10));
             }
             AudioCue::Block => one_shot(&mut commands, bank.block.clone(), 0.45 * sfx, jitter(&mut seed, 0.1)),
             AudioCue::Footstep { surface, landing } => {
@@ -118,6 +137,16 @@ pub(crate) fn play_cues(
             AudioCue::OrkRoar(pos) => {
                 let clip = pick(&bank.ork_roars, &mut seed);
                 spatial_shot(&mut commands, clip, 0.50 * voice, jitter(&mut seed, 0.08), pos);
+            }
+            // A predator's bite snarl — wide pitch jitter so a flurry of bites never repeats. A
+            // heavy beast (bear/croc/golem) gets the deeper roar set, louder + pitched down.
+            AudioCue::CreatureBite { at, big } => {
+                let (set, vol, pitch) = if big {
+                    (&bank.beast_roars, 0.62, jitter(&mut seed, 0.10) * 0.85)
+                } else {
+                    (&bank.beast_snarls, 0.5, jitter(&mut seed, 0.16))
+                };
+                spatial_shot(&mut commands, pick(set, &mut seed), vol * voice, pitch, at);
             }
             // Procedural synth stings (no clip on disk — baked by `synth.rs`).
             AudioCue::OreShatter

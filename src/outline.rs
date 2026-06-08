@@ -74,10 +74,13 @@ impl Plugin for OutlinePlugin {
         render_app.add_systems(RenderStartup, init_pipeline);
         render_app
             .add_render_graph_node::<ViewNodeRunner<OutlineNode>>(Core3d, OutlineLabel)
-            // After tonemapping (Bevy's bokeh DoF already ran in HDR: Bloom → DoF → Tonemapping).
+            // Tonemapping → Outline → DoF: outline must write its darkened edges BEFORE the
+            // DoF pass reads the screen, so out-of-focus outlines blur with everything else
+            // (otherwise the order is undefined and a crisp outline can land on blurred pixels).
+            // DofPlugin owns the DoF → EndMainPassPostProcessing edge.
             .add_render_graph_edges(
                 Core3d,
-                (Node3d::Tonemapping, OutlineLabel, Node3d::EndMainPassPostProcessing),
+                (Node3d::Tonemapping, OutlineLabel, crate::dof::DofLabel),
             );
     }
 }

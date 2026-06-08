@@ -12,12 +12,14 @@ mod block;
 mod camera;
 mod combat;
 
-pub(crate) use combat::{spawn_burst, spawn_heal_burst, spawn_motes, CombatFx, Health};
+pub(crate) use combat::{spawn_burst, spawn_chips, spawn_heal_burst, spawn_motes, CombatFx, Health};
 mod health;
 mod model;
 mod movement;
 
 use bevy::prelude::*;
+
+use crate::inventory::Inventory;
 
 /// Root scale applied to the TS-unit knight so it stands the same height as the orks
 /// (`orks::BASE_SCALE` is 0.7; the knight authors ~1.25u tall → ~0.87u on the ground).
@@ -92,6 +94,11 @@ impl Default for HeroHealth {
 #[derive(Resource, Default)]
 pub struct PlayerRes(pub tileworld_core::player::Player);
 
+/// The shared white material every hero mesh uses (vertex colours carry the look). Stored so
+/// [`reskin_hero`] can rebuild the limb meshes against the same material on an equip change.
+#[derive(Resource)]
+pub struct HeroMaterial(pub Handle<StandardMaterial>);
+
 /// Control mode. **Play** drives the knight + follow-cam; **FreeRoam** hands the camera back
 /// to `controls::FlyCam` for debugging. Toggle with the backtick key.
 #[derive(Resource, PartialEq, Eq, Clone, Copy)]
@@ -147,8 +154,11 @@ impl Plugin for PlayerPlugin {
                 (
                     camera::toggle_mode,
                     camera::player_camera,
+                    reskin_hero, // rebuild limb meshes when weapon/armor equip changes
                     anim::hero_anim,
                     combat::update_sparks,
+                    combat::update_fx_fades,
+                    combat::hero_blade_trail,
                     combat::drive_hit_stop, // ungated: must resume the clock after the freeze
                 ),
             )
@@ -174,8 +184,8 @@ fn spawn_hero(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    inv: Res<Inventory>,
 ) {
-    let spec = model::build_knight();
     // One shared material; colour lives in the mesh vertex colours (orks/critters pattern).
     let mat = materials.add(StandardMaterial {
         base_color: Color::WHITE,
@@ -183,6 +193,7 @@ fn spawn_hero(
         metallic: 0.3,
         ..default()
     });
+    commands.insert_resource(HeroMaterial(mat.clone()));
 
     // Spawn just outside the north gate, facing into the courtyard (+Z toward origin).
     let gate = crate::castle::gate_centers()[0];
@@ -190,7 +201,6 @@ fn spawn_hero(
     let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
     let facing = 0.0_f32;
 
-    let torso = meshes.add(spec.torso);
     let root = commands
         .spawn((
             Transform {
@@ -217,6 +227,25 @@ fn spawn_hero(
         ))
         .id();
 
+    // Build the limb meshes reflecting whatever's equipped (bare on a fresh run).
+    let spec = model::build_knight(
+        inv.0.equipped_id.as_deref(),
+        inv.0.equipped_armor_id.as_deref(),
+    );
+    spawn_hero_meshes(&mut commands, root, spec, &mut meshes, &mat);
+}
+
+/// Spawn the torso + articulated limb meshes as children of the hero `root`, all sharing the
+/// hero material. Shared by [`spawn_hero`] and [`reskin_hero`] so an equip swap rebuilds the
+/// exact same child layout.
+fn spawn_hero_meshes(
+    commands: &mut Commands,
+    root: Entity,
+    spec: model::KnightSpec,
+    meshes: &mut Assets<Mesh>,
+    mat: &Handle<StandardMaterial>,
+) {
+    let torso = meshes.add(spec.torso);
     commands.entity(root).with_children(|p| {
         p.spawn((Mesh3d(torso), MeshMaterial3d(mat.clone()), Transform::default()));
         for part in spec.parts {
@@ -228,6 +257,39 @@ fn spawn_hero(
             ));
         }
     });
+}
+
+/// Rebuild the hero's limb meshes when the equipped weapon/armor changes (the satchel equips
+/// freeze the world, so this ungated render system rebuilds behind the panel and on close).
+/// Despawns the old children and re-spawns from a fresh [`model::build_knight`]; the `Hero`
+/// root + its components are untouched, and [`anim::hero_anim`] re-binds the new `HeroPart`s
+/// next frame. Change-detected + snapshot-gated so it only fires on an actual equip swap.
+fn reskin_hero(
+    mut commands: Commands,
+    inv: Res<Inventory>,
+    mat: Option<Res<HeroMaterial>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    hero_q: Query<(Entity, Option<&Children>), With<Hero>>,
+    mut last: Local<(Option<String>, Option<String>)>,
+) {
+    if !inv.is_changed() {
+        return;
+    }
+    let cur = (inv.0.equipped_id.clone(), inv.0.equipped_armor_id.clone());
+    if cur == *last {
+        return; // no equip change (some other bag mutation)
+    }
+    let Some(mat) = mat else { return };
+    let Ok((root, children)) = hero_q.single() else { return };
+    *last = cur.clone();
+
+    if let Some(children) = children {
+        for &c in children {
+            commands.entity(c).try_despawn();
+        }
+    }
+    let spec = model::build_knight(cur.0.as_deref(), cur.1.as_deref());
+    spawn_hero_meshes(&mut commands, root, spec, &mut meshes, &mat.0);
 }
 
 /// Reset the hero to a fresh run: wipe progression (`Player::reset` → full HP, 30 gold, level 1,

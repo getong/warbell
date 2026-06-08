@@ -348,8 +348,14 @@ pub fn biome_at_world(wx: f32, wz: f32) -> Option<Biome> {
 
 /// Is world `(x, z)` over the carved river channel (where the sea plane shows through the
 /// terrain)? The real combined-map river — `bridges` scans this to span the actual water.
+///
+/// Must sample in the SAME space the tiles are classified in: `tile_at` builds each tile from
+/// `classify(ix / MAP_SCALE, …)`, so the river that actually carves water lives at base coord
+/// `(world + G) / MAP_SCALE`. Feeding the raw `world + G` (missing the `/ MAP_SCALE`) read the
+/// formula 1.4× off — bridges spanned dry land far from the real river, and the horizontal
+/// river branch produced absurdly long decks.
 pub fn is_river_world(wx: f32, wz: f32) -> bool {
-    is_river(wx + GX, wz + GZ)
+    is_river((wx + GX) / MAP_SCALE, (wz + GZ) / MAP_SCALE)
 }
 
 // ── Blended ground colour ───────────────────────────────────────────────────────
@@ -459,6 +465,14 @@ pub fn build(
         crate::biome::BiomeEntity,
     ));
 
+    // ── Background sailboats (near water) + an unreachable forest far-shore (far) ──
+    // Island shape is authored in BASE space (CX/CZ, ISLAND_R*); convert to world:
+    // world = base*MAP_SCALE - G. Centre ≈ origin; radii scale by MAP_SCALE.
+    let isle_c = Vec2::new(CX * MAP_SCALE - GX, CZ * MAP_SCALE - GZ);
+    let isle_r = Vec2::new(ISLAND_RX * MAP_SCALE, ISLAND_RZ * MAP_SCALE);
+    crate::boats::spawn_boats_island(commands, meshes, std_mats, isle_c, isle_r, SEA_Y);
+    crate::distant::spawn_forest_edge(commands, meshes, std_mats, SEA_Y);
+
     // ── Plan the ork camps BEFORE scatter so their clearings can be reserved. ──
     crate::camps::plan();
 
@@ -554,20 +568,22 @@ fn grass_config() -> BiomeConfig {
         tree_min_dist: 2.0,
         classes: vec![],
         cover: vec![
-            PropClass { variants: vec![(gc::build_grass_tuft_mesh(), 1.0)], chance: 0.26, scale: (0.45, 0.8), tree: false },
-            PropClass { variants: vec![(gc::build_clover_mesh(), 1.0)], chance: 0.30, scale: (0.7, 1.2), tree: false },
-            PropClass { variants: vec![(gc::build_fern_mesh(), 1.0)], chance: 0.10, scale: (0.5, 0.85), tree: false },
+            PropClass { variants: vec![(gc::build_grass_tuft_mesh(), 1.0)], chance: 0.26, scale: (0.45, 0.8), tree: false, block_radius: 0.0 },
+            PropClass { variants: vec![(gc::build_clover_mesh(), 1.0)], chance: 0.30, scale: (0.7, 1.2), tree: false, block_radius: 0.0 },
+            PropClass { variants: vec![(gc::build_fern_mesh(), 1.0)], chance: 0.10, scale: (0.5, 0.85), tree: false, block_radius: 0.0 },
             PropClass {
                 variants: (0..3).map(|v| (gc::build_flower_mesh(v), 1.0)).collect(),
                 chance: 0.12,
                 scale: (0.8, 1.4),
                 tree: false,
+                block_radius: 0.0,
             },
             PropClass {
                 variants: (0..2).map(|v| (gc::build_mushroom_mesh(v), 1.0)).collect(),
                 chance: 0.05,
                 scale: (0.6, 1.0),
                 tree: false,
+                block_radius: 0.0,
             },
         ],
         cover_per_tile: 2,

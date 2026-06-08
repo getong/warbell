@@ -18,7 +18,6 @@ use tileworld_core::defense::{
     TOWER_BASE, TOWER_MASTERY, TOWER_MAX_HP,
 };
 
-use crate::audio::AudioCue;
 use crate::economy::Defenses;
 use crate::palette::lin;
 use crate::game_state::Modal;
@@ -31,9 +30,6 @@ use crate::siege::{GamePhase, Siege};
 const DMG_SCALE: f32 = 0.236;
 const HALF_X: f32 = 17.0;
 const HALF_Z: f32 = 12.0;
-/// World XZ of the courtyard war bell (matches `castle.rs`'s bell at `(0,0,6)`).
-const BELL_POS: Vec2 = Vec2::new(0.0, 6.0);
-const BELL_INTERACT_DIST: f32 = 4.2;
 const DEFENDER_BOLT_TTL: f32 = 3.0;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -105,7 +101,6 @@ impl Plugin for DefensePlugin {
                     batter_towers,
                     revive_towers,
                     shrine_heal,
-                    war_bell,
                 )
                     .run_if(in_state(Modal::None)),
             );
@@ -332,25 +327,8 @@ fn shrine_heal(
     }
 }
 
-/// War bell: stand by the courtyard bell during prep and press **E** to ring in the night early
-/// (the reducer floors the skip to `MIN_PREP_SECONDS`). The bare **B** keybind is kept as a
-/// debug fallback in `siege::siege_controls`.
-fn war_bell(
-    keys: Res<ButtonInput<KeyCode>>,
-    hero: Res<HeroState>,
-    mut siege: ResMut<Siege>,
-    mut cues: MessageWriter<AudioCue>,
-    mut feedback: ResMut<crate::combat_fx::HitFeedback>,
-) {
-    if siege.phase != GamePhase::Prep {
-        return;
-    }
-    if keys.just_pressed(KeyCode::KeyE) && hero.pos.distance(BELL_POS) < BELL_INTERACT_DIST {
-        siege.request_prep_skip();
-        cues.write(AudioCue::WarBell);
-        feedback.trauma = (feedback.trauma + 0.3).min(1.0);
-    }
-}
+// (The war bell's **E** ring-in is now handled by the unified `interaction.rs` resolver, along
+// with keep→upgrades and merchant→shop. The bare **B** debug skip stays in `siege::siege_controls`.)
 
 /// Spawn the firing emitters (called from `worldmap::build`): four corner towers, four
 /// keep-roof archers, and a ballista just outside the north gate (the one structure with a
@@ -417,6 +395,9 @@ pub fn populate_defenders(
         },
         crate::biome::BiomeEntity,
     ));
+    // Solid sled — hero/orks route around the war engine. Local z is the long axis (runners +
+    // bow), matching the 0.18 yaw on the mesh.
+    crate::blockers::add_obb(bx, bz, 0.6, 0.85, 0.18);
 }
 
 // ── Ballista model (vertex-coloured, flat-shaded) ──────────────────────────────────

@@ -12,7 +12,7 @@
 use bevy::audio::{PlaybackMode, Volume};
 use bevy::prelude::*;
 
-use crate::biome::{Biome, BiomeState, WorldMode};
+use crate::biome::Biome;
 use crate::worldmap;
 
 use super::AudioConfig;
@@ -90,18 +90,15 @@ pub(crate) fn attach_campfire_audio(
     }
 }
 
-/// Which biome's ambience should be playing: the single-view biome, or the tile under the
-/// camera on the combined map (`None` over grass / water / a biome with no ambience).
-fn current_ambience_biome(state: &BiomeState, cam_xz: Option<Vec2>) -> Option<Biome> {
-    match state.mode {
-        WorldMode::Single(b) => Some(b),
-        WorldMode::Combined => cam_xz.and_then(|p| worldmap::biome_at_world(p.x, p.y)),
-    }
+/// Which biome's ambience should be playing: the tile under the camera on the world map
+/// (`None` over grass / water / a biome with no ambience).
+fn current_ambience_biome(cam_xz: Option<Vec2>) -> Option<Biome> {
+    cam_xz.and_then(|p| worldmap::biome_at_world(p.x, p.y))
 }
 
 /// True if the camera is over or near water. Samples a small ring around the camera so the bed
 /// fades in as you approach a shoreline / river rather than only when dead over it.
-fn near_water(state: &BiomeState, cam_xz: Option<Vec2>) -> bool {
+fn near_water(cam_xz: Option<Vec2>) -> bool {
     let Some(p) = cam_xz else { return false };
     const R: f32 = 6.0;
     let probes = [
@@ -113,11 +110,10 @@ fn near_water(state: &BiomeState, cam_xz: Option<Vec2>) -> bool {
         Vec2::new(R, R),
         Vec2::new(-R, -R),
     ];
-    let combined = matches!(state.mode, WorldMode::Combined);
     probes.iter().any(|o| {
         let q = p + *o;
-        // River band works in any view; open water (no ground) only means sea on the map.
-        crate::water::on_river(q.x, q.y) || (combined && worldmap::ground_at_world(q.x, q.y).is_none())
+        // River band, or open water (no ground tile) = sea on the map.
+        crate::water::on_river(q.x, q.y) || worldmap::ground_at_world(q.x, q.y).is_none()
     })
 }
 
@@ -125,7 +121,6 @@ fn near_water(state: &BiomeState, cam_xz: Option<Vec2>) -> bool {
 pub(crate) fn biome_ambience(
     time: Res<Time>,
     cfg: Res<AudioConfig>,
-    state: Res<BiomeState>,
     cam: Query<&GlobalTransform, With<Camera3d>>,
     mut q: Query<(&mut Ambience, &mut AudioSink)>,
 ) {
@@ -134,8 +129,8 @@ pub(crate) fn biome_ambience(
         let t = g.translation();
         Vec2::new(t.x, t.z)
     });
-    let cur = current_ambience_biome(&state, cam_xz);
-    let water = near_water(&state, cam_xz);
+    let cur = current_ambience_biome(cam_xz);
+    let water = near_water(cam_xz);
     let k = (dt * AMBIENCE_FADE).min(1.0);
     for (mut amb, mut sink) in &mut q {
         let on = match amb.kind {

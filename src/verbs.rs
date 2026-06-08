@@ -95,6 +95,7 @@ impl VerbRng {
 /// node banks its stone (HUD counter) + pops a float, and the boulder despawns.
 fn mine_ore(
     time: Res<Time>,
+    fx: Option<Res<crate::player::CombatFx>>,
     mut swings: MessageReader<HeroSwing>,
     mut bank: ResMut<Bank>,
     mut commands: Commands,
@@ -119,6 +120,7 @@ fn mine_ore(
             }
             let shattered = node.ore.damage(sw.base_dmg as f64, now);
             let head = Vec3::new(p.x, p.y + 1.0, p.z);
+            let chip_at = Vec3::new(p.x, p.y + 0.6, p.z);
             if shattered {
                 bank.0.add_stone(node.ore.stone_reward);
                 floats.0.push(crate::combat_fx::FloatReq {
@@ -127,11 +129,19 @@ fn mine_ore(
                     color: Color::srgb(0.82, 0.82, 0.88),
                     scale: 1.1,
                 });
-                cues.write(AudioCue::OreShatter);
+                if let Some(fx) = &fx {
+                    crate::player::spawn_chips(&mut commands, fx, chip_at, true);
+                }
+                cues.write(AudioCue::OreChip); // metallic crack on the breaking blow…
+                cues.write(AudioCue::OreShatter); // …layered under the synth shatter sting
                 cues.write(AudioCue::HeroEvent(crate::audio::HeroEvent::FirstStone));
                 commands.entity(e).despawn();
             } else {
-                cues.write(AudioCue::Impact { kill: false });
+                // Metallic chip + a small grey rock-chip spray each pick-swing (was a flesh hit).
+                if let Some(fx) = &fx {
+                    crate::player::spawn_chips(&mut commands, fx, chip_at, false);
+                }
+                cues.write(AudioCue::OreChip);
             }
         }
     }
@@ -286,13 +296,10 @@ pub fn populate_forage(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
 ) {
-    let herb_mesh = meshes.add(Sphere::new(0.16).mesh().ico(2).unwrap());
-    let herb_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.36, 0.62, 0.28),
-        emissive: LinearRgba::rgb(0.05, 0.14, 0.04),
-        perceptual_roughness: 0.85,
-        ..default()
-    });
+    // Swamp brambles: a low leafy mound studded with near-black blackberries (vertex-coloured,
+    // so it shares the white prop material like the apple tree). Reads as a gatherable berry bush.
+    let herb_mesh = meshes.add(bramble_mesh());
+    let herb_mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.9, ..default() });
     seed_forage(commands, &herb_mesh, &herb_mat, "marsh_herb", 0.9, crate::biome::Biome::Swamp, 13, 0x4e_b5_1c_0d);
 
     // Forest apples: standout apple TREES (permanent scenery) carrying a cluster of apples that
@@ -311,7 +318,8 @@ pub fn populate_forage(
     populate_apple_orchard(commands, &tree_mesh, &tree_mat, &apple_mesh, &apple_mat);
 }
 
-/// Canopy positions (tree-local) the gatherable apples hang at — also where they pop from.
+/// Canopy positions (tree-local) the gatherable apples hang at — also where they pop from. Only
+/// the first [`APPLES_PER_TREE`] are actually hung/harvested; the rest are spare spots.
 const APPLE_SPOTS: [(f32, f32, f32); 6] = [
     (0.34, 0.84, 0.28),
     (-0.36, 0.88, 0.14),
@@ -320,6 +328,9 @@ const APPLE_SPOTS: [(f32, f32, f32); 6] = [
     (-0.22, 1.10, 0.28),
     (0.04, 1.22, 0.04),
 ];
+
+/// Apples one tree carries (and yields when stripped) — what hangs == what you bag.
+const APPLES_PER_TREE: usize = 2;
 
 /// A whole apple tree you strip at once: walk inside `harvest_r` → all apples pop off into the
 /// bag, then the tree regrows them after a delay. `ready` gates re-harvest during regrow.
@@ -351,7 +362,11 @@ fn populate_apple_orchard(
     apple_mesh: &Handle<Mesh>,
     apple_mat: &Handle<StandardMaterial>,
 ) {
-    const APPLE_TREES: u32 = 8;
+    const APPLE_TREES: u32 = 16;
+    // Keep the apple tree's WHOLE canopy clear of any existing trunk/prop, not just its trunk
+    // point: forest canopy (~1.3) + apple canopy (~0.65). Without this an apple tree lands a
+    // trunk-width from a pine and the two crowns interpenetrate. ≈ the forest's own tree spacing.
+    const APPLE_CLEAR: f32 = 2.0;
     let mut rng = 0xa9_71_3f_55u32 | 1;
     let (mut placed, mut attempts) = (0u32, 0u32);
     while placed < APPLE_TREES && attempts < APPLE_TREES * 400 + 800 {
@@ -360,7 +375,7 @@ fn populate_apple_orchard(
         let z = crate::wildlife::rng_range(&mut rng, -worldmap::GZ + 5.0, worldmap::GZ - 5.0);
         if worldmap::biome_at_world(x, z) != Some(crate::biome::Biome::Forest)
             || worldmap::ground_at_world(x, z).is_none()
-            || crate::blockers::is_blocked(x, z)
+            || crate::blockers::any_within(x, z, APPLE_CLEAR)
             || crate::camps::in_clearing(x, z)
             || crate::castle::in_footprint(x, z)
         {
@@ -368,16 +383,18 @@ fn populate_apple_orchard(
         }
         let y = worldmap::ground_at_world(x, z).unwrap_or(0.0);
         let yaw = crate::wildlife::rng_range(&mut rng, 0.0, std::f32::consts::TAU);
+        // Register the trunk as a blocker so the NEXT apple tree (and any mover) keeps clear of it.
+        crate::blockers::add(x, z, 0.3);
         commands
             .spawn((
                 Mesh3d(tree_mesh.clone()),
                 MeshMaterial3d(tree_mat.clone()),
                 Transform::from_xyz(x, y, z).with_rotation(Quat::from_rotation_y(yaw)),
                 crate::biome::BiomeEntity,
-                AppleTree { harvest_r: 2.0, apples: APPLE_SPOTS.len() as u32, ready: true, harvested_at: 0.0 },
+                AppleTree { harvest_r: 2.0, apples: APPLES_PER_TREE as u32, ready: true, harvested_at: 0.0 },
             ))
             .with_children(|p| {
-                for (ax, ay, az) in APPLE_SPOTS {
+                for (ax, ay, az) in APPLE_SPOTS.into_iter().take(APPLES_PER_TREE) {
                     p.spawn((
                         Mesh3d(apple_mesh.clone()),
                         MeshMaterial3d(apple_mat.clone()),
@@ -491,7 +508,7 @@ fn seed_forage(
         commands.spawn((
             Mesh3d(mesh.clone()),
             MeshMaterial3d(mat.clone()),
-            Transform::from_xyz(x, y + 0.14, z),
+            Transform::from_xyz(x, y, z),
             Visibility::Visible,
             Forage { item_id, harvest_r, collected: false, collected_at: 0.0 },
             crate::biome::BiomeEntity,
@@ -603,7 +620,7 @@ fn chest_interact(
         chest.opened_at = now;
         for &c in children {
             if let Ok(mut lt) = lids.get_mut(c) {
-                lt.rotation = Quat::from_rotation_x(-1.2); // hinge open
+                lt.rotation = Quat::from_rotation_x(-1.7); // hinge open (lid stands up at the back)
             }
         }
         return; // one chest per press
@@ -720,18 +737,18 @@ fn chest_body_mesh() -> Mesh {
     ])
 }
 
-/// Rounded barrel lid: a wooden log (cylinder laid along X) framed by three iron hoop-bands and
-/// a brass clasp at the front. Built around the hinge origin, extending forward (+Z).
+/// Banded plank lid: a flat wooden slab with a slightly raised centre crown, two iron straps
+/// running front↔back (aligned with the body's), and a brass clasp at the front that meets the
+/// lock when closed. Built around the hinge origin with its underside on local y=0 and the body
+/// forward (+Z), so it rests flush on the chest top and swings up cleanly on the back-edge hinge.
 fn chest_lid_mesh() -> Mesh {
-    let along_x = rz(std::f32::consts::FRAC_PI_2); // stand the cylinder's Y-axis up along X
     let iron = lin(CW_IRON);
-    let hoop = |x: f32| ccyl(0.245, 0.05, v(x, 0.0, 0.25), along_x, iron);
     cgroup(vec![
-        ccyl(0.23, 0.70, v(0.0, 0.0, 0.25), along_x, lin(CW_LID)), // rounded lid log
-        hoop(-0.30),                                               // end hoop
-        hoop(0.30),                                                // end hoop
-        hoop(0.0),                                                 // centre hoop
-        cbx(0.14, 0.12, 0.06, v(0.0, -0.10, 0.47), lin(CW_BRASS)), // front clasp (meets lock)
+        cbx(0.72, 0.12, 0.52, v(0.0, 0.06, 0.25), lin(CW_LID)),    // lid slab — underside flush at y=0
+        cbx(0.52, 0.09, 0.34, v(0.0, 0.155, 0.25), lin(CW_LID)),   // raised centre crown
+        cbx(0.07, 0.18, 0.56, v(-0.24, 0.09, 0.25), iron),         // left strap (over the lid)
+        cbx(0.07, 0.18, 0.56, v(0.24, 0.09, 0.25), iron),          // right strap
+        cbx(0.14, 0.12, 0.06, v(0.0, -0.04, 0.50), lin(CW_BRASS)), // front clasp (drops to meet the lock)
     ])
 }
 
@@ -825,16 +842,36 @@ fn apple_tree_mesh() -> Mesh {
     ])
 }
 
+/// Gatherable swamp bramble: a squat dark-green leaf mound dotted with near-black blackberries
+/// + a couple ripe red ones. Vertex-coloured (shares the white prop material). Base at y=0.
+fn bramble_mesh() -> Mesh {
+    let leaf = lin(0x3f6e30);
+    let leaf_dk = lin(0x2b4d22);
+    let berry = lin(0x271338); // blackberry — near-black purple
+    let ripe = lin(0x5a1230); // a few unripe-red
+    cgroup(vec![
+        // Low leafy mound.
+        csph(0.20, v(0.0, 0.15, 0.0), leaf),
+        csph(0.15, v(0.16, 0.12, 0.06), leaf_dk),
+        csph(0.15, v(-0.14, 0.13, -0.05), leaf_dk),
+        csph(0.13, v(0.04, 0.25, -0.10), leaf),
+        csph(0.12, v(-0.06, 0.21, 0.14), leaf),
+        // Berries clustered over the crown.
+        csph(0.055, v(0.10, 0.29, 0.05), berry),
+        csph(0.05, v(-0.08, 0.27, -0.02), berry),
+        csph(0.055, v(0.02, 0.33, -0.06), ripe),
+        csph(0.045, v(0.15, 0.19, 0.12), berry),
+        csph(0.05, v(-0.12, 0.23, 0.10), ripe),
+    ])
+}
+
 // ─── Hunting: per-species drops + ground pickups ───────────────────────────────────
 //
 // On a wild-animal kill (`AnimalKilled`, published by combat) we roll its config drop(s) +
 // a frontier-graded bonus, spawning floating loot motes the hero walks over to bag. HP and
-// bounty come from [`animal_profile`], a forest-native rescale of core's `animal_config`.
+// bounty come from [`animal_profile`], straight off core's `animal_config` (the TS values).
 
-/// Rescale factor from core's TS-anchored animal HP into forest's 60-HP combat units.
-const ANIMAL_SCALE: f64 = 0.236;
-
-/// A wild animal's forest combat profile: rescaled HP + (HP-independent) bounty + loot drops.
+/// A wild animal's forest combat profile: full TS HP + (HP-independent) bounty + loot drops.
 pub struct AnimalProfile {
     pub hp: f32,
     pub gold: i64,
@@ -847,7 +884,7 @@ pub struct AnimalProfile {
 
 /// Map a forest species to its core `animal_config` counterpart (Camel/Cat have no core
 /// entry — handled inline by [`animal_profile`]).
-fn core_species(s: Species) -> Option<tileworld_core::animal::Species> {
+pub(crate) fn core_species(s: Species) -> Option<tileworld_core::animal::Species> {
     use tileworld_core::animal::Species as C;
     Some(match s {
         Species::Wolf => C::Wolf,
@@ -865,13 +902,14 @@ fn core_species(s: Species) -> Option<tileworld_core::animal::Species> {
     })
 }
 
-/// Forest combat profile for a species — core stats rescaled, drops/bounty kept verbatim
-/// (bounty is HP-independent per the parity brief). Camel/Cat are hand-authored (no core entry).
+/// Forest combat profile for a species — core (TS) stats used 1:1, drops/bounty kept verbatim.
+/// HP is the old game's value directly (hero base damage is 25, so a wolf soaks ~4 blows, a boar
+/// ~6, a golem ~12, while a rabbit still pops in one). Camel/Cat are hand-authored (no core entry).
 pub fn animal_profile(s: Species) -> AnimalProfile {
     if let Some(cs) = core_species(s) {
         let c = tileworld_core::animal::animal_config(cs);
         AnimalProfile {
-            hp: ((c.hp * ANIMAL_SCALE).round() as f32).max(2.0),
+            hp: (c.hp.round() as f32).max(2.0),
             gold: c.bounty_gold as i64,
             xp: c.bounty_xp as i64,
             drop: c.drop_item.map(|id| (id, c.drop_chance)),
@@ -879,8 +917,8 @@ pub fn animal_profile(s: Species) -> AnimalProfile {
         }
     } else {
         match s {
-            Species::Camel => AnimalProfile { hp: 12.0, gold: 8, xp: 12, drop: None, drop2: None },
-            _ /* Cat */ => AnimalProfile { hp: 2.0, gold: 2, xp: 3, drop: None, drop2: None },
+            Species::Camel => AnimalProfile { hp: 50.0, gold: 8, xp: 12, drop: None, drop2: None },
+            _ /* Cat */ => AnimalProfile { hp: 10.0, gold: 2, xp: 3, drop: None, drop2: None },
         }
     }
 }

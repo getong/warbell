@@ -70,9 +70,10 @@ pub fn path_to(from: Vec2, to: Vec2) -> Vec<Vec2> {
         .collect()
 }
 
-/// A wave invader's cached A* route to the keep (followed + smoothed by `steer::advance`).
+/// A cached A* route (followed + smoothed by `steer::advance`) — the keep-march of a wave
+/// invader, or a freed captive's march home to the courtyard. Both thread the gates this way.
 #[derive(Component, Default)]
-pub struct InvaderPath {
+pub struct NavPath {
     pub waypoints: Vec<Vec2>,
     pub cursor: usize,
     /// Game-time at which to recompute (throttled + staggered per invader).

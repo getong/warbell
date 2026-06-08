@@ -5,6 +5,7 @@
 //! untouched: [`Health`] is attached to their entities externally by [`ensure_combat_health`]
 //! and the cone scan reads each target's `GlobalTransform`.
 
+use bevy::mesh::MeshBuilder;
 use bevy::prelude::*;
 
 use tileworld_core::player::{cleave_damage, roll_crit, CLEAVE_R2};
@@ -14,7 +15,7 @@ use crate::orks::Ork;
 use crate::wildlife::Animal;
 
 use super::camera::OrbitCam;
-use super::{Hero, HeroHealth, PlayMode, PlayerRes};
+use super::{Hero, HeroHealth, HeroLimb, HeroPart, PlayMode, PlayerRes};
 
 pub const ATTACK_DURATION: f32 = 0.45;
 const ATTACK_RANGE: f32 = 1.8;
@@ -68,6 +69,16 @@ pub fn drive_hit_stop(
     }
 }
 
+/// Hit-feedback output channels bundled into one [`SystemParam`] — keeps [`player_attack`] under
+/// Bevy's 16-param ceiling now that it also spawns the planar impact flashes (which need
+/// `Assets<StandardMaterial>` to clone a per-instance fade material).
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Juice<'w> {
+    feedback: ResMut<'w, crate::combat_fx::HitFeedback>,
+    hitstop: ResMut<'w, HitStop>,
+    materials: ResMut<'w, Assets<StandardMaterial>>,
+}
+
 /// Vitals attached to a hittable (ork / animal) by [`ensure_combat_health`].
 #[derive(Component)]
 pub struct Health {
@@ -86,7 +97,9 @@ pub(crate) struct Spark {
     scale0: f32,
 }
 
-/// Shared spark mesh + materials, built once.
+/// Shared spark + impact-flash assets, built once. The faded planar effects (slash / shockwave /
+/// splat) clone `*_mat` per instance so their alpha can fade independently; the spark materials
+/// (`hit`/`kill`/`heal`/`blood`/`chip`) are shared and fade by shrinking the mote instead.
 #[derive(Resource)]
 pub(crate) struct CombatFx {
     mesh: Handle<Mesh>,
@@ -94,6 +107,18 @@ pub(crate) struct CombatFx {
     kill: Handle<StandardMaterial>,
     /// Green motes for the shaman's heal cast.
     heal: Handle<StandardMaterial>,
+    /// Dark crimson, unlit, NO bloom — blood spray on a creature hit.
+    blood: Handle<StandardMaterial>,
+    /// Grey stone — rock chips off a mined ore boulder.
+    chip: Handle<StandardMaterial>,
+    /// A unit quad (slash streak) + flat ring (kill shockwave) + disc (blood splat).
+    quad: Handle<Mesh>,
+    ring: Handle<Mesh>,
+    disc: Handle<Mesh>,
+    /// Base materials cloned per planar-flash instance (see `spawn_fade`).
+    slash_mat: Handle<StandardMaterial>,
+    ring_mat: Handle<StandardMaterial>,
+    splat_mat: Handle<StandardMaterial>,
 }
 
 pub fn setup_combat_fx(
@@ -120,7 +145,83 @@ pub fn setup_combat_fx(
         unlit: true,
         ..default()
     });
-    commands.insert_resource(CombatFx { mesh, hit, kill, heal });
+    // Blood: dark, lightless — it must NOT glow under the scene's bloom (sparks do).
+    let blood = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.54, 0.10, 0.10),
+        unlit: true,
+        ..default()
+    });
+    let chip = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.62, 0.62, 0.66),
+        unlit: true,
+        ..default()
+    });
+    let quad = meshes.add(Rectangle::new(1.0, 1.0).mesh().build());
+    let ring = meshes.add(Annulus::new(0.72, 1.0).mesh().build());
+    let disc = meshes.add(Circle::new(0.5).mesh().build());
+    // Planar flashes blend over the scene (alpha-faded each frame) and carry an emissive so
+    // bloom picks them up while they're bright. Double-sided so they read from either face.
+    let flash = |base: Color, emissive: LinearRgba| StandardMaterial {
+        base_color: base,
+        emissive,
+        unlit: true,
+        alpha_mode: AlphaMode::Blend,
+        cull_mode: None,
+        ..default()
+    };
+    let slash_mat = materials.add(flash(Color::srgba(1.0, 0.97, 0.9, 0.9), LinearRgba::rgb(4.0, 3.6, 2.8)));
+    let ring_mat = materials.add(flash(Color::srgba(1.0, 0.86, 0.6, 0.45), LinearRgba::rgb(1.4, 0.95, 0.4)));
+    let splat_mat = materials.add(flash(Color::srgba(0.42, 0.06, 0.06, 0.72), LinearRgba::BLACK));
+    commands.insert_resource(CombatFx {
+        mesh, hit, kill, heal, blood, chip, quad, ring, disc, slash_mat, ring_mat, splat_mat,
+    });
+}
+
+/// A short-lived planar flash (slash streak / kill shockwave / blood splat / blade-trail ghost).
+/// Owns a cloned material so it can alpha-fade alone; [`update_fx_fades`] frees that material on
+/// despawn so per-hit clones never leak.
+#[derive(Component)]
+pub(crate) struct FxFade {
+    born: f32,
+    life: f32,
+    mat: Handle<StandardMaterial>,
+    s0: Vec3,
+    s1: Vec3,
+    a0: f32,
+    /// True → re-face the camera each frame (slash / trail). False → keep the spawn pose (the
+    /// ground-flat shockwave + splat).
+    billboard: bool,
+}
+
+/// Drain a planar flash over its life: scale `s0→s1` (ease-out), fade alpha `a0→0`, billboard if
+/// asked, then despawn + free the cloned material.
+pub fn update_fx_fades(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut mats: ResMut<Assets<StandardMaterial>>,
+    cam_q: Query<&GlobalTransform, With<Camera3d>>,
+    mut q: Query<(Entity, &FxFade, &mut Transform)>,
+) {
+    let now = time.elapsed_secs();
+    let cam_pos = cam_q.single().map(|t| t.translation()).ok();
+    for (e, f, mut tf) in &mut q {
+        let k = (now - f.born) / f.life;
+        if k >= 1.0 {
+            commands.entity(e).despawn();
+            mats.remove(&f.mat);
+            continue;
+        }
+        let ease = 1.0 - (1.0 - k) * (1.0 - k); // ease-out
+        tf.scale = f.s0.lerp(f.s1, ease);
+        if f.billboard {
+            if let Some(cp) = cam_pos {
+                tf.look_at(cp, Vec3::Y);
+            }
+        }
+        if let Some(m) = mats.get_mut(&f.mat) {
+            m.base_color = m.base_color.with_alpha(f.a0 * (1.0 - k));
+        }
+    }
 }
 
 /// Attach `Health` to every ork / animal that lacks it (so combat can target them without
@@ -130,8 +231,9 @@ pub fn ensure_combat_health(
     orks: Query<(Entity, &Ork), Without<Health>>,
     animals: Query<(Entity, &Animal), Without<Health>>,
 ) {
-    // Camp orks get their variant's base HP (60/32/72/47); wave invaders already carry their
-    // scaled HP from `siege::spawn_invader`, so they never fall through to here.
+    // Camp orks get their variant's full old-game base HP (254/136/306/201, via `siege::base_hp`);
+    // wave invaders already carry their wave-scaled HP from `siege::spawn_invader`, so they never
+    // fall through to here.
     for (e, o) in &orks {
         let hp = crate::siege::base_hp(o.variant);
         commands.entity(e).try_insert(Health { hp, max: hp });
@@ -155,14 +257,13 @@ pub fn player_attack(
     mut rng: ResMut<CombatRng>,
     mut mods: crate::inventory::CombatMods,
     mut rewards: ResMut<crate::orbs::RewardBursts>,
-    mut feedback: ResMut<crate::combat_fx::HitFeedback>,
-    mut hitstop: ResMut<HitStop>,
+    mut juice: Juice,
     mut commands: Commands,
     mut cues: MessageWriter<AudioCue>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
     mut hero_q: Query<(&mut Hero, &HeroHealth)>,
     mut targets: Query<
-        (Entity, &GlobalTransform, &mut Health, Option<&mut Ork>, Option<&Animal>),
+        (Entity, &GlobalTransform, &mut Health, Option<&mut Ork>, Option<&mut Animal>),
         (Or<(With<Ork>, With<Animal>)>, Without<crate::dying::Dying>),
     >,
 ) {
@@ -234,20 +335,30 @@ pub fn player_attack(
         hit_ents.push(e);
         hp.hp -= dmg;
         let dead = hp.hp <= 0.0;
-        spawn_burst(&mut commands, &fx, Vec3::new(p.x, p.y + 0.9, p.z), dead);
+        // Blood spray driven along the blow + a slash-flash at contact; a kill adds a ground
+        // shockwave ring + a lingering splat under the corpse.
+        let now_s = time.elapsed_secs();
+        let mid = Vec3::new(p.x, p.y + 0.9, p.z);
+        spawn_blood(&mut commands, &fx, mid, dir, dead);
+        spawn_slash(&mut commands, &fx, &mut juice.materials, mid, now_s);
+        // A blood splat under the target on EVERY hit (small + brief), big + lingering on a kill.
+        spawn_splat(&mut commands, &fx, &mut juice.materials, Vec3::new(p.x, p.y, p.z), dead, now_s);
+        if dead {
+            spawn_shockwave(&mut commands, &fx, &mut juice.materials, Vec3::new(p.x, p.y + 0.05, p.z), now_s);
+        }
         hit_any = true;
         // Floating number above the target + a white hurt-flash on a survivor.
         let head = Vec3::new(p.x, p.y + 2.2, p.z);
         if dead {
             floats.0.push(crate::combat_fx::FloatReq {
                 world: head,
-                text: "☠".into(),
+                text: "†".into(),
                 color: crate::combat_fx::col_kill(),
                 scale: 1.4,
             });
             killed_any = true;
             // Any kill bursts bounty gold + xp (as reward orbs) and feeds lifesteal. Orks pull
-            // their bounty from `ork_config`; wild animals from the rescaled `animal_profile`,
+            // their bounty from `ork_config`; wild animals from `animal_profile`,
             // and additionally roll loot drops (handled in `verbs::animal_drops`).
             let (gold, xp) = if let Some(o) = ork.as_deref() {
                 (crate::orks::bounty_gold(o.variant, bounty_mult), crate::orks::bounty_xp(o.variant))
@@ -268,9 +379,10 @@ pub fn player_attack(
             // never re-hit / re-rewarded.
             crate::dying::begin_dying(&mut commands, e, time.elapsed_secs());
         } else {
-            // Shove a surviving ork back along the blow (harder on a crit).
+            // Shove a surviving ork back along the blow (harder on a crit) + a springy recoil.
             if let Some(o) = ork.as_deref_mut() {
                 o.kb = dir * if crit { KNOCKBACK_CRIT } else { KNOCKBACK };
+                o.hit_recoil = now_s;
             }
             // Crit reads as "{dmg}!" in gold; a normal hit is the plain number.
             let (text, color) = if crit {
@@ -285,8 +397,11 @@ pub fn player_attack(
                 scale: if crit { 1.2 } else { 1.0 },
             });
             commands.entity(e).insert(crate::combat_fx::HurtFlash::new(time.elapsed_secs()));
-            // A struck (surviving) animal enrages — predators latch onto the hero.
-            if animal.is_some() {
+            // A struck (surviving) animal staggers back along the blow (harder on a crit) +
+            // enrages — predators latch onto the hero (`Struck`).
+            if let Some(mut an) = animal {
+                an.kb = dir * if crit { KNOCKBACK_CRIT } else { KNOCKBACK };
+                an.hit_recoil = now_s;
                 commands.entity(e).try_insert(crate::wildlife::Struck);
             }
         }
@@ -307,11 +422,16 @@ pub fn player_attack(
                 }
                 hp.hp -= splash;
                 let head = Vec3::new(p.x, p.y + 2.2, p.z);
+                let now_s = time.elapsed_secs();
+                let mid = Vec3::new(p.x, p.y + 0.9, p.z);
+                // Cleave splash has no single blow direction → radial blood puff.
+                spawn_blood(&mut commands, &fx, mid, Vec2::ZERO, hp.hp <= 0.0);
                 if hp.hp <= 0.0 {
-                    spawn_burst(&mut commands, &fx, Vec3::new(p.x, p.y + 0.9, p.z), true);
+                    spawn_shockwave(&mut commands, &fx, &mut juice.materials, Vec3::new(p.x, p.y + 0.05, p.z), now_s);
+                    spawn_splat(&mut commands, &fx, &mut juice.materials, Vec3::new(p.x, p.y, p.z), true, now_s);
                     floats.0.push(crate::combat_fx::FloatReq {
                         world: head,
-                        text: "☠".into(),
+                        text: "†".into(),
                         color: crate::combat_fx::col_kill(),
                         scale: 1.2,
                     });
@@ -334,6 +454,10 @@ pub fn player_attack(
                         scale: 0.85,
                     });
                     commands.entity(e).insert(crate::combat_fx::HurtFlash::new(time.elapsed_secs()));
+                    spawn_splat(&mut commands, &fx, &mut juice.materials, Vec3::new(p.x, p.y, p.z), false, now_s);
+                    if let Some(mut o) = ork {
+                        o.hit_recoil = now_s;
+                    }
                 }
             }
         }
@@ -342,13 +466,13 @@ pub fn player_attack(
     // Juice: a connecting blow shakes the screen, punches the FOV + briefly freezes the sim
     // (heavier on a kill).
     if killed_any {
-        feedback.trauma = (feedback.trauma + SHAKE_KILL).min(1.0);
-        crate::combat_fx::add_fov_kick(&mut feedback, crate::combat_fx::FOV_KICK_KILL);
-        hitstop.remaining = hitstop.remaining.max(HITSTOP_KILL);
+        juice.feedback.trauma = (juice.feedback.trauma + SHAKE_KILL).min(1.0);
+        crate::combat_fx::add_fov_kick(&mut juice.feedback, crate::combat_fx::FOV_KICK_KILL);
+        juice.hitstop.remaining = juice.hitstop.remaining.max(HITSTOP_KILL);
     } else if hit_any {
-        feedback.trauma = (feedback.trauma + SHAKE_HIT).min(1.0);
-        crate::combat_fx::add_fov_kick(&mut feedback, crate::combat_fx::FOV_KICK_HIT);
-        hitstop.remaining = hitstop.remaining.max(HITSTOP_HIT);
+        juice.feedback.trauma = (juice.feedback.trauma + SHAKE_HIT).min(1.0);
+        crate::combat_fx::add_fov_kick(&mut juice.feedback, crate::combat_fx::FOV_KICK_HIT);
+        juice.hitstop.remaining = juice.hitstop.remaining.max(HITSTOP_HIT);
     }
 
     // One sting for the whole swing: impact on a connect (heavier on a kill), else the empty-
@@ -422,6 +546,137 @@ pub(crate) fn spawn_burst(commands: &mut Commands, fx: &CombatFx, at: Vec3, kill
             bevy::light::NotShadowCaster,
         ));
     }
+}
+
+/// Dark blood spray on a creature hit — motes flung mostly ALONG the blow `dir` (world XZ) +
+/// spread + up, so the spray reads as driven by the strike. A kill gushes more, harder.
+pub(crate) fn spawn_blood(commands: &mut Commands, fx: &CombatFx, at: Vec3, dir: Vec2, kill: bool) {
+    let dir3 = Vec3::new(dir.x, 0.0, dir.y);
+    let (n, spd, scale0) = if kill { (16u32, 3.4, 0.55) } else { (9, 2.4, 0.45) };
+    for i in 0..n {
+        let a = i as f32 * 2.399_963_2; // golden angle → even spread
+        let spread = Vec3::new(a.cos(), 0.0, a.sin()) * 0.55;
+        let up = 0.6 + (i % 3) as f32 * 0.45;
+        let mag = 0.6 + (i * 37 % 10) as f32 * 0.06;
+        let vel = (dir3 * 1.2 + spread + Vec3::Y * up) * spd * mag;
+        commands.spawn((
+            Mesh3d(fx.mesh.clone()),
+            MeshMaterial3d(fx.blood.clone()),
+            Transform::from_translation(at).with_scale(Vec3::splat(scale0)),
+            Spark { vel, life: 0.55, life0: 0.55, scale0 },
+            bevy::light::NotShadowCaster,
+        ));
+    }
+}
+
+/// Grey rock-chip burst off a mined ore boulder — small radial spray per swing, a bigger debris
+/// puff on the shattering blow.
+pub(crate) fn spawn_chips(commands: &mut Commands, fx: &CombatFx, at: Vec3, shatter: bool) {
+    let (n, spd, scale0, life) = if shatter { (14u32, 3.2, 0.6, 0.5) } else { (6, 2.2, 0.4, 0.4) };
+    for i in 0..n {
+        let a = i as f32 * 2.399_963_2;
+        let mag = 0.6 + (i * 41 % 10) as f32 * 0.06;
+        let up = 0.5 + (i % 3) as f32 * 0.4;
+        let vel = Vec3::new(a.cos() * spd, up * spd * 0.7, a.sin() * spd) * mag;
+        commands.spawn((
+            Mesh3d(fx.mesh.clone()),
+            MeshMaterial3d(fx.chip.clone()),
+            Transform::from_translation(at).with_scale(Vec3::splat(scale0)),
+            Spark { vel, life, life0: life, scale0 },
+            bevy::light::NotShadowCaster,
+        ));
+    }
+}
+
+/// Spawn one planar flash: clone `base` so it fades alone, lay `mesh` at `pose`, scale `s0→s1`
+/// and fade from `a0` over `life`. `billboard` re-faces the camera each frame.
+#[allow(clippy::too_many_arguments)]
+fn spawn_fade(
+    commands: &mut Commands,
+    mats: &mut Assets<StandardMaterial>,
+    base: &Handle<StandardMaterial>,
+    mesh: &Handle<Mesh>,
+    pose: Transform,
+    s0: Vec3,
+    s1: Vec3,
+    a0: f32,
+    life: f32,
+    billboard: bool,
+    now: f32,
+) {
+    let Some(m) = mats.get(base).cloned() else { return };
+    let mat = mats.add(m);
+    commands.spawn((
+        Mesh3d(mesh.clone()),
+        MeshMaterial3d(mat.clone()),
+        pose.with_scale(s0),
+        bevy::light::NotShadowCaster,
+        crate::biome::BiomeEntity,
+        FxFade { born: now, life, mat, s0, s1, a0, billboard },
+    ));
+}
+
+/// A bright slash streak at the contact point — a wide, thin, camera-facing quad that snaps wider
+/// and fades fast, selling the blade connecting.
+pub(crate) fn spawn_slash(commands: &mut Commands, fx: &CombatFx, mats: &mut Assets<StandardMaterial>, at: Vec3, now: f32) {
+    spawn_fade(
+        commands, mats, &fx.slash_mat, &fx.quad,
+        Transform::from_translation(at),
+        Vec3::new(0.45, 0.12, 1.0), Vec3::new(1.7, 0.2, 1.0), 0.9, 0.12, true, now,
+    );
+}
+
+/// An expanding ground ring on a kill — flat shockwave that rushes out + fades.
+pub(crate) fn spawn_shockwave(commands: &mut Commands, fx: &CombatFx, mats: &mut Assets<StandardMaterial>, at: Vec3, now: f32) {
+    let pose = Transform::from_translation(at + Vec3::Y * 0.05)
+        .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2));
+    spawn_fade(commands, mats, &fx.ring_mat, &fx.ring, pose, Vec3::splat(0.4), Vec3::splat(1.6), 0.45, 0.22, false, now);
+}
+
+/// A dark blood splat on the ground under a struck creature — fades slowly so a fight leaves a
+/// brief trail of where blows landed. Bigger on a kill.
+pub(crate) fn spawn_splat(commands: &mut Commands, fx: &CombatFx, mats: &mut Assets<StandardMaterial>, at: Vec3, kill: bool, now: f32) {
+    let pose = Transform::from_translation(Vec3::new(at.x, at.y + 0.03, at.z))
+        .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2));
+    // A kill leaves a big, long-lived pool; a glancing hit just flecks the ground briefly.
+    let (size, life, a0) = if kill { (1.4, 3.5, 0.72) } else { (0.55, 1.6, 0.6) };
+    let s = Vec3::splat(size);
+    spawn_fade(commands, mats, &fx.splat_mat, &fx.disc, pose, s, s, a0, life, false, now);
+}
+
+/// Emit a faint ghost streak at the sword tip across the fast part of the swing — a cheap weapon
+/// trail. The blade tip sits at `ArmR`-local `(0,-0.5,0.96)` (the baked sword's cone), so the
+/// arm's `GlobalTransform` places it in the world.
+pub fn hero_blade_trail(
+    time: Res<Time>,
+    fx: Option<Res<CombatFx>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut commands: Commands,
+    mut frame: Local<u32>,
+    hero_q: Query<&Hero>,
+    parts: Query<(&HeroPart, &GlobalTransform)>,
+) {
+    let Some(fx) = fx else { return };
+    let Ok(hero) = hero_q.single() else { return };
+    if !hero.attacking {
+        return;
+    }
+    let phase = hero.attack_t / ATTACK_DURATION;
+    if !(0.25..0.55).contains(&phase) {
+        return; // only across the fast sweep, where the blade actually whips through
+    }
+    // Emit on every other frame — a faint, sparse smear rather than a thick bright arc.
+    *frame = frame.wrapping_add(1);
+    if *frame % 2 != 0 {
+        return;
+    }
+    let Some((_, gt)) = parts.iter().find(|(p, _)| p.limb == HeroLimb::ArmR) else { return };
+    let tip = gt.transform_point(Vec3::new(0.0, -0.5, 0.96));
+    spawn_fade(
+        &mut commands, &mut materials, &fx.slash_mat, &fx.quad,
+        Transform::from_translation(tip),
+        Vec3::new(0.3, 0.09, 1.0), Vec3::new(0.42, 0.1, 1.0), 0.16, 0.1, true, time.elapsed_secs(),
+    );
 }
 
 pub fn update_sparks(

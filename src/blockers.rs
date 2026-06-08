@@ -69,6 +69,39 @@ pub fn add_obb(cx: f32, cz: f32, hw: f32, hd: f32, yaw: f32) {
     BOXES.write().unwrap().push([cx, cz, hw, hd, yaw.cos(), yaw.sin()]);
 }
 
+/// True if any obstacle lies within `margin` world-units of `(wx, wz)` — a clearance test for
+/// placing standout props (apple trees) that must not crowd existing trunks/structures. `margin`
+/// of `0` is equivalent to [`is_blocked`]. Scans the neighbourhood widened by `margin` so circles
+/// up to `margin` tiles away are still caught.
+pub fn any_within(wx: f32, wz: f32, margin: f32) -> bool {
+    {
+        let map = CIRCLES.read().unwrap();
+        let (tx, tz) = tile(wx, wz);
+        let reach = 1 + margin.max(0.0).ceil() as i32; // circles ≤1.0 + margin may span extra tiles
+        for dx in -reach..=reach {
+            for dz in -reach..=reach {
+                if let Some(bucket) = map.get(&(tx + dx, tz + dz)) {
+                    for &(cx, cz, r) in bucket {
+                        let (ex, ez) = (wx - cx, wz - cz);
+                        let rr = r + margin;
+                        if ex * ex + ez * ez < rr * rr {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let boxes = BOXES.read().unwrap();
+    boxes.iter().any(|b| {
+        let (ex, ez) = (wx - b[0], wz - b[1]);
+        let (cos, sin) = (b[4], b[5]);
+        let lx = cos * ex - sin * ez;
+        let lz = sin * ex + cos * ez;
+        lx.abs() <= b[2] + margin && lz.abs() <= b[3] + margin
+    })
+}
+
 /// True if `(wx, wz)` lies inside any solid obstacle (a circle or an oriented box).
 pub fn is_blocked(wx: f32, wz: f32) -> bool {
     {

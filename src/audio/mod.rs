@@ -82,6 +82,12 @@ pub enum AudioCue {
     OrkGrunt(Vec3),
     /// Warband alert roar at a world position (hero enters a camp clearing).
     OrkRoar(Vec3),
+    /// A wild predator's snarl as it bites the hero, at a world position. `big` = a heavy beast
+    /// (bear/croc/golem) → a deeper, louder roar. Pitch-jittered so a flurry never repeats.
+    CreatureBite { at: Vec3, big: bool },
+    /// One metallic chip on a pick-swing against an ore boulder (sampled `var-1`/`var-3`
+    /// clips, pitch-jittered). Distinct from the `OreShatter` synth sting on the breaking blow.
+    OreChip,
     // ── Procedural stings (synth-baked, handled by `sfx` via [`synth::StingBank`]) ──
     /// Ore boulder shattered.
     OreShatter,
@@ -114,6 +120,10 @@ pub(crate) struct HeroLineGates {
     pub first_rescue: bool,
     pub home: bool,
     pub been_away: bool,
+    /// Wilderness biomes whose musing has already played this run (the old game's `biome:`
+    /// `spoken` keys) — each biome line fires at most once per run. Cleared with the rest on
+    /// a fresh run via [`reset_hero_line_gates`].
+    pub spoken_biomes: Vec<Biome>,
 }
 
 /// Castle is at the world origin; the hero must roam beyond this, then return inside
@@ -200,6 +210,7 @@ impl Plugin for GameAudioPlugin {
                     voice::play_voice_cues,
                     detect_player_events,
                     detect_home_return,
+                    detect_biome_entry,
                     synth::debug_play_stings,
                 ),
             )
@@ -236,6 +247,21 @@ fn detect_home_return(
         if in_prep {
             cues.write(AudioCue::HeroEvent(HeroEvent::Home));
         }
+    }
+}
+
+/// Emit the hero's biome musing while he stands in a wilderness biome on the world map. The
+/// old game spoke this the first time he walked into each biome; we mirror that by sampling
+/// the biome under the hero every frame and writing [`AudioCue::HeroLine`] — `voice` de-dupes
+/// it to once-per-biome-per-run, and re-firing each frame lets a line dropped mid-sentence
+/// (e.g. crossing a frontier right after another musing) speak once the mouth frees up.
+///
+/// `biome_at_world` returns `None` over grass / sand / water, so the castle and beaches stay
+/// silent — the "home, finally" line is left to [`detect_home_return`].
+fn detect_biome_entry(hero: Query<&crate::player::Hero>, mut cues: MessageWriter<AudioCue>) {
+    let Ok(hero) = hero.single() else { return };
+    if let Some(b) = crate::worldmap::biome_at_world(hero.pos.x, hero.pos.y) {
+        cues.write(AudioCue::HeroLine(b));
     }
 }
 

@@ -219,16 +219,18 @@ pub fn populate_landmarks(
 ) {
     use crate::biome::{Biome, BiomeEntity};
     let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.92, ..default() });
-    // (biome, mesh, scale) — one landmark each.
-    let specs: [(Biome, Mesh, f32); 5] = [
-        (Biome::Snow, build_frozen_spire_mesh(), 1.4),
-        (Biome::Desert, build_sunken_pyramid_mesh(), 1.3),
-        (Biome::Rocky, build_trilithon_mesh(), 1.3),
-        (Biome::Forest, build_giant_dead_tree_mesh(), 1.2),
-        (Biome::Swamp, build_giant_dead_tree_mesh(), 1.1),
+    // (biome, mesh, scale, block_radius) — one landmark each. block_radius is the solid base
+    // footprint (world units, ≤1.0 for the blockers neighbour-scan): a fat column/pyramid blocks
+    // wide, a thin dead-tree trunk only its bole, the trilithon arch only lightly (walk the gap).
+    let specs: [(Biome, Mesh, f32, f32); 5] = [
+        (Biome::Snow, build_frozen_spire_mesh(), 1.4, 0.85),
+        (Biome::Desert, build_sunken_pyramid_mesh(), 1.3, 1.0),
+        (Biome::Rocky, build_trilithon_mesh(), 1.3, 0.6),
+        (Biome::Forest, build_giant_dead_tree_mesh(), 1.2, 0.6),
+        (Biome::Swamp, build_giant_dead_tree_mesh(), 1.1, 0.55),
     ];
     let mut rng: u32 = 0x1a2b_3c4d;
-    for (biome, mesh, scale) in specs {
+    for (biome, mesh, scale, block_r) in specs {
         let handle = meshes.add(mesh);
         let mut placed = false;
         for _ in 0..4000 {
@@ -244,14 +246,20 @@ pub fn populate_landmarks(
             }
             let y = crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
             let yaw = crate::wildlife::rng_range(&mut rng, 0.0, std::f32::consts::TAU);
-            commands.spawn((
-                Mesh3d(handle.clone()),
-                MeshMaterial3d(mat.clone()),
-                Transform::from_xyz(x, y, z)
-                    .with_rotation(Quat::from_rotation_y(yaw))
-                    .with_scale(Vec3::splat(scale)),
-                BiomeEntity,
-            ));
+            let id = commands
+                .spawn((
+                    Mesh3d(handle.clone()),
+                    MeshMaterial3d(mat.clone()),
+                    Transform::from_xyz(x, y, z)
+                        .with_rotation(Quat::from_rotation_y(yaw))
+                        .with_scale(Vec3::splat(scale)),
+                    BiomeEntity,
+                ))
+                .id();
+            // Solid base — movers route around the landmark.
+            crate::blockers::add(x, z, block_r);
+            // Make it a discoverable POI + raise its beacon (see `landmarks.rs`).
+            crate::landmarks::attach(commands, id, biome, Vec3::new(x, y, z), meshes, materials);
             placed = true;
             break;
         }

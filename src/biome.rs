@@ -23,7 +23,7 @@ use bevy::pbr::DistanceFog;
 use bevy::prelude::*;
 
 use crate::palette::srgb;
-use crate::terrain::{HALF, TerrainMaterial};
+use crate::terrain::TerrainMaterial;
 use crate::water::WaterMaterial;
 
 /// Distance fog: clear within this many tiles of the camera, ramping to full by [`FOG_FULL`].
@@ -87,6 +87,7 @@ pub struct GroundDetail {
 }
 
 /// One scatter class: a bag of mesh variants placed with some per-tile probability.
+#[derive(Default)]
 pub struct PropClass {
     /// `(mesh, pick-weight)` — variants chosen among by weight when this class fires.
     pub variants: Vec<(Mesh, f32)>,
@@ -97,6 +98,11 @@ pub struct PropClass {
     /// Trees are spacing-checked (no overlapping canopies) and get wind sway; if a tree
     /// fails the spacing test the runner substitutes the first non-tree class instead.
     pub tree: bool,
+    /// Collision radius at unit scale for a NON-tree prop — a big boulder blocks, small
+    /// clutter doesn't. `0.0` (default) = walk-through. The blocker registered is
+    /// `block_radius * instance_scale`, capped at the `blockers` neighbour-scan bound (≤ 1.0).
+    /// Ignored for `tree` classes (the trunk gets its own circle).
+    pub block_radius: f32,
 }
 
 /// Horizon backdrop: a land arc of hills/mountains (+ optional treeline) facing one way,
@@ -174,102 +180,16 @@ pub struct BiomeConfig {
 
 /// The combined WORLD MAP (all biomes as wedges around a grass centre), or a single
 /// biome filling the whole patch.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum WorldMode {
-    Combined,
-    Single(Biome),
-}
-
+/// Seeded `true` so the world map builds on the first `apply_build` tick (after the
+/// scene's camera/sun/fog exist), then flips `false` — the map is the only view.
 #[derive(Resource)]
-pub struct BiomeState {
-    pub mode: WorldMode,
-}
-
-/// Set to `Some(mode)` to request a (re)build on the next `apply_build` tick. Seeded so
-/// the scene builds on frame 1.
-#[derive(Resource)]
-struct PendingBuild(Option<WorldMode>);
+struct PendingBuild(bool);
 
 pub struct BiomePlugin;
 
 impl Plugin for BiomePlugin {
     fn build(&self, app: &mut App) {
-        let initial = initial_mode();
-        app.insert_resource(BiomeState { mode: initial })
-            .insert_resource(PendingBuild(Some(initial)))
-            .add_systems(Update, (read_switch_keys, apply_build).chain());
-    }
-}
-
-/// Initial view — the combined WORLD MAP by default; `FOREST_BIOME=forest|snow|rocky|
-/// desert|swamp` forces a single-biome full-patch view (used by the screenshot harness).
-fn initial_mode() -> WorldMode {
-    match std::env::var("FOREST_BIOME").ok().as_deref() {
-        Some("forest") => WorldMode::Single(Biome::Forest),
-        Some("snow") => WorldMode::Single(Biome::Snow),
-        Some("rocky") => WorldMode::Single(Biome::Rocky),
-        Some("desert") => WorldMode::Single(Biome::Desert),
-        Some("swamp") => WorldMode::Single(Biome::Swamp),
-        _ => WorldMode::Combined,
-    }
-}
-
-/// Registry: map each biome to its authored config. New biomes are added here.
-fn config_for(b: Biome) -> BiomeConfig {
-    match b {
-        Biome::Forest => crate::biome_forest::config(),
-        Biome::Snow => crate::biome_snow::config(),
-        Biome::Rocky => crate::biome_rocky::config(),
-        Biome::Desert => crate::biome_desert::config(),
-        Biome::Swamp => crate::biome_swamp::config(),
-    }
-}
-
-/// Per-biome bespoke set-pieces (called after the generic scatter).
-fn landmarks_for(
-    b: Biome,
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-) {
-    match b {
-        Biome::Forest => crate::biome_forest::landmarks(commands, meshes, materials),
-        Biome::Snow => crate::biome_snow::landmarks(commands, meshes, materials),
-        Biome::Rocky => crate::biome_rocky::landmarks(commands, meshes, materials),
-        Biome::Desert => crate::biome_desert::landmarks(commands, meshes, materials),
-        Biome::Swamp => crate::biome_swamp::landmarks(commands, meshes, materials),
-    }
-}
-
-/// Key **0** / **M** → the combined world map; number keys **1–5** → a single biome
-/// full-patch view (Forest/Snow/Rocky/Desert/Swamp).
-fn read_switch_keys(
-    keys: Res<ButtonInput<KeyCode>>,
-    mut pending: ResMut<PendingBuild>,
-    mut cues: MessageWriter<crate::audio::AudioCue>,
-) {
-    let pick = if keys.just_pressed(KeyCode::Digit1) {
-        Some(WorldMode::Single(Biome::Forest))
-    } else if keys.just_pressed(KeyCode::Digit2) {
-        Some(WorldMode::Single(Biome::Snow))
-    } else if keys.just_pressed(KeyCode::Digit3) {
-        Some(WorldMode::Single(Biome::Rocky))
-    } else if keys.just_pressed(KeyCode::Digit4) {
-        Some(WorldMode::Single(Biome::Desert))
-    } else if keys.just_pressed(KeyCode::Digit5) {
-        Some(WorldMode::Single(Biome::Swamp))
-    } else if keys.just_pressed(KeyCode::Digit0) || keys.just_pressed(KeyCode::KeyM) {
-        Some(WorldMode::Combined)
-    } else {
-        None
-    };
-    if let Some(m) = pick {
-        pending.0 = Some(m);
-        // UI confirm blip on every switch; the hero speaks a thought when entering a biome.
-        cues.write(crate::audio::AudioCue::UiSelect);
-        if let WorldMode::Single(b) = m {
-            cues.write(crate::audio::AudioCue::HeroLine(b));
-        }
+        app.insert_resource(PendingBuild(true)).add_systems(Update, apply_build);
     }
 }
 
@@ -277,12 +197,10 @@ fn read_switch_keys(
 /// ambient_brightness, sun_pos).
 type Atmo = (u32, f32, u32, f32, u32, f32, Vec3);
 
-/// The runner. When a build is pending: despawn the old build, build the requested view
-/// (world map or single biome), and re-apply atmosphere. Camera/sun/IBL persist.
+/// Build the combined world map once, then apply its atmosphere. Camera/sun/IBL persist.
 #[allow(clippy::too_many_arguments)]
 fn apply_build(
     mut pending: ResMut<PendingBuild>,
-    mut state: ResMut<BiomeState>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
@@ -295,41 +213,20 @@ fn apply_build(
     mut fog_q: Query<&mut DistanceFog>,
     mut sun_q: Query<(&mut DirectionalLight, &mut Transform)>,
 ) {
-    let Some(mode) = pending.0.take() else { return };
-    state.mode = mode;
+    if !pending.0 {
+        return;
+    }
+    pending.0 = false;
 
-    // Wipe the previous build (incl. the obstacle set wildlife navigates by).
+    // Wipe any prior build (incl. the obstacle set wildlife navigates by).
     for e in &existing {
         commands.entity(e).despawn();
     }
     crate::blockers::reset();
 
-    let atmo: Atmo = match mode {
-        WorldMode::Single(biome) => {
-            let cfg = config_for(biome);
-            debug_assert_eq!(cfg.biome, biome, "config_for returned a mismatched biome");
-
-            crate::terrain::spawn_ground(&cfg, &mut commands, &mut meshes, &mut images, &mut terrain_mats);
-            scatter_region(&cfg, &mut commands, &mut meshes, &mut std_mats, -HALF, HALF, cfg.river, &|_x, _z| true, &|_x, _z| 0.0);
-            crate::distant::spawn_backdrop(&cfg.backdrop, &mut commands, &mut meshes, &mut std_mats);
-            if cfg.river {
-                crate::water::spawn_river(&mut commands, &mut meshes, &mut water_mats, &mut std_mats, cfg.river_color);
-            }
-            if cfg.backdrop.ocean {
-                crate::sea::spawn_sea(&cfg.backdrop, &mut commands, &mut meshes, &mut water_mats, &mut std_mats);
-            }
-            crate::particles::spawn(cfg.particle, &mut commands, &mut meshes, &mut std_mats);
-            landmarks_for(biome, &mut commands, &mut meshes, &mut std_mats);
-
-            info!("view → {} (single)", cfg.name);
-            (cfg.sky, cfg.fog_density, cfg.sun_color, cfg.sun_illuminance, cfg.ambient_color, cfg.ambient_brightness, cfg.sun_pos)
-        }
-        WorldMode::Combined => {
-            crate::worldmap::build(&mut commands, &mut meshes, &mut images, &mut std_mats, &mut terrain_mats, &mut water_mats);
-            info!("view → world map");
-            crate::worldmap::ATMOSPHERE
-        }
-    };
+    crate::worldmap::build(&mut commands, &mut meshes, &mut images, &mut std_mats, &mut terrain_mats, &mut water_mats);
+    info!("view → world map");
+    let atmo: Atmo = crate::worldmap::ATMOSPHERE;
 
     // Atmosphere (camera/sun/IBL persist; just re-tint).
     let (sky, _fog_density, sun_color, sun_illuminance, amb_color, amb_brightness, sun_pos) = atmo;
@@ -389,6 +286,7 @@ struct ClassHandles {
     chance: f32,
     scale: (f32, f32),
     tree: bool,
+    block_radius: f32,
 }
 
 fn upload_classes(src: &[PropClass], meshes: &mut Assets<Mesh>) -> Vec<ClassHandles> {
@@ -399,6 +297,7 @@ fn upload_classes(src: &[PropClass], meshes: &mut Assets<Mesh>) -> Vec<ClassHand
             chance: c.chance,
             scale: c.scale,
             tree: c.tree,
+            block_radius: c.block_radius,
         })
         .collect()
 }
@@ -506,6 +405,16 @@ pub fn scatter_region(
                         ));
                     }
                 } else {
+                    // Big non-tree props (boulders) block, scaled with the instance and capped at
+                    // the blockers neighbour-scan bound. Small clutter has block_radius 0 → nothing.
+                    // A floor drops the small end of a mixed class (a knee-high cobble stays
+                    // walk-through even though its big siblings block).
+                    if c.block_radius > 0.0 {
+                        let rad = (c.block_radius * s).min(1.0);
+                        if rad >= 0.22 {
+                            crate::blockers::add(cx, cz, rad);
+                        }
+                    }
                     commands.spawn((
                         Mesh3d(mesh),
                         MeshMaterial3d(mat.clone()),

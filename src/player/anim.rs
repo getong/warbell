@@ -81,21 +81,25 @@ pub fn hero_anim(
     }
 }
 
-/// A horizontal sword slash. Wind back + raise (0–0.25), sweep the blade across the front
-/// fast (0.25–0.6), recover (0.6–1). Endpoints equal the forward rest pose `(x=-ARM_FORWARD,
-/// y=0)` so the swing blends in and out with no snap.
+/// A horizontal sword slash with snap. Ease-IN windup + raise (0–0.25) for anticipation, an
+/// ease-OUT sweep across the front (0.25–0.55) so the blade *cracks* through at the hit phase
+/// then decelerates, recover (0.55–1). Endpoints equal the forward rest pose `(x=-ARM_FORWARD,
+/// y=0)` so the swing blends in and out with no pop.
 fn attack_arm_quat(p: f32) -> Quat {
-    const LIFT: f32 = 0.55; // extra raise during the swing
-    const SWEEP: f32 = 1.25; // half the horizontal arc
+    const LIFT: f32 = 0.7; // extra raise during the swing (bigger arc than the old 0.55)
+    const SWEEP: f32 = 1.45; // half the horizontal arc (was 1.25)
     let (x, y) = if p < 0.25 {
         let u = p / 0.25;
-        (-ARM_FORWARD - LIFT * u, SWEEP * u)
-    } else if p < 0.6 {
-        let u = (p - 0.25) / 0.35;
-        (-(ARM_FORWARD + LIFT), SWEEP - 2.0 * SWEEP * u)
+        let e = u * u; // accelerate into the wound-up top
+        (-ARM_FORWARD - LIFT * e, SWEEP * e)
+    } else if p < 0.55 {
+        let u = (p - 0.25) / 0.30;
+        let e = 1.0 - (1.0 - u) * (1.0 - u); // ease-out: fast crack, then settle
+        (-(ARM_FORWARD + LIFT), SWEEP - 2.0 * SWEEP * e)
     } else {
-        let u = (p - 0.6) / 0.4;
-        (-(ARM_FORWARD + LIFT) + LIFT * u, -SWEEP * (1.0 - u))
+        let u = (p - 0.55) / 0.45;
+        let e = 1.0 - (1.0 - u) * (1.0 - u);
+        (-(ARM_FORWARD + LIFT) + LIFT * e, -SWEEP * (1.0 - e))
     };
     Quat::from_euler(EulerRot::XYZ, x, y, 0.0)
 }

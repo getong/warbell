@@ -63,7 +63,7 @@ pub struct Animal {
     mode: Mode,
     home: Vec2,
     target: Vec2,
-    pos: Vec2,
+    pub(crate) pos: Vec2,
     facing: f32,
     speed: f32,        // flee / move-with-purpose speed
     wander_speed: f32, // relaxed roam speed
@@ -72,16 +72,25 @@ pub struct Animal {
     gait: f32,         // leg-swing frequency while moving
     swing: f32,        // leg-swing amplitude
     bob: f32,          // vertical body bob while moving
-    body_r: f32,       // footprint half-width (collision + cliff-edge footing)
+    pub(crate) body_r: f32, // footprint half-width (collision + cliff-edge footing)
     phase: f32,        // per-instance time offset (desyncs the animation)
     moving: bool,
     timer: f32,
     /// Predator bite cooldown (s); a bite lands at ≤ 0 and resets it.
     atk_cd: f32,
+    /// Timestamp (`elapsed_secs`) of the last strike; `animal_limbs` plays a lunge-bite / tail-
+    /// sting / arm-slam for the species' strike duration after it. `0` = none yet.
+    atk_anim: f32,
+    /// Timestamp of the last blow the animal TOOK; drives a springy recoil-wobble (reuses
+    /// `orks::recoil_tilt`). Stamped by `player::combat`. `0` = none.
+    pub(crate) hit_recoil: f32,
     /// When hunting, the prey entity being chased (None = hunting the hero / not hunting).
     hunt_prey: Option<Entity>,
     /// Elapsed-seconds until which a struck predator stays latched onto the hero (0 = calm).
     aggro_until: f32,
+    /// Decaying knockback shove (world XZ, units/s) from a recent hero blow — applied + slid
+    /// against terrain each frame, the same stagger orks get (`orks::apply_knockback`).
+    pub(crate) kb: Vec2,
     pub(crate) rng: u32,
 }
 
@@ -109,6 +118,7 @@ fn animal_brain(
     cam: Query<&GlobalTransform, With<Camera3d>>,
     hero: Res<crate::player::HeroState>,
     mut pending: ResMut<crate::player::PendingHeroDamage>,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
     mut commands: Commands,
     mut q: Query<(Entity, &mut Animal, &mut Transform, Option<&Struck>), Without<crate::dying::Dying>>,
 ) {
@@ -260,8 +270,18 @@ fn animal_brain(
                         a.hunt_prey = None;
                     } else if a.atk_cd <= 0.0 {
                         a.atk_cd = 1.0;
+                        a.atk_anim = now; // play the lunge-bite / tail-sting / arm-slam
                         if let Some((_, bite)) = pred {
                             pending.0 += bite;
+                            // Snarl as it bites — the creature-side SFX so an attack isn't silent.
+                            let big = matches!(
+                                a.species,
+                                Species::PolarBear | Species::BogCroc | Species::Golem
+                            );
+                            cues.write(crate::audio::AudioCue::CreatureBite {
+                                at: Vec3::new(a.pos.x, tf.translation.y + 0.8, a.pos.y),
+                                big,
+                            });
                         }
                     }
                 } else {
@@ -278,11 +298,34 @@ fn animal_brain(
             }
         }
 
-        // Ground-follow + heading + a small bob while moving.
+        // Decaying knockback shove from a recent hero blow — slid against terrain (so a shove
+        // can't punt an animal through a cliff/water), mirroring `orks::apply_knockback`.
+        if a.kb.length_squared() > 0.0025 {
+            let cur_y = worldmap::ground_at_world(a.pos.x, a.pos.y).unwrap_or(tf.translation.y);
+            let step = a.kb * dt;
+            if steer::can_stand(a.pos.x + step.x, a.pos.y, a.body_r, cur_y) {
+                a.pos.x += step.x;
+            }
+            if steer::can_stand(a.pos.x, a.pos.y + step.y, a.body_r, cur_y) {
+                a.pos.y += step.y;
+            }
+            a.kb *= (1.0 - 9.0 * dt).max(0.0);
+        } else {
+            a.kb = Vec2::ZERO;
+        }
+
+        // Ground-follow + heading + a small bob while moving. A quick forward lunge over the
+        // strike beat sells the bite's weight — visual only (`pos` is untouched, so collision and
+        // gameplay are unaffected).
         let gy = worldmap::ground_at_world(a.pos.x, a.pos.y).unwrap_or(tf.translation.y);
         let bob = if a.moving { (tw * a.gait + a.phase).sin().abs() * a.bob } else { 0.0 };
-        tf.translation = Vec3::new(a.pos.x, gy + bob, a.pos.y);
-        tf.rotation = Quat::from_rotation_y(a.facing);
+        let lunge = strike_p(a.atk_anim, now, arch_dur(strike_arch(a.species)))
+            .map_or(0.0, |p| (p * std::f32::consts::PI).sin() * 0.4);
+        let fwd = Vec2::new(a.facing.sin(), a.facing.cos());
+        let lp = a.pos + fwd * lunge;
+        tf.translation = Vec3::new(lp.x, gy + bob, lp.y);
+        // Springy recoil-wobble on a blow taken (reuses the orks' / dummies' shape).
+        tf.rotation = Quat::from_rotation_y(a.facing) * Quat::from_rotation_x(crate::orks::recoil_tilt(a.hit_recoil, now));
     }
 
     // Reap prey caught by predators this frame (try_despawn — two predators may share a kill).
@@ -291,14 +334,114 @@ fn animal_brain(
     }
 }
 
+/// Which limb a species strikes with — keys the attack pose in [`animal_limbs`].
+#[derive(Clone, Copy, PartialEq)]
+enum StrikeArch {
+    /// Head-snap lunge (Wolf / PolarBear / Boar / BogCroc).
+    Bite,
+    /// Tail stinger arcing over (Scorpion).
+    Sting,
+    /// Overhead arm crash (Golem).
+    Slam,
+    /// Non-attacker (grazers / neutral critters).
+    None,
+}
+
+fn strike_arch(s: Species) -> StrikeArch {
+    match s {
+        Species::Wolf | Species::PolarBear | Species::Boar | Species::BogCroc => StrikeArch::Bite,
+        Species::Scorpion => StrikeArch::Sting,
+        Species::Golem => StrikeArch::Slam,
+        _ => StrikeArch::None,
+    }
+}
+
+/// Strike duration per archetype — the golem's crush is slow + heavy.
+fn arch_dur(a: StrikeArch) -> f32 {
+    match a {
+        StrikeArch::Slam => 0.7,
+        _ => 0.45,
+    }
+}
+
+/// Strike progress `0..1` since `atk_anim`, or `None` when not currently striking.
+fn strike_p(atk_anim: f32, now: f32, dur: f32) -> Option<f32> {
+    if atk_anim <= 0.0 {
+        return None;
+    }
+    let p = (now - atk_anim) / dur;
+    (0.0..1.0).contains(&p).then_some(p)
+}
+
+/// Head-snap bite on X: lift the muzzle (wind), snap down-forward hard, recover.
+fn head_bite_x(p: f32) -> f32 {
+    if p < 0.3 {
+        let u = p / 0.3;
+        -0.55 * (u * u)
+    } else if p < 0.55 {
+        let u = (p - 0.3) / 0.25;
+        let e = 1.0 - (1.0 - u) * (1.0 - u);
+        -0.55 + 1.75 * e
+    } else {
+        let u = (p - 0.55) / 0.45;
+        let e = 1.0 - (1.0 - u) * (1.0 - u);
+        1.2 * (1.0 - e)
+    }
+}
+
+/// Scorpion tail sting on X: arch the stinger up + over, snap it forward, recover.
+fn tail_sting_x(p: f32) -> f32 {
+    if p < 0.4 {
+        let u = p / 0.4;
+        let e = 1.0 - (1.0 - u) * (1.0 - u);
+        -1.7 * e
+    } else {
+        let u = (p - 0.4) / 0.6;
+        let e = 1.0 - (1.0 - u) * (1.0 - u);
+        -1.7 + 1.7 * e
+    }
+}
+
+/// Golem arm slam on X: raise overhead, crash down past rest, recover.
+fn arm_slam_x(p: f32) -> f32 {
+    if p < 0.4 {
+        let u = p / 0.4;
+        -1.8 * (u * u)
+    } else if p < 0.62 {
+        let u = (p - 0.4) / 0.22;
+        let e = 1.0 - (1.0 - u) * (1.0 - u);
+        -1.8 + 2.7 * e
+    } else {
+        let u = (p - 0.62) / 0.38;
+        let e = 1.0 - (1.0 - u) * (1.0 - u);
+        0.9 * (1.0 - e)
+    }
+}
+
+/// Squared camera distance past which limb animation is skipped (actor is a fogged/blurred
+/// smudge by then). Shared by [`animal_limbs`]; orks/villagers carry their own copy.
+const LIMB_CULL2: f32 = 70.0 * 70.0;
+
 fn animal_limbs(
     time: Res<Time>,
-    animals: Query<(&Animal, &Children)>,
+    cam: Query<&GlobalTransform, With<Camera3d>>,
+    animals: Query<(&Animal, &Children, &GlobalTransform)>,
     mut parts: Query<(&AnimPart, &mut Transform)>,
 ) {
     let tw = time.elapsed_secs_wrapped();
-    for (a, children) in &animals {
+    let now = time.elapsed_secs();
+    // Past ~70 tiles an actor is fog- and DoF-blurred to a smudge, so skinning its joints is
+    // wasted CPU. Freeze the rig (it resumes from global-time sines on re-entry, no snap).
+    let cam_p = cam.single().ok().map(|g| g.translation());
+    for (a, children, gt) in &animals {
+        if let Some(cp) = cam_p {
+            if gt.translation().distance_squared(cp) > LIMB_CULL2 {
+                continue;
+            }
+        }
         let t = tw + a.phase;
+        let arch = strike_arch(a.species);
+        let strike = strike_p(a.atk_anim, now, arch_dur(arch));
         for &child in children {
             let Ok((part, mut tf)) = parts.get_mut(child) else { continue };
             tf.rotation = match part.kind {
@@ -306,17 +449,26 @@ fn animal_limbs(
                     let s = if a.moving { (t * a.gait).sin() * a.swing } else { (t * 0.8).sin() * 0.04 };
                     Quat::from_rotation_x(sign * s)
                 }
-                PartKind::Head => {
-                    let bob = (t * 0.5).sin() * 0.07;
-                    let scan = if a.moving { 0.0 } else { (t * 0.4).sin() * 0.22 };
-                    Quat::from_euler(EulerRot::XYZ, bob, scan, 0.0)
-                }
-                PartKind::Tail => {
-                    let wag = (t * if a.moving { 10.0 } else { 3.0 }).sin() * 0.4;
-                    Quat::from_rotation_y(wag)
-                }
-                // Quadruped wildlife has no arms; orks use `Arm` (see `orks.rs`).
-                PartKind::Arm(_) => Quat::IDENTITY,
+                PartKind::Head => match (arch, strike) {
+                    (StrikeArch::Bite, Some(p)) => Quat::from_rotation_x(head_bite_x(p)),
+                    _ => {
+                        let bob = (t * 0.5).sin() * 0.07;
+                        let scan = if a.moving { 0.0 } else { (t * 0.4).sin() * 0.22 };
+                        Quat::from_euler(EulerRot::XYZ, bob, scan, 0.0)
+                    }
+                },
+                PartKind::Tail => match (arch, strike) {
+                    (StrikeArch::Sting, Some(p)) => Quat::from_rotation_x(tail_sting_x(p)),
+                    _ => {
+                        let wag = (t * if a.moving { 10.0 } else { 3.0 }).sin() * 0.4;
+                        Quat::from_rotation_y(wag)
+                    }
+                },
+                // Golem pincers slam; other rigs leave their arms at rest.
+                PartKind::Arm(_) => match (arch, strike) {
+                    (StrikeArch::Slam, Some(p)) => Quat::from_rotation_x(arm_slam_x(p)),
+                    _ => Quat::IDENTITY,
+                },
             };
         }
     }
@@ -380,14 +532,22 @@ fn pick_wander(a: &mut Animal) {
 /// The species that HUNT the hero (chase + bite) rather than fleeing → `(aggro radius, bite
 /// damage)`. Everything else returns `None` and keeps its flee/graze behaviour.
 fn predator_stats(s: Species) -> Option<(f32, f32)> {
+    // Bite/charge damage is now the full old-game value from core (wolf 12, bear 24, boar 18,
+    // scorpion 14, croc 20, golem 28) — the prior forest numbers were ~half that, which is why
+    // wildlife felt toothless. Aggro radii stay forest-tuned for this scene.
+    let dmg = |sp| {
+        crate::verbs::core_species(sp)
+            .map(|c| tileworld_core::animal::animal_config(c).attack_damage as f32)
+            .unwrap_or(0.0)
+    };
     match s {
-        Species::Wolf => Some((13.0, 5.0)),
-        Species::PolarBear => Some((11.0, 13.0)),
-        Species::Boar => Some((8.0, 7.0)),
+        Species::Wolf => Some((13.0, dmg(s))),
+        Species::PolarBear => Some((11.0, dmg(s))),
+        Species::Boar => Some((8.0, dmg(s))),
         // The three biome menaces — they hunt/charge the hero on sight.
-        Species::Scorpion => Some((12.0, 8.0)), // fast, venomous, frequent stings
-        Species::BogCroc => Some((9.0, 11.0)),  // swamp ambusher, heavy bite
-        Species::Golem => Some((9.0, 16.0)),    // slow stone brute, crushing blows
+        Species::Scorpion => Some((12.0, dmg(s))), // fast, venomous, frequent stings
+        Species::BogCroc => Some((9.0, dmg(s))),   // swamp ambusher, heavy bite
+        Species::Golem => Some((9.0, dmg(s))),     // slow stone brute, crushing blows
         _ => None,
     }
 }
@@ -612,8 +772,11 @@ fn spawn_one(
         moving: false,
         timer: rng_range(&mut rng, 0.5, 4.0),
         atk_cd: 0.0,
+        atk_anim: 0.0,
+        hit_recoil: 0.0,
         hunt_prey: None,
         aggro_until: 0.0,
+        kb: Vec2::ZERO,
         rng,
     };
 

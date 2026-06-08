@@ -12,6 +12,7 @@ use bevy::prelude::*;
 
 use crate::orks::Ork;
 use crate::player::Health;
+use crate::ui::UiFonts;
 
 // ── Tuning (ported from the originals) ──────────────────────────────────────
 /// Floating-number lifetime (s).
@@ -19,18 +20,23 @@ const FLOAT_LIFE: f32 = 1.1;
 /// World-units a number rises over its life.
 const FLOAT_RISE: f32 = 1.3;
 /// Base font px for a scale-1 number.
-const FLOAT_FONT: f32 = 22.0;
+const FLOAT_FONT: f32 = 24.0;
+/// Drop-shadow alpha at full opacity (fades with the number).
+const FLOAT_SHADOW_A: f32 = 0.85;
 /// White-flash duration on a struck ork (s).
-const HURT_FLASH_DUR: f32 = 0.12;
+const HURT_FLASH_DUR: f32 = 0.09;
 /// Trauma shed per second (old `TRAUMA_DECAY`).
 const SHAKE_DECAY: f32 = 2.4;
 /// Camera offset (world units) at full trauma.
 pub const SHAKE_MAX: f32 = 0.35;
 /// HP-bar quad size (world units), at the ork's baked scale.
-const HP_BAR_W: f32 = 0.9;
-const HP_BAR_H: f32 = 0.12;
+const HP_BAR_W: f32 = 0.6;
+const HP_BAR_H: f32 = 0.085;
 /// Height above the ork root the bar floats at.
-const HP_BAR_Y: f32 = 2.4;
+const HP_BAR_Y: f32 = 1.9;
+/// Beyond this camera distance a bar is hidden — keeps far-off damaged enemies from floating
+/// bars across the sky (they read as detached when the body's behind trees / off-screen).
+const HP_BAR_MAX_DIST: f32 = 26.0;
 
 // ── Ported float colours ────────────────────────────────────────────────────
 /// Red `-N` when the hero is struck (`#ff5a4a`).
@@ -73,14 +79,21 @@ struct FloatText {
     len: usize,
 }
 
-fn spawn_floats(mut commands: Commands, time: Res<Time>, mut q: ResMut<FloatQueue>) {
+fn spawn_floats(
+    mut commands: Commands,
+    time: Res<Time>,
+    fonts: Res<UiFonts>,
+    mut q: ResMut<FloatQueue>,
+) {
     let now = time.elapsed_secs();
     for r in q.0.drain(..) {
         let len = r.text.chars().count();
         commands.spawn((
             Text::new(r.text),
-            TextFont { font_size: FLOAT_FONT * r.scale, ..default() },
+            TextFont { font: fonts.extrabold.clone(), font_size: FLOAT_FONT * r.scale, ..default() },
             TextColor(r.color),
+            // A crisp dark drop shadow so numbers pop against the bright scene (fades in drive_floats).
+            TextShadow { offset: Vec2::new(0.0, 2.5), color: Color::srgba(0.0, 0.0, 0.0, FLOAT_SHADOW_A) },
             Node {
                 position_type: PositionType::Absolute,
                 left: Val::Px(-9999.0),
@@ -97,11 +110,11 @@ fn drive_floats(
     time: Res<Time>,
     mut commands: Commands,
     cam_q: Query<(&Camera, &GlobalTransform)>,
-    mut q: Query<(Entity, &FloatText, &mut Node, &mut TextColor, &mut TextFont)>,
+    mut q: Query<(Entity, &FloatText, &mut Node, &mut TextColor, &mut TextFont, &mut TextShadow)>,
 ) {
     let now = time.elapsed_secs();
     let Ok((cam, cam_tf)) = cam_q.single() else { return };
-    for (e, f, mut node, mut tc, mut tf) in &mut q {
+    for (e, f, mut node, mut tc, mut tf, mut shadow) in &mut q {
         let t = now - f.born;
         let k = (t / FLOAT_LIFE).clamp(0.0, 1.0);
         if k >= 1.0 {
@@ -113,7 +126,9 @@ fn drive_floats(
             if t < 0.16 { 0.6 + (t / 0.16) * 0.55 } else { (1.15 - (t - 0.16) * 1.6).max(1.0) };
         let font = FLOAT_FONT * f.scale * pop;
         tf.font_size = font;
-        tc.0 = f.color.with_alpha(1.0 - k * k);
+        let fade = 1.0 - k * k;
+        tc.0 = f.color.with_alpha(fade);
+        shadow.color = Color::srgba(0.0, 0.0, 0.0, FLOAT_SHADOW_A * fade);
         let world = f.anchor + Vec3::Y * (FLOAT_RISE * k);
         match cam.world_to_viewport(cam_tf, world) {
             Ok(px) => {
@@ -124,6 +139,37 @@ fn drive_floats(
             }
             Err(_) => node.display = Display::None,
         }
+    }
+}
+
+/// Screenshot/tuning hook: `FOREST_FLOATTEST=1` continuously stages a spread of sample combat
+/// numbers near the hero so a capture can frame the floating-text styling. No effect in normal play.
+fn float_test(
+    time: Res<Time>,
+    hero: Res<crate::player::HeroState>,
+    mut q: ResMut<FloatQueue>,
+    mut t: Local<f32>,
+) {
+    if std::env::var("FOREST_FLOATTEST").is_err() {
+        return;
+    }
+    *t -= time.delta_secs();
+    if *t > 0.0 {
+        return;
+    }
+    *t = 0.5;
+    let base = Vec3::new(hero.pos.x, 2.2, hero.pos.y);
+    let amber = Color::srgb(0.96, 0.78, 0.30);
+    let samples: [(&str, Color, f32, Vec3); 6] = [
+        ("25", col_ork_hit(), 1.0, Vec3::new(-1.4, 0.4, 0.0)),
+        ("48", col_ork_hit(), 1.5, Vec3::new(-0.4, 1.1, 0.0)),
+        ("-7", col_hero_hit(), 1.0, Vec3::new(0.8, 0.2, 0.0)),
+        ("BLOCK", col_block(), 0.95, Vec3::new(1.6, 0.9, 0.0)),
+        ("†", col_kill(), 1.4, Vec3::new(0.2, 1.6, 0.0)),
+        ("+3 gold", amber, 1.0, Vec3::new(-1.0, -0.2, 0.0)),
+    ];
+    for (text, color, scale, off) in samples {
+        q.0.push(FloatReq { world: base + off, text: text.into(), color, scale });
     }
 }
 
@@ -173,7 +219,15 @@ fn setup_hp_bar_assets(
 fn ensure_hp_bars(
     mut commands: Commands,
     assets: Res<HpBarAssets>,
-    orks: Query<Entity, (Or<(With<Ork>, With<crate::wildlife::Animal>)>, Without<HasHpBar>)>,
+    // `With<Health>`: only attach a bar once the target's vitals exist. `ensure_combat_health`
+    // (which adds `Health`) is gated on `Modal::None`, while this runs ungated — without this
+    // filter a bar could be born a frame before `Health`, then `drive_hp_bars` (whose query
+    // *requires* `&Health`) would fail its lookup and despawn the bar for good (`HasHpBar`
+    // lingers, so it never respawns). That silently killed every enemy's bar spawned at startup.
+    orks: Query<
+        Entity,
+        (Or<(With<Ork>, With<crate::wildlife::Animal>)>, With<Health>, Without<HasHpBar>),
+    >,
 ) {
     for e in &orks {
         // `try_insert`: an ork can be despawned (biome rebuild, or a defender bolt reaping a
@@ -185,8 +239,10 @@ fn ensure_hp_bars(
                 p.spawn((
                     Mesh3d(assets.quad.clone()),
                     MeshMaterial3d(assets.bg.clone()),
-                    Transform::from_translation(Vec3::new(0.0, 0.0, -0.001))
-                        .with_scale(Vec3::new(HP_BAR_W + 0.05, HP_BAR_H + 0.03, 1.0)),
+                    // +Z = AWAY from the camera (the billboard's forward/-Z faces the camera via
+                    // `look_at`), so the dark panel sits BEHIND the red fill instead of hiding it.
+                    Transform::from_translation(Vec3::new(0.0, 0.0, 0.01))
+                        .with_scale(Vec3::new(HP_BAR_W + 0.04, HP_BAR_H + 0.02, 1.0)),
                     bevy::light::NotShadowCaster,
                 ));
                 p.spawn((
@@ -227,8 +283,13 @@ fn drive_hp_bars(
             *vis = Visibility::Hidden;
             continue;
         }
-        *vis = Visibility::Visible;
         let head = ork_gt.translation() + Vec3::Y * HP_BAR_Y;
+        // Cull distant bars so a damaged enemy across the map doesn't float a bar in the sky.
+        if head.distance(cam_pos) > HP_BAR_MAX_DIST {
+            *vis = Visibility::Hidden;
+            continue;
+        }
+        *vis = Visibility::Visible;
         tf.translation = head;
         tf.look_at(cam_pos, Vec3::Y); // billboard (materials are double-sided)
         let hurting = hurt.is_some_and(|h| now < h.until);
@@ -242,9 +303,11 @@ fn drive_hp_bars(
     }
 }
 
-// ── 3. Ork hurt-flash (per-ork material, cloned externally) ─────────────────
+// ── 3. Hurt-flash (per-entity material, cloned externally) ──────────────────
+// Shared by orks AND wildlife: a struck target whitens for a beat. Both ship sharing one skin
+// material (batching), so we clone a per-entity copy on the fly and flash only that copy.
 
-/// A struck ork flashes white until this time (s).
+/// A struck ork / animal flashes white until this time (s).
 #[derive(Component)]
 pub struct HurtFlash {
     pub until: f32,
@@ -257,17 +320,17 @@ impl HurtFlash {
     }
 }
 
-/// The ork's own (cloned) skin material handle, so we can flash one ork without
-/// touching the rest of the warband.
+/// A target's own (cloned) skin material handle, so we can flash one ork / animal without
+/// touching the rest of the warband / herd (both ship sharing one material for batching).
 #[derive(Component)]
-struct OrkSkin(Handle<StandardMaterial>);
+struct HurtSkin(Handle<StandardMaterial>);
 
 /// Give every ork its own material clone (orks ship sharing one for batching).
 /// Cheap — there are only dozens of orks — and keeps `orks.rs` untouched.
 fn ensure_ork_skin(
     mut commands: Commands,
     mut mats: ResMut<Assets<StandardMaterial>>,
-    orks: Query<(Entity, &Children), (With<Ork>, Without<OrkSkin>)>,
+    orks: Query<(Entity, &Children), (With<Ork>, Without<HurtSkin>)>,
     child_mats: Query<&MeshMaterial3d<StandardMaterial>>,
     eyes: Query<(), With<crate::orks::OrkEye>>,
 ) {
@@ -291,15 +354,39 @@ fn ensure_ork_skin(
                 commands.entity(c).try_insert(MeshMaterial3d(own.clone()));
             }
         }
-        commands.entity(e).try_insert(OrkSkin(own));
+        commands.entity(e).try_insert(HurtSkin(own));
     }
 }
 
-fn ork_flash(
+/// Same trick for wildlife: each animal gets its own clone of the shared white herd material so a
+/// struck one flashes alone. No eyes to skip, so every mesh child takes the clone. Keeps
+/// `wildlife.rs` untouched.
+fn ensure_animal_skin(
+    mut commands: Commands,
+    mut mats: ResMut<Assets<StandardMaterial>>,
+    animals: Query<(Entity, &Children), (With<crate::wildlife::Animal>, Without<HurtSkin>)>,
+    child_mats: Query<&MeshMaterial3d<StandardMaterial>>,
+) {
+    for (e, children) in &animals {
+        let Some(shared) = children.iter().find_map(|c| child_mats.get(c).ok()) else { continue };
+        let Some(base) = mats.get(&shared.0).cloned() else { continue };
+        let own = mats.add(base);
+        for &c in children {
+            if child_mats.get(c).is_ok() {
+                // `try_insert`: an animal (BiomeEntity) can be despawned the same frame it's first
+                // seen here (biome rebuild / kill / eaten), which despawns its children too.
+                commands.entity(c).try_insert(MeshMaterial3d(own.clone()));
+            }
+        }
+        commands.entity(e).try_insert(HurtSkin(own));
+    }
+}
+
+fn hurt_flash(
     time: Res<Time>,
     mut commands: Commands,
     mut mats: ResMut<Assets<StandardMaterial>>,
-    q: Query<(Entity, &HurtFlash, &OrkSkin)>,
+    q: Query<(Entity, &HurtFlash, &HurtSkin)>,
 ) {
     let now = time.elapsed_secs();
     for (e, hf, skin) in &q {
@@ -313,7 +400,8 @@ fn ork_flash(
         }
         let k = (remain / HURT_FLASH_DUR).clamp(0.0, 1.0);
         if let Some(m) = mats.get_mut(&skin.0) {
-            m.emissive = LinearRgba::rgb(k * 2.0, k * 2.0, k * 2.0);
+            // A subtle whiten, not a strobe — kept low so rapid hits don't blow out the model.
+            m.emissive = LinearRgba::rgb(k * 0.8, k * 0.8, k * 0.8);
         }
     }
 }
@@ -367,10 +455,12 @@ impl Plugin for CombatFxPlugin {
             .add_systems(
                 Update,
                 (
+                    float_test,
                     spawn_floats,
                     drive_floats,
                     ensure_ork_skin,
-                    ork_flash,
+                    ensure_animal_skin,
+                    hurt_flash,
                     ensure_hp_bars,
                     drive_hp_bars,
                     drive_hit_flash,

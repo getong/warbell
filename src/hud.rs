@@ -1,22 +1,34 @@
-//! Minimal combat HUD — an HP bar over a thinner block-stamina bar, bottom-left. Plain
-//! `bevy_ui` rectangles bound to the hero's `HeroHealth`; no text, no chrome.
+//! **Combat HUD** — ported from the 3js `PlayerHud` / `QuickBar` / `BuffBar` / `ItemToasts`.
+//! Bottom-left: a level badge + gradient HP/XP/stamina bars. Bottom-centre: the gold/stone tally
+//! over four quick-use slots (Q/Z/X/C). Above the vitals: buff pips. Top-left: pickup toasts.
+//! All chrome comes from [`crate::ui`]; the bars/text bind to the live hero stores.
 
 use bevy::prelude::*;
 use tileworld_core::buff_store::BuffKind;
 use tileworld_core::inventory::{item_def, QuickSlot};
 
-use crate::icons::IconAtlas;
-use crate::inventory::{Buffs, Inventory, Toasts};
 use crate::player::{HeroHealth, PlayerRes};
+use crate::ui::anim::{anim, AnimKind};
+use crate::ui::fonts::{label, UiFonts};
+use crate::ui::theme::*;
+use crate::ui::widgets::{self, border};
+use crate::ui::IconAtlas;
+use crate::inventory::{Buffs, Inventory, Toasts};
 
 #[derive(Component)]
 struct HpFill;
+#[derive(Component)]
+struct HpText;
 #[derive(Component)]
 struct StaminaFill;
 #[derive(Component)]
 struct XpFill;
 #[derive(Component)]
-struct ResourceText;
+struct LevelText;
+#[derive(Component)]
+struct GoldText;
+#[derive(Component)]
+struct StoneText;
 
 /// Which derived quick-slot a node belongs to.
 #[derive(Clone, Copy, PartialEq)]
@@ -36,19 +48,18 @@ impl SlotKind {
         }
     }
 }
-/// A quick-slot's icon (its `ImageNode` handle + display are swapped each frame).
 #[derive(Component)]
 struct QuickSlotIcon(SlotKind);
-/// A quick-slot's key/count label.
 #[derive(Component)]
-struct QuickSlotText(SlotKind);
-/// The active-buff timers line under the quick-bar.
+struct QuickSlotCount(SlotKind);
+/// Container the buff pips are rebuilt into each frame.
 #[derive(Component)]
-struct BuffLineText;
+struct BuffRoot;
+#[derive(Component)]
+struct BuffPip;
 /// The toast column container (rows are cleared + respawned each frame).
 #[derive(Component)]
 struct ToastRoot;
-/// One toast row (despawned + rebuilt each frame).
 #[derive(Component)]
 struct ToastRow;
 
@@ -61,164 +72,189 @@ impl Plugin for HudPlugin {
     }
 }
 
-fn setup_hud(mut commands: Commands) {
-    let track_bg = Color::srgba(0.0, 0.0, 0.0, 0.55);
+const BAR_W: f32 = 240.0;
+
+/// A full-size absolute fill quad with a vertical gradient (width driven live), tagged `marker`.
+fn fill(top: Color, bot: Color, marker: impl Bundle) -> impl Bundle {
+    (
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(0.0),
+            top: Val::Px(0.0),
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            ..default()
+        },
+        widgets::vgrad(top, bot),
+        marker,
+    )
+}
+
+/// A rounded bar-track node of the given height.
+fn track(h: f32) -> impl Bundle {
+    (
+        Node {
+            width: Val::Px(BAR_W),
+            height: Val::Px(h),
+            border: border(1.0),
+            border_radius: radius(R_CELL),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            overflow: Overflow::clip(),
+            ..default()
+        },
+        BackgroundColor(PANEL_HUD),
+        BorderColor::all(BORDER_SOFT),
+    )
+}
+
+fn setup_hud(mut commands: Commands, fonts: Res<UiFonts>) {
     commands
         .spawn(Node {
             position_type: PositionType::Absolute,
             left: Val::Px(18.0),
             bottom: Val::Px(18.0),
-            width: Val::Px(240.0),
-            flex_direction: FlexDirection::Column,
-            row_gap: Val::Px(6.0),
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::Center,
+            column_gap: Val::Px(8.0),
             ..default()
         })
         .with_children(|root| {
-            // Level + gold + stone readout (numeric).
-            root.spawn((
-                Text::new("Lv 1   Gold 30   Stone 0"),
-                TextFont { font_size: 18.0, ..default() },
-                TextColor(Color::srgb(0.96, 0.86, 0.45)),
-                ResourceText,
-            ));
-            // HP track + fill.
+            // Level badge.
             root.spawn((
                 Node {
-                    width: Val::Percent(100.0),
-                    height: Val::Px(16.0),
-                    padding: UiRect::all(Val::Px(2.0)),
+                    width: Val::Px(40.0),
+                    height: Val::Px(40.0),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    border: border(1.0),
+                    border_radius: radius(R_BTN),
                     ..default()
                 },
-                BackgroundColor(track_bg),
+                BackgroundColor(PANEL_HUD),
+                BorderColor::all(rgba(255, 213, 140, 0.5)),
+                shadow_hud(),
             ))
-            .with_children(|t| {
-                t.spawn((
-                    Node { width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
-                    BackgroundColor(Color::srgb(0.85, 0.22, 0.22)),
-                    HpFill,
-                ));
+            .with_children(|b| {
+                b.spawn((label(&fonts.extrabold, "1", 16.0, GOLD), LevelText));
             });
-            // Block-stamina track + fill (thinner).
-            root.spawn((
-                Node {
-                    width: Val::Percent(100.0),
-                    height: Val::Px(9.0),
-                    padding: UiRect::all(Val::Px(2.0)),
-                    ..default()
-                },
-                BackgroundColor(track_bg),
-            ))
-            .with_children(|t| {
-                t.spawn((
-                    Node { width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
-                    BackgroundColor(Color::srgb(0.92, 0.78, 0.30)),
-                    StaminaFill,
-                ));
-            });
-            // XP track + fill (thin, blue — fills toward the next level).
-            root.spawn((
-                Node {
-                    width: Val::Percent(100.0),
-                    height: Val::Px(7.0),
-                    padding: UiRect::all(Val::Px(2.0)),
-                    ..default()
-                },
-                BackgroundColor(track_bg),
-            ))
-            .with_children(|t| {
-                t.spawn((
-                    Node { width: Val::Percent(0.0), height: Val::Percent(100.0), ..default() },
-                    BackgroundColor(Color::srgb(0.42, 0.7, 1.0)),
-                    XpFill,
-                ));
-            });
+            // Bars column.
+            root.spawn(Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(3.0), ..default() })
+                .with_children(|col| {
+                    col.spawn(track(20.0)).with_children(|t| {
+                        t.spawn(fill(HP_TOP, HP_BOT, HpFill));
+                        t.spawn((
+                            label(&fonts.bold, "100", 11.0, Color::WHITE),
+                            TextShadow { offset: Vec2::ZERO, color: rgba(0, 0, 0, 0.7) },
+                            HpText,
+                        ));
+                    });
+                    col.spawn(track(10.0)).with_children(|t| {
+                        t.spawn(fill(XP_TOP, XP_BOT, XpFill));
+                    });
+                    col.spawn(track(7.0)).with_children(|t| {
+                        t.spawn(fill(STAM_TOP, STAM_BOT, StaminaFill));
+                    });
+                });
         });
 }
 
-/// Pickup toasts (top-right) + the quick-bar/buff line (bottom-centre).
-fn setup_inv_hud(mut commands: Commands) {
-    // Top-left controls legend (so the panels are discoverable).
-    commands
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            left: Val::Px(18.0),
-            top: Val::Px(14.0),
-            ..default()
-        })
-        .with_children(|p| {
-            p.spawn((
-                Text::new("U Upgrades   T Shop   I Bag   R Recruit   B/E War Bell   ` Free-cam"),
-                TextFont { font_size: 14.0, ..default() },
-                TextColor(Color::srgba(0.85, 0.86, 0.92, 0.65)),
-            ));
-        });
-    // Top-right pickup-toast column (rows spawned dynamically into this container).
+/// Pickup toasts (top-left) + the quick-bar (bottom-centre) + the buff pips (bottom-left).
+fn setup_inv_hud(mut commands: Commands, fonts: Res<UiFonts>) {
+    // Top-left pickup-toast column.
     commands.spawn((
         Node {
             position_type: PositionType::Absolute,
-            right: Val::Px(18.0),
+            left: Val::Px(18.0),
             top: Val::Px(18.0),
             flex_direction: FlexDirection::Column,
-            align_items: AlignItems::End,
-            row_gap: Val::Px(4.0),
+            row_gap: Val::Px(8.0),
             ..default()
         },
+        bevy::ui::FocusPolicy::Pass,
         ToastRoot,
     ));
-    // Bottom-centre quick-bar: a row of 4 icon slots + a buff-timer line beneath.
+    // Buff pips, bottom-left above the vitals.
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(18.0),
+            bottom: Val::Px(80.0),
+            flex_direction: FlexDirection::Row,
+            column_gap: Val::Px(8.0),
+            ..default()
+        },
+        bevy::ui::FocusPolicy::Pass,
+        BuffRoot,
+    ));
+    // Bottom-centre quick-bar: gold/stone tally over a row of four slots.
     commands
         .spawn(Node {
             position_type: PositionType::Absolute,
-            bottom: Val::Px(16.0),
+            bottom: Val::Px(14.0),
             width: Val::Percent(100.0),
             flex_direction: FlexDirection::Column,
             align_items: AlignItems::Center,
-            row_gap: Val::Px(4.0),
+            row_gap: Val::Px(5.0),
             ..default()
         })
         .with_children(|col| {
             col.spawn(Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(14.0), ..default() })
-                .with_children(|row| {
-                    for kind in [SlotKind::Food, SlotKind::Resist, SlotKind::Power, SlotKind::Haste] {
-                        row.spawn((
-                            Node {
-                                flex_direction: FlexDirection::Column,
-                                align_items: AlignItems::Center,
-                                padding: UiRect::all(Val::Px(4.0)),
-                                ..default()
-                            },
-                            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)),
-                        ))
-                        .with_children(|slot| {
-                            slot.spawn((
-                                Node {
-                                    width: Val::Px(28.0),
-                                    height: Val::Px(28.0),
-                                    display: Display::None, // shown once a real handle is assigned
-                                    ..default()
-                                },
-                                ImageNode::new(Handle::default()),
-                                QuickSlotIcon(kind),
-                            ));
-                            slot.spawn((
-                                Text::new(format!("{} -", kind.key())),
-                                TextFont { font_size: 14.0, ..default() },
-                                TextColor(Color::srgb(0.88, 0.9, 0.95)),
-                                QuickSlotText(kind),
-                            ));
-                        });
-                    }
+                .with_children(|r| {
+                    r.spawn((label(&fonts.extrabold, "Gold 30", 13.0, GOLD), GoldText));
+                    r.spawn((label(&fonts.extrabold, "Stone 0", 13.0, STONE), StoneText));
                 });
             col.spawn((
-                Text::new(""),
-                TextFont { font_size: 14.0, ..default() },
-                TextColor(Color::srgb(0.7, 0.85, 1.0)),
-                BuffLineText,
-            ));
+                Node {
+                    flex_direction: FlexDirection::Row,
+                    column_gap: Val::Px(6.0),
+                    padding: UiRect::all(Val::Px(5.0)),
+                    border: border(2.0),
+                    border_radius: radius(R_BTN),
+                    ..default()
+                },
+                BackgroundColor(rgba(20, 22, 28, 0.72)),
+                BorderColor::all(rgba(0, 0, 0, 0.5)),
+            ))
+            .with_children(|row| {
+                for kind in [SlotKind::Food, SlotKind::Resist, SlotKind::Power, SlotKind::Haste] {
+                    row.spawn((
+                        Node {
+                            width: Val::Px(52.0),
+                            height: Val::Px(52.0),
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::Center,
+                            border: border(2.0),
+                            border_radius: radius(R_SLOT),
+                            ..default()
+                        },
+                        widgets::slot_paint(),
+                    ))
+                    .with_children(|slot| {
+                        // Key (top-left).
+                        slot.spawn((
+                            Node { position_type: PositionType::Absolute, top: Val::Px(1.0), left: Val::Px(4.0), ..default() },
+                            label(&fonts.extrabold, kind.key().to_string(), 10.0, rgba(230, 236, 246, 0.8)),
+                        ));
+                        // Icon (centre).
+                        slot.spawn((
+                            Node { width: Val::Px(30.0), height: Val::Px(30.0), display: Display::None, ..default() },
+                            ImageNode::new(Handle::default()),
+                            QuickSlotIcon(kind),
+                        ));
+                        // Count (bottom-right).
+                        slot.spawn((
+                            Node { position_type: PositionType::Absolute, right: Val::Px(3.0), bottom: Val::Px(1.0), ..default() },
+                            label(&fonts.extrabold, "", 13.0, Color::WHITE),
+                            TextShadow { offset: Vec2::ZERO, color: rgba(0, 0, 0, 0.9) },
+                            QuickSlotCount(kind),
+                        ));
+                    });
+                }
+            });
         });
 }
 
-/// Resolve which bag item feeds a quick-slot.
 fn slot_for(inv: &Inventory, kind: SlotKind) -> Option<QuickSlot> {
     match kind {
         SlotKind::Food => inv.0.food_slot(),
@@ -228,24 +264,34 @@ fn slot_for(inv: &Inventory, kind: SlotKind) -> Option<QuickSlot> {
     }
 }
 
-/// Drive the quick-bar icons/counts + buff line + the pickup-toast rows (with item icons).
+fn buff_icon_key(kind: BuffKind) -> &'static str {
+    match kind {
+        BuffKind::Resist => "buff:resist",
+        BuffKind::Power => "buff:power",
+        BuffKind::Haste => "buff:haste",
+    }
+}
+
+/// Drive quick-slot icons/counts, rebuild the buff pips, and rebuild the pickup-toast rows.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn update_inv_hud(
     time: Res<Time>,
     inv: Res<Inventory>,
     buffs: Res<Buffs>,
     atlas: Res<IconAtlas>,
+    fonts: Res<UiFonts>,
     mut toasts: ResMut<Toasts>,
     mut commands: Commands,
     mut icon_q: Query<(&QuickSlotIcon, &mut Node, &mut ImageNode)>,
-    mut count_q: Query<(&QuickSlotText, &mut Text), With<QuickSlotText>>,
-    mut buffline_q: Query<&mut Text, (With<BuffLineText>, Without<QuickSlotText>)>,
+    mut count_q: Query<(&QuickSlotCount, &mut Text)>,
+    buff_root_q: Query<Entity, With<BuffRoot>>,
+    pips_q: Query<Entity, With<BuffPip>>,
     toast_root_q: Query<Entity, With<ToastRoot>>,
     rows_q: Query<Entity, With<ToastRow>>,
 ) {
     let now = time.elapsed_secs() as f64;
 
-    // ── Quick-slot icons: swap the handle + show/hide the slot. ──
+    // Quick-slot icons.
     for (slot, mut node, mut img) in &mut icon_q {
         match slot_for(&inv, slot.0).and_then(|s| atlas.get(&s.item_id)) {
             Some(handle) => {
@@ -255,58 +301,77 @@ fn update_inv_hud(
             None => node.display = Display::None,
         }
     }
-    // ── Quick-slot labels: "Q x3" or "Q -". ──
+    // Quick-slot counts ("" if empty/single).
     for (slot, mut text) in &mut count_q {
         **text = match slot_for(&inv, slot.0) {
-            Some(s) => format!("{} x{}", slot.0.key(), s.count),
-            None => format!("{} -", slot.0.key()),
+            Some(s) if s.count > 1 => format!("{}", s.count),
+            _ => String::new(),
         };
     }
-    // ── Active-buff timers. ──
-    if let Ok(mut line) = buffline_q.single_mut() {
-        **line = buffs
-            .0
-            .active_buffs(now)
-            .iter()
-            .map(|a| format!("{} {:.0}s", a.kind.label(), a.remain))
-            .collect::<Vec<_>>()
-            .join("    ");
+
+    // ── Buff pips: rebuild one column [icon + seconds] per active buff. ──
+    for e in &pips_q {
+        commands.entity(e).try_despawn();
+    }
+    if let Ok(root) = buff_root_q.single() {
+        commands.entity(root).with_children(|bar| {
+            for a in buffs.0.active_buffs(now) {
+                bar.spawn((
+                    BuffPip,
+                    Node {
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        row_gap: Val::Px(3.0),
+                        padding: UiRect::axes(Val::Px(6.0), Val::Px(4.0)),
+                        border_radius: radius(R_BTN),
+                        ..default()
+                    },
+                    BackgroundColor(rgba(20, 18, 24, 0.55)),
+                ))
+                .with_children(|pip| {
+                    if let Some(h) = atlas.get(buff_icon_key(a.kind)) {
+                        pip.spawn(widgets::icon(h, 18.0));
+                    }
+                    pip.spawn(label(&fonts.bold, format!("{:.0}s", a.remain), 10.0, GOLD));
+                });
+            }
+        });
     }
 
-    // ── Toasts: dismiss the stale, then rebuild one [icon + text] row per live toast. ──
+    // ── Toasts: dismiss stale, rebuild one [icon + text] card per live toast. ──
     let expired: Vec<i64> =
         toasts.0.toasts().iter().filter(|t| now - t.born >= 4.0).map(|t| t.id).collect();
     for id in expired {
         toasts.0.remove(id);
     }
     for e in &rows_q {
-        commands.entity(e).despawn(); // clear last frame's rows (children go with them)
+        commands.entity(e).try_despawn();
     }
     if let Ok(root) = toast_root_q.single() {
         commands.entity(root).with_children(|col| {
             for tt in toasts.0.toasts() {
                 let name = item_def(&tt.item_id).map(|d| d.name).unwrap_or(tt.item_id.as_str());
                 col.spawn((
+                    ToastRow,
                     Node {
                         flex_direction: FlexDirection::Row,
                         align_items: AlignItems::Center,
-                        column_gap: Val::Px(6.0),
+                        column_gap: Val::Px(10.0),
+                        padding: UiRect::axes(Val::Px(12.0), Val::Px(8.0)),
+                        border: UiRect::left(Val::Px(3.0)),
+                        border_radius: radius(7.0),
                         ..default()
                     },
-                    ToastRow,
+                    BackgroundColor(rgba(20, 22, 28, 0.9)),
+                    BorderColor::all(GREEN),
+                    shadow_hud(),
+                    anim(AnimKind::ToastIn, 0.0, 0.18),
                 ))
                 .with_children(|row| {
                     if let Some(h) = atlas.get(&tt.item_id) {
-                        row.spawn((
-                            Node { width: Val::Px(22.0), height: Val::Px(22.0), ..default() },
-                            ImageNode::new(h),
-                        ));
+                        row.spawn(widgets::icon(h, 26.0));
                     }
-                    row.spawn((
-                        Text::new(format!("+{} {}", tt.count, name)),
-                        TextFont { font_size: 18.0, ..default() },
-                        TextColor(Color::srgb(0.95, 0.86, 0.5)),
-                    ));
+                    row.spawn(label(&fonts.extrabold, format!("+{} {}", tt.count, name), 14.0, rgb(242, 244, 250)));
                 });
             }
         });
@@ -317,12 +382,14 @@ fn update_inv_hud(
 fn update_hud(
     player: Res<PlayerRes>,
     bank: Res<crate::economy::Bank>,
-    lives: Res<crate::succession::Lives>,
     hero_q: Query<&HeroHealth>,
     mut hp_q: Query<&mut Node, (With<HpFill>, Without<StaminaFill>, Without<XpFill>)>,
     mut st_q: Query<&mut Node, (With<StaminaFill>, Without<HpFill>, Without<XpFill>)>,
     mut xp_q: Query<&mut Node, (With<XpFill>, Without<HpFill>, Without<StaminaFill>)>,
-    mut txt_q: Query<&mut Text, With<ResourceText>>,
+    mut hp_txt: Query<&mut Text, (With<HpText>, Without<LevelText>, Without<GoldText>, Without<StoneText>)>,
+    mut lvl_txt: Query<&mut Text, (With<LevelText>, Without<GoldText>, Without<StoneText>)>,
+    mut gold_txt: Query<&mut Text, (With<GoldText>, Without<StoneText>)>,
+    mut stone_txt: Query<&mut Text, With<StoneText>>,
 ) {
     let Ok(hh) = hero_q.single() else { return };
     let p = &player.0;
@@ -342,13 +409,16 @@ fn update_hud(
     if let Ok(mut n) = xp_q.single_mut() {
         n.width = Val::Percent(xp);
     }
-    if let Ok(mut t) = txt_q.single_mut() {
-        **t = format!(
-            "Lv {}   Gold {}   Stone {}   Heirs {}",
-            p.level,
-            p.gold,
-            bank.0.stone() as i64,
-            lives.heirs
-        );
+    if let Ok(mut t) = hp_txt.single_mut() {
+        **t = format!("{}", p.hp.max(0.0) as i64);
+    }
+    if let Ok(mut t) = lvl_txt.single_mut() {
+        **t = format!("{}", p.level);
+    }
+    if let Ok(mut t) = gold_txt.single_mut() {
+        **t = format!("Gold {}", p.gold);
+    }
+    if let Ok(mut t) = stone_txt.single_mut() {
+        **t = format!("Stone {}", bank.0.stone() as i64);
     }
 }

@@ -598,9 +598,10 @@ pub fn config() -> BiomeConfig {
         biome: Biome::Swamp,
         name: "Swamp",
 
-        // Dark olive green-brown wet ground.
+        // Dark olive green-brown wet ground. Low roughness so the dim sun throws a damp
+        // specular sheen across the muck — reads as standing bog-water rather than dry dirt.
         ground_color: 0x49543a,
-        ground_roughness: 1.0,
+        ground_roughness: 0.25,
         detail: GroundDetail {
             scale: 0.16,
             strength: 0.55,
@@ -635,6 +636,7 @@ pub fn config() -> BiomeConfig {
                 chance: 0.085,
                 scale: (0.85 * TREE_SCALE, 1.25 * TREE_SCALE),
                 tree: true,
+                block_radius: 0.0,
             },
             // Cattail reed clumps — FIRST non-tree class → the tree-spacing fallback.
             PropClass {
@@ -645,6 +647,7 @@ pub fn config() -> BiomeConfig {
                 chance: 0.06,
                 scale: (0.85, 1.4),
                 tree: false,
+                block_radius: 0.0,
             },
             // Toadstools / shelf fungus / mossy rock accents.
             PropClass {
@@ -652,6 +655,7 @@ pub fn config() -> BiomeConfig {
                 chance: 0.04,
                 scale: (0.7, 1.5),
                 tree: false,
+                block_radius: 0.0,
             },
         ],
         cover: vec![
@@ -660,24 +664,28 @@ pub fn config() -> BiomeConfig {
                 chance: 0.34,
                 scale: (0.7, 1.4),
                 tree: false,
+                block_radius: 0.0,
             },
             PropClass {
                 variants: vec![(build_reed_sprig_mesh(), 1.0)],
                 chance: 0.18,
                 scale: (0.7, 1.2),
                 tree: false,
+                block_radius: 0.0,
             },
             PropClass {
                 variants: vec![(build_swamp_mushroom_mesh(), 1.0)],
                 chance: 0.12,
                 scale: (0.7, 1.3),
                 tree: false,
+                block_radius: 0.0,
             },
             PropClass {
                 variants: vec![(build_lily_disc_mesh(), 1.0)],
                 chance: 0.10,
                 scale: (0.7, 1.3),
                 tree: false,
+                block_radius: 0.0,
             },
             // Soft pale floor accents — bog cotton + lilac marsh flowers.
             PropClass {
@@ -685,6 +693,7 @@ pub fn config() -> BiomeConfig {
                 chance: 0.10,
                 scale: (0.7, 1.3),
                 tree: false,
+                block_radius: 0.0,
             },
         ],
         cover_per_tile: 2,

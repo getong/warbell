@@ -19,6 +19,11 @@ const GRUNT_MIN_GAP: f32 = 1.6;
 /// How long a spoken line (or death cry) blocks grunts after it starts (clips are ~2–4 s; we
 /// don't know the exact length, so this is a conservative mouth-busy window).
 const LINE_GUARD: f32 = 4.0;
+/// Minimum gap between ANY two spoken hero lines (biome musings + event hints). The old game's
+/// `voiceStore.GLOBAL_GAP` — so the man can't rattle two thoughts back to back. Because the
+/// emitter re-sends the cue every frame the hero is inside a biome, a musing the gap suppresses
+/// isn't lost: it fires the moment the gap clears while he's still there (mark-spoken-on-fire).
+const GLOBAL_LINE_GAP: f32 = 14.0;
 
 #[derive(Component)]
 pub(crate) struct HeroVoiceTag;
@@ -35,16 +40,18 @@ pub(crate) struct VoiceBank {
     events: Vec<(HeroEvent, Handle<AudioSource>)>,
 }
 
-/// Mouth bookkeeping — last grunt time + when the current line stops blocking grunts.
+/// Mouth bookkeeping — last grunt time, when the current line stops blocking grunts, and the
+/// start time of the last spoken LINE (drives the [`GLOBAL_LINE_GAP`] between musings/hints).
 #[derive(Resource)]
 pub(crate) struct HeroMouth {
     last_grunt: f32,
     line_until: f32,
+    last_line: f32,
 }
 
 impl Default for HeroMouth {
     fn default() -> Self {
-        Self { last_grunt: -100.0, line_until: 0.0 }
+        Self { last_grunt: -100.0, line_until: 0.0, last_line: -100.0 }
     }
 }
 
@@ -114,13 +121,26 @@ pub(crate) fn play_voice_cues(
                 }
             }
             AudioCue::HeroDeath => {
+                // A death cry always plays (interrupts) but still counts as the last line.
                 mouth.line_until = now + LINE_GUARD;
+                mouth.last_line = now;
                 pending = Some((pick(&bank.deaths, &mut seed), cfg.voice_vol, true));
             }
             AudioCue::HeroLine(b) => {
-                if let Some(h) = bank.lines.iter().find(|(bb, _)| *bb == b).map(|(_, h)| h) {
-                    mouth.line_until = now + LINE_GUARD;
-                    pending = Some((h.clone(), cfg.narration_vol, true));
+                // Once per biome per run (old game's `biome:` `spoken` gate), only when the mouth
+                // is free, AND at least GLOBAL_LINE_GAP since the last line — so a musing that
+                // can't fire (mid-sentence or inside the gap) isn't marked spoken and re-fires
+                // once he's quiet (the emitter re-sends every frame he's inside the biome).
+                if !gates.spoken_biomes.contains(&b)
+                    && now >= mouth.line_until
+                    && now - mouth.last_line >= GLOBAL_LINE_GAP
+                {
+                    if let Some(h) = bank.lines.iter().find(|(bb, _)| *bb == b).map(|(_, h)| h) {
+                        gates.spoken_biomes.push(b);
+                        mouth.line_until = now + LINE_GUARD;
+                        mouth.last_line = now;
+                        pending = Some((h.clone(), cfg.narration_vol, true));
+                    }
                 }
             }
             AudioCue::HeroEvent(ev) => {
@@ -141,6 +161,10 @@ pub(crate) fn play_voice_cues(
                             _ => {}
                         }
                         mouth.line_until = now + LINE_GUARD;
+                        // Count event hints toward the musing gap so a biome line doesn't
+                        // immediately follow a hint — but don't gate the hint itself (one-shot,
+                        // no retry, so a suppressed night warning would be lost).
+                        mouth.last_line = now;
                         pending = Some((h.clone(), cfg.narration_vol, true));
                     }
                 }

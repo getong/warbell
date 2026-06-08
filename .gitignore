@@ -6,3 +6,6 @@
 # per-biome reference shots live under shots/). Real game art lives under assets/.
 /*.png
 /shots/
+
+# Claude Code local runtime artifacts
+/.claude/scheduled_tasks.lock

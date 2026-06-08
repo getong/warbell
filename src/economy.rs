@@ -16,6 +16,11 @@ use crate::game_state::{AppState, Modal};
 use crate::inventory::{try_grant, Inventory, Toasts};
 use crate::player::PlayerRes;
 use crate::siege::KeepHp;
+use crate::ui::anim::{anim, AnimKind};
+use crate::ui::fonts::{label, UiFonts};
+use crate::ui::theme::*;
+use crate::ui::widgets::{self, border};
+use crate::ui::IconAtlas;
 
 /// The crafting-resource bank — currently just stone. Wraps the parity-tested core store.
 #[derive(Resource, Default)]
@@ -170,18 +175,18 @@ fn try_purchase(
 
 // ── Tree UI (Modal panel) ─────────────────────────────────────────────────────────────
 
+// The tree opens via the contextual **E** near the keep (see `interaction.rs`); this system only
+// keeps the `FOREST_PANEL=tree` screenshot hook alive.
 fn open_tree(
-    keys: Res<ButtonInput<KeyCode>>,
     app: Res<State<AppState>>,
     mut next: ResMut<NextState<Modal>>,
     mut auto_done: Local<bool>,
 ) {
-    // Screenshot hook: `FOREST_PANEL=tree` auto-opens the tree once so the harness can shoot it.
     let force = !*auto_done && std::env::var("FOREST_PANEL").ok().as_deref() == Some("tree");
     if force {
         *auto_done = true;
     }
-    if *app.get() == AppState::Playing && (keys.just_pressed(KeyCode::KeyU) || force) {
+    if *app.get() == AppState::Playing && force {
         next.set(Modal::UpgradeTree);
     }
 }
@@ -202,12 +207,27 @@ fn branch_title(b: UpgradeBranch) -> &'static str {
     }
 }
 
-fn node_label(node: &tileworld_core::upgrade_store::UpgradeNode) -> String {
-    let stone = if node.stone_cost > 0 { format!(" +{}st", node.stone_cost) } else { String::new() };
-    format!("{}\n{}g{}", node.name, node.cost(), stone)
+fn branch_sigil(b: UpgradeBranch) -> &'static str {
+    match b {
+        UpgradeBranch::Economy => "branch:economy",
+        UpgradeBranch::Defense => "branch:defense",
+        UpgradeBranch::Hero => "branch:hero",
+        UpgradeBranch::Arsenal => "branch:arsenal",
+    }
 }
 
-fn spawn_tree(mut commands: Commands) {
+fn branch_color(b: UpgradeBranch) -> Color {
+    match b {
+        UpgradeBranch::Economy => BRANCH_ECON,
+        UpgradeBranch::Defense => BRANCH_DEF,
+        UpgradeBranch::Hero => BRANCH_HERO,
+        UpgradeBranch::Arsenal => BRANCH_ARSENAL,
+    }
+}
+
+/// The upgrade board — a parchment "Castellan's plans" sheet with four heraldic charters, ported
+/// from the 3js `UpgradeTree`.
+fn spawn_tree(mut commands: Commands, fonts: Res<UiFonts>, atlas: Res<IconAtlas>) {
     commands
         .spawn((
             Node {
@@ -216,72 +236,138 @@ fn spawn_tree(mut commands: Commands) {
                 height: Val::Percent(100.0),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
-                row_gap: Val::Px(10.0),
+                row_gap: Val::Px(14.0),
+                padding: UiRect::axes(Val::Px(48.0), Val::Px(30.0)),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.82)),
+            BackgroundColor(PARCHMENT),
             GlobalZIndex(60),
             TreeUi,
+            anim(AnimKind::PopIn, 0.0, 0.22),
         ))
         .with_children(|root| {
-            root.spawn((
-                Text::new("War Table"),
-                TextFont { font_size: 34.0, ..default() },
-                TextColor(Color::srgb(0.95, 0.88, 0.6)),
-            ));
-            root.spawn((
-                Text::new(""),
-                TextFont { font_size: 20.0, ..default() },
-                TextColor(Color::srgb(0.9, 0.9, 0.95)),
-                TreeHeader,
-            ));
-            root.spawn((
-                Text::new("U / Esc to close"),
-                TextFont { font_size: 15.0, ..default() },
-                TextColor(Color::srgba(0.8, 0.8, 0.85, 0.7)),
-            ));
-            // Four branch columns.
-            root.spawn(Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(12.0), ..default() })
-                .with_children(|cols| {
-                    for branch in
-                        [UpgradeBranch::Economy, UpgradeBranch::Defense, UpgradeBranch::Hero, UpgradeBranch::Arsenal]
-                    {
-                        cols.spawn(Node {
-                            flex_direction: FlexDirection::Column,
-                            row_gap: Val::Px(5.0),
-                            width: Val::Px(170.0),
-                            ..default()
-                        })
-                        .with_children(|col| {
+            // Header: title block (left) + treasury tally (right).
+            root.spawn(Node {
+                width: Val::Percent(100.0),
+                max_width: Val::Px(1180.0),
+                flex_direction: FlexDirection::Row,
+                justify_content: JustifyContent::SpaceBetween,
+                align_items: AlignItems::Center,
+                ..default()
+            })
+            .with_children(|head| {
+                head.spawn(Node { flex_direction: FlexDirection::Column, ..default() })
+                    .with_children(|t| {
+                        t.spawn(label(&fonts.bold, "CASTELLAN'S PLANS", 12.0, rgb(138, 106, 46)));
+                        t.spawn(label(&fonts.serif, "Expand the Keep", 34.0, INK));
+                    });
+                head.spawn((
+                    Node {
+                        padding: UiRect::axes(Val::Px(14.0), Val::Px(6.0)),
+                        border_radius: radius(R_CELL),
+                        ..default()
+                    },
+                    BackgroundColor(rgba(255, 246, 218, 0.6)),
+                ))
+                .with_children(|h| {
+                    h.spawn((label(&fonts.serif, "Gold 0   Stone 0", 18.0, rgb(58, 42, 14)), TreeHeader));
+                });
+            });
+
+            // Four charter columns.
+            root.spawn(Node {
+                flex_direction: FlexDirection::Row,
+                column_gap: Val::Px(20.0),
+                width: Val::Percent(100.0),
+                max_width: Val::Px(1180.0),
+                justify_content: JustifyContent::Center,
+                ..default()
+            })
+            .with_children(|cols| {
+                for branch in
+                    [UpgradeBranch::Economy, UpgradeBranch::Defense, UpgradeBranch::Hero, UpgradeBranch::Arsenal]
+                {
+                    cols.spawn(Node {
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(8.0),
+                        width: Val::Px(270.0),
+                        ..default()
+                    })
+                    .with_children(|col| {
+                        // Heraldic banner heading.
+                        col.spawn((
+                            Node {
+                                flex_direction: FlexDirection::Row,
+                                align_items: AlignItems::Center,
+                                column_gap: Val::Px(9.0),
+                                padding: UiRect::axes(Val::Px(12.0), Val::Px(9.0)),
+                                border_radius: radius(R_CELL),
+                                ..default()
+                            },
+                            BackgroundColor(branch_color(branch)),
+                        ))
+                        .with_children(|banner| {
+                            if let Some(h) = atlas.get(branch_sigil(branch)) {
+                                banner.spawn(widgets::icon(h, 18.0));
+                            }
+                            banner.spawn(label(&fonts.bold, branch_title(branch), 15.0, rgb(253, 243, 216)));
+                        });
+                        // Nodes.
+                        for node in UPGRADE_NODES.iter().filter(|n| n.branch == branch) {
                             col.spawn((
-                                Text::new(branch_title(branch)),
-                                TextFont { font_size: 17.0, ..default() },
-                                TextColor(Color::srgb(0.7, 0.8, 1.0)),
-                            ));
-                            for node in UPGRADE_NODES.iter().filter(|n| n.branch == branch) {
-                                col.spawn((
-                                    Button,
-                                    Interaction::default(),
+                                Button,
+                                Interaction::default(),
+                                Node {
+                                    flex_direction: FlexDirection::Row,
+                                    align_items: AlignItems::Center,
+                                    column_gap: Val::Px(11.0),
+                                    width: Val::Percent(100.0),
+                                    padding: UiRect::all(Val::Px(11.0)),
+                                    border: border(1.0),
+                                    border_radius: radius(R_BTN),
+                                    ..default()
+                                },
+                                BackgroundColor(rgba(255, 251, 238, 0.55)),
+                                BorderColor::all(rgba(86, 58, 24, 0.32)),
+                                TreeNodeButton(node.id),
+                            ))
+                            .with_children(|b| {
+                                // Medallion.
+                                b.spawn((
                                     Node {
-                                        width: Val::Percent(100.0),
-                                        padding: UiRect::all(Val::Px(5.0)),
+                                        width: Val::Px(40.0),
+                                        height: Val::Px(40.0),
+                                        align_items: AlignItems::Center,
+                                        justify_content: JustifyContent::Center,
+                                        border_radius: radius(R_CARD),
                                         ..default()
                                     },
-                                    BackgroundColor(Color::srgb(0.18, 0.18, 0.2)),
-                                    TreeNodeButton(node.id),
+                                    BackgroundColor(rgba(120, 84, 36, 0.12)),
                                 ))
-                                .with_children(|b| {
-                                    b.spawn((
-                                        Text::new(node_label(node)),
-                                        TextFont { font_size: 13.0, ..default() },
-                                        TextColor(Color::WHITE),
-                                    ));
+                                .with_children(|m| {
+                                    if let Some(h) = atlas.get(node.id) {
+                                        m.spawn(widgets::icon(h, 24.0));
+                                    }
                                 });
-                            }
-                        });
-                    }
-                });
+                                // Text block.
+                                b.spawn(Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(2.0), ..default() })
+                                    .with_children(|tb| {
+                                        tb.spawn(label(&fonts.serif, node.name, 16.0, INK));
+                                        tb.spawn(label(&fonts.regular, node.desc, 11.5, INK_SOFT));
+                                        let stone = if node.stone_cost > 0 {
+                                            format!("{}g   +{} stone", node.cost(), node.stone_cost)
+                                        } else {
+                                            format!("{}g", node.cost())
+                                        };
+                                        tb.spawn(label(&fonts.bold, stone, 12.5, rgb(154, 110, 22)));
+                                    });
+                            });
+                        }
+                    });
+                }
+            });
+
+            root.spawn(label(&fonts.serif, "Press U or Esc to close the plans", 13.0, rgb(138, 106, 46)));
         });
 }
 
@@ -323,15 +409,15 @@ fn tree_interact(
         }
     }
 
-    // Re-colour every node by its current state.
+    // Re-colour every node by its current state (parchment palette).
     for (_, btn, mut bg) in &mut buttons {
         let Some(node) = node_by_id(btn.0) else { continue };
         bg.0 = if up.0.is_purchased(btn.0) {
-            Color::srgb(0.22, 0.45, 0.25) // owned
+            rgba(168, 142, 96, 0.5) // owned — sealed tan
         } else if up.0.can_buy(node, gold, stone, false) {
-            Color::srgb(0.5, 0.42, 0.16) // buyable
+            rgba(255, 253, 244, 0.88) // buyable — bright vellum
         } else {
-            Color::srgb(0.16, 0.16, 0.19) // locked / can't afford
+            rgba(245, 238, 222, 0.32) // locked / can't afford — faded
         };
     }
 
@@ -349,92 +435,94 @@ struct ShopItemButton(&'static str);
 #[derive(Component)]
 struct ShopHeader;
 
-fn open_shop(
-    keys: Res<ButtonInput<KeyCode>>,
-    mut next: ResMut<NextState<Modal>>,
-    mut auto_done: Local<bool>,
-) {
-    // Screenshot hook: `FOREST_PANEL=shop` opens the merchant once for the harness.
+// The shop opens via the contextual **E** at the merchant stall (see `interaction.rs`); this system
+// only keeps the `FOREST_PANEL=shop` screenshot hook alive.
+fn open_shop(mut next: ResMut<NextState<Modal>>, mut auto_done: Local<bool>) {
     let force = !*auto_done && std::env::var("FOREST_PANEL").ok().as_deref() == Some("shop");
     if force {
         *auto_done = true;
     }
-    if keys.just_pressed(KeyCode::KeyT) || force {
+    if force {
         next.set(Modal::Shop);
     }
 }
 
-fn spawn_shop(mut commands: Commands, eco: Res<EconomyState>, atlas: Res<crate::icons::IconAtlas>) {
+fn spawn_shop(
+    mut commands: Commands,
+    eco: Res<EconomyState>,
+    fonts: Res<UiFonts>,
+    atlas: Res<IconAtlas>,
+) {
     let discount = eco.shop_discount as f64;
     let items = build_shop_items(&eco.unlocked_weapons);
-    commands
-        .spawn((
+    commands.spawn((widgets::scrim(60), ShopUi)).with_children(|root| {
+        root.spawn((
             Node {
-                position_type: PositionType::Absolute,
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
                 flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
-                row_gap: Val::Px(8.0),
+                min_width: Val::Px(380.0),
+                row_gap: Val::Px(10.0),
+                padding: UiRect::axes(Val::Px(26.0), Val::Px(22.0)),
+                border: border(1.0),
+                border_radius: radius(R_PANEL),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.82)),
-            GlobalZIndex(60),
-            ShopUi,
+            widgets::card_paint(),
+            anim(AnimKind::PopIn, 0.0, 0.26),
         ))
-        .with_children(|root| {
-            root.spawn((
-                Text::new("Merchant"),
-                TextFont { font_size: 34.0, ..default() },
-                TextColor(Color::srgb(0.95, 0.88, 0.6)),
-            ));
-            root.spawn((
-                Text::new(""),
-                TextFont { font_size: 20.0, ..default() },
-                TextColor(Color::srgb(0.9, 0.9, 0.95)),
-                ShopHeader,
-            ));
-            root.spawn((
-                Text::new("T / Esc to close  ·  click to buy"),
-                TextFont { font_size: 14.0, ..default() },
-                TextColor(Color::srgba(0.8, 0.8, 0.85, 0.7)),
-            ));
+        .with_children(|card| {
+            // Header.
+            card.spawn(Node {
+                flex_direction: FlexDirection::Row,
+                justify_content: JustifyContent::SpaceBetween,
+                align_items: AlignItems::Center,
+                padding: UiRect::bottom(Val::Px(8.0)),
+                border: UiRect::bottom(Val::Px(1.0)),
+                ..default()
+            })
+            .insert(BorderColor::all(BORDER_SOFT))
+            .with_children(|h| {
+                h.spawn(label(&fonts.bold, "WANDERING MERCHANT", 18.0, TEXT));
+                h.spawn((label(&fonts.bold, "Gold 0", 13.0, GOLD), ShopHeader));
+            });
+            // Item rows.
             for item in items {
                 let price = discounted_price(item.price, discount);
                 let stat = item_def(item.id).map(|d| d.stat_line()).unwrap_or_default();
-                root.spawn((
+                card.spawn((
                     Button,
                     Interaction::default(),
                     Node {
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(12.0),
                         width: Val::Px(360.0),
-                        padding: UiRect::all(Val::Px(6.0)),
-                        justify_content: JustifyContent::SpaceBetween,
+                        padding: UiRect::axes(Val::Px(12.0), Val::Px(10.0)),
+                        border: border(1.0),
+                        border_radius: radius(R_BTN),
                         ..default()
                     },
-                    BackgroundColor(Color::srgb(0.18, 0.18, 0.21)),
+                    BackgroundColor(BTN_BG),
+                    BorderColor::all(BORDER_SOFT),
                     ShopItemButton(item.id),
                 ))
                 .with_children(|b| {
-                    if let Some(icon) = atlas.get(item.id) {
-                        b.spawn((
-                            Node { width: Val::Px(22.0), height: Val::Px(22.0), margin: UiRect::right(Val::Px(8.0)), ..default() },
-                            ImageNode::new(icon),
-                        ));
+                    if let Some(handle) = atlas.get(item.id) {
+                        b.spawn(widgets::icon(handle, 24.0));
                     }
                     b.spawn((
-                        Text::new(format!("{}   {}", item.name, stat)),
-                        TextFont { font_size: 15.0, ..default() },
-                        TextColor(Color::WHITE),
+                        Node { flex_grow: 1.0, flex_direction: FlexDirection::Column, ..default() },
+                        children![
+                            label(&fonts.semibold, item.name, 14.0, TEXT),
+                            label(&fonts.regular, stat, 11.0, GREY),
+                        ],
                     ));
-                    b.spawn((
-                        Text::new(format!("{price}g")),
-                        TextFont { font_size: 15.0, ..default() },
-                        TextColor(Color::srgb(0.96, 0.86, 0.45)),
-                    ));
+                    b.spawn(label(&fonts.bold, format!("{price}g"), 14.0, GOLD));
                 });
             }
+            // Close hint.
+            card.spawn(label(&fonts.regular, "T or Esc to leave  ·  click to buy", 11.0, GREY));
         });
+    });
 }
 
 fn despawn_shop(mut commands: Commands, q: Query<Entity, With<ShopUi>>) {
@@ -484,9 +572,9 @@ fn shop_interact(
             .map(|i| discounted_price(i.price, discount))
             .unwrap_or(i64::MAX);
         bg.0 = if gold >= price {
-            Color::srgb(0.5, 0.42, 0.16)
+            BTN_BG_HOVER // affordable — brighter
         } else {
-            Color::srgb(0.16, 0.16, 0.19)
+            rgba(255, 255, 255, 0.015) // too dear — sunken
         };
     }
 

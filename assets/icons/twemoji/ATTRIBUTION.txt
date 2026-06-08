@@ -1,0 +1,6 @@
+Icon artwork: Twemoji (https://github.com/jdecked/twemoji)
+Copyright Twitter, Inc and other contributors.
+Graphics licensed under CC-BY 4.0: https://creativecommons.org/licenses/by/4.0/
+
+72x72 PNG emoji rasters, filename = lowercase Unicode codepoint(s) (U+FE0F variation
+selectors omitted), used as in-game item / upgrade / status icons via src/ui/icons.rs.

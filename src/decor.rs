@@ -209,7 +209,8 @@ pub fn build(
         }
         let yaw = r.range(0.0, TAU);
         let s = r.range(0.9, 1.25);
-        let log = logs[i % logs.len()].clone();
+        let variant = i % logs.len();
+        let log = logs[variant].clone();
         spawn(
             &mut *commands,
             log,
@@ -219,21 +220,26 @@ pub fn build(
                 scale: Vec3::splat(s),
             },
         );
+        // Solid log — a long thin oriented box along its +X length axis (matching the mesh yaw).
+        let log_len = if variant == 0 { 2.6 } else { 2.0 };
+        crate::blockers::add_obb(x, z, log_len * 0.5 * s, 0.26 * s, yaw);
         // A short stump just off one end of the log (~70% of the time).
         if r.next() < 0.7 {
             let off = r.range(1.2, 1.7) * s;
             let sx = x + yaw.cos() * off;
             let sz = z - yaw.sin() * off;
             if !crate::water::on_river(sx, sz) {
+                let ss = r.range(0.85, 1.2);
                 spawn(
                     &mut *commands,
                     stump.clone(),
                     Transform {
                         translation: Vec3::new(sx, 0.0, sz),
                         rotation: Quat::from_rotation_y(r.range(0.0, TAU)),
-                        scale: Vec3::splat(r.range(0.85, 1.2)),
+                        scale: Vec3::splat(ss),
                     },
                 );
+                crate::blockers::add(sx, sz, 0.32 * ss); // solid stump base
             }
         }
         placed_logs += 1;
@@ -250,15 +256,17 @@ pub fn build(
         if crate::water::on_river(x, z) {
             continue;
         }
+        let ss = r.range(0.8, 1.25);
         spawn(
             &mut *commands,
             stump.clone(),
             Transform {
                 translation: Vec3::new(x, 0.0, z),
                 rotation: Quat::from_rotation_y(r.range(0.0, TAU)),
-                scale: Vec3::splat(r.range(0.8, 1.25)),
+                scale: Vec3::splat(ss),
             },
         );
+        crate::blockers::add(x, z, 0.32 * ss); // solid stump base
         placed_stumps += 1;
     }
 

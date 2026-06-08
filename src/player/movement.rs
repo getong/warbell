@@ -10,6 +10,7 @@ use bevy::prelude::*;
 use crate::audio::AudioCue;
 use crate::biome::Biome;
 use crate::orks::Ork;
+use crate::wildlife::Animal;
 use crate::{blockers, steer, worldmap};
 
 use super::{Hero, HeroState, PendingHeroDamage, PlayMode, PlayerRes};
@@ -47,6 +48,59 @@ fn write_state(state: &mut HeroState, hero: &Hero) {
     state.alive = true;
 }
 
+/// Hero footing height at `(x, z)`: terrain, or the bridge deck where the river shows through.
+/// `worldmap::ground_at_world` is terrain-only (reads `None` over water), so — unlike the orks,
+/// who cross on nav-grid waypoints — the hero ORs the deck in here to walk the planks.
+fn footing(x: f32, z: f32) -> Option<f32> {
+    worldmap::ground_at_world(x, z).or_else(|| crate::bridges::deck_y_at(x, z))
+}
+
+/// Bridge-aware twin of `steer::can_stand`: the body centre + four footprint edges must all be
+/// on footing (terrain or deck) within one terrace class of `cur_y`.
+fn hero_can_stand(x: f32, z: f32, r: f32, cur_y: f32) -> bool {
+    const OFF: [(f32, f32); 5] = [(0.0, 0.0), (1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)];
+    OFF.iter().all(|(dx, dz)| {
+        matches!(footing(x + dx * r, z + dz * r), Some(y) if (y - cur_y).abs() <= steer::MAX_STEP)
+    })
+}
+
+/// Asymmetric locomotion rule that lets the hero *drop* off cliffs (the orks/wildlife can't).
+/// Every footprint point must still be on footing — no walking into water or off the map — and
+/// none may rise more than one terrace class above `ref_y` (can't climb a cliff face). There's
+/// no lower bound, so a downward ledge is walkable: the hero steps off, gravity takes over, and
+/// the landing code bruises him if the drop cleared `FALL_SAFE`.
+///
+/// `ref_y` is the hero's *body* height (`hero.y`), not the ground under him: while falling past a
+/// ledge that keeps the just-departed high tile in his radius, the high tile stays within
+/// `MAX_STEP` of his airborne body, so it doesn't snag him at the lip.
+fn hero_can_step(x: f32, z: f32, r: f32, ref_y: f32) -> bool {
+    const OFF: [(f32, f32); 5] = [(0.0, 0.0), (1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)];
+    OFF.iter().all(|(dx, dz)| {
+        matches!(footing(x + dx * r, z + dz * r), Some(y) if y <= ref_y + steer::MAX_STEP)
+    })
+}
+
+/// Shove the hero out of a creature's body cylinder (centre `c`, radius `body_r`) so he can't
+/// clip through it — a one-way push (the creature holds its ground), sliding along the same
+/// standable/blocker rule as locomotion. Shared by the ork + animal collision passes.
+fn shove_out_of(hero: &mut Hero, c: Vec2, body_r: f32, cur_y: f32) {
+    let min_d = PLAYER_R + body_r;
+    let to = hero.pos - c;
+    let d = to.length();
+    if d <= 1e-4 || d >= min_d {
+        return;
+    }
+    let push = to / d * (min_d - d);
+    let nx = hero.pos.x + push.x;
+    let nz = hero.pos.y + push.y;
+    if hero_can_stand(nx, hero.pos.y, PLAYER_R, cur_y) && !blockers::is_blocked(nx, hero.pos.y) {
+        hero.pos.x = nx;
+    }
+    if hero_can_stand(hero.pos.x, nz, PLAYER_R, cur_y) && !blockers::is_blocked(hero.pos.x, nz) {
+        hero.pos.y = nz;
+    }
+}
+
 pub fn player_move(
     time: Res<Time>,
     mode: Res<PlayMode>,
@@ -56,6 +110,7 @@ pub fn player_move(
     mut hero_q: Query<(&mut Hero, &mut Transform), Without<Camera3d>>,
     cam_q: Query<&Transform, (With<Camera3d>, Without<Hero>)>,
     orks: Query<&Ork>,
+    animals: Query<&Animal>,
     mut state: ResMut<HeroState>,
     mut pending: ResMut<PendingHeroDamage>,
     mut feedback: ResMut<crate::combat_fx::HitFeedback>,
@@ -123,7 +178,7 @@ pub fn player_move(
     // ── Horizontal motion with axis-separated terrain + prop collision ──
     let sprinting =
         moving && (keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight));
-    let cur_y = worldmap::ground_at_world(hero.pos.x, hero.pos.y).unwrap_or(hero.y);
+    let cur_y = footing(hero.pos.x, hero.pos.y).unwrap_or(hero.y);
     if moving {
         let haste = buffs.0.speed_mult(t as f64) as f32; // active Haste buff (1.0 = none)
         let step = SPEED
@@ -134,11 +189,11 @@ pub fn player_move(
             * dt;
         let nx = hero.pos.x + move_dir.x * step;
         let nz = hero.pos.y + move_dir.z * step;
-        if steer::can_stand(nx, hero.pos.y, PLAYER_R, cur_y) && !blockers::is_blocked(nx, hero.pos.y)
+        if hero_can_step(nx, hero.pos.y, PLAYER_R, hero.y) && !blockers::is_blocked(nx, hero.pos.y)
         {
             hero.pos.x = nx;
         }
-        if steer::can_stand(hero.pos.x, nz, PLAYER_R, cur_y) && !blockers::is_blocked(hero.pos.x, nz)
+        if hero_can_step(hero.pos.x, nz, PLAYER_R, hero.y) && !blockers::is_blocked(hero.pos.x, nz)
         {
             hero.pos.y = nz;
         }
@@ -146,27 +201,17 @@ pub fn player_move(
         hero.facing = lerp_angle(hero.facing, want, (dt * TURN_RATE).min(1.0));
     }
 
-    // ── Body-collision vs orks: shove the hero out of any overlap so he can't clip through one
-    // (one-way push — the ork holds its ground). Slides along the same standable/blocker rule. ──
+    // ── Body-collision vs creatures: shove the hero out of any overlap so he can't clip through
+    // an ork or animal (one-way push — the creature holds its ground). ──
     for o in &orks {
-        let min_d = PLAYER_R + o.body_r;
-        let to = hero.pos - o.pos;
-        let d = to.length();
-        if d > 1e-4 && d < min_d {
-            let push = to / d * (min_d - d);
-            let nx = hero.pos.x + push.x;
-            let nz = hero.pos.y + push.y;
-            if steer::can_stand(nx, hero.pos.y, PLAYER_R, cur_y) && !blockers::is_blocked(nx, hero.pos.y) {
-                hero.pos.x = nx;
-            }
-            if steer::can_stand(hero.pos.x, nz, PLAYER_R, cur_y) && !blockers::is_blocked(hero.pos.x, nz) {
-                hero.pos.y = nz;
-            }
-        }
+        shove_out_of(&mut hero, o.pos, o.body_r, cur_y);
+    }
+    for a in &animals {
+        shove_out_of(&mut hero, a.pos, a.body_r, cur_y);
     }
 
     // ── Vertical: jump + gravity + ground snap ──
-    let ground_y = worldmap::ground_at_world(hero.pos.x, hero.pos.y).unwrap_or(0.0);
+    let ground_y = footing(hero.pos.x, hero.pos.y).unwrap_or(0.0);
     let was_on_ground = hero.on_ground;
     if keys.just_pressed(KeyCode::Space) && hero.on_ground {
         hero.vel_y = JUMP_SPEED;

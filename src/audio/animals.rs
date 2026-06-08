@@ -24,6 +24,10 @@ use super::AudioConfig;
 /// (the "broke my speakers" runaway). This caps every animal to one call per `MIN_GAP`.
 const MIN_GAP: f32 = 8.0;
 
+/// Master scale applied to every wildlife call on top of its per-species gain — keeps the
+/// animals as quiet background ambience under the combat/footstep mix rather than barking over it.
+const WILDLIFE_GAIN: f32 = 0.5;
+
 /// One species' ambient call set: clips chosen at random + a per-species gain.
 struct VoiceSet {
     clips: Vec<Handle<AudioSource>>,
@@ -87,7 +91,7 @@ pub(crate) fn animal_voices(
         a.call_cd = MIN_GAP;
         let i = (rng_range(&mut a.rng, 0.0, set.clips.len() as f32) as usize).min(set.clips.len() - 1);
         let clip = set.clips[i].clone();
-        let volume = set.volume;
+        let volume = set.volume * WILDLIFE_GAIN;
         commands.entity(e).with_children(|p| {
             p.spawn((
                 AudioPlayer(clip),

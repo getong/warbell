@@ -58,6 +58,7 @@ pub fn config() -> BiomeConfig {
                 chance: 0.075,
                 scale: (0.85 * TREE_SCALE, 1.3 * TREE_SCALE),
                 tree: true,
+                block_radius: 0.0,
             },
             // Bushes (also the tree-too-close fallback).
             PropClass {
@@ -67,6 +68,7 @@ pub fn config() -> BiomeConfig {
                 chance: 0.06,
                 scale: (0.8, 1.35),
                 tree: false,
+                block_radius: 0.0,
             },
             // Rocks.
             PropClass {
@@ -76,16 +78,18 @@ pub fn config() -> BiomeConfig {
                 chance: 0.03,
                 scale: (0.6, 1.6),
                 tree: false,
+                block_radius: 0.24, // big rocks block; small (scale ≲1.0) stay walk-through
             },
         ],
         cover: vec![
-            PropClass { variants: vec![(gc::build_grass_tuft_mesh(), 1.0)], chance: 0.15, scale: (0.45, 0.7), tree: false },
-            PropClass { variants: vec![(gc::build_clover_mesh(), 1.0)], chance: 0.30, scale: (0.7, 1.2), tree: false },
+            PropClass { variants: vec![(gc::build_grass_tuft_mesh(), 1.0)], chance: 0.15, scale: (0.45, 0.7), tree: false, block_radius: 0.0 },
+            PropClass { variants: vec![(gc::build_clover_mesh(), 1.0)], chance: 0.30, scale: (0.7, 1.2), tree: false, block_radius: 0.0 },
             PropClass {
                 variants: (0..4).map(|v| (gc::build_mushroom_mesh(v), 1.0)).collect(),
                 chance: 0.13,
                 scale: (0.7, 1.2),
                 tree: false,
+                block_radius: 0.0,
             },
             // Wildflowers — the meadow's life. 7 colour/shape variants (pink/yellow/white
             // daisies, red poppies, blue cornflowers, violets), denser than before.
@@ -94,14 +98,16 @@ pub fn config() -> BiomeConfig {
                 chance: 0.20,
                 scale: (0.8, 1.3),
                 tree: false,
+                block_radius: 0.0,
             },
-            PropClass { variants: vec![(gc::build_fern_mesh(), 1.0)], chance: 0.08, scale: (0.7, 1.1), tree: false },
+            PropClass { variants: vec![(gc::build_fern_mesh(), 1.0)], chance: 0.08, scale: (0.7, 1.1), tree: false, block_radius: 0.0 },
             // Forest-floor litter — pinecones, acorns, pebbles, fallen leaves.
             PropClass {
                 variants: (0..gc::NUM_LITTER_VARIANTS).map(|v| (gc::build_floor_litter_mesh(v), 1.0)).collect(),
                 chance: 0.08,
                 scale: (0.7, 1.25),
                 tree: false,
+                block_radius: 0.0,
             },
         ],
         cover_per_tile: 2,

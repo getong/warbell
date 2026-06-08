@@ -1,7 +1,6 @@
-//! Tileworld Biomes — a single static Bevy 0.18 scene recreating the TS game's
-//! biomes as 32×32 grid patches with matching ground, models and post-processing. No
-//! player, no day/night, no gameplay — just the scene. Press keys **1–5** to switch
-//! biome (Forest / Snow / Rocky / Desert / Swamp).
+//! Tileworld Biomes — a Bevy 0.18 scene of one combined island WORLD MAP: five biome
+//! regions on a single landmass, open ocean (with drifting boats) on three sides, and an
+//! unreachable forest + river edge on the north. The world map is the only view.
 
 mod audio;
 mod biome;
@@ -12,6 +11,7 @@ mod biome_rocky;
 mod biome_snow;
 mod biome_swamp;
 mod blockers;
+mod boats;
 mod camps;
 mod capture;
 mod castle;
@@ -21,15 +21,18 @@ mod critters;
 mod debug_panel;
 mod decor;
 mod defenses;
+mod dof;
 mod dying;
 mod distant;
 mod economy;
+mod footstep_fx;
 mod game_state;
 mod grade;
 mod groundcover;
 mod hud;
-mod icons;
+mod interaction;
 mod inventory;
+mod landmarks;
 mod navgrid;
 mod orbs;
 mod orks;
@@ -42,7 +45,6 @@ mod props;
 mod roads;
 mod ruins;
 mod scene;
-mod sea;
 mod siege;
 mod steer;
 mod succession;
@@ -50,6 +52,7 @@ mod succession_fx;
 mod terrain;
 mod training_dummies;
 mod trees;
+mod ui;
 mod verbs;
 mod villagers;
 mod visual;
@@ -98,6 +101,7 @@ fn main() {
             biome::BiomePlugin,     // orchestrates ground/scatter/backdrop/particles
             particles::ParticlePlugin,
             decor::DecorPlugin, // firefly bob system (decor itself spawned per-biome)
+            dof::DofPlugin,     // custom CoC bokeh depth-of-field post pass (player-focused)
             distant::DistantPlugin,
         ))
         .add_plugins((
@@ -118,13 +122,17 @@ fn main() {
             siege::SiegePlugin,   // night-wave assault: phases, spawn ring, invader AI, keep HP
         ))
         .add_plugins((
-            icons::IconsPlugin, // procedural item icons (satchel + shop)
+            boats::BoatsPlugin, // background sailboats drifting on the ocean
+            ui::UiKitPlugin,    // shared UI kit: theme + fonts + Twemoji icons + motion + notices
             grade::GradePlugin, // reactive low-HP/hit vignette
             training_dummies::TrainingDummiesPlugin, // courtyard practice pells (hit feedback)
             succession_fx::SuccessionFxPlugin, // graves + soul-wisp on each fallen heir
             dying::DyingPlugin, // shared death-fade for orks + wildlife
             visual::VisualPlugin, // volumetric god-rays region, pollen motes, prop specular + panel knobs
             outline::OutlinePlugin, // toon edge-outline post pass (crisp object silhouettes)
+            landmarks::LandmarksPlugin, // landmark POIs: discovery caches + shrine buffs + beacons
+            footstep_fx::FootstepFxPlugin, // dust puffs / water ripples under the hero's feet
+            interaction::InteractionPlugin, // contextual E (keep→upgrades, merchant→shop, bell→night)
         ))
         .run();
 }

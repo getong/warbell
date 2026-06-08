@@ -8,7 +8,7 @@ use std::f32::consts::PI;
 
 use bevy::prelude::*;
 
-use crate::biome::{Biome, BiomeState, WorldMode};
+use crate::biome::Biome;
 use crate::player::Hero;
 use crate::worldmap;
 
@@ -22,24 +22,20 @@ fn surface_for(b: Biome) -> Surface {
     }
 }
 
-/// Surface under a world position: the single-view biome, or the tile's biome on the combined
-/// map (grass / castle ground → dirt).
-fn surface_at(state: &BiomeState, p: Vec2) -> Surface {
-    match state.mode {
-        WorldMode::Single(b) => surface_for(b),
-        WorldMode::Combined => worldmap::biome_at_world(p.x, p.y).map(surface_for).unwrap_or(Surface::Dirt),
-    }
+/// Surface under a world position: the tile's biome on the world map (grass / castle
+/// ground → dirt).
+fn surface_at(p: Vec2) -> Surface {
+    worldmap::biome_at_world(p.x, p.y).map(surface_for).unwrap_or(Surface::Dirt)
 }
 
 pub(crate) fn hero_footsteps(
     mut last_half: Local<i64>,
     mut was_air: Local<bool>,
-    state: Res<BiomeState>,
     mut cues: MessageWriter<AudioCue>,
     hero_q: Query<&Hero>,
 ) {
     let Ok(hero) = hero_q.single() else { return };
-    let surface = surface_at(&state, hero.pos);
+    let surface = surface_at(hero.pos);
 
     // `walk_phase` advances whenever the hero is moving (mid-air too), so derive the gait
     // half-cycle index from it; a change = one footfall.

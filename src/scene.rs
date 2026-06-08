@@ -17,7 +17,6 @@ use bevy::pbr::{
     ScreenSpaceAmbientOcclusionQualityLevel,
 };
 use bevy::post_process::bloom::Bloom;
-use bevy::post_process::dof::{DepthOfField, DepthOfFieldMode};
 use bevy::prelude::*;
 use bevy::render::render_resource::{
     Extent3d, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension,
@@ -41,7 +40,10 @@ impl Plugin for ScenePlugin {
                 brightness: 85.0,
                 affects_lightmapped_meshes: true,
             })
-            .insert_resource(DirectionalLightShadowMap { size: 4096 })
+            // 2048 (was 4096) — paired with the tighter 75-tile shadow cascade below, each
+            // cascade now covers less ground, so per-cascade resolution near the player holds
+            // up while the shadow pass costs ~¼ the fill. Far shadows are fogged out anyway.
+            .insert_resource(DirectionalLightShadowMap { size: 2048 })
             .insert_resource(SkyClock {
                 t: start_t(),
                 // Freeze the clock for screenshots so frame 90 is deterministic.
@@ -260,17 +262,20 @@ fn setup_camera(
     });
     let (yaw, pitch, _) = cam_tf.rotation.to_euler(EulerRot::YXZ);
 
-    // Richer grade: saturation + a touch of contrast (the AgX/flat look needs both).
-    // Defaults dialed in from the live panel.
     let mut grading = ColorGrading::default();
-    grading.global.post_saturation = 1.45;
-    grading.shadows.contrast = 1.06;
-    grading.midtones.contrast = 1.32;
-    grading.highlights.contrast = 1.18;
+    grading.global.post_saturation = 1.2;
+    grading.shadows.contrast = 1.05;
+    grading.midtones.contrast = 1.35;
+    grading.highlights.contrast = 1.1;
 
     commands.spawn((
         Camera3d::default(),
-        Projection::from(PerspectiveProjection { fov: 50f32.to_radians(), ..default() }),
+        // far=230 (was the 1000 default). The Linear fog reaches full horizon colour by 190
+        // tiles (biome.rs), so everything past ~190 is solid fog — invisible but still drawn at
+        // full cost. Clipping the frustum at 230 (40-tile margin) lets Bevy's frustum culler
+        // drop all that far geometry for free: the opposite island edge / fogged ground-cover
+        // stops being submitted when the player roams to a far shore. No visible change.
+        Projection::from(PerspectiveProjection { fov: 50f32.to_radians(), far: 230.0, ..default() }),
         cam_tf,
         Hdr,
         Exposure { ev100: 10.60 },
@@ -282,23 +287,18 @@ fn setup_camera(
         Msaa::Off,
         Smaa { preset: SmaaPreset::High },
         ScreenSpaceAmbientOcclusion {
-            quality_level: ScreenSpaceAmbientOcclusionQualityLevel::High,
+            // Medium (was High): AO is a subtle contact-shadow read near the camera; the High→
+            // Medium drop is barely perceptible but trims a chunk of the fullscreen prepass cost.
+            quality_level: ScreenSpaceAmbientOcclusionQualityLevel::Medium,
             ..default()
         },
         DepthPrepass,
         NormalPrepass,
         Bloom { intensity: 0.30, ..Bloom::NATURAL },
-        // Real CoC **bokeh** depth-of-field (Bevy built-in, native Vulkan) — the proper
-        // system the old game used: a focal plane (auto-focused on the player by
-        // `drive_dof_focus`) with the fore/background softening into a creamy bokeh. Lower
-        // `aperture_f_stops` = more blur; tunable live in F1 → Blur+Bloom.
-        DepthOfField {
-            mode: DepthOfFieldMode::Bokeh,
-            focal_distance: 28.0,
-            aperture_f_stops: 2.4,
-            max_circle_of_confusion_diameter: 72.0,
-            ..default()
-        },
+        // Custom CoC **bokeh** depth-of-field (Bevy's built-in no-ops here): a focal plane
+        // auto-focused on the player by `drive_dof_focus`, fore/background melting into
+        // bokeh. Tunable live in F1 → Blur+Bloom (sharp band / blur radius).
+        crate::dof::default_dof(),
         DistanceFog {
             color: SKY,
             directional_light_color: Color::srgb(1.0, 0.93, 0.78),
@@ -316,9 +316,9 @@ fn setup_camera(
         // Volumetric sun shafts (god rays) — the modern, integrated replacement for the TS
         // screen-space `GodRays` pass. Lit by the sun's `VolumetricLight` inside the `FogVolume`
         // spawned in `setup_sun`. `jitter = 0` since we run SMAA, not TAA (jitter needs temporal
-        // resolve); `ambient_intensity` is high so the (mostly unlit) thin fog reads as bright
-        // sky-haze rather than a dark absorbing mass — only the sun's shafts add brightness.
-        VolumetricFog { ambient_intensity: 1.0, jitter: 0.0, step_count: 56, ..default() },
+        // resolve); `ambient_intensity = 0` so only the sun's shafts add brightness — a high
+        // value washed distant geometry into a bright white sky-haze. Tunable live in F1 → Fog.
+        VolumetricFog { ambient_intensity: 0.0, jitter: 0.0, step_count: 32, ..default() },
         ShadowFilteringMethod::Gaussian,
         // Toon edge-outline (runs before the blur): crisp object silhouettes. Tunable in F1.
         crate::outline::default_outline(),
@@ -345,7 +345,7 @@ fn env_cam() -> Option<Transform> {
 /// so the hero stays sharp while the fore/background melt into bokeh.
 fn drive_dof_focus(
     mode: Res<crate::player::PlayMode>,
-    mut cam_q: Query<(&GlobalTransform, &mut DepthOfField), With<Camera3d>>,
+    mut cam_q: Query<(&GlobalTransform, &mut crate::dof::Dof), With<Camera3d>>,
     hero_q: Query<&crate::player::Hero>,
 ) {
     let Ok((cam_tf, mut dof)) = cam_q.single_mut() else {
@@ -359,7 +359,7 @@ fn drive_dof_focus(
     } else {
         28.0 // free-cam: a fixed mid-ground focal plane
     };
-    dof.focal_distance = target;
+    dof.focal = target;
 }
 
 fn setup_sun(mut commands: Commands) {
@@ -376,7 +376,11 @@ fn setup_sun(mut commands: Commands) {
         VolumetricLight,
         CascadeShadowConfigBuilder {
             num_cascades: 4,
-            maximum_distance: 110.0,
+            // 75 (was 110): the sharp-view band is ~85 tiles and DoF+fog blur anything past it,
+            // so shadows beyond ~75 tiles are never legible. Shrinking the cascade span packs the
+            // four cascades over less ground (crisper near shadows) and feeds less geometry into
+            // the shadow pass each frame as the sun rotates.
+            maximum_distance: 75.0,
             first_cascade_far_bound: 10.0,
             ..default()
         }

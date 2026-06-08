@@ -36,9 +36,10 @@ pub(crate) const ORK_SIGHT: f32 = 9.0;
 pub(crate) const ORK_ATTACK_RANGE: f32 = 1.5;
 /// Max distance from its home camp an ork will pursue — keeps each warband local.
 const ORK_LEASH: f32 = 16.0;
-/// Damage per club hit (queued onto `player::PendingHeroDamage`). Bumped from 8 so a swarm
-/// actually threatens the hero's (large) health pool.
-pub(crate) const ORK_DAMAGE: f32 = 14.0;
+/// Damage per club hit (queued onto `player::PendingHeroDamage`) — the full old-game grunt
+/// `orkConfig.ts` damage (24). `variant_melee` anchors every other variant off this via the core
+/// damage ratio, so scout→15 / berserker→30 fall out automatically, all at old-game parity.
+pub(crate) const ORK_DAMAGE: f32 = 24.0;
 /// Seconds between an ork's strikes.
 pub(crate) const ORK_ATTACK_CD: f32 = 1.1;
 
@@ -47,12 +48,12 @@ pub(crate) const ORK_ATTACK_CD: f32 = 1.1;
 pub(crate) const SHAMAN_CAST_RANGE: f32 = 8.0;
 /// Seconds between bolt casts.
 pub(crate) const SHAMAN_CAST_CD: f32 = 2.1;
-/// Bolt damage (kept above the club's `ORK_DAMAGE`, as in the original).
-pub(crate) const SHAMAN_BOLT_DAMAGE: f32 = 17.0;
+/// Bolt damage — the full old-game shaman `orkConfig.ts` value (26, above the club as before).
+pub(crate) const SHAMAN_BOLT_DAMAGE: f32 = 26.0;
 /// A shaman heals the nearest wounded ally within this range.
 const SHAMAN_HEAL_RANGE: f32 = 8.0;
-/// HP restored per heal.
-const SHAMAN_HEAL_AMOUNT: f32 = 20.0;
+/// HP restored per heal (old-game shaman `healAmount`).
+const SHAMAN_HEAL_AMOUNT: f32 = 24.0;
 /// Seconds between heals.
 const SHAMAN_HEAL_CD: f32 = 5.0;
 
@@ -169,6 +170,13 @@ pub struct Ork {
     timer: f32,
     /// Strike cooldown (s) — counts down; a hit fires at ≤ 0 and resets it.
     pub(crate) atk_cd: f32,
+    /// Timestamp (`elapsed_secs`) the last strike fired; `ork_limbs` plays a club-chop (or the
+    /// shaman's staff-jab) for [`ATTACK_ANIM_DUR`] after it. `0` = none yet. Stamped by both the
+    /// camp brain and the night-wave invader brain (`siege.rs`).
+    pub(crate) atk_anim: f32,
+    /// Timestamp of the last blow the ork TOOK; drives a brief springy recoil-wobble (the same
+    /// read as the training dummies'). Stamped by `player::combat`. `0` = none.
+    pub(crate) hit_recoil: f32,
     /// This ork is the camp shaman (casts bolts + heals instead of clubbing).
     pub(crate) shaman: bool,
     /// Heal cooldown (s) — shamans only.
@@ -187,7 +195,7 @@ pub struct Ork {
     /// Brawl strike cooldown (s), separate from the hero-attack `atk_cd`.
     brawl_cd: f32,
     /// Cached A* route to the hero while hunting (camp orks route around walls/props instead of
-    /// wedging on them). Invaders ignore these — they use their own `navgrid::InvaderPath`.
+    /// wedging on them). Invaders ignore these — they use their own `navgrid::NavPath`.
     hunt_path: Vec<Vec2>,
     hunt_cursor: usize,
     /// Game-time to recompute the hunt path (throttled + staggered per ork).
@@ -245,11 +253,14 @@ const EYE_OFFS: [Vec3; 2] = [Vec3::new(-0.08, 1.12, 0.24), Vec3::new(0.08, 1.12,
 
 /// Tags a night-wave invader (vs a leashed camp ork). Spawned + driven by `siege.rs`; the
 /// camp [`ork_brain`] skips these via `Without<WaveInvader>` so the two AIs stay separate.
-/// Carries the stuck-cull idle tracking (idle far from the keep → reaped so a wave can't hang).
+/// Carries the stuck-cull progress tracking (no keep-ward progress for too long → reaped so a
+/// wave can't hang on a wedged ork — see `siege::stuck_step`).
 #[derive(Component)]
 pub struct WaveInvader {
-    pub last_pos: Vec2,
-    pub idle_since: f32,
+    /// Closest approach to the keep so far (min distance); progress = this strictly dropping.
+    pub closest: f32,
+    /// Game-time the closest approach last improved; stale past the timeout → reaped.
+    pub progress_at: f32,
 }
 
 // ── Plugin + systems ───────────────────────────────────────────────────────────────
@@ -281,6 +292,7 @@ fn ork_brain(
 ) {
     let dt = time.delta_secs().min(0.05);
     let tw = time.elapsed_secs_wrapped();
+    let now = time.elapsed_secs();
 
     // True if ANY ork is engaged this frame → swells the combat music layer.
     let mut fighting = false;
@@ -434,6 +446,8 @@ fn ork_brain(
                         o.atk_cd = ORK_ATTACK_CD * if frenzied { 0.6 } else { 1.0 };
                         pending.0 += variant_melee(o.variant);
                     }
+                    // Trigger the strike animation (club chop / staff jab) — `ork_limbs` reads this.
+                    o.atk_anim = time.elapsed_secs();
                 }
             }
         }
@@ -442,8 +456,18 @@ fn ork_brain(
 
         let gy = worldmap::ground_at_world(o.pos.x, o.pos.y).unwrap_or(tf.translation.y);
         let bob = if o.moving { (tw * o.gait + o.phase).sin().abs() * o.bob } else { 0.0 };
-        tf.translation = Vec3::new(o.pos.x, gy + bob, o.pos.y);
-        tf.rotation = Quat::from_rotation_y(o.facing);
+        // A melee ork steps into its club-chop (visual only — `pos` is untouched). The shaman
+        // casts at range, so it doesn't lunge.
+        let lunge = if o.shaman {
+            0.0
+        } else {
+            strike_p(o.atk_anim, now).map_or(0.0, |p| (p * std::f32::consts::PI).sin() * 0.35)
+        };
+        let fwd = Vec2::new(o.facing.sin(), o.facing.cos());
+        let lp = o.pos + fwd * lunge;
+        tf.translation = Vec3::new(lp.x, gy + bob, lp.y);
+        // Springy recoil-wobble on a blow taken (composes with the facing yaw).
+        tf.rotation = Quat::from_rotation_y(o.facing) * Quat::from_rotation_x(recoil_tilt(o.hit_recoil, now));
     }
 
     music.fighting = fighting;
@@ -457,10 +481,84 @@ fn ork_brain(
     *was_clearing = in_clearing;
 }
 
-fn ork_limbs(time: Res<Time>, orks: Query<(&Ork, &Children)>, mut parts: Query<(&OrkPart, &mut Transform)>) {
+/// How long a strike animation plays after `atk_anim` is stamped.
+const ATTACK_ANIM_DUR: f32 = 0.42;
+
+/// How long the springy hit-recoil wobble lasts after the ork is struck.
+const RECOIL_DUR: f32 = 0.34;
+
+/// Damped springy tilt (radians) since being struck at `hit_recoil`; `0` when at rest. Same
+/// shape as the training dummies' recoil wobble. Used by both the camp brain and the invader
+/// brain (`siege.rs`) so every ork recoils the same.
+pub(crate) fn recoil_tilt(hit_recoil: f32, now: f32) -> f32 {
+    if hit_recoil <= 0.0 {
+        return 0.0;
+    }
+    let r = now - hit_recoil;
+    if r >= RECOIL_DUR {
+        return 0.0;
+    }
+    let k = 1.0 - r / RECOIL_DUR;
+    (now * 30.0).sin() * 0.2 * k * k
+}
+
+/// Strike progress `0..1` since `atk_anim`, or `None` when not currently striking.
+fn strike_p(atk_anim: f32, now: f32) -> Option<f32> {
+    if atk_anim <= 0.0 {
+        return None;
+    }
+    let p = (now - atk_anim) / ATTACK_ANIM_DUR;
+    (0.0..1.0).contains(&p).then_some(p)
+}
+
+/// Overhead club chop on X: raise back (ease-in), fast chop forward (ease-out), recover to rest.
+fn club_chop_x(p: f32) -> f32 {
+    if p < 0.3 {
+        let u = p / 0.3;
+        -1.5 * (u * u)
+    } else if p < 0.55 {
+        let u = (p - 0.3) / 0.25;
+        let e = 1.0 - (1.0 - u) * (1.0 - u);
+        -1.5 + 2.4 * e
+    } else {
+        let u = (p - 0.55) / 0.45;
+        let e = 1.0 - (1.0 - u) * (1.0 - u);
+        0.9 * (1.0 - e)
+    }
+}
+
+/// Shaman staff jab — raise high, jab down, settle back to the attack rest (−1.3).
+fn shaman_cast_x(p: f32) -> f32 {
+    if p < 0.4 {
+        let u = p / 0.4;
+        -1.3 - 0.6 * (u * u)
+    } else {
+        let u = (p - 0.4) / 0.6;
+        let e = 1.0 - (1.0 - u) * (1.0 - u);
+        -1.9 + 0.6 * e
+    }
+}
+
+/// Squared camera distance past which limb animation is skipped (fog/DoF hide the joints).
+const LIMB_CULL2: f32 = 70.0 * 70.0;
+
+fn ork_limbs(
+    time: Res<Time>,
+    cam: Query<&GlobalTransform, With<Camera3d>>,
+    orks: Query<(&Ork, &Children, &GlobalTransform)>,
+    mut parts: Query<(&OrkPart, &mut Transform)>,
+) {
     let tw = time.elapsed_secs_wrapped();
-    for (o, children) in &orks {
+    let now = time.elapsed_secs();
+    let cam_p = cam.single().ok().map(|g| g.translation());
+    for (o, children, gt) in &orks {
+        if let Some(cp) = cam_p {
+            if gt.translation().distance_squared(cp) > LIMB_CULL2 {
+                continue;
+            }
+        }
         let t = tw + o.phase;
+        let strike = strike_p(o.atk_anim, now);
         for &child in children {
             let Ok((part, mut tf)) = parts.get_mut(child) else { continue };
             tf.rotation = match part.kind {
@@ -470,12 +568,23 @@ fn ork_limbs(time: Res<Time>, orks: Query<(&Ork, &Children)>, mut parts: Query<(
                     Quat::from_rotation_x(sign * s)
                 }
                 PartKind::Arm(sign) => {
-                    // Shaman raises its staff (right arm) while casting.
-                    if o.shaman && sign > 0.0 && matches!(o.mode, OrkMode::Attack) {
-                        Quat::from_rotation_x(-1.3)
+                    // Rest pose = walk swing / idle sway.
+                    let s = if o.moving { -(t * o.gait).sin() * 0.42 } else { (t * 0.8).sin() * 0.05 };
+                    let arm_gait = Quat::from_rotation_x(sign * s);
+                    // The right arm (sign > 0) carries the club / staff → it does the striking.
+                    if sign > 0.0 && o.shaman {
+                        match strike {
+                            Some(p) => Quat::from_rotation_x(shaman_cast_x(p)),
+                            None if matches!(o.mode, OrkMode::Attack) => Quat::from_rotation_x(-1.3),
+                            None => arm_gait,
+                        }
+                    } else if sign > 0.0 {
+                        match strike {
+                            Some(p) => Quat::from_rotation_x(club_chop_x(p)),
+                            None => arm_gait,
+                        }
                     } else {
-                        let s = if o.moving { -(t * o.gait).sin() * 0.42 } else { (t * 0.8).sin() * 0.05 };
-                        Quat::from_rotation_x(sign * s)
+                        arm_gait
                     }
                 }
                 PartKind::Head => {
@@ -821,6 +930,8 @@ impl Armory {
             mode: OrkMode::Idle,
             timer: rng_range(&mut rng, 0.5, 4.0),
             atk_cd: 0.0,
+            atk_anim: 0.0,
+            hit_recoil: 0.0,
             shaman: st.shaman,
             heal_cd: rng_range(&mut rng, 0.0, SHAMAN_HEAL_CD),
             rng,
