@@ -418,7 +418,17 @@ struct InvaderArmory(orks::Armory);
 pub struct GameTime(pub f32);
 
 /// Advance the pause-aware [`GameTime`] (gated, so it freezes with the rest of the world).
-fn advance_game_clock(time: Res<Time>, mut clock: ResMut<GameTime>) {
+/// Also held while the day/night cycle is paused (`SkyClock.paused` — the F1 panel's
+/// "pause cycle" box or the `P` key): pausing the sun freezes the whole night timeline, so the
+/// prep countdown stops and the next wave never comes until you resume.
+fn advance_game_clock(
+    time: Res<Time>,
+    sky: Res<crate::scene::SkyClock>,
+    mut clock: ResMut<GameTime>,
+) {
+    if sky.paused {
+        return;
+    }
     clock.0 += time.delta_secs();
 }
 
@@ -456,6 +466,7 @@ impl Plugin for SiegePlugin {
 fn night_warning(
     siege: Res<Siege>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
+    mut speak: MessageWriter<crate::audio::Speak>,
     mut warned_wave: Local<i32>,
 ) {
     if siege.phase == GamePhase::Prep
@@ -465,7 +476,7 @@ fn night_warning(
         let next_wave = siege.wave_index + 1;
         if *warned_wave != next_wave {
             *warned_wave = next_wave;
-            cues.write(crate::audio::AudioCue::HeroEvent(crate::audio::HeroEvent::NightWarning));
+            speak.write(crate::audio::Speak::new(crate::audio::Concept::NightWarning));
         }
     }
 }
