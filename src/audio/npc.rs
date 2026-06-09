@@ -12,7 +12,7 @@ use bevy::prelude::*;
 use crate::player::Hero;
 use crate::villagers::Villager;
 
-use super::{frand, AudioConfig, AudioCue, HeroSpeaking};
+use super::{frand, AudioConfig, AudioCue, HeroSpeaking, OthersSpeaking};
 
 /// A given villager line plays at most once per this window (the user-requested "no line more
 /// than once per 10 minutes" floor).
@@ -217,6 +217,7 @@ pub(crate) fn npc_ambient(
     bank: Res<NpcVoiceBank>,
     mut st: ResMut<NpcVoiceState>,
     speaking: Res<HeroSpeaking>,
+    mut others: ResMut<OthersSpeaking>,
     mut subs: ResMut<crate::subtitles::Subtitles>,
     inv: Res<crate::inventory::Inventory>,
     hero: Query<&Hero>,
@@ -256,6 +257,7 @@ pub(crate) fn npc_ambient(
             st.next_ambient = now + AMBIENT_GAP;
             st.voice_until = now + dur;
             st.voice_pos = who_pos;
+            others.until = now + dur; // hero holds his commentary while this villager speaks
             say_from(&mut commands, who, bank.ambient[i].clone(), NPC_GAIN * cfg.voice_vol);
             subs.say(now, AMBIENT_TEXT[i], dur);
             return;
@@ -272,6 +274,7 @@ pub(crate) fn npc_events(
     bank: Res<NpcVoiceBank>,
     mut st: ResMut<NpcVoiceState>,
     speaking: Res<HeroSpeaking>,
+    mut others: ResMut<OthersSpeaking>,
     mut subs: ResMut<crate::subtitles::Subtitles>,
     hero: Query<&Hero>,
     villagers: Query<(Entity, &GlobalTransform), With<Villager>>,
@@ -326,6 +329,7 @@ pub(crate) fn npc_events(
     st.last.insert(key, now);
     st.voice_until = now + dur;
     st.voice_pos = who_pos;
+    others.until = now + dur; // hero holds his commentary while this villager speaks
     say_from(&mut commands, who, clip, NPC_GAIN * cfg.voice_vol);
     subs.say(now, text, dur);
 }

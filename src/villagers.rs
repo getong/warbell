@@ -153,10 +153,11 @@ pub struct VillagersPlugin;
 
 /// Per planned camp: whether its captives were freed (`done`) and whether it was ever seen
 /// populated by a living warband (`seen` — guards against auto-freeing before camps spawn).
+/// `pub(crate)` so the save system snapshots/restores `done` (a world flag).
 #[derive(Resource, Default)]
-struct RescuedCamps {
-    done: Vec<bool>,
-    seen: Vec<bool>,
+pub(crate) struct RescuedCamps {
+    pub(crate) done: Vec<bool>,
+    pub(crate) seen: Vec<bool>,
 }
 
 const CAMP_HOME_R: f32 = 6.0;
@@ -448,6 +449,11 @@ fn worker_steer(
         if dist < 1.6 {
             worker.at_post = true;
             v.moving = false;
+            // Turn to face the building/field so the hoeing reads (villager_limbs swings
+            // the arms once `at_post`). `to` points from the worker to the plot centre.
+            if to.length_squared() > 1e-4 {
+                v.facing = to.x.atan2(to.y);
+            }
         } else {
             worker.at_post = false;
             v.target = post;
@@ -754,18 +760,22 @@ const LIMB_CULL2: f32 = 70.0 * 70.0;
 fn villager_limbs(
     time: Res<Time>,
     cam: Query<&GlobalTransform, With<Camera3d>>,
-    vils: Query<(&Villager, &Children, &GlobalTransform)>,
+    vils: Query<(&Villager, &Children, &GlobalTransform, Option<&crate::town::Worker>)>,
     mut parts: Query<(&VilPart, &mut Transform)>,
 ) {
     let tw = time.elapsed_secs_wrapped();
     let cam_p = cam.single().ok().map(|g| g.translation());
-    for (v, children, gt) in &vils {
+    for (v, children, gt, worker) in &vils {
         if let Some(cp) = cam_p {
             if gt.translation().distance_squared(cp) > LIMB_CULL2 {
                 continue;
             }
         }
         let t = tw + v.phase;
+        // A posted worker hoes the field: both arms swing forward-down together on a
+        // ~1.4s cycle (legs planted, a small synced head-nod). `hoe` ∈ ~[-0.2, 1.2] rad.
+        let working = worker.is_some_and(|w| w.at_post);
+        let hoe = 0.5 + 0.7 * (t * 4.5).sin();
         for &child in children {
             let Ok((part, mut tf)) = parts.get_mut(child) else { continue };
             tf.rotation = match part.kind {
@@ -774,12 +784,21 @@ fn villager_limbs(
                     Quat::from_rotation_x(sign * s)
                 }
                 PartKind::Arm(sign) => {
-                    let s = if v.moving { -(t * v.gait).sin() * 0.5 } else { (t * 1.2).sin() * 0.06 };
-                    Quat::from_rotation_x(sign * s)
+                    if working {
+                        // Both arms together (ignore the L/R sign) — a two-handed hoe stroke.
+                        Quat::from_rotation_x(hoe)
+                    } else {
+                        let s = if v.moving { -(t * v.gait).sin() * 0.5 } else { (t * 1.2).sin() * 0.06 };
+                        Quat::from_rotation_x(sign * s)
+                    }
                 }
                 PartKind::Head => {
-                    let scan = if v.moving { 0.0 } else { (t * 0.7).sin() * 0.18 };
-                    Quat::from_rotation_y(scan)
+                    if working {
+                        Quat::from_rotation_x((t * 4.5).sin() * 0.06) // small nod toward the work
+                    } else {
+                        let scan = if v.moving { 0.0 } else { (t * 0.7).sin() * 0.18 };
+                        Quat::from_rotation_y(scan)
+                    }
                 }
                 PartKind::Tail => Quat::IDENTITY, // villagers have no tail
             };

@@ -52,6 +52,17 @@ pub fn add(wx: f32, wz: f32, radius: f32) {
     CIRCLES.write().unwrap().entry(tile(wx, wz)).or_default().push((wx, wz, radius));
 }
 
+/// Remove circular obstacles centred within ~0.2 units of `(wx, wz)`. Used when a tree is
+/// felled so its trunk blocker doesn't linger as an invisible nub where the tree stood.
+pub fn remove_at(wx: f32, wz: f32) {
+    if let Some(bucket) = CIRCLES.write().unwrap().get_mut(&tile(wx, wz)) {
+        bucket.retain(|&(cx, cz, _)| {
+            let (ex, ez) = (wx - cx, wz - cz);
+            ex * ex + ez * ez > 0.04 // keep anything more than 0.2 units away
+        });
+    }
+}
+
 /// Mark a solid **axis-aligned** box centred at `(cx, cz)` with half-extents `(hw, hd)` (spans
 /// `cx ± hw` by `cz ± hd`). For rectangular structures — sized to the real footprint (+ a small
 /// body margin), no radius bound.

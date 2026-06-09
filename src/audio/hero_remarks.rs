@@ -18,7 +18,7 @@ use crate::critters::Species;
 
 use super::{
     frand, AudioConfig, AudioCue, HeroLineAnchor, HeroLineCooldown, HeroMouthTag, HeroSpeaking,
-    HERO_LINE_CD,
+    OthersSpeaking, HERO_LINE_CD,
 };
 
 /// A given remark plays at most once per this window (variety without repetition).
@@ -183,8 +183,12 @@ pub(crate) fn tick(
     mut commands: Commands,
     bank: Res<RemarkBank>,
     mut st: ResMut<RemarkState>,
-    mut cd: ResMut<HeroLineCooldown>,
-    mut speaking: ResMut<HeroSpeaking>,
+    // Bundled into one tuple param to stay under Bevy's 16-param system limit.
+    (mut cd, mut speaking, others): (
+        ResMut<HeroLineCooldown>,
+        ResMut<HeroSpeaking>,
+        Res<OthersSpeaking>,
+    ),
     mut subs: ResMut<crate::subtitles::Subtitles>,
     mut cues: MessageReader<AudioCue>,
     existing: Query<Entity, With<HeroMouthTag>>,
@@ -238,6 +242,12 @@ pub(crate) fn tick(
     // Shared one-line cooldown: while it's ticking, the hero says nothing more — and a remark that
     // wanted to fire inside it is just dropped (no queue), so he never talks over himself.
     if now < cd.until {
+        return;
+    }
+    // And don't comment over someone else mid-sentence — a villager's chatter or an ork's bark
+    // holds his observations (dropped, re-evaluated next frame once they finish). The user-asked
+    // "don't have the hero talk over the guards/townsfolk" gate.
+    if now < others.until {
         return;
     }
 

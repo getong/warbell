@@ -8,4 +8,18 @@ edition = "2024"
 # gradient, ork config, factions, map constants). Everything here is unit-tested
 # with plain `cargo test` and is the validation spec the Bevy port must satisfy.
 # f64 throughout to match JS `number` semantics for cross-language parity.
+#
+# The crate stays zero-dep by DEFAULT. The optional `serde` feature derives
+# Serialize/Deserialize on the save-relevant stores (Player/Bag/Town/ResourceState)
+# so the Bevy front-end can persist a run; `cargo test -p tileworld_core` runs with
+# the feature OFF and keeps the parity gate dependency-free.
+[features]
+serde = ["dep:serde"]
+
 [dependencies]
+serde = { version = "1", features = ["derive"], optional = true }
+
+# Only used by the `--features serde` round-trip tests (tests/serde_roundtrip.rs);
+# the default `cargo test` run never pulls it.
+[dev-dependencies]
+serde_json = "1"

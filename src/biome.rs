@@ -474,6 +474,9 @@ pub fn scatter_region(
                                 scale: Vec3::splat(s),
                             },
                             crate::wind::sway_for(cx, cz, base),
+                            // Every scattered tree is choppable for wood (1 tree = 1 wood). The
+                            // trunk blocker is cleared on fell via `blockers::remove_at`.
+                            crate::verbs::ChopTree::new(),
                             BiomeEntity,
                         ));
                     }

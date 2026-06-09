@@ -1,7 +1,7 @@
 # Save / Continue — dawn autosave + resume
 
 **Date:** 2026-06-09
-**Status:** approved, implementing
+**Status:** implemented (`src/savegame.rs`, `SaveGamePlugin`)
 **Scope:** one-slot autosave at every dawn (cleared night); resume a run after defeat or after
 quitting. Start screen and the game-over screen gain **Continue** / **New Game**.
 

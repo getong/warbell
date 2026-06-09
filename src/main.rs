@@ -53,6 +53,7 @@ mod props;
 mod quality;
 mod roads;
 mod ruins;
+mod savegame;
 mod scene;
 mod siege;
 mod steer;
@@ -61,6 +62,7 @@ mod succession;
 mod succession_fx;
 mod terrain;
 mod town;
+mod town_meshes;
 mod training_dummies;
 mod trees;
 mod tutorial;
@@ -152,6 +154,7 @@ fn main() {
         ))
         .add_plugins((
             town::TownPlugin, // city-building: plots, build menu, economy, burn/repair
+            savegame::SaveGamePlugin, // dawn autosave + Continue/New Game (one slot)
         ))
         .run();
 }

@@ -46,6 +46,9 @@ ONE module in parallel against a *shared* `target/` and must **not** run `cargo 
 - **Other agents may be working in parallel.** If your changes overlap with another agent's
   in-flight work, you can simply **wait for them to finish** rather than racing or stomping their
   edits.
+- **Push back on bad ideas — don't just agree.** If a request is wrong, risky, or has a clearly
+  better alternative, say so plainly and explain why before (or instead of) implementing it. Honest
+  technical disagreement is wanted, not reflexive compliance.
 
 ### Cloud / remote-container setup (Claude Code on the web, fresh containers)
 

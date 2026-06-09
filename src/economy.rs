@@ -32,7 +32,7 @@ pub struct Upgrades(pub UpgradeState);
 
 /// Structural-defense flags set by the Defense branch — turned into real auto-firing structures
 /// in P4. (Reinforce is enacted immediately on `KeepHp`.)
-#[derive(Resource, Default)]
+#[derive(Resource, Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Defenses {
     pub walls: bool,
     pub gate: bool,

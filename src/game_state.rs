@@ -130,8 +130,18 @@ fn watch_end(
     }
 }
 
-fn start_screen_input(keys: Res<ButtonInput<KeyCode>>, mut next_app: ResMut<NextState<AppState>>) {
-    if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space) {
+fn start_screen_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut next_app: ResMut<NextState<AppState>>,
+    mut pending: ResMut<crate::savegame::PendingLoad>,
+    save: Res<crate::savegame::SaveExists>,
+) {
+    // C resumes the saved run; Enter/Space starts a fresh one.
+    if save.0 && keys.just_pressed(KeyCode::KeyC) {
+        pending.0 = crate::savegame::load_save();
+        next_app.set(AppState::Playing);
+    } else if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space) {
+        pending.0 = None;
         next_app.set(AppState::Playing);
     }
 }
@@ -166,9 +176,21 @@ const DIFFS: [crate::siege::Difficulty; 3] = [
     crate::siege::Difficulty::Hard,
 ];
 
-fn gameover_input(keys: Res<ButtonInput<KeyCode>>, mut next_app: ResMut<NextState<AppState>>) {
-    // Enter restarts: the per-plugin OnExit(GameOver) resets (siege/keep/hero) rebuild a fresh run.
-    if keys.just_pressed(KeyCode::Enter) {
+fn gameover_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut next_app: ResMut<NextState<AppState>>,
+    mut pending: ResMut<crate::savegame::PendingLoad>,
+    siege: Option<Res<crate::siege::Siege>>,
+    save: Res<crate::savegame::SaveExists>,
+) {
+    let defeat = !matches!(siege.as_deref().map(|s| s.phase), Some(crate::siege::GamePhase::Victory));
+    // C resumes last night (defeat + save only); Enter starts a fresh run. The per-plugin
+    // OnExit(GameOver) resets rebuild a fresh run, then any pending load overwrites them.
+    if defeat && save.0 && keys.just_pressed(KeyCode::KeyC) {
+        pending.0 = crate::savegame::load_save();
+        next_app.set(AppState::Playing);
+    } else if keys.just_pressed(KeyCode::Enter) {
+        pending.0 = None;
         next_app.set(AppState::Playing);
     }
 }
@@ -181,15 +203,21 @@ struct StartScreenUi;
 struct PausedUi;
 #[derive(Component)]
 struct GameOverUi;
-/// The "Play" button on the start screen.
+/// The "Play" / "New Game" button on the start screen (always a fresh run).
 #[derive(Component)]
 struct StartPlayButton;
+/// The "Continue" button on the start screen (loads the save). Only spawned when a save exists.
+#[derive(Component)]
+struct StartContinueButton;
 /// A difficulty segment (click to select).
 #[derive(Component)]
 struct SegButton(crate::siege::Difficulty);
-/// The "Play again" button on the game-over screen.
+/// The "Play again" / "New Game" button on the game-over screen (a fresh run).
 #[derive(Component)]
 struct AgainButton;
+/// The "Continue from last night" button on the game-over screen (loads the save).
+#[derive(Component)]
+struct GameOverContinueButton;
 
 /// A centred full-screen scrim card root (pause / game-over).
 fn modal_root(z: i32) -> impl Bundle {
@@ -215,8 +243,10 @@ fn spawn_start_screen(
     mut commands: Commands,
     fonts: Res<UiFonts>,
     siege: Option<Res<crate::siege::Siege>>,
+    save: Res<crate::savegame::SaveExists>,
 ) {
     let cur = siege.map(|s| s.difficulty).unwrap_or(crate::siege::Difficulty::Normal);
+    let has_save = save.0;
 
     commands
         .spawn((
@@ -280,7 +310,24 @@ fn spawn_start_screen(
                     BackgroundColor(rgba(199, 155, 106, 0.6)),
                     anim(AnimKind::Rise, 0.3, 0.7),
                 ));
-                // Play button.
+                // Continue button (only with a save) — the primary action when resuming.
+                if has_save {
+                    m.spawn((
+                        Node {
+                            padding: UiRect::axes(Val::Px(44.0), Val::Px(13.0)),
+                            border: widgets::border(1.0),
+                            border_radius: radius(11.0),
+                            ..default()
+                        },
+                        widgets::btn_primary_paint(),
+                        StartContinueButton,
+                        anim_btn(AnimKind::Rise, 0.34, 0.7),
+                    ))
+                    .with_children(|b| {
+                        b.spawn(label(&fonts.extrabold, "CONTINUE", 19.0, Color::WHITE));
+                    });
+                }
+                // Play / New Game button. With a save present it's the secondary "fresh run".
                 m.spawn((
                     Node {
                         padding: UiRect::axes(Val::Px(44.0), Val::Px(13.0)),
@@ -293,7 +340,8 @@ fn spawn_start_screen(
                     anim_btn(AnimKind::Rise, 0.36, 0.7),
                 ))
                 .with_children(|b| {
-                    b.spawn(label(&fonts.extrabold, "PLAY", 19.0, Color::WHITE));
+                    let txt = if has_save { "NEW GAME" } else { "PLAY" };
+                    b.spawn(label(&fonts.extrabold, txt, 19.0, Color::WHITE));
                 });
                 // Difficulty selector.
                 m.spawn((
@@ -416,6 +464,7 @@ fn spawn_gameover_screen(
     fonts: Res<UiFonts>,
     siege: Option<Res<crate::siege::Siege>>,
     player: Option<Res<crate::player::PlayerRes>>,
+    save: Res<crate::savegame::SaveExists>,
 ) {
     let won = matches!(siege.as_deref().map(|s| s.phase), Some(crate::siege::GamePhase::Victory));
     let (title, col) = if won {
@@ -426,6 +475,8 @@ fn spawn_gameover_screen(
     let stats = player
         .map(|p| format!("Level {}     Gold {}", p.0.level, p.0.gold))
         .unwrap_or_default();
+    // On a defeat with a save, offer to resume last night; a victory ends the saga (no Continue).
+    let can_continue = !won && save.0;
 
     commands.spawn((modal_root(50), GameOverUi)).with_children(|root| {
         root.spawn((
@@ -435,6 +486,24 @@ fn spawn_gameover_screen(
         ));
         if !stats.is_empty() {
             root.spawn((label(&fonts.semibold, stats, 16.0, GOLD), anim(AnimKind::FloatUp, 0.2, 0.5)));
+        }
+        // Continue from last night (defeat + save only) — the primary "don't lose progress" action.
+        if can_continue {
+            root.spawn((
+                Node {
+                    padding: UiRect::axes(Val::Px(26.0), Val::Px(11.0)),
+                    border: widgets::border(1.0),
+                    border_radius: radius(R_CARD),
+                    margin: UiRect::top(Val::Px(8.0)),
+                    ..default()
+                },
+                widgets::btn_primary_paint(),
+                GameOverContinueButton,
+                anim_btn(AnimKind::FloatUp, 0.35, 0.5),
+            ))
+            .with_children(|b| {
+                b.spawn(label(&fonts.extrabold, "CONTINUE FROM LAST NIGHT", 15.0, Color::WHITE));
+            });
         }
         root.spawn((
             Node {
@@ -449,30 +518,45 @@ fn spawn_gameover_screen(
             anim_btn(AnimKind::FloatUp, 0.4, 0.5),
         ))
         .with_children(|b| {
-            b.spawn(label(&fonts.extrabold, "PLAY AGAIN", 15.0, Color::WHITE));
+            let txt = if can_continue { "NEW GAME" } else { "PLAY AGAIN" };
+            b.spawn(label(&fonts.extrabold, txt, 15.0, Color::WHITE));
         });
     });
 }
 
-/// Click "Play" / a difficulty segment on the start screen.
+/// Click "Continue" / "New Game" / a difficulty segment on the start screen.
 #[allow(clippy::type_complexity)]
 fn start_click(
-    q: Query<(&Interaction, Option<&StartPlayButton>, Option<&SegButton>), Changed<Interaction>>,
+    q: Query<
+        (
+            &Interaction,
+            Option<&StartPlayButton>,
+            Option<&StartContinueButton>,
+            Option<&SegButton>,
+        ),
+        Changed<Interaction>,
+    >,
     mut next_app: ResMut<NextState<AppState>>,
+    mut pending: ResMut<crate::savegame::PendingLoad>,
     siege: Option<ResMut<crate::siege::Siege>>,
 ) {
     let mut siege = siege;
-    for (interaction, play, seg) in &q {
+    for (interaction, play, cont, seg) in &q {
         if *interaction != Interaction::Pressed {
             continue;
         }
         if play.is_some() {
+            pending.0 = None; // New Game: a fresh run, never a load.
             next_app.set(AppState::Playing);
         }
-        if let Some(seg) = seg {
-            if let Some(s) = siege.as_deref_mut() {
-                s.difficulty = seg.0;
-            }
+        if cont.is_some() {
+            pending.0 = crate::savegame::load_save();
+            next_app.set(AppState::Playing);
+        }
+        if let Some(seg) = seg
+            && let Some(s) = siege.as_deref_mut()
+        {
+            s.difficulty = seg.0;
         }
     }
 }
@@ -495,13 +579,26 @@ fn update_diff_seg(
     }
 }
 
-/// Click "Play again" on the game-over screen.
+/// Click "New Game" / "Continue from last night" on the game-over screen.
+#[allow(clippy::type_complexity)]
 fn gameover_click(
-    q: Query<&Interaction, (Changed<Interaction>, With<AgainButton>)>,
+    q: Query<
+        (&Interaction, Option<&AgainButton>, Option<&GameOverContinueButton>),
+        Changed<Interaction>,
+    >,
     mut next_app: ResMut<NextState<AppState>>,
+    mut pending: ResMut<crate::savegame::PendingLoad>,
 ) {
-    for interaction in &q {
-        if *interaction == Interaction::Pressed {
+    for (interaction, again, cont) in &q {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        if again.is_some() {
+            pending.0 = None; // fresh run
+            next_app.set(AppState::Playing);
+        }
+        if cont.is_some() {
+            pending.0 = crate::savegame::load_save();
             next_app.set(AppState::Playing);
         }
     }

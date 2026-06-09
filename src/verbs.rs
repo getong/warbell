@@ -59,6 +59,7 @@ impl Plugin for VerbsPlugin {
                 Update,
                 (
                     mine_ore,
+                    chop_tree,
                     forage_pickup,
                     forage_respawn,
                     apple_harvest,
@@ -143,6 +144,74 @@ fn mine_ore(
                 }
                 cues.write(AudioCue::OreChip);
             }
+        }
+    }
+}
+
+// ── Tree chopping (1 tree = 1 wood) — the wood mirror of ore mining ──────────────────
+
+/// A choppable tree: an individual entity (the decorative scattered trees are merged, so
+/// can't carry per-tree HP). Looks like any forest tree; fell it for wood.
+#[derive(Component)]
+pub struct ChopTree {
+    hp: f64,
+}
+
+impl ChopTree {
+    /// A fresh choppable tree at full HP — added to every scattered tree in `biome::scatter_region`.
+    pub fn new() -> Self {
+        Self { hp: TREE_HP }
+    }
+}
+
+/// Swings to fell a tree (~2 at the hero's base 25–30 dmg).
+const TREE_HP: f64 = 55.0;
+/// Wood banked per felled tree.
+const TREE_WOOD: f64 = 1.0;
+/// Tree trunk radius added to the swing reach.
+const CHOP_TREE_RADIUS: f32 = 1.0;
+
+/// Read each published swing; any live choppable tree in the cone takes the blow. On felling
+/// it banks 1 wood, pops a float, and despawns. Mirrors [`mine_ore`].
+fn chop_tree(
+    mut swings: MessageReader<HeroSwing>,
+    mut bank: ResMut<Bank>,
+    mut commands: Commands,
+    mut floats: ResMut<crate::combat_fx::FloatQueue>,
+    mut cues: MessageWriter<AudioCue>,
+    mut q: Query<(Entity, &mut ChopTree, &Transform)>,
+) {
+    for sw in swings.read() {
+        let mut struck = false; // one chop thunk per swing, even if several trees are in the cone
+        for (e, mut tree, tf) in &mut q {
+            if tree.hp <= 0.0 {
+                continue;
+            }
+            let p = tf.translation;
+            let to = Vec2::new(p.x - sw.origin.x, p.z - sw.origin.y);
+            let dist = to.length();
+            if dist > SWING_RANGE + CHOP_TREE_RADIUS || dist < 1e-3 {
+                continue;
+            }
+            if (to / dist).dot(sw.fwd) < SWING_CONE_DOT {
+                continue;
+            }
+            struck = true;
+            tree.hp -= sw.base_dmg as f64;
+            if tree.hp <= 0.0 {
+                bank.0.add_wood(TREE_WOOD);
+                floats.0.push(crate::combat_fx::FloatReq {
+                    world: Vec3::new(p.x, p.y + 1.6, p.z),
+                    text: format!("+{} wood", TREE_WOOD as i64),
+                    color: Color::srgb(0.78, 0.62, 0.36),
+                    scale: 1.1,
+                });
+                crate::blockers::remove_at(p.x, p.z); // clear the trunk blocker so no ghost nub
+                commands.entity(e).try_despawn();
+            }
+        }
+        if struck {
+            cues.write(AudioCue::WoodChop);
         }
     }
 }
@@ -300,7 +369,7 @@ pub fn populate_forage(
     // so it shares the white prop material like the apple tree). Reads as a gatherable berry bush.
     let herb_mesh = meshes.add(bramble_mesh());
     let herb_mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.9, ..default() });
-    seed_forage(commands, &herb_mesh, &herb_mat, "marsh_herb", 0.9, crate::biome::Biome::Swamp, 13, 0x4e_b5_1c_0d);
+    seed_forage(commands, &herb_mesh, &herb_mat, "marsh_herb", 0.9, crate::biome::Biome::Swamp, 20, 0x4e_b5_1c_0d);
 
     // Forest apples: standout apple TREES (permanent scenery) carrying a cluster of apples that
     // you strip the WHOLE tree at once by walking up — the apples pop off in a satisfying burst.
@@ -329,8 +398,9 @@ const APPLE_SPOTS: [(f32, f32, f32); 6] = [
     (0.04, 1.22, 0.04),
 ];
 
-/// Apples one tree carries (and yields when stripped) — what hangs == what you bag.
-const APPLES_PER_TREE: usize = 2;
+/// Apples one tree carries (and yields when stripped) — what hangs == what you bag. (3 of the 6
+/// `APPLE_SPOTS`; bumped from 2 for more forest food.)
+const APPLES_PER_TREE: usize = 3;
 
 /// A whole apple tree you strip at once: walk inside `harvest_r` → all apples pop off into the
 /// bag, then the tree regrows them after a delay. `ready` gates re-harvest during regrow.
@@ -362,7 +432,7 @@ fn populate_apple_orchard(
     apple_mesh: &Handle<Mesh>,
     apple_mat: &Handle<StandardMaterial>,
 ) {
-    const APPLE_TREES: u32 = 16;
+    const APPLE_TREES: u32 = 24;
     // Keep the apple tree's WHOLE canopy clear of any existing trunk/prop, not just its trunk
     // point: forest canopy (~1.3) + apple canopy (~0.65). Without this an apple tree lands a
     // trunk-width from a pine and the two crowns interpenetrate. ≈ the forest's own tree spacing.
@@ -529,18 +599,27 @@ const CHEST_INTERACT_DIST: f32 = 2.2;
 const CACHE_RESPAWN: f32 = 150.0;
 
 #[derive(Component)]
-struct Chest {
+pub(crate) struct Chest {
     /// true = repeatable supply cache (gold + food), false = one-shot treasure (gear).
-    cache: bool,
-    opened: bool,
-    opened_at: f32,
+    pub(crate) cache: bool,
+    pub(crate) opened: bool,
+    pub(crate) opened_at: f32,
     /// Frontier factor at placement → loot tier.
     factor: f64,
 }
 
+/// Stable index of a chest over the spawn order (`0..CHEST_COUNT`). The save keys a
+/// looted-treasure flag by this so a re-launched world re-opens the right chests.
+#[derive(Component)]
+pub(crate) struct ChestId(pub usize);
+
 /// The hinged lid (a child of the chest) — rotated open on loot, closed on a cache respawn.
 #[derive(Component)]
-struct ChestLid;
+pub(crate) struct ChestLid;
+
+/// Lid hinge angle when open (front swings up + back). Shared by `chest_interact` and the
+/// save-restore pass so a loaded looted chest shows its lid open.
+pub(crate) const CHEST_LID_OPEN: f32 = -1.7;
 
 /// Forest-native frontier gradient: 0 across the safe core around the castle (the world
 /// origin), smoothly → 1 toward the rim. (Core's `frontier_factor` is anchored to its own
@@ -622,7 +701,7 @@ fn chest_interact(
         chest.opened_at = now;
         for &c in children {
             if let Ok(mut lt) = lids.get_mut(c) {
-                lt.rotation = Quat::from_rotation_x(-1.7); // hinge open (lid stands up at the back)
+                lt.rotation = Quat::from_rotation_x(CHEST_LID_OPEN); // hinge open (lid stands up at the back)
             }
         }
         return; // one chest per press
@@ -691,6 +770,7 @@ pub fn populate_chests(
                 Transform::from_xyz(x, y, z),
                 Visibility::Visible,
                 Chest { cache, opened: false, opened_at: 0.0, factor },
+                ChestId(placed as usize),
                 crate::biome::BiomeEntity,
             ))
             .id();

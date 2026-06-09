@@ -19,6 +19,8 @@ pub(crate) struct SfxBank {
     flesh: Handle<AudioSource>,
     /// Metallic chips (old `sword-hit-var-{1,3}`) — picked at random for chipping stone (ore).
     chips: Vec<Handle<AudioSource>>,
+    /// A wood-axe chop landing on a tree (one clip, pitch-jittered per swing).
+    chop: Handle<AudioSource>,
     block: Handle<AudioSource>,
     ui: Handle<AudioSource>,
     /// Sampled orchestral level-up fanfare (the old game's `playLevelUpFanfare`) — replaces the
@@ -44,6 +46,7 @@ pub(crate) fn setup_sfx(asset: Res<AssetServer>, mut commands: Commands) {
             .iter()
             .map(|f| asset.load(*f))
             .collect(),
+        chop: asset.load("audio/chop-wood.ogg"),
         block: asset.load("audio/block.ogg"),
         ui: asset.load("audio/menu-select.ogg"),
         level_up: asset.load("audio/level-up-orchestra.ogg"),
@@ -121,6 +124,10 @@ pub(crate) fn play_cues(
             // never repeats the same note (old game's `playPick`).
             AudioCue::OreChip => {
                 one_shot(&mut commands, pick(&bank.chips, &mut seed), 0.5 * sfx, jitter(&mut seed, 0.10));
+            }
+            // A wood-axe chop per swing that bites a tree — pitch-jittered so a long chop varies.
+            AudioCue::WoodChop => {
+                one_shot(&mut commands, bank.chop.clone(), 0.6 * sfx, jitter(&mut seed, 0.12));
             }
             AudioCue::Block => one_shot(&mut commands, bank.block.clone(), 0.45 * sfx, jitter(&mut seed, 0.1)),
             AudioCue::Footstep { surface, landing } => {

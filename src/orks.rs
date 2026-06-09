@@ -36,10 +36,12 @@ pub(crate) const ORK_SIGHT: f32 = 9.0;
 pub(crate) const ORK_ATTACK_RANGE: f32 = 1.5;
 /// Max distance from its home camp an ork will pursue — keeps each warband local.
 const ORK_LEASH: f32 = 16.0;
-/// Damage per club hit (queued onto `player::PendingHeroDamage`) — the full old-game grunt
-/// `orkConfig.ts` damage (24). `variant_melee` anchors every other variant off this via the core
-/// damage ratio, so scout→15 / berserker→30 fall out automatically, all at old-game parity.
-pub(crate) const ORK_DAMAGE: f32 = 24.0;
+/// Damage per club hit (queued onto `player::PendingHeroDamage`). Old-game grunt `orkConfig.ts`
+/// damage is 24; this is an intentional **−10% playtest nerf** (24 → 21.6) because the hero was
+/// dying too fast on Normal — a deliberate divergence from parity, not a reintroduced rescale.
+/// `variant_melee` anchors every other variant off this via the core damage ratio, so they all
+/// drop ~10% in lockstep.
+pub(crate) const ORK_DAMAGE: f32 = 21.6;
 /// Seconds between an ork's strikes.
 pub(crate) const ORK_ATTACK_CD: f32 = 1.1;
 
@@ -48,8 +50,9 @@ pub(crate) const ORK_ATTACK_CD: f32 = 1.1;
 pub(crate) const SHAMAN_CAST_RANGE: f32 = 8.0;
 /// Seconds between bolt casts.
 pub(crate) const SHAMAN_CAST_CD: f32 = 2.1;
-/// Bolt damage — the full old-game shaman `orkConfig.ts` value (26, above the club as before).
-pub(crate) const SHAMAN_BOLT_DAMAGE: f32 = 26.0;
+/// Bolt damage — old-game shaman `orkConfig.ts` value is 26; same intentional **−10% playtest
+/// nerf** as `ORK_DAMAGE` (26 → 23.4), still above the club as in the original.
+pub(crate) const SHAMAN_BOLT_DAMAGE: f32 = 23.4;
 /// A shaman heals the nearest wounded ally within this range.
 const SHAMAN_HEAL_RANGE: f32 = 8.0;
 /// HP restored per heal (old-game shaman `healAmount`).
@@ -94,7 +97,7 @@ pub(crate) fn bounty_xp(v: OrkVariant) -> i64 {
 /// ≈10). The Shaman casts `SHAMAN_BOLT_DAMAGE` instead, so this is unused for it.
 pub(crate) fn variant_melee(v: OrkVariant) -> f32 {
     use tileworld_core::ork_config::{ork_config, OrkVariant as C};
-    let grunt = ork_config(C::Grunt).damage as f32; // 24
+    let grunt = ork_config(C::Grunt).damage as f32; // core ratio anchor (24); ORK_DAMAGE is the nerfed scene value
     (ORK_DAMAGE * ork_config(core_variant(v)).damage as f32 / grunt).round()
 }
 

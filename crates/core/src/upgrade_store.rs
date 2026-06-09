@@ -301,6 +301,24 @@ impl UpgradeState {
     pub fn reset(&mut self) {
         self.purchased.clear();
     }
+
+    /// Rebuild a state from saved purchased ids (a loaded game). Each id is resolved
+    /// back to its `&'static` catalog id via [`node_by_id`]; unknown ids (a node
+    /// removed since the save) are skipped. This is the load counterpart of
+    /// [`purchased`](Self::purchased) — `purchased` can't be serde-`Deserialize`d
+    /// because the ids are `&'static str`, so the save stores owned `String`s and
+    /// this re-interns them. The caller re-enacts the effects against live state.
+    pub fn restore<S: AsRef<str>>(ids: &[S]) -> Self {
+        let mut purchased = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(node) = node_by_id(id.as_ref())
+                && !purchased.contains(&node.id)
+            {
+                purchased.push(node.id);
+            }
+        }
+        Self { purchased }
+    }
 }
 
 #[cfg(test)]
@@ -436,5 +454,20 @@ mod tests {
         st.reset();
         assert!(!st.is_purchased("hero_hp_1"));
         assert!(st.purchased().is_empty());
+    }
+
+    #[test]
+    fn restore_round_trips_purchased_ids_and_skips_unknown() {
+        let mut st = UpgradeState::new();
+        st.purchase(node_by_id("hero_hp_1").unwrap(), 9999, 0, false);
+        st.purchase(node_by_id("def_walls").unwrap(), 9999, 9999, false);
+        // Save = the owned ids as Strings (what the save file holds).
+        let saved: Vec<String> = st.purchased().iter().map(|s| s.to_string()).collect();
+        let mut restored = UpgradeState::restore(&saved);
+        assert_eq!(restored, st);
+        // A stale id from an older save is ignored, not fatal.
+        restored = UpgradeState::restore(&["hero_hp_1".to_string(), "no_such_node".to_string()]);
+        assert!(restored.is_purchased("hero_hp_1"));
+        assert_eq!(restored.purchased().len(), 1);
     }
 }

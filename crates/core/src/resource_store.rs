@@ -7,6 +7,7 @@
 //! instance (no global → parallel-safe). `f64` for JS-`number` parity.
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ResourceState {
     pub stone: f64,
     pub food: f64,
