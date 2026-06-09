@@ -23,6 +23,9 @@ const AMBIENCE_FADE: f32 = 0.8;
 /// Campfire loop level at the source (spatial falloff handles distance from there).
 const CAMPFIRE_VOL: f32 = 0.5;
 
+/// How close to the castle (origin) the camera must be for the town-square bed to fade in.
+const CASTLE_AMBIENCE_R: f32 = 24.0;
+
 /// What makes an ambience loop fade in.
 #[derive(Clone, Copy, PartialEq)]
 enum AmbienceKind {
@@ -31,6 +34,9 @@ enum AmbienceKind {
     /// Plays while the camera is over / near water — a river band in any view, or the open
     /// sea / coast (off the island) on the combined world map.
     Water,
+    /// The busy town-square bustle around the castle — only during the **day** (prep); it falls
+    /// silent at night when the curfew empties the streets for the siege.
+    Castle,
 }
 
 /// A persistent ambience loop + its current (lerped) volume level.
@@ -53,6 +59,7 @@ pub(crate) fn setup_ambience(asset: Res<AssetServer>, mut commands: Commands) {
         (AmbienceKind::Biome(Biome::Desert), "audio/desert-wind.ogg"),
         (AmbienceKind::Biome(Biome::Swamp), "audio/swamp-ambient.ogg"),
         (AmbienceKind::Water, "audio/water.ogg"),
+        (AmbienceKind::Castle, "audio/castle-ambient.ogg"),
     ];
     for (kind, file) in beds {
         commands.spawn((
@@ -123,6 +130,7 @@ fn near_water(cam_xz: Option<Vec2>) -> bool {
 pub(crate) fn biome_ambience(
     time: Res<Time>,
     cfg: Res<AudioConfig>,
+    siege: Option<Res<crate::siege::Siege>>,
     cam: Query<&GlobalTransform, With<Camera3d>>,
     mut q: Query<(&mut Ambience, &mut AudioSink)>,
 ) {
@@ -133,11 +141,16 @@ pub(crate) fn biome_ambience(
     });
     let cur = current_ambience_biome(cam_xz);
     let water = near_water(cam_xz);
+    // Town-square bustle plays near the castle by day; the night curfew empties the streets, so
+    // it falls silent during a wave.
+    let day = siege.map(|s| s.phase != crate::siege::GamePhase::Wave).unwrap_or(true);
+    let near_castle = cam_xz.is_some_and(|p| p.length() < CASTLE_AMBIENCE_R);
     let k = (dt * AMBIENCE_FADE).min(1.0);
     for (mut amb, mut sink) in &mut q {
         let on = match amb.kind {
             AmbienceKind::Biome(b) => Some(b) == cur,
             AmbienceKind::Water => water,
+            AmbienceKind::Castle => near_castle && day,
         };
         let target = if on { cfg.ambience_vol } else { 0.0 };
         amb.level += (target - amb.level) * k;

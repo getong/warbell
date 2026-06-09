@@ -56,6 +56,7 @@ mod ruins;
 mod scene;
 mod siege;
 mod steer;
+mod subtitles;
 mod succession;
 mod succession_fx;
 mod terrain;
@@ -144,6 +145,7 @@ fn main() {
             interaction::InteractionPlugin, // contextual E (keep→upgrades, merchant→shop, bell→night)
             debug_stats::DebugStatsPlugin, // read-only perf/state telemetry overlay (toggle: F2)
             quality::QualityPlugin, // explicit Low/High graphics presets (set in Settings)
+            subtitles::SubtitlePlugin, // bottom-centre captions for spoken villager lines
         ))
         .run();
 }
