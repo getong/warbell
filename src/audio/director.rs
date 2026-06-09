@@ -3,40 +3,32 @@
 //! firing reply chains when a line ends. Replaces the bespoke mouth/cooldown bookkeeping that
 //! used to live in `voice.rs`/`npc.rs`/`ork.rs`/`hero_remarks.rs`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use bevy::audio::{PlaybackMode, Volume};
 use bevy::prelude::*;
 
 use super::lines::{
-    can_play, pick_line, replies_to, speaker_voice, Active, Chain, Concept, Line, Speaker,
+    can_play, passes_gates, pick_line, replies_to, speaker_voice, Active, Chain, Concept, Line,
+    Speaker,
 };
 use super::AudioConfig;
 
-/// A chained reply line won't repeat within this window (seconds) — keeps call-and-response
-/// exchanges from looping the same retort.
-const CHAIN_REPLY_FLOOR: f32 = 30.0;
-
 /// A request to speak. Triggers (`detect_*` systems) write these; the director decides if/what
 /// actually plays. `at` positions a spatial speaker (villager/ork); ignored for the head-locked
-/// hero. `floor` is the per-line replay floor for this request's concept.
+/// hero. Per-line replay throttling is now DATA on each [`Line`] (`floor` / `once` fields).
 #[derive(Message, Clone, Copy)]
 pub struct Speak {
     pub concept: Concept,
     pub at: Option<Vec3>,
-    pub floor: f32,
 }
 
 impl Speak {
     pub fn new(concept: Concept) -> Self {
-        Self { concept, at: None, floor: 0.0 }
+        Self { concept, at: None }
     }
     pub fn at(concept: Concept, pos: Vec3) -> Self {
-        Self { concept, at: Some(pos), floor: 0.0 }
-    }
-    pub fn floored(mut self, floor: f32) -> Self {
-        self.floor = floor;
-        self
+        Self { concept, at: Some(pos) }
     }
 }
 
@@ -50,6 +42,7 @@ pub struct VoiceSink(pub Speaker);
 pub struct VoiceManager {
     pub active: HashMap<Speaker, Active>,
     pub last_played: HashMap<&'static str, f32>,
+    pub played_once: HashSet<&'static str>,
     pub rng: u32,
     /// Pending chain dispatches: (fire_at, chain, position) queued when a line with `then` starts.
     pub pending_chains: Vec<(f32, Chain, Option<Vec3>)>,
@@ -60,6 +53,7 @@ impl Default for VoiceManager {
         Self {
             active: HashMap::new(),
             last_played: HashMap::new(),
+            played_once: HashSet::new(),
             rng: 0x1234_5678,
             pending_chains: Vec::new(),
         }
@@ -75,6 +69,13 @@ impl VoiceManager {
     /// Is the hero mid-line? (Replaces `HeroSpeaking` — villagers/orks defer to him.)
     pub fn hero_speaking(&self, now: f32) -> bool {
         self.active.get(&Speaker::Hero).is_some_and(|a| now < a.ends_at)
+    }
+    /// Clear all state for a fresh run (mirrors the old `reset_hero_line_gates`).
+    pub fn reset(&mut self) {
+        self.active.clear();
+        self.last_played.clear();
+        self.played_once.clear();
+        self.pending_chains.clear();
     }
 }
 
@@ -96,7 +97,7 @@ pub fn speak_director(
     for req in reqs.read() {
         // Pull rng out across the immutable `pick_line` borrow of `mgr.last_played`.
         let mut rng = mgr.rng;
-        let chosen = pick_line(req.concept, &mgr.last_played, now, req.floor, &mut rng).copied();
+        let chosen = pick_line(req.concept, &mgr.last_played, &mgr.played_once, now, &mut rng).copied();
         mgr.rng = rng;
         let Some(line) = chosen else { continue };
 
@@ -160,6 +161,9 @@ fn play_line(
         },
     );
     mgr.last_played.insert(line.id, now);
+    if line.once {
+        mgr.played_once.insert(line.id);
+    }
     if let Some(chain) = line.then {
         mgr.pending_chains.push((now + dur, chain, pos));
     }
@@ -191,10 +195,10 @@ pub fn tick_chains(
         }
     });
     for (chain, pos) in due {
-        // Pick the highest-priority reply that's off its floor (replies use a short 30s floor).
+        // Pick the highest-priority reply that passes its per-line gates (once + floor).
         let pick = replies_to(chain.concept)
             .filter(|l| l.speaker == chain.target)
-            .filter(|l| now - *mgr.last_played.get(l.id).unwrap_or(&f32::NEG_INFINITY) >= CHAIN_REPLY_FLOOR)
+            .filter(|l| passes_gates(l, &mgr.last_played, &mgr.played_once, now))
             .max_by_key(|l| l.priority)
             .copied();
         let Some(reply) = pick else { continue };
@@ -202,6 +206,11 @@ pub fn tick_chains(
             play_line(&mut commands, &asset, &cfg, &mut mgr, &sinks, now, &reply, pos);
         }
     }
+}
+
+/// Fresh run: wipe all voice state (active lines, replay floors, once-per-run set, chains).
+pub fn reset_voices(mut mgr: ResMut<VoiceManager>) {
+    mgr.reset();
 }
 
 /// Reseed the line-pick RNG from wall-clock entropy so catalog line order differs each run
