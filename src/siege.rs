@@ -705,7 +705,10 @@ fn invader_brain(
         let at_guard = guard_tgt.is_some_and(|(_, gp)| o.pos.distance(gp) < atk_range);
         let at_keep = !chase_hero && guard_tgt.is_none() && dist_keep <= KEEP_ATTACK_RANGE;
         // Chasing a target (hero/guard) uses cheap direct steering; only the keep march paths A*.
-        let chase_direct = chase_hero || guard_tgt.is_some();
+        // Arsonists with a building goal also steer directly toward `target` (= the building, in
+        // the open safe-zone outside the walls) instead of running the keep A* — otherwise they'd
+        // ignore the building and march the keep.
+        let chase_direct = chase_hero || guard_tgt.is_some() || building_goal.is_some();
 
         if at_hero || at_guard || at_keep {
             o.moving = false;
@@ -795,7 +798,10 @@ fn invader_brain(
         // keep within the timeout is wedged (oscillating round a prop/wall, or gate-flip thrash)
         // and fades out, so the wave can't hang. Attacking or chasing the hero/a guard counts as
         // progress (intended behaviour, never culled). See `stuck_step`.
-        let engaged = at_hero || at_guard || at_keep || chase_hero || guard_tgt.is_some();
+        // A building-marching arsonist is "engaged": its distance to the KEEP may be increasing as
+        // it heads for an off-keep building, so the keep-progress test must not falsely reap it.
+        let engaged =
+            at_hero || at_guard || at_keep || chase_hero || guard_tgt.is_some() || building_goal.is_some();
         let (closest, progress_at, reap) = stuck_step(inv.closest, inv.progress_at, dist_keep, engaged, now);
         inv.closest = closest;
         inv.progress_at = progress_at;
