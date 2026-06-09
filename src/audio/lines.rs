@@ -96,6 +96,10 @@ pub struct Chain {
     pub target: Speaker,
 }
 
+/// The one wired chain so far: a villager's at-the-hero jab → the hero fires back. Used as the
+/// `then` on the `pa_*` jab lines; resolved against the hero's `ReplyToVillagerJab` reply pool.
+const REPLY_TO_JAB: Chain = Chain { concept: Concept::ReplyToVillagerJab, target: Speaker::Hero };
+
 /// One voice line — the whole record.
 #[derive(Clone, Copy)]
 pub struct Line {
@@ -203,9 +207,13 @@ pub const LINES: &[Line] = &[
     Line { floor: 360.0, ..line("idle_hens",    Speaker::Villager, Concept::Greeting,         "I told the hens about the orks. They were not impressed.") },
     Line { floor: 360.0, ..line("idle_cousin",  Speaker::Villager, Concept::Greeting,         "Me cousin says he killed an ork once. Me cousin says a lotta things.") },
     Line { floor: 360.0, ..line("merchant",     Speaker::Villager, Concept::Greeting,         "Finest wares this side of the swamp. Only wares this side of the swamp, but still.") },
-    Line { floor: 360.0, ..line("pa_hero",      Speaker::Villager, Concept::Greeting,         "Off to be a hero again, are we? Must be nice having the time.") },
-    Line { floor: 360.0, ..line("pa_chosen",    Speaker::Villager, Concept::Greeting,         "Oh, the chosen one graces us. Mind you don't trip on all that destiny.") },
-    Line { floor: 360.0, ..line("pa_slept",     Speaker::Villager, Concept::Greeting,         "Saved us all last night, did you? Funny, I slept fine without you.") },
+    // These three jabs are aimed AT the hero, so each opens a call-and-response chain: when the
+    // line finishes it dispatches `ReplyToVillagerJab` to the hero, who picks a comeback from his
+    // reply pool below (the Valve "then" dispatch — `tick_chains` resolves it against current facts,
+    // so if the hero has wandered out of earshot / is mid-line, the comeback simply doesn't land).
+    Line { floor: 360.0, then: Some(REPLY_TO_JAB), ..line("pa_hero",   Speaker::Villager, Concept::Greeting, "Off to be a hero again, are we? Must be nice having the time.") },
+    Line { floor: 360.0, then: Some(REPLY_TO_JAB), ..line("pa_chosen", Speaker::Villager, Concept::Greeting, "Oh, the chosen one graces us. Mind you don't trip on all that destiny.") },
+    Line { floor: 360.0, then: Some(REPLY_TO_JAB), ..line("pa_slept",  Speaker::Villager, Concept::Greeting, "Saved us all last night, did you? Funny, I slept fine without you.") },
     Line { floor: 360.0, ..line("pa_fence",     Speaker::Villager, Concept::Greeting,         "Big strong knight. Can't fix a fence, but big strong knight.") },
     Line { floor: 360.0, ..line("story_barn",   Speaker::Villager, Concept::Greeting,         "See ol' Marek's barn? Burned clean down. He says lightning. Was the ale.") },
     Line { floor: 360.0, ..line("story_miller", Speaker::Villager, Concept::Greeting,         "The miller's daughter married a soldier. He left, she kept the goat. Smart girl.") },
@@ -235,6 +243,14 @@ pub const LINES: &[Line] = &[
     Line { ..line("shaman", Speaker::Ork, Concept::OrkSpot,  "Spirits take him. Saka.") },
     // ── Ork death snarl (on a kill) ──
     Line { ..line("death",  Speaker::Ork, Concept::OrkDeath, "Not done.") },
+    // ── Hero comebacks to a villager's jab (chain replies — `reply_to`, never emitted directly) ──
+    // Dispatched by `tick_chains` when a `pa_*` jab finishes; `pick`-of-pool gives variety. Priority
+    // 12 so the retort lands over idle chatter; floored so the same comeback doesn't repeat soon.
+    // Clips at audio/vo/hero/reply_jab_*.ogg are not shipped yet — the chain fires (see tests) but
+    // stays silent until they're recorded, exactly like intro_a/intro_b.
+    Line { priority: 12, floor: 90.0, reply_to: Some(Concept::ReplyToVillagerJab), ..line("reply_jab_a", Speaker::Hero, Concept::ReplyToVillagerJab, "Mm. And yet here you still stand, breathing. Funny how that works.") },
+    Line { priority: 12, floor: 90.0, reply_to: Some(Concept::ReplyToVillagerJab), ..line("reply_jab_b", Speaker::Hero, Concept::ReplyToVillagerJab, "Destiny's heavy. Someone has to carry it. Might as well be the fool with the sword.") },
+    Line { priority: 12, floor: 90.0, reply_to: Some(Concept::ReplyToVillagerJab), ..line("reply_jab_c", Speaker::Hero, Concept::ReplyToVillagerJab, "Keep talking. The orks find the loud ones first.") },
 ];
 
 /// All catalog lines for a concept, in declaration order.
@@ -328,11 +344,16 @@ mod tests {
     }
 
     #[test]
-    fn pick_line_none_when_no_candidates() {
-        let (last, once) = (HashMap::new(), HashSet::new());
+    fn pick_line_none_when_all_candidates_floored() {
+        // LevelUp has a single catalog line (floor 300). Mark it as just played → the only
+        // candidate is ineligible → `pick_line` returns None (every concept now has ≥1 line, so we
+        // prove the empty-pool path via the floor instead of an unpopulated concept).
+        let mut last = HashMap::new();
+        last.insert("levelup", 50.0);
+        let once = HashSet::new();
         let mut rng = 1;
-        // ReplyToVillagerJab has no catalog entry yet (chain reply added in a later task)
-        assert!(pick_line(Concept::ReplyToVillagerJab, &last, &once, 100.0, &mut rng).is_none());
+        assert!(pick_line(Concept::LevelUp, &last, &once, 60.0, &mut rng).is_none()); // 10s < 300 floor
+        assert!(pick_line(Concept::LevelUp, &last, &once, 400.0, &mut rng).is_some()); // floor cleared
     }
 
     #[test]
@@ -410,5 +431,60 @@ mod tests {
         assert!(!can_play(Some(&a), 1.0, 49));
         assert!(can_play(Some(&a), 1.0, 50));
         assert!(can_play(Some(&a), 1.0, 200));
+    }
+
+    // ── Call-and-response chain (D3) ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn jab_lines_dispatch_the_reply_chain() {
+        // The three at-the-hero villager jabs each finish with a `then` that targets the hero.
+        for id in ["pa_hero", "pa_chosen", "pa_slept"] {
+            let l = LINES.iter().find(|l| l.id == id).unwrap();
+            let chain = l.then.unwrap_or_else(|| panic!("{id} should chain a reply"));
+            assert_eq!(chain.concept, Concept::ReplyToVillagerJab);
+            assert_eq!(chain.target, Speaker::Hero);
+        }
+    }
+
+    #[test]
+    fn reply_pool_answers_the_jab() {
+        // `replies_to` is what the director's `tick_chains` queries: every match is a hero line
+        // tagged as a valid reply, and there's a pool of them (the user's "a set of replies that
+        // fit a prompt").
+        let pool: Vec<&Line> = replies_to(Concept::ReplyToVillagerJab).collect();
+        assert!(pool.len() >= 2, "want a pool of comebacks, got {}", pool.len());
+        assert!(pool.iter().all(|l| l.speaker == Speaker::Hero));
+        assert!(pool.iter().all(|l| l.reply_to == Some(Concept::ReplyToVillagerJab)));
+    }
+
+    #[test]
+    fn chain_resolves_end_to_end() {
+        // Replay exactly what `tick_chains` does once a `pa_*` jab finishes: take the chain, gather
+        // replies for it, filter to the target speaker + per-line gates, pick the highest priority.
+        let chain = LINES.iter().find(|l| l.id == "pa_slept").unwrap().then.unwrap();
+        let (last, once) = (HashMap::new(), HashSet::new());
+        let pick = replies_to(chain.concept)
+            .filter(|l| l.speaker == chain.target)
+            .filter(|l| passes_gates(l, &last, &once, 0.0))
+            .max_by_key(|l| l.priority);
+        let reply = pick.expect("a fresh jab should resolve to a comeback");
+        assert_eq!(reply.speaker, Speaker::Hero);
+        assert!(reply.id.starts_with("reply_jab_"));
+    }
+
+    #[test]
+    fn stale_chain_self_terminates_when_pool_floored() {
+        // If every comeback is on its replay floor (the hero just fired one), the chain finds no
+        // reply and silently dies — the Valve "no explicit interruption" property.
+        let chain = REPLY_TO_JAB;
+        let mut last = HashMap::new();
+        for l in replies_to(chain.concept) {
+            last.insert(l.id, 0.0); // all played at t=0
+        }
+        let once = HashSet::new();
+        let any = replies_to(chain.concept)
+            .filter(|l| l.speaker == chain.target)
+            .any(|l| passes_gates(l, &last, &once, 10.0)); // 10s later, floor 90 still active
+        assert!(!any, "a floored pool should yield no reply → chain self-terminates");
     }
 }
