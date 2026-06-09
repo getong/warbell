@@ -93,7 +93,9 @@ impl Plugin for EconomyPlugin {
     }
 }
 
-fn reset_economy(
+/// Pub so `town::reset_town` can order its starting-wood grant *after* this — otherwise
+/// `bank.0.reset()` here (which now zeroes food/wood too) races and wipes the grant.
+pub fn reset_economy(
     mut bank: ResMut<Bank>,
     mut up: ResMut<Upgrades>,
     mut def: ResMut<Defenses>,
