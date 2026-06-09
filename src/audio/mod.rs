@@ -26,6 +26,7 @@ pub(crate) mod synth;
 mod voice;
 
 pub(crate) use lines::{Concept, Line, Speaker};
+pub(crate) use director::Speak;
 
 use bevy::audio::Volume;
 use bevy::prelude::*;
@@ -40,79 +41,6 @@ pub enum Surface {
     Stone,
 }
 
-/// A one-off **spoken reaction** by the hero (the "mouth"), distinct from the per-biome
-/// [`AudioCue::HeroLine`]. Ported from the old game's `sayHeroLine(key, …)` event lines.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum HeroEvent {
-    /// First ore broken this run ("stone → defenses").
-    FirstStone,
-    /// A chest was opened (repeatable).
-    ChestOpen,
-    /// First camp freed this run ("the rescued become militia").
-    FirstRescue,
-    /// Prep is nearly over — night is coming (once per prep day).
-    NightWarning,
-    /// HP crossed the danger threshold (repeatable).
-    LowHp,
-    /// Returned to the castle after roaming the wilderness (once this run).
-    Home,
-    /// Equipped a new weapon/armor (first time this run) — "look it over in my satchel".
-    Equip,
-    /// Gained a level.
-    LevelUp,
-    /// Survived a night — dawn breaks.
-    WaveSurvived,
-    /// First ork felled this run.
-    FirstKill,
-    /// Purse crossed a comfortable threshold (first time this run).
-    GoldRich,
-    /// Spent down to no gold.
-    Broke,
-    /// The keep dropped below half HP during a wave.
-    KeepHurt,
-    /// The shrine mended the hero.
-    ShrineHeal,
-}
-
-impl HeroEvent {
-    /// Stable 0-based index for the voice module's per-event replay-floor array.
-    pub(crate) const COUNT: usize = 14;
-    pub(crate) fn key(self) -> usize {
-        match self {
-            HeroEvent::FirstStone => 0,
-            HeroEvent::ChestOpen => 1,
-            HeroEvent::FirstRescue => 2,
-            HeroEvent::NightWarning => 3,
-            HeroEvent::LowHp => 4,
-            HeroEvent::Home => 5,
-            HeroEvent::Equip => 6,
-            HeroEvent::LevelUp => 7,
-            HeroEvent::WaveSurvived => 8,
-            HeroEvent::FirstKill => 9,
-            HeroEvent::GoldRich => 10,
-            HeroEvent::Broke => 11,
-            HeroEvent::KeepHurt => 12,
-            HeroEvent::ShrineHeal => 13,
-        }
-    }
-    /// Flavour reactions that obey the 10-minute per-line replay floor (so they stay an
-    /// occasional spice, never chatter). One-shot once-per-run lines and the night warning are
-    /// exempt — they're already naturally rare and the warning must always land.
-    pub(crate) fn throttled(self) -> bool {
-        matches!(
-            self,
-            HeroEvent::ChestOpen
-                | HeroEvent::LevelUp
-                | HeroEvent::WaveSurvived
-                | HeroEvent::Broke
-                | HeroEvent::KeepHurt
-                | HeroEvent::ShrineHeal
-                // HP bounces around the danger threshold in a hard fight, which used to re-fire
-                // "I'm hurt…" constantly — floor it like the rest.
-                | HeroEvent::LowHp
-        )
-    }
-}
 
 /// A one-shot audio request. Gameplay writes these via `MessageWriter<AudioCue>`; [`sfx`] and
 /// [`voice`] each read the whole stream and handle their own subset.
@@ -139,8 +67,6 @@ pub enum AudioCue {
     HeroHurt,
     /// Death scream on the killing blow (interrupts any line).
     HeroDeath,
-    /// Hero's spoken thought on entering a biome.
-    HeroLine(Biome),
     // ── Spatial creature voices (handled by `sfx`, positioned in the world) ──
     /// Ork aggro grunt at a world position.
     OrkGrunt(Vec3),
@@ -178,8 +104,6 @@ pub enum AudioCue {
     CampRescue,
     /// Hero HP crossed the low threshold.
     LowHp,
-    /// A one-off spoken reaction by the hero (see [`HeroEvent`]); handled by [`voice`].
-    HeroEvent(HeroEvent),
 }
 
 /// Per-run gates for the "once" event voice lines (the old game's `spoken` key-set). Reset on
@@ -191,14 +115,11 @@ pub(crate) struct HeroLineGates {
     pub first_rescue: bool,
     pub home: bool,
     pub been_away: bool,
-    /// Once-per-run gates for the new spoken reactions (the rest are repeatable / 10-min floored).
+    /// Once-per-run gates for the new spoken reactions (the rest are repeatable / floor-capped).
     pub equip: bool,
     pub first_kill: bool,
     pub gold_rich: bool,
-    /// Wilderness biomes whose musing has already played this run (the old game's `biome:`
-    /// `spoken` keys) — each biome line fires at most once per run. Cleared with the rest on
-    /// a fresh run via [`reset_hero_line_gates`].
-    pub spoken_biomes: Vec<Biome>,
+    // `spoken_biomes` removed — biome dedup is now the catalog `once` flag (director tracks it).
 }
 
 /// Castle is at the world origin; the hero must roam beyond this, then return inside
@@ -443,7 +364,7 @@ fn detect_home_return(
     hero: Query<&crate::player::Hero>,
     siege: Option<Res<crate::siege::Siege>>,
     mut gates: ResMut<HeroLineGates>,
-    mut cues: MessageWriter<AudioCue>,
+    mut speak: MessageWriter<Speak>,
 ) {
     let Ok(hero) = hero.single() else { return };
     let d = hero.pos.length();
@@ -454,23 +375,23 @@ fn detect_home_return(
         let in_prep =
             siege.map(|s| matches!(s.phase, crate::siege::GamePhase::Prep)).unwrap_or(true);
         if in_prep {
-            cues.write(AudioCue::HeroEvent(HeroEvent::Home));
+            speak.write(Speak::new(Concept::Home));
         }
     }
 }
 
 /// Emit the hero's biome musing while he stands in a wilderness biome on the world map. The
 /// old game spoke this the first time he walked into each biome; we mirror that by sampling
-/// the biome under the hero every frame and writing [`AudioCue::HeroLine`] — `voice` de-dupes
-/// it to once-per-biome-per-run, and re-firing each frame lets a line dropped mid-sentence
-/// (e.g. crossing a frontier right after another musing) speak once the mouth frees up.
+/// the biome under the hero every frame and writing `Speak(BiomeEntered(b))` — the catalog
+/// `once` flag de-dupes to once-per-biome-per-run. Re-firing each frame lets a line that
+/// couldn't fire (director busy) speak once the mouth frees up.
 ///
 /// `biome_at_world` returns `None` over grass / sand / water, so the castle and beaches stay
 /// silent — the "home, finally" line is left to [`detect_home_return`].
-fn detect_biome_entry(hero: Query<&crate::player::Hero>, mut cues: MessageWriter<AudioCue>) {
+fn detect_biome_entry(hero: Query<&crate::player::Hero>, mut speak: MessageWriter<Speak>) {
     let Ok(hero) = hero.single() else { return };
     if let Some(b) = crate::worldmap::biome_at_world(hero.pos.x, hero.pos.y) {
-        cues.write(AudioCue::HeroLine(b));
+        speak.write(Speak::new(Concept::BiomeEntered(b)));
     }
 }
 
@@ -483,6 +404,7 @@ fn detect_player_events(
     player: Res<crate::player::PlayerRes>,
     mut gates: ResMut<HeroLineGates>,
     mut cues: MessageWriter<AudioCue>,
+    mut speak: MessageWriter<Speak>,
     mut init: Local<bool>,
     mut last_level: Local<i64>,
     mut last_gold: Local<i64>,
@@ -498,27 +420,27 @@ fn detect_player_events(
     if p.level > *last_level {
         *last_level = p.level;
         cues.write(AudioCue::LevelUp); // synth sting
-        cues.write(AudioCue::HeroEvent(HeroEvent::LevelUp)); // spoken line (10-min floored)
+        speak.write(Speak::new(Concept::LevelUp)); // spoken line (5-min floored)
     }
     // First kill this run — xp first rises above 0.
     if !gates.first_kill && p.xp > 0 {
         gates.first_kill = true;
-        cues.write(AudioCue::HeroEvent(HeroEvent::FirstKill));
+        speak.write(Speak::new(Concept::FirstKill));
     }
     // Purse crossed a comfortable threshold (first time this run).
     if !gates.gold_rich && p.gold >= GOLD_RICH_AT {
         gates.gold_rich = true;
-        cues.write(AudioCue::HeroEvent(HeroEvent::GoldRich));
+        speak.write(Speak::new(Concept::GoldRich));
     }
     // Spent down to nothing (had some, now none).
     if *last_gold > 0 && p.gold == 0 {
-        cues.write(AudioCue::HeroEvent(HeroEvent::Broke)); // 10-min floored
+        speak.write(Speak::new(Concept::Broke)); // 5-min floored
     }
     *last_gold = p.gold;
     let low = p.max_hp > 0.0 && p.hp > 0.0 && p.hp <= p.max_hp * 0.35;
     if low && !*was_low {
         cues.write(AudioCue::LowHp); // synth danger bleep
-        cues.write(AudioCue::HeroEvent(HeroEvent::LowHp)); // hero's pained line over it
+        speak.write(Speak::new(Concept::LowHp)); // hero's pained line over it
     }
     *was_low = low;
 }
@@ -529,7 +451,7 @@ fn detect_player_events(
 fn detect_siege_voice(
     siege: Option<Res<crate::siege::Siege>>,
     keep: Option<Res<crate::siege::KeepHp>>,
-    mut cues: MessageWriter<AudioCue>,
+    mut speak: MessageWriter<Speak>,
     mut prev_phase: Local<Option<crate::siege::GamePhase>>,
     mut keep_low: Local<bool>,
 ) {
@@ -538,7 +460,7 @@ fn detect_siege_voice(
     let phase = siege.phase;
     if let Some(prev) = *prev_phase {
         if prev == GamePhase::Wave && phase == GamePhase::Prep {
-            cues.write(AudioCue::HeroEvent(HeroEvent::WaveSurvived));
+            speak.write(Speak::new(Concept::WaveSurvived));
         }
     }
     *prev_phase = Some(phase);
@@ -546,7 +468,7 @@ fn detect_siege_voice(
         if let Some(keep) = keep {
             let low = keep.max > 0.0 && keep.hp > 0.0 && keep.hp <= keep.max * 0.5;
             if low && !*keep_low {
-                cues.write(AudioCue::HeroEvent(HeroEvent::KeepHurt));
+                speak.write(Speak::new(Concept::KeepHurt));
             }
             *keep_low = low;
         }
@@ -561,7 +483,7 @@ fn detect_siege_voice(
 fn detect_equip(
     inv: Res<crate::inventory::Inventory>,
     mut gates: ResMut<HeroLineGates>,
-    mut cues: MessageWriter<AudioCue>,
+    mut speak: MessageWriter<Speak>,
     mut init: Local<bool>,
     mut last: Local<(i64, i64)>,
 ) {
@@ -578,7 +500,7 @@ fn detect_equip(
         // Only speak when newly geared (ignore a reset that strips gear back to fists).
         if !gates.equip && (wb > 0 || am < 1000) {
             gates.equip = true;
-            cues.write(AudioCue::HeroEvent(HeroEvent::Equip));
+            speak.write(Speak::new(Concept::Equip));
         }
     }
 }

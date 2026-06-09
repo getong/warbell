@@ -125,10 +125,29 @@ const fn line(id: &'static str, speaker: Speaker, concept: Concept, text: &'stat
     }
 }
 
-/// THE catalog. Filled in across the migration tasks (Phase C). Starts with a single hero line so
-/// Phase A/B have something real to resolve and test against.
+/// THE catalog. Filled in across the migration tasks (Phase C).
 pub const LINES: &[Line] = &[
-    line("levelup", Speaker::Hero, Concept::LevelUp, "Stronger. The blade feels lighter than it did."),
+    // ── Hero event reactions ──
+    Line { once: true,  priority: 20, ..line("stone",         Speaker::Hero, Concept::FirstStone,   "[older clip — text not transcribed]") },
+    Line { floor: 300.0,              ..line("chest",         Speaker::Hero, Concept::ChestOpen,    "[older clip — text not transcribed]") },
+    Line { once: true,  priority: 20, ..line("rescue",        Speaker::Hero, Concept::FirstRescue,  "[older clip — text not transcribed]") },
+    Line { priority: 30,              ..line("night",         Speaker::Hero, Concept::NightWarning, "[older clip — text not transcribed]") },
+    Line { floor: 300.0, priority: 15, ..line("hurt",         Speaker::Hero, Concept::LowHp,        "[older clip — text not transcribed]") },
+    Line { once: true,  priority: 15, ..line("home",          Speaker::Hero, Concept::Home,         "[older clip — text not transcribed]") },
+    Line { once: true,  priority: 15, ..line("equip",         Speaker::Hero, Concept::Equip,        "Mm, new armor. I should look it over in my satchel.") },
+    Line { floor: 300.0, priority: 15, ..line("levelup",      Speaker::Hero, Concept::LevelUp,      "Stronger. The blade feels lighter than it did.") },
+    Line { floor: 300.0, priority: 20, ..line("wave_survived", Speaker::Hero, Concept::WaveSurvived, "Dawn. We held. ...this time.") },
+    Line { once: true,  priority: 15, ..line("first_kill",    Speaker::Hero, Concept::FirstKill,    "Down it goes. Plenty more where that came from.") },
+    Line { once: true,                ..line("gold_rich",     Speaker::Hero, Concept::GoldRich,     "Coin enough to make the merchant smile. Good.") },
+    Line { floor: 300.0,              ..line("broke",         Speaker::Hero, Concept::Broke,        "Pockets empty. Steel will have to do the talking.") },
+    Line { floor: 300.0, priority: 25, ..line("keep_hurt",    Speaker::Hero, Concept::KeepHurt,     "The keep's taking a beating. Get to the walls.") },
+    Line { floor: 300.0,              ..line("shrine_heal",   Speaker::Hero, Concept::ShrineHeal,   "The old stones still have mercy in them.") },
+    // ── Hero biome musings (once per biome per run via `once`) ──
+    Line { once: true, ..line("forest", Speaker::Hero, Concept::BiomeEntered(Biome::Forest), "[older clip — text not transcribed]") },
+    Line { once: true, ..line("snow",   Speaker::Hero, Concept::BiomeEntered(Biome::Snow),   "[older clip — text not transcribed]") },
+    Line { once: true, ..line("rock",   Speaker::Hero, Concept::BiomeEntered(Biome::Rocky),  "[older clip — text not transcribed]") },
+    Line { once: true, ..line("desert", Speaker::Hero, Concept::BiomeEntered(Biome::Desert), "[older clip — text not transcribed]") },
+    Line { once: true, ..line("swamp",  Speaker::Hero, Concept::BiomeEntered(Biome::Swamp),  "[older clip — text not transcribed]") },
 ];
 
 /// All catalog lines for a concept, in declaration order.
@@ -218,14 +237,15 @@ mod tests {
     #[test]
     fn candidates_filters_by_concept() {
         assert_eq!(candidates(Concept::LevelUp).count(), 1);
-        assert_eq!(candidates(Concept::ChestOpen).count(), 0);
+        assert_eq!(candidates(Concept::ChestOpen).count(), 1);
     }
 
     #[test]
     fn pick_line_none_when_no_candidates() {
         let (last, once) = (HashMap::new(), HashSet::new());
         let mut rng = 1;
-        assert!(pick_line(Concept::ChestOpen, &last, &once, 100.0, &mut rng).is_none());
+        // OrkSpot has no catalog entry yet
+        assert!(pick_line(Concept::OrkSpot, &last, &once, 100.0, &mut rng).is_none());
     }
 
     #[test]
