@@ -24,8 +24,9 @@ const AMBIENT_GAP: f32 = 55.0;
 const NEAR_DIST: f32 = 7.0;
 /// For an event line, the nearest villager must be within this of the hero to voice it.
 const EVENT_NEAR: f32 = 55.0;
-/// Spoken-line gain (spatial — the world→audio scale handles distance falloff).
-const NPC_GAIN: f32 = 0.9;
+/// Spoken-line gain (spatial — the world→audio scale handles distance falloff). Bumped 0.9 → 1.4
+/// so the townsfolk carry over the mix.
+const NPC_GAIN: f32 = 1.4;
 
 /// The proximity lines, by key (the key drives the per-line [`LINE_FLOOR`]). Aligned with
 /// [`NpcVoiceBank::ambient`]. The first five are the original townsfolk greetings/musings; the
@@ -88,6 +89,32 @@ const AMBIENT_KEYS: [&str; 21] = [
 /// Lines that only make sense when the hero is visibly armed — held out of the rotation until a
 /// weapon is equipped, so the "look at the size of that sword" jab lands when there's a sword.
 const NEEDS_WEAPON: [&str; 1] = ["pa_sword"];
+
+/// Subtitle text for each ambient line, **aligned 1:1 with [`AMBIENT_KEYS`]** (so the on-screen
+/// caption matches the clip). Keep in sync with the clips + the doc table above.
+const AMBIENT_TEXT: [&str; 21] = [
+    "Oh, hello there, m'lord. Mind the mud.",
+    "Bless your night. We sleep easier when you're about.",
+    "I told the hens about the orks. They were not impressed.",
+    "Me cousin says he killed an ork once. Me cousin says a lotta things.",
+    "Finest wares this side of the swamp. Only wares this side of the swamp, but still.",
+    "Look at the size of that sword. My uncle's is smaller, and he's twice the man.",
+    "Off to be a hero again, are we? Must be nice having the time.",
+    "Oh, the chosen one graces us. Mind you don't trip on all that destiny.",
+    "Saved us all last night, did you? Funny, I slept fine without you.",
+    "Big strong knight. Can't fix a fence, but big strong knight.",
+    "See ol' Marek's barn? Burned clean down. He says lightning. Was the ale.",
+    "The miller's daughter married a soldier. He left, she kept the goat. Smart girl.",
+    "They say the swamp witch grants wishes. They also say she eats fingers. I'll keep my fingers.",
+    "We don't talk about grandfather.",
+    "Heard the baker's getting rich. Heard it from the baker. So.",
+    "Another glorious day of standing exactly here. Living the dream.",
+    "If one more chicken gets into the chapel, I'm converting.",
+    "Taxes up, walls down, orks at the door. But sure, ring the bell. That'll help.",
+    "I had a trade once, then the war. Now I... do this.",
+    "We're ever so grateful. Truly. Now could you grateful your boots off my step.",
+    "Bless you for the protection. The screaming at night is a lovely touch.",
+];
 
 #[derive(Resource)]
 pub(crate) struct NpcVoiceBank {
@@ -170,6 +197,7 @@ pub(crate) fn npc_ambient(
     mut commands: Commands,
     bank: Res<NpcVoiceBank>,
     mut st: ResMut<NpcVoiceState>,
+    mut subs: ResMut<crate::subtitles::Subtitles>,
     inv: Res<crate::inventory::Inventory>,
     hero: Query<&Hero>,
     villagers: Query<(Entity, &GlobalTransform), With<Villager>>,
@@ -193,6 +221,7 @@ pub(crate) fn npc_ambient(
             st.last.insert(key, now);
             st.next_ambient = now + AMBIENT_GAP;
             say_from(&mut commands, who, bank.ambient[i].clone(), NPC_GAIN * cfg.voice_vol);
+            subs.say(now, AMBIENT_TEXT[i], crate::subtitles::read_secs(AMBIENT_TEXT[i]));
             return;
         }
     }
@@ -206,6 +235,7 @@ pub(crate) fn npc_events(
     mut commands: Commands,
     bank: Res<NpcVoiceBank>,
     mut st: ResMut<NpcVoiceState>,
+    mut subs: ResMut<crate::subtitles::Subtitles>,
     hero: Query<&Hero>,
     villagers: Query<(Entity, &GlobalTransform), With<Villager>>,
     siege: Option<Res<crate::siege::Siege>>,
@@ -214,14 +244,17 @@ pub(crate) fn npc_events(
 ) {
     use crate::siege::GamePhase;
     let now = time.elapsed_secs();
-    let mut chosen: Option<(&'static str, Handle<AudioSource>)> = None;
+    // (key, subtitle text, clip)
+    let mut chosen: Option<(&'static str, &'static str, Handle<AudioSource>)> = None;
     if let Some(siege) = &siege {
         let phase = siege.phase;
         if let Some(prev) = *prev_phase {
             if prev == GamePhase::Prep && phase == GamePhase::Wave {
-                chosen = Some(("siege_fear", bank.siege_fear.clone()));
+                chosen =
+                    Some(("siege_fear", "They're coming. Inside, inside. Lock the door.", bank.siege_fear.clone()));
             } else if prev == GamePhase::Wave && phase == GamePhase::Prep {
-                chosen = Some(("dawn_relief", bank.dawn_relief.clone()));
+                chosen =
+                    Some(("dawn_relief", "Made it to morning. Knew you'd see us through.", bank.dawn_relief.clone()));
             }
         }
         *prev_phase = Some(phase);
@@ -229,10 +262,14 @@ pub(crate) fn npc_events(
     // Always drain the cue stream; a rescue (rare) trumps a phase line if both land this frame.
     for c in cues.read() {
         if matches!(c, AudioCue::CampRescue) {
-            chosen = Some(("rescued", bank.rescued.clone()));
+            chosen = Some((
+                "rescued",
+                "You came for me? Gods bless you. I'll take up a spear, I swear it.",
+                bank.rescued.clone(),
+            ));
         }
     }
-    let Some((key, clip)) = chosen else { return };
+    let Some((key, text, clip)) = chosen else { return };
     if now - *st.last.get(key).unwrap_or(&-1000.0) < LINE_FLOOR {
         return;
     }
@@ -240,4 +277,5 @@ pub(crate) fn npc_events(
     let Some(who) = nearest_villager(hero.pos, &villagers, EVENT_NEAR) else { return };
     st.last.insert(key, now);
     say_from(&mut commands, who, clip, NPC_GAIN * cfg.voice_vol);
+    subs.say(now, text, crate::subtitles::read_secs(text));
 }
