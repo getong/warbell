@@ -106,6 +106,10 @@ pub struct Line {
     pub interruptible: bool,
     /// Barge-in priority: a new line plays over a playing one only if `new.priority >= cur.priority`.
     pub priority: u8,
+    /// Plays at most once this often (seconds); 0 = no floor. Per-line replay throttle.
+    pub floor: f32,
+    /// Plays at most ONCE per run (e.g. "first kill"); reset on a fresh run.
+    pub once: bool,
     /// If set, this line is a valid reply to a dispatched chain `Concept`.
     pub reply_to: Option<Concept>,
     /// If set, dispatch this chain when the line finishes.
@@ -114,7 +118,11 @@ pub struct Line {
 
 /// Convenience constructor for the common case (no reply_to / no then, interruptible, prio 10).
 const fn line(id: &'static str, speaker: Speaker, concept: Concept, text: &'static str) -> Line {
-    Line { id, speaker, concept, text, interruptible: true, priority: 10, reply_to: None, then: None }
+    Line {
+        id, speaker, concept, text,
+        interruptible: true, priority: 10, floor: 0.0, once: false,
+        reply_to: None, then: None,
+    }
 }
 
 /// THE catalog. Filled in across the migration tasks (Phase C). Starts with a single hero line so
@@ -147,19 +155,31 @@ fn frand(s: &mut u32) -> f32 {
     (next_rng(s) & 0x00ff_ffff) as f32 / 0x00ff_ffff as f32
 }
 
-/// Pick a line for `concept`: among candidates, drop any played more recently than `floor`
-/// seconds ago (per-line replay floor, keyed by `id` in `last`), random pick of the rest.
-/// Returns `None` if the concept has no candidates or all are still floored.
+/// Does this line pass its per-line replay gates right now? Blocked if it's a `once` line already
+/// played this run, or if it played more recently than `floor` seconds ago.
+pub fn passes_gates(
+    line: &Line,
+    last: &std::collections::HashMap<&'static str, f32>,
+    played_once: &std::collections::HashSet<&'static str>,
+    now: f32,
+) -> bool {
+    if line.once && played_once.contains(line.id) {
+        return false;
+    }
+    now - *last.get(line.id).unwrap_or(&f32::NEG_INFINITY) >= line.floor
+}
+
+/// Pick a line for `concept`: among candidates, keep only those passing their per-line gates
+/// (replay floor + once-per-run), then random-pick. `None` if no candidate is currently eligible.
 pub fn pick_line(
     concept: Concept,
     last: &std::collections::HashMap<&'static str, f32>,
+    played_once: &std::collections::HashSet<&'static str>,
     now: f32,
-    floor: f32,
     rng: &mut u32,
 ) -> Option<&'static Line> {
-    let fresh: Vec<&'static Line> = candidates(concept)
-        .filter(|l| now - *last.get(l.id).unwrap_or(&f32::NEG_INFINITY) >= floor)
-        .collect();
+    let fresh: Vec<&'static Line> =
+        candidates(concept).filter(|l| passes_gates(l, last, played_once, now)).collect();
     if fresh.is_empty() {
         return None;
     }
@@ -193,44 +213,66 @@ pub fn can_play(active: Option<&Active>, now: f32, new_priority: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     #[test]
     fn candidates_filters_by_concept() {
-        // The seed catalog has exactly one LevelUp line and no ChestOpen line yet.
         assert_eq!(candidates(Concept::LevelUp).count(), 1);
         assert_eq!(candidates(Concept::ChestOpen).count(), 0);
     }
 
     #[test]
     fn pick_line_none_when_no_candidates() {
-        let last = HashMap::new();
+        let (last, once) = (HashMap::new(), HashSet::new());
         let mut rng = 1;
-        assert!(pick_line(Concept::ChestOpen, &last, 100.0, 300.0, &mut rng).is_none());
+        assert!(pick_line(Concept::ChestOpen, &last, &once, 100.0, &mut rng).is_none());
     }
 
     #[test]
-    fn pick_line_respects_replay_floor() {
+    fn pick_line_returns_candidate() {
+        let (last, once) = (HashMap::new(), HashSet::new());
+        let mut rng = 1;
+        assert_eq!(pick_line(Concept::LevelUp, &last, &once, 0.0, &mut rng).unwrap().id, "levelup");
+    }
+
+    fn test_line() -> Line {
+        line("t", Speaker::Hero, Concept::LevelUp, "x")
+    }
+
+    #[test]
+    fn passes_gates_floor_blocks_then_clears() {
+        let mut l = test_line();
+        l.floor = 300.0;
         let mut last = HashMap::new();
-        last.insert("levelup", 50.0);
-        let mut rng = 1;
-        // 10s later, floor 300 → still floored → None.
-        assert!(pick_line(Concept::LevelUp, &last, 60.0, 300.0, &mut rng).is_none());
-        // 400s later → floor cleared → returns the line.
-        assert_eq!(pick_line(Concept::LevelUp, &last, 450.0, 300.0, &mut rng).unwrap().id, "levelup");
+        last.insert("t", 50.0);
+        let once = HashSet::new();
+        assert!(!passes_gates(&l, &last, &once, 60.0));  // 10s later → floored
+        assert!(passes_gates(&l, &last, &once, 400.0));  // 350s later → cleared
     }
 
     #[test]
-    fn pick_line_first_play_ignores_floor() {
+    fn passes_gates_first_play_ignores_floor() {
+        let mut l = test_line();
+        l.floor = 300.0;
+        let (last, once) = (HashMap::new(), HashSet::new());
+        assert!(passes_gates(&l, &last, &once, 0.0)); // never played → passes
+    }
+
+    #[test]
+    fn passes_gates_once_blocks_after_played() {
+        let mut l = test_line();
+        l.once = true;
         let last = HashMap::new();
-        let mut rng = 1;
-        assert!(pick_line(Concept::LevelUp, &last, 0.0, 300.0, &mut rng).is_some());
+        let mut once = HashSet::new();
+        assert!(passes_gates(&l, &last, &once, 0.0));        // not yet played
+        once.insert("t");
+        assert!(!passes_gates(&l, &last, &once, 1000.0));    // played once → blocked forever
     }
 
     #[test]
     fn every_speaker_is_registered() {
         for s in [Speaker::Hero, Speaker::Villager, Speaker::Ork] {
-            let _ = speaker_voice(s); // must not panic
+            let _ = speaker_voice(s);
         }
     }
 
@@ -246,20 +288,20 @@ mod tests {
     #[test]
     fn can_play_when_current_finished() {
         let a = active(255, false, 5.0);
-        assert!(can_play(Some(&a), 6.0, 0)); // past ends_at → even a non-interruptible line is done
+        assert!(can_play(Some(&a), 6.0, 0));
     }
 
     #[test]
     fn cannot_interrupt_protected_line() {
         let a = active(50, false, 100.0);
-        assert!(!can_play(Some(&a), 1.0, 255)); // not interruptible → blocked regardless of priority
+        assert!(!can_play(Some(&a), 1.0, 255));
     }
 
     #[test]
     fn interrupt_needs_equal_or_higher_priority() {
         let a = active(50, true, 100.0);
-        assert!(!can_play(Some(&a), 1.0, 49)); // lower → blocked
-        assert!(can_play(Some(&a), 1.0, 50)); // equal → allowed
-        assert!(can_play(Some(&a), 1.0, 200)); // higher → allowed
+        assert!(!can_play(Some(&a), 1.0, 49));
+        assert!(can_play(Some(&a), 1.0, 50));
+        assert!(can_play(Some(&a), 1.0, 200));
     }
 }

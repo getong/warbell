@@ -378,11 +378,11 @@ impl Plugin for GameAudioPlugin {
             // Fresh run: clear the once-per-run voice gates (mirrors siege's reset).
             .add_systems(
                 OnExit(crate::game_state::AppState::StartScreen),
-                (reset_hero_line_gates, hero_remarks::reset),
+                (reset_hero_line_gates, hero_remarks::reset, director::reset_voices),
             )
             .add_systems(
                 OnExit(crate::game_state::AppState::GameOver),
-                (reset_hero_line_gates, hero_remarks::reset),
+                (reset_hero_line_gates, hero_remarks::reset, director::reset_voices),
             );
     }
 }
