@@ -148,26 +148,13 @@ pub(crate) struct HeroLineCooldown {
 /// Length of [`HeroLineCooldown`] (seconds) — per user: ~20 s between hero lines.
 pub(crate) const HERO_LINE_CD: f32 = 20.0;
 
-/// Estimated end time of the hero's CURRENTLY-PLAYING line (≈ clip length). Distinct from the 20 s
-/// [`HeroLineCooldown`]: this tracks only the few seconds a clip actually sounds, so villagers +
-/// orks (and the finish-grace check) know when he's mid-sentence and stay off him.
-#[derive(Resource, Default)]
-pub(crate) struct HeroSpeaking {
-    pub until: f32,
-}
+// The old `HeroSpeaking` / `OthersSpeaking` "who's mid-sentence" resources are gone: the director's
+// `VoiceManager::hero_speaking(now)` / `others_speaking(now)` derive the same facts from the active
+// per-speaker lines, so villagers/orks/hero all defer to each other through one source of truth.
 
-/// Mirror of [`HeroSpeaking`]: estimated end time of a NON-hero spoken line currently sounding —
-/// a villager's chatter or an ork's battle bark. The hero's spoken lines (`voice.rs` biome/event
-/// musings + `hero_remarks.rs` observations) defer while `now < until`, so he never talks over the
-/// townsfolk or the horde commenting on guards/town/etc. His combat exertion grunts + death cry are
-/// exempt (reflex, not commentary).
-#[derive(Resource, Default)]
-pub(crate) struct OthersSpeaking {
-    pub until: f32,
-}
-
-/// Tags every hero-mouth sink — a `voice` line OR a `hero_remarks` remark — so the place/biome
-/// auto-stop can find whichever one is playing and fade it.
+/// Tags the hero's reflex grunt/death sinks (`voice.rs`) so a new grunt can stop the prior one.
+/// (Catalog hero lines use `director::VoiceSink(Hero)` instead — the two mouths coordinate via
+/// `VoiceManager::hero_speaking`.)
 #[derive(Component)]
 pub(crate) struct HeroMouthTag;
 
@@ -239,8 +226,6 @@ impl Plugin for GameAudioPlugin {
             .init_resource::<synth::StingBank>()
             .init_resource::<HeroLineGates>()
             .init_resource::<HeroLineCooldown>()
-            .init_resource::<HeroSpeaking>()
-            .init_resource::<OthersSpeaking>()
             .init_resource::<director::VoiceManager>()
             .init_resource::<RemarkTrigger>()
             .init_resource::<npc::VillagerTrigger>()
