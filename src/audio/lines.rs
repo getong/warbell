@@ -74,6 +74,7 @@ pub enum Concept {
     KillMusing,
     // ── Villager ──
     Greeting,
+    VillagerArmedJab,
     SiegeFalls,
     Dawn,
     Rescued,
@@ -191,6 +192,37 @@ pub const LINES: &[Line] = &[
     // Clips at assets/audio/vo/hero/intro_a.ogg and intro_b.ogg (not yet shipped — guard skips them silently)
     Line { once: true, priority: 3, ..line("intro_a", Speaker::Hero, Concept::Intro, "Daylight's short — open the chests, gather coin and stone, buy what'll keep you breathing. When dark comes, the orks come for the keep. We hold it.") },
     Line { once: true, priority: 3, ..line("intro_b", Speaker::Hero, Concept::Intro, "By day you scavenge — chests, ore, gold — and arm up at the War Table. By night the horde hits these walls. Keep the keep standing. Don't waste the light.") },
+    // ── Villager ambient chatter (nearest working townsperson, when the hero lingers) ──
+    // One villager voice globally at a time (director enforces this); accepted simplification vs. the
+    // old one-per-cluster model. floor:360 keeps the ~7-min rotation cycling without going silent.
+    // Speakers: Ed (greet … screaming) and Professor (day_dream … screaming). Text is the clip transcript.
+    Line { floor: 360.0, ..line("greet",        Speaker::Villager, Concept::Greeting,         "Oh, hello there, m'lord. Mind the mud.") },
+    Line { floor: 360.0, ..line("greet_2",      Speaker::Villager, Concept::Greeting,         "Bless your night. We sleep easier when you're about.") },
+    Line { floor: 360.0, ..line("idle_hens",    Speaker::Villager, Concept::Greeting,         "I told the hens about the orks. They were not impressed.") },
+    Line { floor: 360.0, ..line("idle_cousin",  Speaker::Villager, Concept::Greeting,         "Me cousin says he killed an ork once. Me cousin says a lotta things.") },
+    Line { floor: 360.0, ..line("merchant",     Speaker::Villager, Concept::Greeting,         "Finest wares this side of the swamp. Only wares this side of the swamp, but still.") },
+    Line { floor: 360.0, ..line("pa_hero",      Speaker::Villager, Concept::Greeting,         "Off to be a hero again, are we? Must be nice having the time.") },
+    Line { floor: 360.0, ..line("pa_chosen",    Speaker::Villager, Concept::Greeting,         "Oh, the chosen one graces us. Mind you don't trip on all that destiny.") },
+    Line { floor: 360.0, ..line("pa_slept",     Speaker::Villager, Concept::Greeting,         "Saved us all last night, did you? Funny, I slept fine without you.") },
+    Line { floor: 360.0, ..line("pa_fence",     Speaker::Villager, Concept::Greeting,         "Big strong knight. Can't fix a fence, but big strong knight.") },
+    Line { floor: 360.0, ..line("story_barn",   Speaker::Villager, Concept::Greeting,         "See ol' Marek's barn? Burned clean down. He says lightning. Was the ale.") },
+    Line { floor: 360.0, ..line("story_miller", Speaker::Villager, Concept::Greeting,         "The miller's daughter married a soldier. He left, she kept the goat. Smart girl.") },
+    Line { floor: 360.0, ..line("story_witch",  Speaker::Villager, Concept::Greeting,         "They say the swamp witch grants wishes. They also say she eats fingers. I'll keep my fingers.") },
+    Line { floor: 360.0, ..line("story_gran",   Speaker::Villager, Concept::Greeting,         "We don't talk about grandfather.") },
+    Line { floor: 360.0, ..line("story_baker",  Speaker::Villager, Concept::Greeting,         "Heard the baker's getting rich. Heard it from the baker. So.") },
+    Line { floor: 360.0, ..line("day_dream",    Speaker::Villager, Concept::Greeting,         "Another glorious day of standing exactly here. Living the dream.") },
+    Line { floor: 360.0, ..line("chicken",      Speaker::Villager, Concept::Greeting,         "If one more chicken gets into the chapel, I'm converting.") },
+    Line { floor: 360.0, ..line("taxes",        Speaker::Villager, Concept::Greeting,         "Taxes up, walls down, orks at the door. But sure, ring the bell. That'll help.") },
+    Line { floor: 360.0, ..line("trade",        Speaker::Villager, Concept::Greeting,         "I had a trade once, then the war. Now I... do this.") },
+    Line { floor: 360.0, ..line("grateful",     Speaker::Villager, Concept::Greeting,         "We're ever so grateful. Truly. Now could you grateful your boots off my step.") },
+    Line { floor: 360.0, ..line("screaming",    Speaker::Villager, Concept::Greeting,         "Bless you for the protection. The screaming at night is a lovely touch.") },
+    // pa_sword is weapon-gated → its own concept so the trigger can conditionally emit it only when armed
+    Line { floor: 360.0, ..line("pa_sword",     Speaker::Villager, Concept::VillagerArmedJab, "Look at the size of that sword. My uncle's is smaller, and he's twice the man.") },
+    // ── Villager event reactions (must finish; outrank ambient chatter) ──
+    // interruptible:false + priority:15 so these aren't cut off by ambient. floor:600 = 10-min floor.
+    Line { interruptible: false, priority: 15, floor: 600.0, ..line("siege_fear",  Speaker::Villager, Concept::SiegeFalls, "They're coming. Inside, inside. Lock the door.") },
+    Line { interruptible: false, priority: 15, floor: 600.0, ..line("dawn_relief", Speaker::Villager, Concept::Dawn,       "Made it to morning. Knew you'd see us through.") },
+    Line { interruptible: false, priority: 15, floor: 600.0, ..line("rescued",     Speaker::Villager, Concept::Rescued,    "You came for me? Gods bless you. I'll take up a spear, I swear it.") },
 ];
 
 /// All catalog lines for a concept, in declaration order.
