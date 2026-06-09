@@ -26,7 +26,8 @@ const LINE_GUARD: f32 = 4.0;
 const GLOBAL_LINE_GAP: f32 = 14.0;
 /// Per-line floor for the "throttled" flavour reactions (see [`HeroEvent::throttled`]) — a given
 /// line plays at most once per this window, so they stay an occasional spice rather than chatter.
-const EVENT_REPLAY_GAP: f32 = 600.0;
+/// (5 min: loosened from 10 so the hero pipes up a little more often.)
+const EVENT_REPLAY_GAP: f32 = 300.0;
 
 #[derive(Component)]
 pub(crate) struct HeroVoiceTag;
@@ -67,6 +68,8 @@ impl Default for HeroMouth {
 }
 
 pub(crate) fn setup_voice(asset: Res<AssetServer>, mut commands: Commands) {
+    // The hero's one-off musing on first entering each biome. [older clips — text not
+    // transcribed here; transcribe + note the line if these get re-recorded.]
     let lines = vec![
         (Biome::Forest, asset.load("audio/vo/forest.ogg")),
         (Biome::Snow, asset.load("audio/vo/snow.ogg")),
@@ -74,20 +77,31 @@ pub(crate) fn setup_voice(asset: Res<AssetServer>, mut commands: Commands) {
         (Biome::Desert, asset.load("audio/vo/desert.ogg")),
         (Biome::Swamp, asset.load("audio/vo/swamp.ogg")),
     ];
+    // The hero's spoken event reactions. Spoken text is in the comment beside each load so we
+    // keep a record of every quote in the game (retune triggers without re-listening). The first
+    // six are older clips not transcribed here; the eight below them are the newer recorded set.
     let events = vec![
-        (HeroEvent::FirstStone, asset.load("audio/vo/stone.ogg")),
-        (HeroEvent::ChestOpen, asset.load("audio/vo/chest.ogg")),
-        (HeroEvent::FirstRescue, asset.load("audio/vo/rescue.ogg")),
-        (HeroEvent::NightWarning, asset.load("audio/vo/night.ogg")),
-        (HeroEvent::LowHp, asset.load("audio/vo/hurt.ogg")),
-        (HeroEvent::Home, asset.load("audio/vo/home.ogg")),
+        (HeroEvent::FirstStone, asset.load("audio/vo/stone.ogg")), // [older clip — text not transcribed]
+        (HeroEvent::ChestOpen, asset.load("audio/vo/chest.ogg")),  // [older clip — text not transcribed]
+        (HeroEvent::FirstRescue, asset.load("audio/vo/rescue.ogg")), // [older clip — text not transcribed]
+        (HeroEvent::NightWarning, asset.load("audio/vo/night.ogg")), // [older clip — text not transcribed]
+        (HeroEvent::LowHp, asset.load("audio/vo/hurt.ogg")),       // [older clip — text not transcribed]
+        (HeroEvent::Home, asset.load("audio/vo/home.ogg")),        // [older clip — text not transcribed]
+        // "Mm, new armor. I should look it over in my satchel."   (first time gear is equipped)
         (HeroEvent::Equip, asset.load("audio/vo/equip.ogg")),
+        // "Stronger. The blade feels lighter than it did."        (on level-up)
         (HeroEvent::LevelUp, asset.load("audio/vo/levelup.ogg")),
+        // "Dawn. We held. ...this time."                          (on the Wave→Prep edge)
         (HeroEvent::WaveSurvived, asset.load("audio/vo/wave_survived.ogg")),
+        // "Down it goes. Plenty more where that came from."       (first ork felled this run)
         (HeroEvent::FirstKill, asset.load("audio/vo/first_kill.ogg")),
+        // "Coin enough to make the merchant smile. Good."         (gold crosses GOLD_RICH_AT)
         (HeroEvent::GoldRich, asset.load("audio/vo/gold_rich.ogg")),
+        // "Pockets empty. Steel will have to do the talking."     (spent down to 0 gold)
         (HeroEvent::Broke, asset.load("audio/vo/broke.ogg")),
+        // "The keep's taking a beating. Get to the walls."        (keep below half HP in a wave)
         (HeroEvent::KeepHurt, asset.load("audio/vo/keep_hurt.ogg")),
+        // "The old stones still have mercy in them."              (the healing shrine mends him)
         (HeroEvent::ShrineHeal, asset.load("audio/vo/shrine_heal.ogg")),
     ];
     commands.insert_resource(VoiceBank {

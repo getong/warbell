@@ -149,6 +149,13 @@ explicit gate-targeting code. Night-wave invaders follow `InvaderPath` waypoints
 - **Death is a fade, not a pop** (`src/dying.rs`): kills insert `Dying{since}` and crumple over
   ~1.4s. Every AI/targeting/count query must filter `Without<Dying>` so corpses aren't targeted or
   counted — but reward/clear logic fires once pre-fade.
+- **Every voice/quote line carries its spoken text in a code comment.** When you wire up *any*
+  spoken line (hero `voice.rs`, villager `audio/npc.rs`, ork `audio/ork.rs`, or future speakers),
+  put the exact transcript next to where the clip is loaded / keyed, plus its trigger. The audio
+  files are opaque `.ogg`s — these comments are our **only** record of what the game actually says,
+  so we can retune *when/how often* lines play without re-listening to every clip. Keep them in
+  sync when a clip is re-recorded; if a clip's text is unknown (older un-transcribed asset), say so
+  explicitly (`[older clip — text not transcribed]`) rather than leaving it blank.
 - **Mesh-building contract** (see `CONTRACT.md`, `CONTRACT2.md`): every prop mesh's base sits at
   `y = 0`; **colour lives in the mesh `ATTRIBUTE_COLOR`** (linear RGBA via `crate::palette::lin` /
   `lin_scaled`), because all props share one white `StandardMaterial` so the renderer auto-batches

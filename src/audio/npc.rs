@@ -18,7 +18,8 @@ use super::{frand, AudioConfig, AudioCue};
 /// than once per 10 minutes" floor).
 const LINE_FLOOR: f32 = 600.0;
 /// Minimum gap between ANY two ambient (proximity) villager lines, so the town isn't a babble.
-const AMBIENT_GAP: f32 = 150.0;
+/// (Lowered from 150 → the town should feel a bit chattier, but never wall-to-wall.)
+const AMBIENT_GAP: f32 = 80.0;
 /// Hero must be this close (world units) to a villager to trigger a proximity greeting/musing.
 const NEAR_DIST: f32 = 7.0;
 /// For an event line, the nearest villager must be within this of the hero to voice it.
@@ -28,8 +29,38 @@ const NPC_GAIN: f32 = 0.9;
 
 /// The proximity lines, by key (the key drives the per-line [`LINE_FLOOR`]). Aligned with
 /// [`NpcVoiceBank::ambient`]. The first five are the original townsfolk greetings/musings; the
-/// rest are the funny / passive-aggressive comments + short town stories (a different speaker),
-/// so the city feels like a crowd of people, not one greeter.
+/// rest are the funny / passive-aggressive comments + short town stories, so the city feels like
+/// a crowd of people, not one greeter.
+///
+/// **Spoken text of each line** (keep this in sync when clips change — it's our only record of
+/// what the town actually says, so we can retune triggers without re-listening):
+/// - `greet`        — "Oh, hello there, m'lord. Mind the mud."                                  (Ed)
+/// - `greet_2`      — "Bless your night. We sleep easier when you're about."                    (Ed)
+/// - `idle_hens`    — "I told the hens about the orks. They were not impressed."                (Ed)
+/// - `idle_cousin`  — "Me cousin says he killed an ork once. Me cousin says a lotta things."     (Ed)
+/// - `merchant`     — "Finest wares this side of the swamp. Only wares this side of the swamp,
+///                     but still."                                                              (Ed)
+/// - `pa_sword`     — "Look at the size of that sword. My uncle's is smaller, and he's twice the
+///                     man."                                         (Ed; gated on a weapon equipped)
+/// - `pa_hero`      — "Off to be a hero again, are we? Must be nice having the time."            (Ed)
+/// - `pa_chosen`    — "Oh, the chosen one graces us. Mind you don't trip on all that destiny."   (Ed)
+/// - `pa_slept`     — "Saved us all last night, did you? Funny, I slept fine without you."       (Ed)
+/// - `pa_fence`     — "Big strong knight. Can't fix a fence, but big strong knight."             (Ed)
+/// - `story_barn`   — "See ol' Marek's barn? Burned clean down. He says lightning. Was the ale." (Ed)
+/// - `story_miller` — "The miller's daughter married a soldier. He left, she kept the goat. Smart
+///                     girl."                                                                   (Ed)
+/// - `story_witch`  — "They say the swamp witch grants wishes. They also say she eats fingers.
+///                     I'll keep my fingers."                                                   (Ed)
+/// - `story_gran`   — "We don't talk about grandfather."   (Ed; the "soup ladle" setup didn't render)
+/// - `story_baker`  — "Heard the baker's getting rich. Heard it from the baker. So."             (Ed)
+/// - `day_dream`    — "Another glorious day of standing exactly here. Living the dream."  (Professor)
+/// - `chicken`      — "If one more chicken gets into the chapel, I'm converting."         (Professor)
+/// - `taxes`        — "Taxes up, walls down, orks at the door. But sure, ring the bell. That'll
+///                     help."                                                            (Professor)
+/// - `trade`        — "I had a trade once, then the war. Now I... gesture vaguely... do this." (Professor)
+/// - `grateful`     — "We're ever so grateful. Truly. Now could you... grateful your boots off my
+///                     step."                                                            (Professor)
+/// - `screaming`    — "Bless you for the protection. The screaming at night is a lovely touch." (Professor)
 const AMBIENT_KEYS: [&str; 21] = [
     "greet",
     "greet_2",
@@ -87,8 +118,11 @@ pub(crate) fn setup_npc_voice(asset: Res<AssetServer>, mut commands: Commands) {
     let ambient = AMBIENT_KEYS.iter().map(|k| asset.load(format!("audio/vo/npc/{k}.ogg"))).collect();
     commands.insert_resource(NpcVoiceBank {
         ambient,
+        // "They're coming. Inside, inside. Lock the door."   (fires on the Prep→Wave edge — dusk)
         siege_fear: asset.load("audio/vo/npc/siege_fear.ogg"),
+        // "Made it to morning. Knew you'd see us through."   (fires on the Wave→Prep edge — dawn)
         dawn_relief: asset.load("audio/vo/npc/dawn_relief.ogg"),
+        // "You came for me? Gods bless you. I'll take up a spear, I swear it."  (on a camp rescue)
         rescued: asset.load("audio/vo/npc/rescued.ogg"),
     });
     commands.init_resource::<NpcVoiceState>();
