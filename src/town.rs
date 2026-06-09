@@ -105,10 +105,12 @@ impl Plugin for TownPlugin {
                 Update,
                 (apply_building_damage, repair_system).run_if(in_state(Modal::None)),
             )
+            // Rebuild building meshes to match a loaded `TownRes` (ungated; fires on a load).
+            .add_systems(Update, restore_buildings)
             // VFX (ungated): flames flicker even when frozen.
             .add_systems(Update, flame_flicker)
-            // Screenshot staging (ungated): no-ops unless FOREST_TOWN is set.
-            .add_systems(Update, stage_town_for_shot);
+            // Screenshot staging (ungated): no-op unless FOREST_TOWN / FOREST_PANEL=build set.
+            .add_systems(Update, (stage_town_for_shot, open_build_for_shot));
     }
 }
 
@@ -187,12 +189,20 @@ fn population_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut floats: ResMut<crate::combat_fx::FloatQueue>,
 ) {
     let dt = time.delta_secs() as f64;
     if town.0.population_tick(dt, &mut bank.0) {
         lives.heirs += 1;
         let seed = 0x70b1_0000u32.wrapping_add(town.0.population.wrapping_mul(101));
         crate::villagers::spawn_townsperson(&mut commands, &mut meshes, &mut materials, seed);
+        // Make the food→population link visible: a float over the town when a villager is born.
+        floats.0.push(crate::combat_fx::FloatReq {
+            world: Vec3::new(0.0, 6.5, 5.0),
+            text: "\u{1f331} A villager joins your town!".into(),
+            color: Color::srgb(0.55, 1.0, 0.6),
+            scale: 1.25,
+        });
     }
 }
 
@@ -210,6 +220,32 @@ fn reset_town(
     // scene must match). Mirrors how succession_fx reaps graves on a new run.
     for e in &stale {
         commands.entity(e).try_despawn();
+    }
+}
+
+/// On a loaded game (`GameLoaded`), rebuild building meshes to match the restored `TownRes`:
+/// reap every current building mesh + flame, then spawn one per built plot. The plot pads
+/// persist (built once at startup), so only the buildings on them need reconciling — the mirror
+/// of `reset_town`'s reap, but for an arbitrary saved layout instead of an empty one.
+fn restore_buildings(
+    mut ev: MessageReader<crate::savegame::GameLoaded>,
+    town: Res<TownRes>,
+    spots: Res<PlotSpots>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    stale: Query<Entity, Or<(With<BuildingMesh>, With<Flame>)>>,
+) {
+    if ev.read().count() == 0 {
+        return;
+    }
+    for e in &stale {
+        commands.entity(e).try_despawn();
+    }
+    for (idx, plot) in town.0.plots.iter().enumerate() {
+        if let (true, Some(kind)) = (plot.is_built(), plot.kind) {
+            spawn_building_mesh(&mut commands, &mut meshes, &mut materials, idx, kind, &spots);
+        }
     }
 }
 
@@ -384,6 +420,27 @@ fn repair_system(
 /// Screenshot-staging hook: pre-builds plots 0/1/2 and optionally ignites plot 0.
 /// Runs once per launch when `FOREST_TOWN` is set (any value builds; `"burn"` also ignites).
 /// Waits until `PlotSpots` is populated (post worldmap build) via the early-return guard.
+/// Screenshot hook: `FOREST_PANEL=build` pops the Build menu (with a plot target + resources
+/// staged) so the construction copy can be captured. No-op otherwise.
+fn open_build_for_shot(
+    app: Res<State<AppState>>,
+    mut next: ResMut<NextState<Modal>>,
+    mut target: ResMut<BuildTarget>,
+    mut bank: ResMut<Bank>,
+    mut done: Local<bool>,
+) {
+    if *done || std::env::var("FOREST_PANEL").ok().as_deref() != Some("build") {
+        return;
+    }
+    if *app.get() == AppState::Playing {
+        *done = true;
+        target.0 = Some(0); // pretend we're standing on a plot so the rows read as buildable
+        bank.0.add_wood(50.0);
+        bank.0.add_stone(50.0);
+        next.set(Modal::Build);
+    }
+}
+
 fn stage_town_for_shot(
     mut done: Local<bool>,
     spots: Res<PlotSpots>,
@@ -403,7 +460,8 @@ fn stage_town_for_shot(
     town.0.build(0, BuildKind::Farm, &mut bank.0);
     town.0.build(1, BuildKind::House, &mut bank.0);
     town.0.build(2, BuildKind::Farm, &mut bank.0);
-    for idx in [0usize, 1, 2] {
+    town.0.build(3, BuildKind::Lumber, &mut bank.0);
+    for idx in [0usize, 1, 2, 3] {
         if let Some(kind) = town.0.plots[idx].kind {
             spawn_building_mesh(&mut commands, &mut meshes, &mut materials, idx, kind, &spots);
         }
@@ -422,7 +480,17 @@ struct BuildUi;
 #[derive(Component)]
 struct BuildOption(BuildKind);
 
-const MENU: [BuildKind; 2] = [BuildKind::Farm, BuildKind::House];
+const MENU: [BuildKind; 3] = [BuildKind::Farm, BuildKind::House, BuildKind::Lumber];
+
+/// One-line "what it does" shown under each building in the Build menu — so players see that
+/// a Farm *feeds the town and grows population*, not just that it "needs a worker".
+fn build_desc(kind: BuildKind) -> &'static str {
+    match kind {
+        BuildKind::Farm => "Grows food \u{2192} new villagers join your town",
+        BuildKind::House => "Housing \u{2192} +2 population your town can hold",
+        BuildKind::Lumber => "Woodcutter \u{2192} produces wood (needs a worker)",
+    }
+}
 
 fn spawn_build(
     mut commands: Commands,
@@ -476,19 +544,29 @@ fn spawn_build(
                     BuildOption(kind),
                 ))
                 .with_children(|b| {
-                    let need = kind.needs_worker();
-                    let name = if need {
-                        format!("{}  (needs worker)", kind.label())
-                    } else {
-                        kind.label().to_string()
-                    };
-                    b.spawn(label(&fonts.semibold, &name, 14.0, col));
-                    b.spawn(label(
-                        &fonts.semibold,
-                        &format!("Wood {}  Stone {}", c.wood as i64, c.stone as i64),
-                        13.0,
-                        col,
-                    ));
+                    // Left column: name + a plain-language line on what the building does.
+                    let desc_col = if afford { GREY } else { TEXT_FAINT };
+                    b.spawn(Node {
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(2.0),
+                        ..default()
+                    })
+                    .with_children(|l| {
+                        l.spawn(label(&fonts.semibold, kind.label(), 14.0, col));
+                        l.spawn(label(&fonts.regular, build_desc(kind), 11.0, desc_col));
+                    });
+                    // Right: cost (only the resources actually needed).
+                    let mut cost = String::new();
+                    if c.wood > 0.0 {
+                        cost.push_str(&format!("{} wood", c.wood as i64));
+                    }
+                    if c.stone > 0.0 {
+                        if !cost.is_empty() {
+                            cost.push_str("  ");
+                        }
+                        cost.push_str(&format!("{} stone", c.stone as i64));
+                    }
+                    b.spawn(label(&fonts.semibold, &cost, 13.0, col));
                 });
             }
             root.spawn(label(&fonts.regular, "Esc to close", 11.0, GREY));
@@ -558,27 +636,11 @@ fn spawn_building_mesh(
 }
 
 fn building_mesh(kind: BuildKind) -> Mesh {
-    let (body_col, roof_col, h) = match kind {
-        BuildKind::Farm => (0xb9975a, 0x7a4a2a, 1.4f32),  // straw walls, brown thatch
-        BuildKind::House => (0xcdbfa6, 0x8a3a2a, 2.0f32), // plaster walls, red roof
-    };
-    let walls = tinted(
-        Cuboid::new(2.2, h, 2.2)
-            .mesh()
-            .build()
-            .translated_by(Vec3::new(0.0, h * 0.5, 0.0)),
-        lin(body_col),
-    );
-    let roof = tinted(
-        Cuboid::new(2.6, 0.5, 2.6)
-            .mesh()
-            .build()
-            .translated_by(Vec3::new(0.0, h + 0.25, 0.0)),
-        lin(roof_col),
-    );
-    let mut m = walls;
-    m.merge(&roof).expect("building parts share attributes");
-    m.duplicate_vertices();
-    m.compute_flat_normals();
-    m
+    // Proper low-poly models (foundation/walls/gable-roof/door/window for the house, a
+    // thatched hut + tilled field for the farm) live in `town_meshes`.
+    match kind {
+        BuildKind::Farm => crate::town_meshes::farm(),
+        BuildKind::House => crate::town_meshes::house(),
+        BuildKind::Lumber => crate::town_meshes::woodcutter(),
+    }
 }

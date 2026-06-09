@@ -5008,12 +5008,18 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "bevy_egui",
+ "serde",
+ "serde_json",
  "tileworld_core",
 ]
 
 [[package]]
 name = "tileworld_core"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "tiny-skia"

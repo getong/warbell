@@ -17,11 +17,15 @@ pub const UPKEEP_PER_POP: f64 = 0.04;
 /// Building HP healed per second while repairing (Prep phase).
 pub const REPAIR_PER_SEC: f64 = 8.0;
 
-/// What you can build on a plot. (Pass 2 adds Lumber/Quarry/Market/Granary.)
+/// What you can build on a plot. (Pass 2 adds Quarry/Market/Granary.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum BuildKind {
     Farm,
     House,
+    /// Woodcutter — produces wood. Costs only stone so it can always be bootstrapped by
+    /// mining, even once the starting wood stipend is spent (no wood chicken-and-egg).
+    Lumber,
 }
 
 /// A resource a producer yields.
@@ -44,6 +48,7 @@ impl BuildKind {
         match self {
             BuildKind::Farm => Cost { wood: 8.0, stone: 0.0 },
             BuildKind::House => Cost { wood: 6.0, stone: 4.0 },
+            BuildKind::Lumber => Cost { wood: 0.0, stone: 6.0 },
         }
     }
 
@@ -52,6 +57,7 @@ impl BuildKind {
         match self {
             BuildKind::Farm => Some((Resource::Food, 0.5)),
             BuildKind::House => None,
+            BuildKind::Lumber => Some((Resource::Wood, 0.4)),
         }
     }
 
@@ -59,6 +65,7 @@ impl BuildKind {
         match self {
             BuildKind::Farm => 60.0,
             BuildKind::House => 50.0,
+            BuildKind::Lumber => 55.0,
         }
     }
 
@@ -70,12 +77,14 @@ impl BuildKind {
         match self {
             BuildKind::Farm => "Farm",
             BuildKind::House => "House",
+            BuildKind::Lumber => "Woodcutter",
         }
     }
 }
 
 /// A plot's lifecycle. `hp`/`burning` live inside `Built`.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum PlotState {
     Empty,
     Built { hp: f64, burning: bool },
@@ -83,6 +92,7 @@ pub enum PlotState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Plot {
     pub kind: Option<BuildKind>,
     pub state: PlotState,
@@ -105,6 +115,7 @@ impl Plot {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Town {
     pub plots: Vec<Plot>,
     pub population: u32,
@@ -292,6 +303,19 @@ mod tests {
         let before = bank.food();
         t.production_tick(2.0, &mut bank); // 2s at 0.5/s = +1 food from one farm
         assert!((bank.food() - (before + 1.0)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn woodcutter_costs_stone_only_and_produces_wood() {
+        // Bootstrappable with zero wood (only stone), so it closes the wood loop.
+        let mut t = Town::new(1, 0);
+        let mut bank = bank_with(0.0, 10.0, 0.0); // no wood, some stone
+        assert!(t.build(0, BuildKind::Lumber, &mut bank));
+        assert_eq!(bank.stone(), 4.0); // 10 - 6
+        t.plots[0].staffed = true;
+        let before = bank.wood();
+        t.production_tick(2.0, &mut bank); // 2s at 0.4/s = +0.8 wood
+        assert!((bank.wood() - (before + 0.8)).abs() < 1e-9);
     }
 
     #[test]

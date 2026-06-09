@@ -152,6 +152,9 @@ pub enum AudioCue {
     /// One metallic chip on a pick-swing against an ore boulder (sampled `var-1`/`var-3`
     /// clips, pitch-jittered). Distinct from the `OreShatter` synth sting on the breaking blow.
     OreChip,
+    /// A single axe chop landing on a tree (sampled `chop-wood.ogg`, pitch-jittered). Emitted
+    /// once per swing that strikes any choppable tree (`verbs::chop_tree`).
+    WoodChop,
     // ── Procedural stings (synth-baked, handled by `sfx` via [`synth::StingBank`]) ──
     /// Ore boulder shattered.
     OreShatter,
@@ -224,6 +227,16 @@ pub(crate) const HERO_LINE_CD: f32 = 20.0;
 /// orks (and the finish-grace check) know when he's mid-sentence and stay off him.
 #[derive(Resource, Default)]
 pub(crate) struct HeroSpeaking {
+    pub until: f32,
+}
+
+/// Mirror of [`HeroSpeaking`]: estimated end time of a NON-hero spoken line currently sounding —
+/// a villager's chatter or an ork's battle bark. The hero's spoken lines (`voice.rs` biome/event
+/// musings + `hero_remarks.rs` observations) defer while `now < until`, so he never talks over the
+/// townsfolk or the horde commenting on guards/town/etc. His combat exertion grunts + death cry are
+/// exempt (reflex, not commentary).
+#[derive(Resource, Default)]
+pub(crate) struct OthersSpeaking {
     pub until: f32,
 }
 
@@ -301,6 +314,7 @@ impl Plugin for GameAudioPlugin {
             .init_resource::<HeroLineGates>()
             .init_resource::<HeroLineCooldown>()
             .init_resource::<HeroSpeaking>()
+            .init_resource::<OthersSpeaking>()
             .add_message::<AudioCue>()
             .add_systems(
                 Startup,

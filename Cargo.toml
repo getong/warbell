@@ -13,7 +13,11 @@ bevy = { version = "0.18.1", features = ["wav"] }
 bevy_egui = "0.39.1" # live debug-tuning panel (egui), targets bevy 0.18
 # Pure, deterministic game logic vendored from the ditched port (zero deps, edition 2024).
 # Source of the parity-tested stores: pathfinding, waves, upgrades, inventory, animals, etc.
-tileworld_core = { path = "crates/core" }
+# `serde` feature on so the save system can persist Player/Bag/Town/ResourceState (savegame.rs).
+tileworld_core = { path = "crates/core", features = ["serde"] }
+# Save/continue: JSON snapshot of a run, written at each dawn (`src/savegame.rs`).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 # Compile bevy deps with optimizations even in dev — otherwise the scene runs
 # at single digit FPS. Our own crate stays fast-to-compile at opt-level 0.

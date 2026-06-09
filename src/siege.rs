@@ -69,7 +69,7 @@ pub fn base_hp(v: OrkVariant) -> f32 {
 
 // ── Difficulty (ported from difficultyStore.ts) ─────────────────────────────────────
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum Difficulty {
     Easy,
     Normal,

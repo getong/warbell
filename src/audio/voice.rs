@@ -14,7 +14,7 @@ use crate::biome::Biome;
 
 use super::{
     frand, pick, AudioConfig, AudioCue, HeroEvent, HeroLineAnchor, HeroLineCooldown, HeroLineGates,
-    HeroMouthTag, HeroSpeaking, HERO_LINE_CD,
+    HeroMouthTag, HeroSpeaking, OthersSpeaking, HERO_LINE_CD,
 };
 
 /// Seconds between any two exertion grunts, so combat doesn't spam the hero's voice.
@@ -126,6 +126,7 @@ pub(crate) fn play_voice_cues(
     mut mouth: ResMut<HeroMouth>,
     mut cd: ResMut<HeroLineCooldown>,
     mut speaking: ResMut<HeroSpeaking>,
+    others: Res<OthersSpeaking>,
     mut gates: ResMut<HeroLineGates>,
     mut seed: Local<u32>,
     existing: Query<Entity, With<HeroMouthTag>>,
@@ -175,6 +176,7 @@ pub(crate) fn play_voice_cues(
                 if !gates.spoken_biomes.contains(&b)
                     && now >= mouth.line_until
                     && now >= cd.until
+                    && now >= others.until // don't muse over a villager / ork mid-line
                     && now - mouth.last_line >= GLOBAL_LINE_GAP
                 {
                     if let Some(h) = bank.lines.iter().find(|(bb, _)| *bb == b).map(|(_, h)| h) {
@@ -194,6 +196,7 @@ pub(crate) fn play_voice_cues(
                 // (not played, not queued) so bursts (level-up + first-kill + gold all at once)
                 // never trim each other — only one line plays per cooldown.
                 let blocked = now < cd.until
+                    || now < others.until // hold the reaction while someone else is speaking
                     || match ev {
                         HeroEvent::FirstStone if gates.first_stone => true,
                         HeroEvent::FirstRescue if gates.first_rescue => true,

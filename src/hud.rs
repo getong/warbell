@@ -33,6 +33,8 @@ struct StoneText;
 struct FoodText;
 #[derive(Component)]
 struct WoodText;
+#[derive(Component)]
+struct PopText;
 
 /// Which derived quick-slot a node belongs to.
 #[derive(Clone, Copy, PartialEq)]
@@ -72,7 +74,7 @@ pub struct HudPlugin;
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, (setup_hud, setup_inv_hud))
-            .add_systems(Update, (update_hud, update_inv_hud));
+            .add_systems(Update, (update_hud, update_inv_hud, update_town_pop));
     }
 }
 
@@ -209,6 +211,7 @@ fn setup_inv_hud(mut commands: Commands, fonts: Res<UiFonts>) {
                     r.spawn((label(&fonts.extrabold, "Stone 0", 13.0, STONE), StoneText));
                     r.spawn((label(&fonts.extrabold, "Food 0", 13.0, rgb(150, 220, 130)), FoodText));
                     r.spawn((label(&fonts.extrabold, "Wood 0", 13.0, rgb(190, 150, 100)), WoodText));
+                    r.spawn((label(&fonts.extrabold, "Pop 0/0", 13.0, rgb(230, 210, 150)), PopText));
                 });
             col.spawn((
                 Node {
@@ -385,6 +388,14 @@ fn update_inv_hud(
 }
 
 #[allow(clippy::type_complexity)]
+/// Population readout — `Pop <current>/<cap>`. Its own system so it needs no `&mut Text`
+/// disjointness juggling; makes the food→population growth visible as a climbing number.
+fn update_town_pop(town: Res<crate::town::TownRes>, mut q: Query<&mut Text, With<PopText>>) {
+    if let Ok(mut t) = q.single_mut() {
+        **t = format!("Pop {}/{}", town.0.population, town.0.pop_cap());
+    }
+}
+
 fn update_hud(
     player: Res<PlayerRes>,
     bank: Res<crate::economy::Bank>,

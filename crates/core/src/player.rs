@@ -19,6 +19,7 @@ const HP_PER_LEVEL: f64 = 14.0;
 const DAMAGE_PER_LEVEL: f64 = 6.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Player {
     pub x: f64,
     pub y: f64,

@@ -48,10 +48,10 @@ pub(crate) fn load_voices(asset: Res<AssetServer>, mut commands: Commands) {
     add(Species::Camel, 1.0, &["audio/camel.ogg"]);
     add(Species::Deer, 0.9, &["audio/deer-1.ogg", "audio/deer-2.ogg"]);
     add(Species::Goat, 0.9, &["audio/goat-1.ogg", "audio/goat-2.ogg"]);
-    add(Species::Rabbit, 0.7, &["audio/rabbit.ogg"]);
+    add(Species::Rabbit, 0.35, &["audio/rabbit.ogg"]);
     add(Species::PolarBear, 1.3, &["audio/bear-growl.ogg", "audio/bear-roar.ogg"]);
-    add(Species::Dog, 0.8, &["audio/dog-1.ogg", "audio/dog-2.ogg", "audio/dog-3.ogg", "audio/dog-4.ogg"]);
-    add(Species::Cat, 0.7, &["audio/cat-1.ogg", "audio/cat-2.ogg", "audio/cat-3.ogg", "audio/cat-4.ogg"]);
+    add(Species::Dog, 0.4, &["audio/dog-1.ogg", "audio/dog-2.ogg", "audio/dog-3.ogg", "audio/dog-4.ogg"]);
+    add(Species::Cat, 0.35, &["audio/cat-1.ogg", "audio/cat-2.ogg", "audio/cat-3.ogg", "audio/cat-4.ogg"]);
     add(Species::Wolf, 1.0, &["audio/wolf-1.ogg", "audio/wolf-2.ogg"]);
     add(Species::Boar, 1.0, &["audio/boar-1.ogg", "audio/boar-2.ogg"]);
     // Elk: no recording yet → silent (no entry).

@@ -11,7 +11,7 @@ use crate::dying::Dying;
 use crate::orks::Ork;
 use crate::player::Hero;
 
-use super::{frand, AudioConfig, HeroSpeaking};
+use super::{frand, AudioConfig, HeroSpeaking, OthersSpeaking};
 
 /// Shortest gap between ANY two ork utterances; a random slice up to [`BARK_GAP_JITTER`] is added
 /// on top so the cadence is irregular.
@@ -27,6 +27,9 @@ const PITCH_LO: f32 = 0.82;
 const PITCH_HI: f32 = 1.18;
 /// Ork voice gain (spatial).
 const ORK_GAIN: f32 = 0.85;
+/// Conservative mouth-busy window an ork bark/snarl occupies (clips aren't transcribed, ~2–4 s) —
+/// the hero defers his commentary this long after the horde speaks (mirrors voice.rs `LINE_GUARD`).
+const ORK_LINE_GUARD: f32 = 3.5;
 
 /// The general battle-cry pool (aligned with [`OrkVoiceBank::battle`]). One deep "cave monster"
 /// take, randomly pitch-shifted per utterance.
@@ -92,6 +95,7 @@ pub(crate) fn ork_voices(
     bank: Res<OrkVoiceBank>,
     mut st: ResMut<OrkVoiceState>,
     speaking: Res<HeroSpeaking>,
+    mut others: ResMut<OthersSpeaking>,
     hero: Query<&Hero>,
     dying: Query<&GlobalTransform, (Added<Dying>, With<Ork>)>,
     alive: Query<&GlobalTransform, (With<Ork>, Without<Dying>)>,
@@ -113,6 +117,7 @@ pub(crate) fn ork_voices(
         if frand(&mut st.rng) < DEATH_CHANCE {
             say_at(&mut commands, gt.translation(), bank.death.clone(), vol, pitch);
             st.next_bark = now + BARK_GAP + frand(&mut st.rng) * BARK_GAP_JITTER;
+            others.until = now + ORK_LINE_GUARD; // hero holds his commentary while the horde speaks
             return;
         }
     }
@@ -130,4 +135,5 @@ pub(crate) fn ork_voices(
     let i = (frand(&mut st.rng) * BATTLE_KEYS.len() as f32) as usize % BATTLE_KEYS.len();
     say_at(&mut commands, pos, bank.battle[i].clone(), vol, pitch);
     st.next_bark = now + BARK_GAP + frand(&mut st.rng) * BARK_GAP_JITTER;
+    others.until = now + ORK_LINE_GUARD; // hero holds his commentary while the horde speaks
 }

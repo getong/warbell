@@ -298,6 +298,7 @@ pub const BAG_SIZE: usize = 24;
 
 /// One bag cell: `None` = empty, else an item id + a stack count.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Slot {
     pub item_id: Option<String>,
     pub count: i64,
@@ -325,6 +326,7 @@ pub struct QuickSlot {
 /// `InventoryState`; the `open` modal flag is the ECS `AppState::Inventory`, so it
 /// is NOT stored here.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Bag {
     pub bag: Vec<Slot>,
     /// equipped weapon's damage bonus (0 = fists/starter).

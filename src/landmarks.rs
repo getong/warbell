@@ -71,6 +71,12 @@ impl Landmark {
     pub fn is_discovered(&self) -> bool {
         self.discovered
     }
+
+    /// Mark found on a loaded game (no loot/announce — that's the live `discover` path).
+    /// The matching beacon is snuffed by [`snuff_found_beacons`] next frame.
+    pub(crate) fn set_discovered(&mut self, v: bool) {
+        self.discovered = v;
+    }
 }
 
 /// How many landmarks the hero has found this session (for the all-found bonus + future HUD).
@@ -78,7 +84,7 @@ impl Landmark {
 pub struct Discoveries {
     pub found: u32,
     pub total: u32,
-    completed: bool,
+    pub(crate) completed: bool,
 }
 
 struct Meta {
@@ -221,6 +227,9 @@ impl Plugin for LandmarksPlugin {
         app.init_resource::<Discoveries>()
             // Beacon drift is a visual — runs even while the world is frozen, like the particles.
             .add_systems(Update, beacon_drift)
+            // Reconcile beacons to discovery state (ungated): catches the save-restore path, which
+            // flips `discovered` directly without going through `discover`'s beacon snuff.
+            .add_systems(Update, snuff_found_beacons)
             .add_systems(
                 Update,
                 (track_total, discover, shrine).run_if(in_state(Modal::None)),
@@ -252,6 +261,22 @@ fn beacon_drift(time: Res<Time>, mut q: Query<(&Beacon, &mut Transform)>) {
         }
         tf.translation.x = b.base.x + (t * 0.8 + b.phase).sin() * 0.25;
         tf.translation.z = b.base.z + (t * 0.7 + b.phase * 1.7).cos() * 0.25;
+    }
+}
+
+/// Despawn any beacon whose landmark is already discovered. The live `discover` path snuffs its
+/// own beacon inline; this covers the **save-restore** path, where `Landmark::set_discovered`
+/// flips the flag with no beacon bookkeeping. Cheap: idles once every found landmark's column is
+/// gone (the common steady state), only doing work the frame after a load marks new discoveries.
+fn snuff_found_beacons(
+    mut commands: Commands,
+    found: Query<&Landmark>,
+    beacons: Query<(Entity, &Beacon)>,
+) {
+    for (e, b) in &beacons {
+        if found.iter().any(|lm| lm.discovered && lm.name == b.name) {
+            commands.entity(e).try_despawn();
+        }
     }
 }
 
