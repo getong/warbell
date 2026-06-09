@@ -21,7 +21,7 @@ use bevy::prelude::*;
 use tileworld_core::buff_store::BuffKind;
 use tileworld_core::frontier;
 
-use crate::audio::{AudioCue, HeroEvent};
+use crate::audio::AudioCue;
 use crate::biome::{Biome, BiomeEntity};
 use crate::combat_fx::{col_kill, FloatQueue, FloatReq};
 use crate::game_state::Modal;
@@ -291,6 +291,7 @@ fn discover(
     mut toasts: ResMut<Toasts>,
     mut floats: ResMut<FloatQueue>,
     mut cues: MessageWriter<AudioCue>,
+    mut speak: MessageWriter<crate::audio::Speak>,
     mut disc: ResMut<Discoveries>,
     mut commands: Commands,
     mut q: Query<(&mut Landmark, &Transform)>,
@@ -338,7 +339,7 @@ fn discover(
         });
         cues.write(AudioCue::ChestOpen);
         cues.write(AudioCue::Gold);
-        cues.write(AudioCue::HeroEvent(HeroEvent::ChestOpen));
+        speak.write(crate::audio::Speak::new(crate::audio::Concept::ChestOpen));
 
         // Snuff the beacon — it's been found.
         for (e, b) in &beacons {

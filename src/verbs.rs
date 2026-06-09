@@ -102,6 +102,7 @@ fn mine_ore(
     mut commands: Commands,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
     mut cues: MessageWriter<AudioCue>,
+    mut speak: MessageWriter<crate::audio::Speak>,
     mut q: Query<(Entity, &mut OreNode, &Transform)>,
 ) {
     let now = time.elapsed_secs() as f64;
@@ -135,7 +136,7 @@ fn mine_ore(
                 }
                 cues.write(AudioCue::OreChip); // metallic crack on the breaking blow…
                 cues.write(AudioCue::OreShatter); // …layered under the synth shatter sting
-                cues.write(AudioCue::HeroEvent(crate::audio::HeroEvent::FirstStone));
+                speak.write(crate::audio::Speak::new(crate::audio::Concept::FirstStone));
                 crate::blockers::remove_at(p.x, p.z); // clear the boulder blocker — no ghost collision
                 commands.entity(e).try_despawn();
             } else {
@@ -671,6 +672,7 @@ fn chest_interact(
     mut toasts: ResMut<Toasts>,
     mut player: ResMut<PlayerRes>,
     mut cues: MessageWriter<AudioCue>,
+    mut speak: MessageWriter<crate::audio::Speak>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
     mut chests: Query<(&mut Chest, &Transform, &Children), Without<ChestLid>>,
     mut lids: Query<&mut Transform, (With<ChestLid>, Without<Chest>)>,
@@ -717,7 +719,7 @@ fn chest_interact(
         floats.0.push(FloatReq { world: head, text: format!("+{gold} gold"), color: crate::combat_fx::col_kill(), scale: 1.1 });
         cues.write(AudioCue::ChestOpen);
         cues.write(AudioCue::Gold); // a coin chime layered over the chest creak
-        cues.write(AudioCue::HeroEvent(crate::audio::HeroEvent::ChestOpen)); // hero muses
+        speak.write(crate::audio::Speak::new(crate::audio::Concept::ChestOpen)); // hero muses
 
         chest.opened = true;
         chest.opened_at = now;

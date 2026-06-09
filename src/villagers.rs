@@ -146,7 +146,10 @@ fn arm_as_guard(commands: &mut Commands, e: Entity, post: Vec2) {
 // pair can win a 1v1 but a wave still overwhelms them.
 const GUARD_MAX_HP: f32 = 65.0;
 const GUARD_DAMAGE: f32 = 9.0;
-const GUARD_DEFEND_RADIUS: f32 = 12.0;
+/// How far a guard will march to hunt an invader at night. Large enough to cover the whole
+/// defended area, so the reserve actively goes out to meet the wave instead of standing idle until
+/// an ork wanders within arm's reach (the old 12-unit passive radius left guards doing nothing).
+const GUARD_HUNT_RADIUS: f32 = 60.0;
 const GUARD_MELEE: f32 = 1.6;
 const GUARD_SPEED: f32 = 2.4;
 const GUARD_ATTACK_CD: f32 = 1.0;
@@ -302,6 +305,7 @@ fn camp_rescue(
     cages_q: Query<(Entity, &crate::camps::Cage, &Transform)>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
+    mut speak: MessageWriter<crate::audio::Speak>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -345,7 +349,7 @@ fn camp_rescue(
             scale: 1.2,
         });
         cues.write(crate::audio::AudioCue::CampRescue);
-        cues.write(crate::audio::AudioCue::HeroEvent(crate::audio::HeroEvent::FirstRescue));
+        speak.write(crate::audio::Speak::new(crate::audio::Concept::FirstRescue));
     }
 }
 
@@ -679,11 +683,11 @@ fn guard_combat(
             v.moving = false;
         } else {
             g.atk_cd -= dt;
-            // Nearest invader within the defend radius.
+            // Hunt the NEAREST invader (within the big hunt radius) — march out to meet it.
             let mut best: Option<(Entity, Vec2, f32)> = None;
             for (e, p) in &inv {
                 let d = v.pos.distance(*p);
-                if d < GUARD_DEFEND_RADIUS && best.is_none_or(|(_, _, bd)| d < bd) {
+                if d < GUARD_HUNT_RADIUS && best.is_none_or(|(_, _, bd)| d < bd) {
                     best = Some((*e, *p, d));
                 }
             }
@@ -705,8 +709,31 @@ fn guard_combat(
                         }
                     }
                 } else {
+                    // Far from the ork → A* toward it (thread walls/gates instead of wedging);
+                    // close → cheap direct steer. Same pattern as the dawn return-to-post.
+                    let step_target = if d > GUARD_PATH_RANGE {
+                        if path.cursor >= path.waypoints.len()
+                            || now >= path.next_replan
+                            || path.goal_cached.distance(tp) > 2.0
+                        {
+                            path.waypoints = crate::navgrid::path_to(v.pos, tp);
+                            path.cursor = 0;
+                            path.goal_cached = tp;
+                            path.next_replan = now + 0.5 + (self_e.to_bits() % 16) as f32 * 0.04;
+                        }
+                        while path.cursor < path.waypoints.len()
+                            && v.pos.distance(path.waypoints[path.cursor]) < 1.2
+                        {
+                            path.cursor += 1;
+                        }
+                        path.waypoints.get(path.cursor).copied().unwrap_or(tp)
+                    } else {
+                        path.waypoints.clear();
+                        path.cursor = 0;
+                        tp
+                    };
                     let cur_y = worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
-                    if let Some(s) = steer::advance(v.pos, v.facing, tp, GUARD_SPEED * dt, v.body_r, cur_y, VIL_MAX_TURN * 2.0 * dt) {
+                    if let Some(s) = steer::advance(v.pos, v.facing, step_target, GUARD_SPEED * dt, v.body_r, cur_y, VIL_MAX_TURN * 2.0 * dt) {
                         v.facing = s.facing;
                         v.pos = s.pos;
                         v.moving = s.moving;
