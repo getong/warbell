@@ -16,9 +16,7 @@
 use bevy::audio::{PlaybackMode, Volume};
 use bevy::prelude::*;
 
-use super::{
-    frand, pick, AudioConfig, AudioCue, HeroLineCooldown, HeroMouthTag, HeroSpeaking, HERO_LINE_CD,
-};
+use super::{frand, pick, AudioConfig, AudioCue, HeroLineCooldown, HeroMouthTag, HERO_LINE_CD};
 
 /// Seconds between any two exertion grunts, so combat doesn't spam the hero's voice.
 const GRUNT_MIN_GAP: f32 = 1.6;
@@ -70,7 +68,6 @@ pub(crate) fn play_voice_cues(
     bank: Res<VoiceBank>,
     mut mouth: ResMut<HeroMouth>,
     mut cd: ResMut<HeroLineCooldown>,
-    mut speaking: ResMut<HeroSpeaking>,
     mgr: Res<super::director::VoiceManager>,
     mut seed: Local<u32>,
     existing: Query<Entity, With<HeroMouthTag>>,
@@ -79,8 +76,7 @@ pub(crate) fn play_voice_cues(
 ) {
     let now = time.elapsed_secs();
     // Decide the single sound the mouth plays this frame; later cues override earlier ones.
-    // (clip, vol, is_line) — is_line marks the death cry (vs short grunts).
-    let mut pending: Option<(Handle<AudioSource>, f32, bool)> = None;
+    let mut pending: Option<(Handle<AudioSource>, f32)> = None;
 
     for cue in cues.read() {
         match *cue {
@@ -93,7 +89,7 @@ pub(crate) fn play_voice_cues(
                     && !mgr.hero_speaking(now)
                 {
                     mouth.last_grunt = now;
-                    pending = Some((pick(&bank.swings, &mut seed), 0.4 * cfg.voice_vol, false));
+                    pending = Some((pick(&bank.swings, &mut seed), 0.4 * cfg.voice_vol));
                 }
             }
             AudioCue::HeroJump => {
@@ -105,7 +101,7 @@ pub(crate) fn play_voice_cues(
                     && !mgr.hero_speaking(now)
                 {
                     mouth.last_grunt = now;
-                    pending = Some((bank.jump.clone(), 0.28 * cfg.voice_vol, false));
+                    pending = Some((bank.jump.clone(), 0.28 * cfg.voice_vol));
                 }
             }
             AudioCue::HeroHurt => {
@@ -116,7 +112,7 @@ pub(crate) fn play_voice_cues(
                     && !mgr.hero_speaking(now)
                 {
                     mouth.last_grunt = now;
-                    pending = Some((pick(&bank.hurts, &mut seed), 0.45 * cfg.voice_vol, false));
+                    pending = Some((pick(&bank.hurts, &mut seed), 0.45 * cfg.voice_vol));
                 }
             }
             AudioCue::HeroDeath => {
@@ -130,21 +126,17 @@ pub(crate) fn play_voice_cues(
                         commands.entity(e).try_despawn();
                     }
                 }
-                pending = Some((pick(&bank.deaths, &mut seed), cfg.voice_vol, true));
+                pending = Some((pick(&bank.deaths, &mut seed), cfg.voice_vol));
             }
             _ => {}
         }
     }
 
-    if let Some((clip, vol, is_line)) = pending {
-        // One mouth: stop whatever he was saying — a prior line OR a remark (both `HeroMouthTag`).
+    if let Some((clip, vol)) = pending {
+        // One mouth: stop whatever reflex sink he had going (both carry `HeroMouthTag`).
         // Only live sinks are yielded, so no stale ids; `try_despawn` is safe if one already ended.
         for e in &existing {
             commands.entity(e).try_despawn();
-        }
-        // A LINE (death cry) occupies the mouth for ~its length, so villagers/orks defer; grunts don't.
-        if is_line {
-            speaking.until = now + LINE_GUARD;
         }
         commands.spawn((
             AudioPlayer(clip),
