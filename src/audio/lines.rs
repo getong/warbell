@@ -122,3 +122,144 @@ const fn line(id: &'static str, speaker: Speaker, concept: Concept, text: &'stat
 pub const LINES: &[Line] = &[
     line("levelup", Speaker::Hero, Concept::LevelUp, "Stronger. The blade feels lighter than it did."),
 ];
+
+/// All catalog lines for a concept, in declaration order.
+pub fn candidates(concept: Concept) -> impl Iterator<Item = &'static Line> {
+    LINES.iter().filter(move |l| l.concept == concept)
+}
+
+/// All catalog lines that are a valid reply to a dispatched chain concept.
+pub fn replies_to(concept: Concept) -> impl Iterator<Item = &'static Line> {
+    LINES.iter().filter(move |l| l.reply_to == Some(concept))
+}
+
+/// xorshift — same as the audio module's RNG, duplicated here to keep `lines` Bevy/dep-free.
+fn next_rng(s: &mut u32) -> u32 {
+    if *s == 0 {
+        *s = 0x9e37_79b9;
+    }
+    *s ^= *s << 13;
+    *s ^= *s >> 17;
+    *s ^= *s << 5;
+    *s
+}
+fn frand(s: &mut u32) -> f32 {
+    (next_rng(s) & 0x00ff_ffff) as f32 / 0x00ff_ffff as f32
+}
+
+/// Pick a line for `concept`: among candidates, drop any played more recently than `floor`
+/// seconds ago (per-line replay floor, keyed by `id` in `last`), random pick of the rest.
+/// Returns `None` if the concept has no candidates or all are still floored.
+pub fn pick_line(
+    concept: Concept,
+    last: &std::collections::HashMap<&'static str, f32>,
+    now: f32,
+    floor: f32,
+    rng: &mut u32,
+) -> Option<&'static Line> {
+    let fresh: Vec<&'static Line> = candidates(concept)
+        .filter(|l| now - *last.get(l.id).unwrap_or(&f32::NEG_INFINITY) >= floor)
+        .collect();
+    if fresh.is_empty() {
+        return None;
+    }
+    let i = (frand(rng) * fresh.len() as f32) as usize % fresh.len();
+    Some(fresh[i])
+}
+
+/// What a speaker is currently saying (tracked by the director's `VoiceManager`).
+#[derive(Clone, Copy, Debug)]
+pub struct Active {
+    pub id: &'static str,
+    /// `elapsed_secs` when the clip is estimated to finish.
+    pub ends_at: f32,
+    pub priority: u8,
+    pub interruptible: bool,
+    /// Chain to dispatch when it finishes (consumed once).
+    pub then: Option<Chain>,
+}
+
+/// May a new line of `new_priority` start now, given the speaker's current `active` line?
+/// Rule (Pixel Crushers): play if the speaker is idle, its line already finished, or the current
+/// line is interruptible AND the newcomer is at least as important.
+pub fn can_play(active: Option<&Active>, now: f32, new_priority: u8) -> bool {
+    match active {
+        None => true,
+        Some(a) if now >= a.ends_at => true,
+        Some(a) => a.interruptible && new_priority >= a.priority,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn candidates_filters_by_concept() {
+        // The seed catalog has exactly one LevelUp line and no ChestOpen line yet.
+        assert_eq!(candidates(Concept::LevelUp).count(), 1);
+        assert_eq!(candidates(Concept::ChestOpen).count(), 0);
+    }
+
+    #[test]
+    fn pick_line_none_when_no_candidates() {
+        let last = HashMap::new();
+        let mut rng = 1;
+        assert!(pick_line(Concept::ChestOpen, &last, 100.0, 300.0, &mut rng).is_none());
+    }
+
+    #[test]
+    fn pick_line_respects_replay_floor() {
+        let mut last = HashMap::new();
+        last.insert("levelup", 50.0);
+        let mut rng = 1;
+        // 10s later, floor 300 → still floored → None.
+        assert!(pick_line(Concept::LevelUp, &last, 60.0, 300.0, &mut rng).is_none());
+        // 400s later → floor cleared → returns the line.
+        assert_eq!(pick_line(Concept::LevelUp, &last, 450.0, 300.0, &mut rng).unwrap().id, "levelup");
+    }
+
+    #[test]
+    fn pick_line_first_play_ignores_floor() {
+        let last = HashMap::new();
+        let mut rng = 1;
+        assert!(pick_line(Concept::LevelUp, &last, 0.0, 300.0, &mut rng).is_some());
+    }
+
+    #[test]
+    fn every_speaker_is_registered() {
+        for s in [Speaker::Hero, Speaker::Villager, Speaker::Ork] {
+            let _ = speaker_voice(s); // must not panic
+        }
+    }
+
+    fn active(prio: u8, interruptible: bool, ends_at: f32) -> Active {
+        Active { id: "x", ends_at, priority: prio, interruptible, then: None }
+    }
+
+    #[test]
+    fn can_play_when_idle() {
+        assert!(can_play(None, 0.0, 0));
+    }
+
+    #[test]
+    fn can_play_when_current_finished() {
+        let a = active(255, false, 5.0);
+        assert!(can_play(Some(&a), 6.0, 0)); // past ends_at → even a non-interruptible line is done
+    }
+
+    #[test]
+    fn cannot_interrupt_protected_line() {
+        let a = active(50, false, 100.0);
+        assert!(!can_play(Some(&a), 1.0, 255)); // not interruptible → blocked regardless of priority
+    }
+
+    #[test]
+    fn interrupt_needs_equal_or_higher_priority() {
+        let a = active(50, true, 100.0);
+        assert!(!can_play(Some(&a), 1.0, 49)); // lower → blocked
+        assert!(can_play(Some(&a), 1.0, 50)); // equal → allowed
+        assert!(can_play(Some(&a), 1.0, 200)); // higher → allowed
+    }
+}
