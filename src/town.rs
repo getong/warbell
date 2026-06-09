@@ -13,6 +13,10 @@ use tileworld_core::town_store::{BuildKind, Town};
 use crate::economy::Bank;
 use crate::game_state::{AppState, Modal};
 use crate::palette::lin;
+use crate::ui::anim::{anim, AnimKind};
+use crate::ui::fonts::{label, UiFonts};
+use crate::ui::theme::*;
+use crate::ui::widgets::{self, border};
 
 /// Number of build plots seeded around the castle.
 pub const PLOT_COUNT: usize = 8;
@@ -68,8 +72,10 @@ impl Plugin for TownPlugin {
             .init_resource::<BuildTarget>()
             .init_resource::<PlotSpots>()
             .add_systems(OnExit(AppState::StartScreen), reset_town)
-            .add_systems(OnExit(AppState::GameOver), reset_town);
-        // Plot seeding, build Modal, ticks, and burn/repair are added in later tasks.
+            .add_systems(OnExit(AppState::GameOver), reset_town)
+            .add_systems(OnEnter(Modal::Build), spawn_build)
+            .add_systems(OnExit(Modal::Build), despawn_build)
+            .add_systems(Update, build_interact.run_if(in_state(Modal::Build)));
     }
 }
 
@@ -143,5 +149,174 @@ fn plot_pad_mesh() -> Mesh {
 fn tinted(mut m: Mesh, c: [f32; 4]) -> Mesh {
     let n = m.count_vertices();
     m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![c; n]);
+    m
+}
+
+// ── Modal::Build panel ────────────────────────────────────────────────────────────────────
+
+#[derive(Component)]
+struct BuildUi;
+
+#[derive(Component)]
+struct BuildOption(BuildKind);
+
+const MENU: [BuildKind; 2] = [BuildKind::Farm, BuildKind::House];
+
+fn spawn_build(
+    mut commands: Commands,
+    fonts: Res<UiFonts>,
+    bank: Res<Bank>,
+    town: Res<TownRes>,
+    target: Res<BuildTarget>,
+) {
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Percent(50.0),
+                top: Val::Percent(50.0),
+                margin: UiRect::new(Val::Px(-180.0), Val::Auto, Val::Px(-140.0), Val::Auto),
+                width: Val::Px(360.0),
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(10.0),
+                padding: UiRect::all(Val::Px(20.0)),
+                border: border(1.0),
+                border_radius: radius(R_PANEL),
+                ..default()
+            },
+            widgets::card_paint(),
+            GlobalZIndex(60),
+            BuildUi,
+            anim(AnimKind::PopIn, 0.0, 0.22),
+        ))
+        .with_children(|root| {
+            root.spawn(label(&fonts.extrabold, "BUILD", 20.0, GOLD));
+            let buildable = target.0.is_some();
+            if !buildable {
+                root.spawn(label(&fonts.regular, "Stand on an empty plot to build.", 13.0, GREY));
+            }
+            for kind in MENU {
+                let c = kind.cost();
+                let afford = town.0.can_afford(kind, &bank.0) && buildable;
+                let col = if afford { Color::WHITE } else { TEXT_FAINT };
+                root.spawn((
+                    Button,
+                    Interaction::default(),
+                    Node {
+                        flex_direction: FlexDirection::Row,
+                        justify_content: JustifyContent::SpaceBetween,
+                        padding: UiRect::axes(Val::Px(14.0), Val::Px(9.0)),
+                        border: border(1.0),
+                        border_radius: radius(R_CARD),
+                        ..default()
+                    },
+                    BorderColor::all(if afford { GOLD_DEEP } else { BORDER_SOFT }),
+                    BuildOption(kind),
+                ))
+                .with_children(|b| {
+                    let need = kind.needs_worker();
+                    let name = if need {
+                        format!("{}  (needs worker)", kind.label())
+                    } else {
+                        kind.label().to_string()
+                    };
+                    b.spawn(label(&fonts.semibold, &name, 14.0, col));
+                    b.spawn(label(
+                        &fonts.semibold,
+                        &format!("Wood {}  Stone {}", c.wood as i64, c.stone as i64),
+                        13.0,
+                        col,
+                    ));
+                });
+            }
+            root.spawn(label(&fonts.regular, "Esc to close", 11.0, GREY));
+        });
+}
+
+fn despawn_build(mut commands: Commands, q: Query<Entity, With<BuildUi>>) {
+    for e in &q {
+        commands.entity(e).despawn();
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_interact(
+    q: Query<(&Interaction, &BuildOption), Changed<Interaction>>,
+    mut town: ResMut<TownRes>,
+    mut bank: ResMut<Bank>,
+    target: Res<BuildTarget>,
+    mut next_modal: ResMut<NextState<Modal>>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    spots: Res<PlotSpots>,
+    existing: Query<(Entity, &BuildingMesh)>,
+) {
+    for (interaction, opt) in &q {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        let Some(idx) = target.0 else { continue };
+        let kind = opt.0;
+        if town.0.build(idx, kind, &mut bank.0) {
+            // Rebuild-on-rubble: clear any stale mesh first.
+            for (e, bm) in &existing {
+                if bm.idx == idx {
+                    commands.entity(e).try_despawn();
+                }
+            }
+            spawn_building_mesh(&mut commands, &mut meshes, &mut materials, idx, kind, &spots);
+            next_modal.set(Modal::None); // close after a successful build
+        }
+    }
+}
+
+fn spawn_building_mesh(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    idx: usize,
+    kind: BuildKind,
+    spots: &PlotSpots,
+) {
+    let pos = spots.0.get(idx).copied().unwrap_or(Vec2::ZERO);
+    let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
+    let mat = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        perceptual_roughness: 0.9,
+        ..default()
+    });
+    commands.spawn((
+        Mesh3d(meshes.add(building_mesh(kind))),
+        MeshMaterial3d(mat),
+        Transform::from_xyz(pos.x, y, pos.y),
+        crate::biome::BiomeEntity,
+        BuildingMesh { idx },
+    ));
+}
+
+fn building_mesh(kind: BuildKind) -> Mesh {
+    let (body_col, roof_col, h) = match kind {
+        BuildKind::Farm => (0xb9975a, 0x7a4a2a, 1.4f32),  // straw walls, brown thatch
+        BuildKind::House => (0xcdbfa6, 0x8a3a2a, 2.0f32), // plaster walls, red roof
+    };
+    let walls = tinted(
+        Cuboid::new(2.2, h, 2.2)
+            .mesh()
+            .build()
+            .translated_by(Vec3::new(0.0, h * 0.5, 0.0)),
+        lin(body_col),
+    );
+    let roof = tinted(
+        Cuboid::new(2.6, 0.5, 2.6)
+            .mesh()
+            .build()
+            .translated_by(Vec3::new(0.0, h + 0.25, 0.0)),
+        lin(roof_col),
+    );
+    let mut m = walls;
+    m.merge(&roof).expect("building parts share attributes");
+    m.duplicate_vertices();
+    m.compute_flat_normals();
     m
 }
