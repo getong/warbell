@@ -15,8 +15,8 @@ use super::{frand, AudioConfig};
 
 /// Shortest gap between ANY two ork utterances; a random slice up to [`BARK_GAP_JITTER`] is added
 /// on top so the cadence is irregular.
-const BARK_GAP: f32 = 28.0;
-const BARK_GAP_JITTER: f32 = 20.0;
+const BARK_GAP: f32 = 18.0;
+const BARK_GAP_JITTER: f32 = 14.0;
 /// An ork must be within this of the hero (world units) for its bark to be worth playing.
 const EARSHOT: f32 = 32.0;
 /// When an ork falls while the cooldown is clear, the chance we play its death snarl (vs. letting
@@ -28,7 +28,18 @@ const PITCH_HI: f32 = 1.18;
 /// Ork voice gain (spatial).
 const ORK_GAIN: f32 = 0.85;
 
-/// The general battle-cry pool (aligned with [`OrkVoiceBank::battle`]).
+/// The general battle-cry pool (aligned with [`OrkVoiceBank::battle`]). One deep "cave monster"
+/// take, randomly pitch-shifted per utterance.
+///
+/// **Spoken text of each line** (keep in sync with the clips — our record of what the orks say):
+/// - `spot`   — "Little knight. Little bones."
+/// - `charge` — "Smash the stone. Burn the nest."
+/// - `blood`  — "Blood. Blood."                       (the berserker frenzy cry)
+/// - `taunt`  — "Run, runt. We eat slow ones first."
+/// - `where`  — "Where? Where you hide, worm?"         (lost the target)
+/// - `feast`  — "Tonight we feast."
+/// - `shaman` — "Spirits take him. Saka."              (the shaman's incantation)
+/// And the separate death snarl `death` — "Not done." (choked, fading; plays on a kill).
 const BATTLE_KEYS: [&str; 7] = ["spot", "charge", "blood", "taunt", "where", "feast", "shaman"];
 
 #[derive(Resource)]
