@@ -334,6 +334,7 @@ impl Plugin for GameAudioPlugin {
                     npc::setup_npc_voice,
                     ork::setup_ork_voice,
                     hero_remarks::setup,
+                    director::setup_voice_manager,
                 ),
             )
             .add_systems(
@@ -365,6 +366,10 @@ impl Plugin for GameAudioPlugin {
                     .after(voice::play_voice_cues)
                     .run_if(in_state(crate::game_state::AppState::Playing)),
             )
+            // The director is the PLAYBACK layer — gated on `Playing` (like every sibling audio
+            // system) so an in-flight line finishes through a panel. The SIM layer is the
+            // `detect_*` trigger systems that emit `Speak`; those carry `Modal::None` so no new
+            // line is *decided* while the world is frozen.
             .add_systems(
                 Update,
                 (director::speak_director, director::tick_chains)

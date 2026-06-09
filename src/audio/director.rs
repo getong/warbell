@@ -13,6 +13,10 @@ use super::lines::{
 };
 use super::AudioConfig;
 
+/// A chained reply line won't repeat within this window (seconds) — keeps call-and-response
+/// exchanges from looping the same retort.
+const CHAIN_REPLY_FLOOR: f32 = 30.0;
+
 /// A request to speak. Triggers (`detect_*` systems) write these; the director decides if/what
 /// actually plays. `at` positions a spatial speaker (villager/ork); ignored for the head-locked
 /// hero. `floor` is the per-line replay floor for this request's concept.
@@ -74,12 +78,6 @@ impl VoiceManager {
     }
 }
 
-/// Estimate a clip's spoken length from its transcript (same model as the subtitle reader, so the
-/// mouth-busy window matches the caption).
-fn line_secs(text: &str) -> f32 {
-    crate::subtitles::read_secs(text)
-}
-
 /// Resolve `Speak` requests into clips. For each request: pick a fresh line for the concept, check
 /// the speaker's barge-in gate, and if clear, stop any current sink for that speaker and play.
 pub fn speak_director(
@@ -134,7 +132,7 @@ fn play_line(
         Speaker::Ork => "ork",
     };
     let clip: Handle<AudioSource> = asset.load(format!("audio/vo/{dir}/{}.ogg", line.id));
-    let dur = line_secs(line.text);
+    let dur = crate::subtitles::read_secs(line.text);
     let vol = voice.gain * cfg.voice_vol;
 
     let mut ent = commands.spawn((
@@ -195,7 +193,8 @@ pub fn tick_chains(
     for (chain, pos) in due {
         // Pick the highest-priority reply that's off its floor (replies use a short 30s floor).
         let pick = replies_to(chain.concept)
-            .filter(|l| now - *mgr.last_played.get(l.id).unwrap_or(&f32::NEG_INFINITY) >= 30.0)
+            .filter(|l| l.speaker == chain.target)
+            .filter(|l| now - *mgr.last_played.get(l.id).unwrap_or(&f32::NEG_INFINITY) >= CHAIN_REPLY_FLOOR)
             .max_by_key(|l| l.priority)
             .copied();
         let Some(reply) = pick else { continue };
@@ -203,4 +202,15 @@ pub fn tick_chains(
             play_line(&mut commands, &asset, &cfg, &mut mgr, &sinks, now, &reply, pos);
         }
     }
+}
+
+/// Reseed the line-pick RNG from wall-clock entropy so catalog line order differs each run
+/// (a fixed seed replays the same picks every session — the same complaint `npc.rs` solved).
+pub fn setup_voice_manager(mut mgr: ResMut<VoiceManager>) {
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0x1234_5678)
+        | 1;
+    mgr.rng = seed;
 }
