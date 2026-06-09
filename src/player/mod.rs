@@ -77,8 +77,8 @@ pub struct HeroHealth {
 impl Default for HeroHealth {
     fn default() -> Self {
         HeroHealth {
-            stamina: 100.0,
-            stamina_max: 100.0,
+            stamina: 150.0,
+            stamina_max: 150.0,
             block_locked: false,
             regen_pause: 0.0,
             blocking: false,

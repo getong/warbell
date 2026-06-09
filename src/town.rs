@@ -78,8 +78,16 @@ impl Plugin for TownPlugin {
             .init_resource::<PendingBuildingDamage>()
             .init_resource::<BuildTarget>()
             .init_resource::<PlotSpots>()
-            .add_systems(OnExit(AppState::StartScreen), reset_town)
-            .add_systems(OnExit(AppState::GameOver), reset_town)
+            // Run AFTER economy's reset: its `bank.0.reset()` zeroes food/wood too, so the
+            // START_WOOD grant must come last or it gets wiped (system-order race).
+            .add_systems(
+                OnExit(AppState::StartScreen),
+                reset_town.after(crate::economy::reset_economy),
+            )
+            .add_systems(
+                OnExit(AppState::GameOver),
+                reset_town.after(crate::economy::reset_economy),
+            )
             .add_systems(OnEnter(Modal::Build), spawn_build)
             .add_systems(OnExit(Modal::Build), despawn_build)
             .add_systems(Update, build_interact.run_if(in_state(Modal::Build)))

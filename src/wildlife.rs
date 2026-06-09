@@ -589,6 +589,7 @@ fn valid(place: Place, x: f32, z: f32) -> bool {
     worldmap::ground_at_world(x, z).is_some()
         && !crate::blockers::is_blocked(x, z)
         && !crate::camps::in_clearing(x, z) // keep herds out of the ork camps
+        && (x * x + z * z).sqrt() >= worldmap::SAFE_R // keep wild herds out of the castle safe-zone
         && place_ok(place, x, z)
 }
 
