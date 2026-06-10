@@ -73,6 +73,15 @@ impl Plugin for VerbsPlugin {
                     ground_pickup,
                 )
                     .run_if(in_state(Modal::None)),
+            )
+            // Impact-juice drivers — ungated (like `dying.rs` / `combat_fx`: a mid-fall tree
+            // keeps toppling behind a panel; virtual time still freezes them under a hit-stop)
+            // and AFTER the wind sway, which rewrites every swaying tree's rotation each frame:
+            // these layer the chop shudder / felling topple on top of that write.
+            .add_systems(
+                Update,
+                (drive_trunk_shake, drive_felling, drive_regrow_pop, drive_lid_swing)
+                    .after(crate::wind::sway_system),
             );
     }
 }
@@ -106,11 +115,11 @@ fn mine_ore(
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
     mut cues: MessageWriter<AudioCue>,
     mut speak: MessageWriter<crate::audio::Speak>,
-    mut q: Query<(Entity, &mut OreNode, &Transform)>,
+    mut q: Query<(Entity, &mut OreNode, &Transform, Option<&mut TrunkShake>)>,
 ) {
     let now = time.elapsed_secs() as f64;
     for sw in swings.read() {
-        for (e, mut node, tf) in &mut q {
+        for (e, mut node, tf, mut shake) in &mut q {
             if node.ore.hp <= 0.0 {
                 continue;
             }
@@ -120,7 +129,8 @@ fn mine_ore(
             if dist > SWING_RANGE + ORE_COLLISION_RADIUS as f32 || dist < 1e-3 {
                 continue;
             }
-            if (to / dist).dot(sw.fwd) < SWING_CONE_DOT {
+            let dir = to / dist;
+            if dir.dot(sw.fwd) < SWING_CONE_DOT {
                 continue;
             }
             let shattered = node.ore.damage(sw.base_dmg as f64, now);
@@ -143,9 +153,16 @@ fn mine_ore(
                 crate::blockers::remove_at(p.x, p.z); // clear the boulder blocker — no ghost collision
                 commands.entity(e).try_despawn();
             } else {
-                // Metallic chip + a small grey rock-chip spray each pick-swing (was a flesh hit).
+                // Metallic chip + a small grey rock-chip spray each pick-swing (was a flesh hit),
+                // and the boulder itself judders under the pick (its rest yaw is restored after).
                 if let Some(fx) = &fx {
                     crate::player::spawn_chips(&mut commands, fx, chip_at, false);
+                }
+                match shake.as_deref_mut() {
+                    Some(s) => s.restart(now as f32, dir),
+                    None => {
+                        commands.entity(e).try_insert(TrunkShake::new(now as f32, dir));
+                    }
                 }
                 cues.write(AudioCue::OreChip);
             }
@@ -186,6 +203,194 @@ pub struct Stump {
     regrow_at: f32,
 }
 
+// ── Chop/mine impact juice — trunk shudder, felling topple, regrow pop ──────────────
+//
+// Transform-only animations on the existing prop entities (the `dying.rs` philosophy): no new
+// meshes/materials per event, just damped rotation/scale writes layered after the wind sway.
+
+/// A standing tree (or ore boulder) shuddering from an axe/pick blow: a damped rock along the
+/// blow direction. For swaying trees the wobble composes on top of the rotation `wind::sway_system`
+/// rewrites each frame; static props (ore) capture + restore their rest rotation instead.
+#[derive(Component)]
+pub struct TrunkShake {
+    started: f32,
+    /// Unit world-XZ direction of the blow — the trunk rocks away from the chopper first.
+    dir: Vec2,
+    /// Rest rotation for NON-swaying props, captured on the first drive frame and restored when
+    /// the shake rings out. Swaying trees ignore it (the sway rewrite is the rest pose).
+    base_rot: Option<Quat>,
+}
+
+impl TrunkShake {
+    pub fn new(now: f32, dir: Vec2) -> Self {
+        Self { started: now, dir, base_rot: None }
+    }
+    /// Re-kick an in-flight shake (rapid swings) without forgetting the stored rest rotation.
+    pub fn restart(&mut self, now: f32, dir: Vec2) {
+        self.started = now;
+        self.dir = dir;
+    }
+}
+
+/// How long a chop shudder rings (s) — under the hero's 0.45s swing so each blow reads alone.
+const TRUNK_SHAKE_DUR: f32 = 0.42;
+/// Peak shudder tilt (radians) — small at the trunk, clearly visible at the canopy.
+const TRUNK_SHAKE_AMP: f32 = 0.06;
+
+/// World-space tilt axis that tips a prop's top toward `dir` for a positive angle.
+fn tip_axis(dir: Vec2) -> Vec3 {
+    Vec3::new(dir.y, 0.0, -dir.x)
+}
+
+/// Drive each shudder: a damped sine rock about the blow-perpendicular axis, then restore.
+#[allow(clippy::type_complexity)]
+fn drive_trunk_shake(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut q: Query<
+        (Entity, &mut TrunkShake, &mut Transform, Has<crate::wind::Sway>),
+        Without<Felling>,
+    >,
+) {
+    let now = time.elapsed_secs();
+    for (e, mut shake, mut tf, swaying) in &mut q {
+        let t = now - shake.started;
+        if t >= TRUNK_SHAKE_DUR {
+            if !swaying {
+                if let Some(base) = shake.base_rot {
+                    tf.rotation = base;
+                }
+            }
+            commands.entity(e).try_remove::<TrunkShake>();
+            continue;
+        }
+        let k = 1.0 - t / TRUNK_SHAKE_DUR;
+        let rock = Quat::from_axis_angle(tip_axis(shake.dir), (t * 26.0).sin() * TRUNK_SHAKE_AMP * k * k);
+        if swaying {
+            tf.rotation = rock * tf.rotation; // sway rewrote the rest pose this frame
+        } else {
+            let base = *shake.base_rot.get_or_insert(tf.rotation);
+            tf.rotation = rock * base;
+        }
+    }
+}
+
+/// A felled tree mid-topple: it tips over along the felling blow with the accelerating arc of a
+/// real fall, then the landing puffs leaves + a ground ring (+ a thud in earshot) and the trunk
+/// hides — the invisible [`Stump`] (already inserted by [`fell_tree`]) regrows it later.
+#[derive(Component)]
+pub struct Felling {
+    started: f32,
+    /// Unit world-XZ the tree falls along (away from the felling blow).
+    dir: Vec2,
+    /// Standing rotation, captured on the first drive frame (after the sway writes) so the
+    /// topple composes from the true rest pose.
+    base_rot: Option<Quat>,
+}
+
+/// Seconds from the felling blow to the trunk hitting the ground.
+const FELL_DUR: f32 = 1.05;
+/// Total topple angle (~86° — flat enough to read as DOWN before the hide).
+const FELL_ANGLE: f32 = 1.5;
+/// The landing thud / leaf-burst point sits about this far out along the fallen trunk.
+const FELL_CROWN_REACH: f32 = 1.6;
+
+#[allow(clippy::too_many_arguments)]
+fn drive_felling(
+    time: Res<Time>,
+    mut commands: Commands,
+    hero: Res<HeroState>,
+    fxa: Option<Res<TreeFx>>,
+    fx: Option<Res<crate::player::CombatFx>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut cues: MessageWriter<AudioCue>,
+    mut q: Query<(Entity, &mut Felling, &mut Transform, &mut Visibility)>,
+) {
+    let now = time.elapsed_secs();
+    for (e, mut fell, mut tf, mut vis) in &mut q {
+        let t = now - fell.started;
+        if t >= FELL_DUR {
+            // Landing: hide the trunk (regrow restores it) + sell the impact where the crown hit.
+            *vis = Visibility::Hidden;
+            let at = tf.translation + Vec3::new(fell.dir.x, 0.0, fell.dir.y) * FELL_CROWN_REACH;
+            let gy = worldmap::ground_at_world(at.x, at.z).unwrap_or(tf.translation.y);
+            if let Some(fxa) = &fxa {
+                crate::player::spawn_motes(
+                    &mut commands, &fxa.chip_mesh, &fxa.leaf_mat,
+                    Vec3::new(at.x, gy + 0.3, at.z), 9, 2.6, 1.1, 0.7,
+                );
+            }
+            if let Some(fx) = &fx {
+                crate::player::spawn_shockwave(&mut commands, fx, &mut materials, Vec3::new(at.x, gy, at.z), now);
+            }
+            // A soft ground whump, only near the hero (woodcutters fell trees all day).
+            if hero.pos.distance(Vec2::new(tf.translation.x, tf.translation.z)) < 18.0 {
+                cues.write(AudioCue::Impact { kill: false });
+            }
+            commands.entity(e).try_remove::<Felling>();
+            continue;
+        }
+        let k = t / FELL_DUR;
+        let base = *fell.base_rot.get_or_insert(tf.rotation);
+        // k² — a real fall starts slow and accelerates into the ground.
+        tf.rotation = Quat::from_axis_angle(tip_axis(fell.dir), k * k * FELL_ANGLE) * base;
+    }
+}
+
+/// A regrown tree springing back up: scale pops 0 → rest with a slight overshoot, so a returning
+/// tree *grows in* instead of blinking into place. Inserted by [`regrow_trees`].
+#[derive(Component)]
+struct RegrowPop {
+    started: f32,
+    /// The tree's rest scale (scatter bakes a per-instance scale).
+    base: Vec3,
+}
+
+/// How long the regrow pop takes (s).
+const REGROW_POP_DUR: f32 = 0.55;
+
+/// Ease-out-back: starts at 0, overshoots ~10% past 1, settles at 1.
+fn ease_out_back(k: f32) -> f32 {
+    let k1 = k - 1.0;
+    1.0 + 2.701_58 * k1 * k1 * k1 + 1.701_58 * k1 * k1
+}
+
+fn drive_regrow_pop(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut q: Query<(Entity, &RegrowPop, &mut Transform)>,
+) {
+    let now = time.elapsed_secs();
+    for (e, pop, mut tf) in &mut q {
+        let k = (now - pop.started) / REGROW_POP_DUR;
+        if k >= 1.0 {
+            tf.scale = pop.base;
+            commands.entity(e).try_remove::<RegrowPop>();
+            continue;
+        }
+        tf.scale = pop.base * ease_out_back(k).max(0.02);
+    }
+}
+
+/// Shared chop-burst visuals (built in [`setup_drop_assets`]): one tiny cuboid flown as wood
+/// chips (pale split-wood) or leaf flutter (canopy green) via the spark physics.
+#[derive(Resource)]
+pub(crate) struct TreeFx {
+    chip_mesh: Handle<Mesh>,
+    wood_mat: Handle<StandardMaterial>,
+    leaf_mat: Handle<StandardMaterial>,
+}
+
+/// Wood chips off the trunk + a small leaf flutter from the canopy on a landed axe blow —
+/// shared by the hero's [`chop_tree`] and the woodcutter NPC (`lumberjack.rs`). `dir` = blow
+/// direction; the chips spray from the chopper-facing side of the trunk.
+pub(crate) fn chop_burst(commands: &mut Commands, fxa: &TreeFx, tree_pos: Vec3, dir: Vec2) {
+    let impact = tree_pos + Vec3::new(-dir.x * 0.35, 1.0, -dir.y * 0.35);
+    crate::player::spawn_motes(commands, &fxa.chip_mesh, &fxa.wood_mat, impact, 5, 2.4, 0.9, 0.45);
+    let canopy = tree_pos + Vec3::Y * 2.1;
+    crate::player::spawn_motes(commands, &fxa.chip_mesh, &fxa.leaf_mat, canopy, 3, 1.5, 1.1, 0.7);
+}
+
 /// Swings to fell a tree (~2 at the hero's base 25–30 dmg).
 const TREE_HP: f64 = 55.0;
 /// Wood banked per felled tree.
@@ -195,12 +400,16 @@ const CHOP_TREE_RADIUS: f32 = 1.0;
 /// Seconds before a felled tree grows back in place.
 const TREE_REGROW: f32 = 150.0;
 
-/// Fell `e`: bank the wood (+ float), lift the trunk blocker, and leave a hidden [`Stump`] in
-/// place to regrow. Shared by the hero's [`chop_tree`] and the woodcutter NPC (`lumberjack.rs`).
+/// Fell `e`: bank the wood (+ float), lift the trunk blocker, and start the [`Felling`] topple
+/// along `dir` (the blow direction) — the tree falls over for real, then [`drive_felling`] hides
+/// it on landing and the [`Stump`] regrows it later. Shared by the hero's [`chop_tree`] and the
+/// woodcutter NPC (`lumberjack.rs`). The `Stump` goes on NOW, so a falling tree is already
+/// un-choppable / un-assignable (every chop site filters `Without<Stump>`).
 pub fn fell_tree(
     commands: &mut Commands,
     e: Entity,
     at: Vec3,
+    dir: Vec2,
     now: f32,
     bank: &mut tileworld_core::resource_store::ResourceState,
     floats: &mut crate::combat_fx::FloatQueue,
@@ -213,12 +422,15 @@ pub fn fell_tree(
         scale: 1.1,
     });
     crate::blockers::remove_at(at.x, at.z); // clear the trunk blocker so no ghost nub
-    commands
-        .entity(e)
-        .try_insert((Stump { regrow_at: now + TREE_REGROW }, Visibility::Hidden));
+    let dir = if dir.length_squared() > 1e-6 { dir.normalize() } else { Vec2::Y };
+    commands.entity(e).try_insert((
+        Stump { regrow_at: now + TREE_REGROW },
+        Felling { started: now, dir, base_rot: None },
+    ));
 }
 
-/// Restore each due stump to a standing, choppable tree (visible again, trunk re-blocked).
+/// Restore each due stump to a standing, choppable tree (visible again, trunk re-blocked),
+/// springing it up from the ground with a [`RegrowPop`] instead of blinking it in.
 fn regrow_trees(
     time: Res<Time>,
     mut commands: Commands,
@@ -232,7 +444,10 @@ fn regrow_trees(
         tree.hp = TREE_HP;
         *vis = Visibility::Visible;
         crate::blockers::add(tf.translation.x, tf.translation.z, tree.trunk_r);
-        commands.entity(e).try_remove::<Stump>();
+        commands
+            .entity(e)
+            .try_insert(RegrowPop { started: now, base: tf.scale })
+            .try_remove::<Stump>();
     }
 }
 
@@ -245,11 +460,13 @@ fn chop_tree(
     mut commands: Commands,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
     mut cues: MessageWriter<AudioCue>,
-    mut q: Query<(Entity, &mut ChopTree, &Transform), Without<Stump>>,
+    fxa: Option<Res<TreeFx>>,
+    mut q: Query<(Entity, &mut ChopTree, &Transform, Option<&mut TrunkShake>), Without<Stump>>,
 ) {
+    let now = time.elapsed_secs();
     for sw in swings.read() {
         let mut struck = false; // one chop thunk per swing, even if several trees are in the cone
-        for (e, mut tree, tf) in &mut q {
+        for (e, mut tree, tf, mut shake) in &mut q {
             if tree.hp <= 0.0 {
                 continue;
             }
@@ -259,13 +476,25 @@ fn chop_tree(
             if dist > SWING_RANGE + CHOP_TREE_RADIUS || dist < 1e-3 {
                 continue;
             }
-            if (to / dist).dot(sw.fwd) < SWING_CONE_DOT {
+            let dir = to / dist;
+            if dir.dot(sw.fwd) < SWING_CONE_DOT {
                 continue;
             }
             struck = true;
             tree.hp -= sw.base_dmg as f64;
             if tree.hp <= 0.0 {
-                fell_tree(&mut commands, e, p, time.elapsed_secs(), &mut bank.0, &mut floats);
+                fell_tree(&mut commands, e, p, dir, now, &mut bank.0, &mut floats);
+            } else {
+                // A surviving trunk shudders under the blow + sheds chips and a few leaves.
+                match shake.as_deref_mut() {
+                    Some(s) => s.restart(now, dir),
+                    None => {
+                        commands.entity(e).try_insert(TrunkShake::new(now, dir));
+                    }
+                }
+                if let Some(fxa) = &fxa {
+                    chop_burst(&mut commands, fxa, p, dir);
+                }
             }
         }
         if struck {
@@ -788,6 +1017,38 @@ pub(crate) struct ChestLid;
 /// save-restore pass so a loaded looted chest shows its lid open.
 pub(crate) const CHEST_LID_OPEN: f32 = -1.7;
 
+/// A chest lid swinging on its hinge: opening flings it past the catch with an overshoot
+/// (treasure!), re-closing (cache respawn) is a plain ease. The save-restore pass still sets a
+/// loaded chest's lid rotation directly — no swing on load.
+#[derive(Component)]
+struct LidSwing {
+    started: f32,
+    from: f32,
+    to: f32,
+}
+
+/// How long a lid swing takes (s).
+const LID_SWING_DUR: f32 = 0.4;
+
+fn drive_lid_swing(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut q: Query<(Entity, &LidSwing, &mut Transform)>,
+) {
+    let now = time.elapsed_secs();
+    for (e, swing, mut tf) in &mut q {
+        let k = (now - swing.started) / LID_SWING_DUR;
+        if k >= 1.0 {
+            tf.rotation = Quat::from_rotation_x(swing.to);
+            commands.entity(e).try_remove::<LidSwing>();
+            continue;
+        }
+        // Opening (toward the negative hinge angle) gets the springy overshoot; closing eases.
+        let eased = if swing.to < swing.from { ease_out_back(k) } else { k * k * (3.0 - 2.0 * k) };
+        tf.rotation = Quat::from_rotation_x(swing.from + (swing.to - swing.from) * eased);
+    }
+}
+
 /// Forest-native frontier gradient: 0 across the safe core around the castle (the world
 /// origin), smoothly → 1 toward the rim. (Core's `frontier_factor` is anchored to its own
 /// enlarged tilemap; we recompute the gradient and reuse only core's pure loot picks.)
@@ -818,8 +1079,9 @@ fn chest_interact(
     mut cues: MessageWriter<AudioCue>,
     mut speak: MessageWriter<crate::audio::Speak>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
+    mut commands: Commands,
     mut chests: Query<(&mut Chest, &Transform, &Children), Without<ChestLid>>,
-    mut lids: Query<&mut Transform, (With<ChestLid>, Without<Chest>)>,
+    lids: Query<(), (With<ChestLid>, Without<Chest>)>,
 ) {
     if !keys.just_pressed(KeyCode::KeyF) || !hero.alive {
         return;
@@ -868,8 +1130,9 @@ fn chest_interact(
         chest.opened = true;
         chest.opened_at = now;
         for &c in children {
-            if let Ok(mut lt) = lids.get_mut(c) {
-                lt.rotation = Quat::from_rotation_x(CHEST_LID_OPEN); // hinge open (lid stands up at the back)
+            if lids.get(c).is_ok() {
+                // Swing the hinge open (overshooting past the catch) instead of snapping.
+                commands.entity(c).try_insert(LidSwing { started: now, from: 0.0, to: CHEST_LID_OPEN });
             }
         }
         return; // one chest per press
@@ -880,16 +1143,18 @@ fn chest_interact(
 #[allow(clippy::type_complexity)]
 fn chest_respawn(
     time: Res<Time>,
+    mut commands: Commands,
     mut chests: Query<(&mut Chest, &Children), Without<ChestLid>>,
-    mut lids: Query<&mut Transform, (With<ChestLid>, Without<Chest>)>,
+    lids: Query<(), (With<ChestLid>, Without<Chest>)>,
 ) {
     let now = time.elapsed_secs();
     for (mut chest, children) in &mut chests {
         if chest.cache && chest.opened && now - chest.opened_at >= CACHE_RESPAWN {
             chest.opened = false;
             for &c in children {
-                if let Ok(mut lt) = lids.get_mut(c) {
-                    lt.rotation = Quat::IDENTITY; // closed
+                if lids.get(c).is_ok() {
+                    // Ease the lid back shut (no overshoot — it's just falling closed).
+                    commands.entity(c).try_insert(LidSwing { started: now, from: CHEST_LID_OPEN, to: 0.0 });
                 }
             }
         }
@@ -1260,6 +1525,21 @@ fn setup_drop_assets(
         ..default()
     });
     commands.insert_resource(DropAssets { mesh, mat });
+
+    // Chop-burst chips: one tiny cuboid, unlit (NO emissive — debris must not bloom like sparks),
+    // tinted pale split-wood / canopy green by two shared materials.
+    let chip_mesh = meshes.add(Cuboid::new(0.09, 0.09, 0.09).mesh().build());
+    let wood_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.78, 0.60, 0.36),
+        unlit: true,
+        ..default()
+    });
+    let leaf_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.31, 0.61, 0.23),
+        unlit: true,
+        ..default()
+    });
+    commands.insert_resource(TreeFx { chip_mesh, wood_mat, leaf_mat });
 }
 
 /// Roll an animal's drops (primary + secondary + a frontier-graded bonus gear roll) and spawn

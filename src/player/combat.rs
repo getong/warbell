@@ -278,7 +278,14 @@ pub fn player_attack(
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
     mut hero_q: Query<(&mut Hero, &HeroHealth)>,
     mut targets: Query<
-        (Entity, &GlobalTransform, &mut Health, Option<&mut Ork>, Option<&mut Animal>),
+        (
+            Entity,
+            &GlobalTransform,
+            &mut Health,
+            Option<&mut Ork>,
+            Option<&mut Animal>,
+            Option<&mut crate::combat_fx::HitSquash>,
+        ),
         (Or<(With<Ork>, With<Animal>)>, Without<crate::dying::Dying>),
     >,
 ) {
@@ -335,7 +342,7 @@ pub fn player_attack(
     // Direct-hit bookkeeping for the cleave pass (positions to splash from + who's already hit).
     let mut struck: Vec<Vec2> = Vec::new();
     let mut hit_ents: Vec<Entity> = Vec::new();
-    for (e, gt, mut hp, mut ork, animal) in &mut targets {
+    for (e, gt, mut hp, mut ork, animal, mut squash) in &mut targets {
         let p = gt.translation();
         let to = Vec2::new(p.x - origin.x, p.z - origin.y);
         let dist = to.length();
@@ -412,6 +419,14 @@ pub fn player_attack(
                 scale: if crit { 1.2 } else { 1.0 },
             });
             commands.entity(e).insert(crate::combat_fx::HurtFlash::new(time.elapsed_secs()));
+            // Springy body squash-and-stretch — re-kicked in place on rapid hits so the rest
+            // scale captured by the first squash is never forgotten.
+            match squash.as_deref_mut() {
+                Some(s) => s.restart(now_s),
+                None => {
+                    commands.entity(e).try_insert(crate::combat_fx::HitSquash::new(now_s));
+                }
+            }
             // A struck (surviving) animal staggers back along the blow (harder on a crit) +
             // enrages — predators latch onto the hero (`Struck`).
             if let Some(mut an) = animal {
@@ -426,7 +441,7 @@ pub fn player_attack(
     if player.0.cleave > 0.0 && !struck.is_empty() {
         let splash = cleave_damage(dmg as f64, player.0.cleave) as f32;
         if splash > 0.0 {
-            for (e, gt, mut hp, ork, _animal) in &mut targets {
+            for (e, gt, mut hp, ork, _animal, mut squash) in &mut targets {
                 if ork.is_none() || hit_ents.contains(&e) {
                     continue; // cleave only hits orks, and never the directly-struck ones twice
                 }
@@ -472,6 +487,12 @@ pub fn player_attack(
                     spawn_splat(&mut commands, &fx, &mut juice.materials, Vec3::new(p.x, p.y, p.z), false, now_s);
                     if let Some(mut o) = ork {
                         o.hit_recoil = now_s;
+                    }
+                    match squash.as_deref_mut() {
+                        Some(s) => s.restart(now_s),
+                        None => {
+                            commands.entity(e).try_insert(crate::combat_fx::HitSquash::new(now_s));
+                        }
                     }
                 }
             }
