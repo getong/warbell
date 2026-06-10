@@ -180,6 +180,7 @@ fn chop_work(
     mut cues: MessageWriter<crate::audio::AudioCue>,
     mut danger: ResMut<DangerSpots>,
     hero: Res<crate::player::HeroState>,
+    tree_fx: Option<Res<crate::verbs::TreeFx>>,
     mut workers: Query<
         (Entity, &mut ChopJob, &mut Worker, &mut Villager, &mut Transform, &mut crate::navgrid::NavPath),
         (Without<Fleeing>, Without<FightBack>, Without<crate::dying::Dying>),
@@ -215,16 +216,27 @@ fn chop_work(
                 if hero.pos.distance(v.pos) < SFX_EARSHOT {
                     cues.write(crate::audio::AudioCue::WoodChop);
                 }
+                let dir = (tp - v.pos).normalize_or_zero();
                 if tree.work_chop(CHOP_DMG) {
                     crate::verbs::fell_tree(
                         &mut commands,
                         job.tree,
                         ttf.translation,
+                        dir,
                         now,
                         &mut bank.0,
                         &mut floats,
                     );
                     commands.entity(self_e).try_remove::<ChopJob>();
+                } else {
+                    // The same chop juice the hero's swings get: the trunk shudders under the
+                    // axe and sheds chips/leaves (visual-only, so no earshot gate).
+                    commands
+                        .entity(job.tree)
+                        .try_insert(crate::verbs::TrunkShake::new(now, dir));
+                    if let Some(fxa) = &tree_fx {
+                        crate::verbs::chop_burst(&mut commands, fxa, ttf.translation, dir);
+                    }
                 }
             }
         } else {
