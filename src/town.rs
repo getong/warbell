@@ -93,6 +93,13 @@ impl Plugin for TownPlugin {
                 OnExit(AppState::GameOver),
                 reset_town.after(crate::economy::reset_economy),
             )
+            // Pause-menu Restart / Load also begins a fresh run (gated; see game_state).
+            .add_systems(
+                OnExit(AppState::Paused),
+                reset_town
+                    .after(crate::economy::reset_economy)
+                    .run_if(crate::game_state::restart_requested),
+            )
             .add_systems(OnEnter(Modal::Build), spawn_build)
             .add_systems(OnExit(Modal::Build), despawn_build)
             .add_systems(Update, build_interact.run_if(in_state(Modal::Build)))
@@ -196,10 +203,16 @@ fn production_system(time: Res<Time>, mut town: ResMut<TownRes>, mut bank: ResMu
 /// here — [`sync_population_bodies`] reconciles them to `town.population` next frame.
 fn population_system(
     time: Res<Time>,
+    siege: Option<Res<crate::siege::Siege>>,
     mut town: ResMut<TownRes>,
     mut lives: ResMut<Lives>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
 ) {
+    // Growing a new peasant is a daytime thing: while the night wave is on, the food→population
+    // flow pauses entirely — losses to the horde can't be replaced until dawn.
+    if siege.is_some_and(|s| s.phase == crate::siege::GamePhase::Wave) {
+        return;
+    }
     let dt = time.delta_secs() as f64;
     match town.0.population_tick(dt) {
         PopEvent::Grew => {
@@ -234,8 +247,10 @@ fn sync_population_bodies(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    folk: Query<Entity, With<Townsfolk>>,
-    idle_guards: Query<Entity, (With<Townsfolk>, With<Guard>, Without<Worker>)>,
+    // The dying are already subtracted from `population` (see `villagers::npc_damage_apply`) —
+    // counting their still-fading bodies would make this reaper cull a second, living villager.
+    folk: Query<Entity, (With<Townsfolk>, Without<crate::dying::Dying>)>,
+    idle_guards: Query<Entity, (With<Townsfolk>, With<Guard>, Without<Worker>, Without<crate::dying::Dying>)>,
     mut next_seed: Local<u32>,
 ) {
     let want = town.0.population as i64;
@@ -315,6 +330,15 @@ const PLOT_OFFSETS: [Vec2; PLOT_COUNT] = [
     Vec2::new(20.0, -8.0),   // E  — east of wall, off gate lane
     Vec2::new(-20.0, -8.0),  // W  — west of wall, off gate lane
 ];
+
+/// World-XZ radius around each plot centre that must stay clear so a future building has room:
+/// `worldmap::classify` forces flat grass here, and chest / ground-cover placement rejects it.
+pub const PLOT_CLEAR_R: f32 = 3.4;
+
+/// Is `(wx, wz)` inside the clear zone of any town build plot?
+pub fn near_build_plot(wx: f32, wz: f32) -> bool {
+    PLOT_OFFSETS.iter().any(|o| (wx - o.x).hypot(wz - o.y) < PLOT_CLEAR_R)
+}
 
 /// Seed the build-plot entities + their foundation pads. Called from `worldmap::build`
 /// after the castle so the safe-zone ground is final.
@@ -561,7 +585,7 @@ impl BuildItem {
     fn desc(self) -> &'static str {
         match self {
             BuildItem::Producer(BuildKind::Farm) => "Grows food \u{2192} feeds the town so peasants settle in",
-            BuildItem::Producer(BuildKind::Lumber) => "Woodcutter \u{2192} produces wood (needs a worker)",
+            BuildItem::Producer(BuildKind::Lumber) => "Woodcutter \u{2192} fells real trees and hauls the logs home (needs a worker)",
             BuildItem::House => "Home in the walls \u{2192} +2 people your town can hold",
         }
     }

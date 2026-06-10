@@ -73,7 +73,9 @@ impl Plugin for WindPlugin {
 
 /// Each frame, recompute every [`Sway`] entity's rotation as `lean * base`, where the
 /// lean is a small two-axis wobble driven by elapsed time + the instance phase.
-fn sway_system(time: Res<Time>, mut q: Query<(&Sway, &mut Transform)>) {
+/// `pub(crate)` so the chop-impact systems (`verbs.rs`) can order `.after()` it — they layer a
+/// trunk shudder / felling topple on top of the rotation this writes.
+pub(crate) fn sway_system(time: Res<Time>, mut q: Query<(&Sway, &mut Transform)>) {
     // `elapsed_secs_wrapped` (wraps at 3600s by default) keeps f32 precision sharp over
     // long sessions; the wrap period is far longer than any sway period so there's no
     // visible jump when it wraps.

@@ -11,11 +11,12 @@ has grown into a near-parity playable game: a knight defends a central castle ag
 ork sieges, with combat, economy, an upgrade tree, inventory, villagers, succession, and five
 biomes on one enlarged island.
 
-> **`README.md` and the `main.rs` module doc-comment are stale** — they describe the original
-> "no player, no gameplay, just the scene" viewer. Trust the code and `docs/superpowers/specs/`,
-> not those two, for what the game *is now*. The parity effort is tracked in
-> `docs/superpowers/specs/2026-06-07-tileworld-parity-port-roadmap.md` (source of truth for
-> per-subsystem numbers and reuse pointers).
+> `README.md` and the `main.rs` module doc-comment now describe the actual game (both were
+> truthed-up after an earlier era where they still claimed "no player, no gameplay, just the
+> scene"). They're fine as entry points, but the per-subsystem **source of truth** is the parity
+> roadmap, `docs/superpowers/specs/2026-06-07-tileworld-parity-port-roadmap.md` (numbers + reuse
+> pointers). If you spot a code comment still describing the old static-viewer state, it's stale —
+> fix it.
 
 ## Commands
 
@@ -84,6 +85,7 @@ Env hooks that stage a scene for a shot (combine with `FOREST_SHOT`), all read a
 | `FOREST_HERO="x,z"` | drop the hero at a world XZ (e.g. deep in a biome region) to stage its reactive atmosphere/weather |
 | `FOREST_BIOME` | boot straight into a given biome |
 | `FOREST_WAVE` / `FOREST_DEFEND=1` | stage a night siege / arm all defenses + walls |
+| `FOREST_ORKLINE="x,z"` | park one ork of each variant in an idle line at a world XZ (model close-ups) |
 | `FOREST_MENU=1` | shoot the start screen |
 | `FOREST_PANEL=tree\|inv` | seed + open the upgrade-tree / satchel panel for a shot |
 | `FOREST_EQUIP="sword_gold,gold_armor"` | equip the listed item ids at startup so the hero model shows its weapon/armor |
@@ -131,11 +133,13 @@ Two related map systems share the ground pipeline in `biome.rs`:
 - **`biome.rs` + `biome_<name>.rs`** — the biome *framework*. Each biome exposes `config()`
   (declarative ground/atmosphere/scatter/particles) + optional `landmarks()`. Keys **1–5** swap a
   single 32×32 biome patch at runtime (despawns everything tagged `BiomeEntity`, rebuilds).
-- **`worldmap.rs`** — the actual playable island: a faithful port of the TS `tileMap.ts` at base
-  resolution scaled up by `MAP_SCALE = 1.4` (→ `COLS 202 × ROWS 151`). Elliptical island, five
-  biome blobs, grass safe-zone (castle), rivers/lake, terraced heights. `worldmap::build` also
-  seeds castle/camps/ore/chests placement. **Generation runs in base space, drawn over the enlarged
-  grid**, so the island shape is identical, just denser.
+- **`worldmap.rs`** — the actual playable island: a port of the TS `tileMap.ts` at base
+  resolution scaled up by `MAP_SCALE = 1.5` (→ `COLS 216 × ROWS 162`). Elliptical island, five
+  biome blobs, grass safe-zone (castle), four rivers + lake, coastal mountain ridges, rolling
+  terraced knolls, plateaus. `classify` force-flattens grass under every town build plot (and
+  chest/cover placement rejects `town::near_build_plot`) so nothing occupies a future building's
+  spot. `worldmap::build` also seeds castle/camps/ore/chests placement. **Generation runs in base
+  space, drawn over the enlarged grid**, so the island shape is identical, just denser.
 
 ### Pathfinding through the castle (`src/navgrid.rs`)
 
