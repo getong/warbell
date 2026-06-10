@@ -227,6 +227,7 @@ impl Plugin for GameAudioPlugin {
             .init_resource::<HeroLineGates>()
             .init_resource::<HeroLineCooldown>()
             .init_resource::<director::VoiceManager>()
+            .init_resource::<director::OfferedReply>()
             .init_resource::<RemarkTrigger>()
             .init_resource::<npc::VillagerTrigger>()
             .init_resource::<ork::OrkTrigger>()

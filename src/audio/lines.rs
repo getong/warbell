@@ -96,15 +96,22 @@ pub enum Concept {
 pub struct Chain {
     pub concept: Concept,
     pub target: Speaker,
+    /// `true` = don't auto-play: offer the reply to the PLAYER as an `E — Talk back` prompt near
+    /// the speaker for a few seconds (see `interaction.rs`); unanswered, it expires silently.
+    pub manual: bool,
 }
 
-/// A villager's at-the-hero jab → the hero fires back. Used as the `then` on the `pa_*` jab
-/// lines; resolved against the hero's `ReplyToVillagerJab` reply pool.
-const REPLY_TO_JAB: Chain = Chain { concept: Concept::ReplyToVillagerJab, target: Speaker::Hero };
+/// A villager's at-the-hero jab → the hero MAY fire back: offered to the player (`manual`), not
+/// auto-played. Used as the `then` on the `pa_*` jab lines; resolved against the hero's
+/// `ReplyToVillagerJab` reply pool when the player takes it.
+const REPLY_TO_JAB: Chain =
+    Chain { concept: Concept::ReplyToVillagerJab, target: Speaker::Hero, manual: true };
 
 /// Second link: some hero comebacks hand the exchange BACK to the villager for a parting shot
-/// (jab → comeback → last word, then the chain ends — no `then` on the last-word pool).
-const LAST_WORD: Chain = Chain { concept: Concept::VillagerLastWord, target: Speaker::Villager };
+/// (jab → comeback → last word, then the chain ends — no `then` on the last-word pool). The NPC
+/// answers on his own, so this one stays automatic.
+const LAST_WORD: Chain =
+    Chain { concept: Concept::VillagerLastWord, target: Speaker::Villager, manual: false };
 
 /// One voice line — the whole record.
 #[derive(Clone, Copy)]
@@ -476,6 +483,7 @@ mod tests {
             let chain = l.then.unwrap_or_else(|| panic!("{id} should chain a reply"));
             assert_eq!(chain.concept, Concept::ReplyToVillagerJab);
             assert_eq!(chain.target, Speaker::Hero);
+            assert!(chain.manual, "the comeback is offered to the player, not auto-played");
         }
     }
 
@@ -517,6 +525,7 @@ mod tests {
             let chain = l.then.unwrap();
             assert_eq!(chain.concept, Concept::VillagerLastWord);
             assert_eq!(chain.target, Speaker::Villager);
+            assert!(!chain.manual, "the NPC's parting shot plays on its own");
         }
         // ...but not ALL of them — sometimes the hero ends the exchange.
         assert!(
