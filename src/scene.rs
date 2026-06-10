@@ -117,15 +117,19 @@ fn start_t() -> f32 {
 // at the sky reads how long until the wave. Through the wave the sun keeps creeping into deeper
 // night (time visibly passes) but is HARD-CAPPED before the next sunrise, so night always stays
 // night however long the wave runs. End screens ease quickly back to daylight.
-// The 150s prep day (siege PREP_DURATION) maps to the sun's arc: ~5:00 low golden morning (east)
+// The prep day (siege PREP_DURATION) maps to the sun's arc: ~5:00 low golden morning (east)
 // → 13:00 noon (overhead) → dusk → nightfall right at countdown end.
 const T_DAWN: f32 = 0.03; // ~5:00 — low sunrise sun, east horizon
-const T_NIGHTFALL: f32 = 0.60; // full dark — prep's end target / wave start (sun below horizon)
+const T_NIGHTFALL: f32 = 0.55; // full dark — the t where `night`→1; prep's end / wave start moment
 const T_NIGHT_CAP: f32 = 0.90; // deep pre-dawn — the sun holds here on long waves (sunrise ≈0.97)
 const T_NIGHT: f32 = 0.75; // midnight — only the FOREST_WAVE screenshot boot (`start_t`)
 const T_NOON: f32 = 0.25; // end-screen daylight
 const DAY_LERP_RATE: f32 = 0.7; // quick-ease speed (≈ a couple-second dusk/dawn) for edge transitions
 const NIGHT_DRIFT_RATE: f32 = 0.003; // slow clock creep through the wave (~100s nightfall→cap)
+// Ease-in on prep progress (>1): daylight holds high for most of the countdown, then the sun
+// plunges through dusk→dark only in the final ~7s — so darkness COMPLETES right as the wave
+// starts (T_NIGHTFALL is the full-dark t), with no dim-daytime tail and no "dark, then wait".
+const PREP_SUN_EASE: f32 = 3.5;
 
 fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
     let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
@@ -210,13 +214,15 @@ fn advance_sky(
         match siege.as_deref() {
             Some(s) => match s.phase {
                 // Prep is one continuous sunrise→nightfall descent used as a countdown: the
-                // sun reaches full dark exactly as the timer (prog→1) expires.
+                // sun reaches full dark exactly as the timer (prog→1) expires. The ease-in
+                // (`PREP_SUN_EASE`) keeps the day bright for most of the countdown, then drops
+                // fast through dusk at the very end — no long dim-daylight tail.
                 GamePhase::Prep => {
                     let prog = crate::siege::prep_progress(
                         s.prep_seconds_left,
                         crate::siege::mods_for(s.difficulty),
                     );
-                    ease_to(&mut clock.t, T_DAWN + (T_NIGHTFALL - T_DAWN) * prog);
+                    ease_to(&mut clock.t, T_DAWN + (T_NIGHTFALL - T_DAWN) * prog.powf(PREP_SUN_EASE));
                 }
                 GamePhase::Wave => {
                     // Already night (the normal case after a full prep): let time creep slowly
@@ -267,12 +273,12 @@ fn advance_sky(
 
     for (mut light, mut tf) in &mut sun_q {
         *tf = Transform::from_translation(sun_dir * 120.0).looking_at(Vec3::ZERO, Vec3::Y);
-        // A modest moonlight floor (≈300 lux): enough for soft directional moonlight, but
+        // A moonlight floor (≈1 700 lux): enough for soft directional moonlight, but
         // low enough that the procedural Atmosphere sky stays dark/moody after dark. Ground
         // visibility comes from ambient + IBL below. Daytime peak raised (≈14 100) with the
         // ambient/IBL fill cut below — the sun should dominate the fill so lit vs shadowed
         // ground actually contrasts instead of washing flat.
-        light.illuminance = 1100.0 + 13_000.0 * day;
+        light.illuminance = 1700.0 + 12_400.0 * day;
         // Warm at the horizon → warm gold overhead (never neutral-white: the warm key light
         // is what gives the daytime scene its colour depth), then cooled toward moonlit blue
         // as the sun drops below the horizon (so the "moon" doesn't cast an orange glow).
@@ -293,13 +299,13 @@ fn advance_sky(
         }
     }
 
-    // Ambient: the night floor stays HIGH (≈215) since it — not the dimmed moonlight — is
+    // Ambient: the night floor stays HIGH (≈270) since it — not the dimmed moonlight — is
     // what lights the ground after dark (and ambient doesn't feed the Atmosphere sky, so it
     // brightens the ground without re-brightening the moody sky). But by DAY the ambient
     // *dips* (≈140): the sun is the day's fill, and a strong cool ambient was flattening the
     // lit/shadow contrast into the washed look. (Computed from `day`, never read-back, so it
     // can't compound frame-to-frame.)
-    ambient.brightness = 215.0 - 75.0 * day;
+    ambient.brightness = 270.0 - 130.0 * day;
     ambient.color = lerp_col(Color::srgb(0.50, 0.60, 0.95), Color::srgb(1.0, 0.95, 0.86), day);
     // Golden hour: as the sun skims the horizon, warm the ambient fill too, so the whole
     // scene catches the sunset glow instead of just the sky band.
@@ -309,12 +315,12 @@ fn advance_sky(
         ambient.color = lerp_col(ambient.color, t.ambient_color, bw);
     }
 
-    // IBL (baked daytime) dimmed at night, but kept a strong floor (≈320) so surfaces still
+    // IBL (baked daytime) dimmed at night, but kept a strong floor (≈400) so surfaces still
     // catch skylight after dark — the other half of the after-dark ground light. The daytime
     // value is deliberately modest (430): like ambient above, too much skylight fill kills
     // the sun's shadow contrast.
     for mut env in &mut env_q {
-        env.intensity = 320.0 + (IBL_INTENSITY - 320.0) * day;
+        env.intensity = 400.0 + (IBL_INTENSITY - 400.0) * day;
     }
 
     // Darken night at the GRADE stage. Camera `Exposure` only scales PBR lighting, but
@@ -324,7 +330,7 @@ fn advance_sky(
     let night_stops = std::env::var("FOREST_NIGHT")
         .ok()
         .and_then(|s| s.trim().parse::<f32>().ok())
-        .unwrap_or(0.7);
+        .unwrap_or(0.42);
     for mut g in &mut grade_q {
         g.global.exposure = -night * night_stops;
     }
