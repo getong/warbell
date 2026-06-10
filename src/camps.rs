@@ -3,9 +3,11 @@
 //! forest, swamp, rock). Each is a clearing of tents, a flickering campfire, a warband banner,
 //! skull-spikes and a prisoner cage with captives, patrolled by a mixed warband (`orks.rs`).
 //!
-//! The scene is a viewer: **no rescue, respawn, combat or faction fighting** — pure set-dressing.
-//! Camps render only in the Combined world-map view (built from `worldmap::build`, like the
-//! castle); single-biome views (keys 1–5) have no island layout, so no camps.
+//! This module builds the **camp dioramas + placement**; the warbands that occupy them fight,
+//! flee, brawl rival factions and respawn (`orks.rs`), and a cleared warband frees the prisoner
+//! cage (`villagers::camp_rescue`, tagged here by [`Cage`]). Camps render only in the Combined
+//! world-map view (built from `worldmap::build`, like the castle); single-biome views (keys 1–5)
+//! have no island layout, so no camps.
 //!
 //! Placement ([`plan`]) deterministically reject-samples one flat 7×7 walkable clearing per
 //! biome (mountainous snow/rock land on the flat grass apron at the biome edge — what the TS
@@ -237,6 +239,19 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut
     let smoke_puff = meshes.add(Sphere::new(0.5).mesh().ico(1).unwrap());
 
     let armory = orks::Armory::new(meshes, materials, mat.clone());
+
+    // Screenshot hook: `FOREST_ORKLINE="x,z"` parks one ork of each variant in a line at the
+    // given world XZ, each home-anchored on its own spot so it idles in place for the shot —
+    // pair with `FOREST_CAM` to frame the warband close up.
+    if let Ok(s) = std::env::var("FOREST_ORKLINE") {
+        let p: Vec<f32> = s.split(',').filter_map(|t| t.trim().parse().ok()).collect();
+        if p.len() == 2 {
+            for (i, variant) in VARIANTS.iter().enumerate() {
+                let pos = Vec2::new(p[0] + i as f32 * 1.8 - 2.7, p[1]);
+                armory.spawn(commands, *variant, Faction::Red, pos, pos, 11 + i as u32);
+            }
+        }
+    }
 
     for (camp, site) in sites.iter().enumerate() {
         let rot_q = Quat::from_rotation_y(site.rot);

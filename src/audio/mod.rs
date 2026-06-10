@@ -81,24 +81,24 @@ pub enum AudioCue {
     /// One metallic chip on a pick-swing against an ore boulder (sampled `var-1`/`var-3`
     /// clips, pitch-jittered). Distinct from the `OreShatter` synth sting on the breaking blow.
     OreChip,
-    /// A single axe chop landing on a tree (sampled `chop-wood.ogg`, pitch-jittered). Emitted
-    /// once per swing that strikes any choppable tree (`verbs::chop_tree`).
+    /// A single axe chop landing on a tree (sampled `chop-wood-{1..3}.ogg`, random take +
+    /// pitch jitter). Emitted once per swing that strikes any choppable tree (`verbs::chop_tree`).
     WoodChop,
+    /// Herb / loot picked up (sampled `forage.ogg`).
+    Forage,
+    /// Night wave summoned — the war bell's single hard toll (sampled `war-bell.ogg`).
+    WarBell,
     // ── Procedural stings (synth-baked, handled by `sfx` via [`synth::StingBank`]) ──
     /// Ore boulder shattered.
     OreShatter,
     /// Chest lid opened.
     ChestOpen,
-    /// Herb / loot picked up.
-    Forage,
     /// Hero gained a level.
     LevelUp,
     /// Gold collected.
     Gold,
     /// Shop purchase confirmed.
     ShopBuy,
-    /// Night wave summoned (war bell).
-    WarBell,
     /// Camp captive freed.
     CampRescue,
     /// Hero HP crossed the low threshold.
@@ -134,11 +134,14 @@ pub struct MusicState {
 /// Shared **hero-line spacing** for the hero's spoken voice. EVERY spoken hero LINE — the catalog's
 /// event reactions, biome musings, AND observational remarks (now all routed through `director`) —
 /// stamps `until = now + HERO_LINE_CD` and the line's `priority` when it starts, and the director
-/// refuses to begin a new hero line while `now < until` **unless** the newcomer strictly out-ranks
-/// the line that opened the window (so urgent warnings — night falling, the keep under attack —
-/// still cut through ~20 s of idle chatter). A line that wanted to fire inside the window is simply
-/// dropped (never queued — "consider it played"); it re-fires next frame if its trigger persists.
-/// Short combat exertions (swing/jump/hurt grunts) are exempt; the death cry spends the window.
+/// refuses to begin a new hero line while `now < until` **unless** the newcomer is URGENT
+/// (`lines::HERO_URGENT_PRIORITY`) and strictly out-ranks the line that opened the window — so
+/// real warnings (night falling, the keep under attack) cut through ~20 s of idle chatter, but
+/// ordinary remarks can never ladder up the priority tiers back-to-back. An urgent line that cuts
+/// through re-stamps the window at its own priority, so everything quieter waits the full cooldown
+/// behind it. A line that wanted to fire inside the window is simply dropped (never queued —
+/// "consider it played"); it re-fires next frame if its trigger persists. Short combat exertions
+/// (swing/jump/hurt grunts) are exempt; the death cry spends the window.
 #[derive(Resource, Default)]
 pub(crate) struct HeroLineCooldown {
     pub until: f32,
@@ -227,6 +230,7 @@ impl Plugin for GameAudioPlugin {
             .init_resource::<HeroLineGates>()
             .init_resource::<HeroLineCooldown>()
             .init_resource::<director::VoiceManager>()
+            .init_resource::<director::OfferedReply>()
             .init_resource::<RemarkTrigger>()
             .init_resource::<npc::VillagerTrigger>()
             .init_resource::<ork::OrkTrigger>()
@@ -310,6 +314,14 @@ const QUIET_CLEAR: f32 = 28.0;
 const INTRO_DELAY: f32 = 1.6;
 /// Minimum seconds between two remark emissions — the global cadence throttle.
 const REMARK_GAP: f32 = 20.0;
+/// When the cadence comes due, the hero only ACTUALLY remarks with this probability — idle
+/// musings ("old stones…", "quiet day…") are an occasional colour beat, not a metronome. A
+/// failed roll re-arms [`REMARK_RETRY`], so the average idle gap lands around
+/// `RETRY / CHANCE ≈ 35 s` (plus however long the remark itself ran). Event reactions
+/// (night warning, keep hurt, low HP…) don't pass through this system and are unaffected.
+const REMARK_CHANCE: f32 = 0.3;
+/// Re-check delay after a failed remark roll (seconds).
+const REMARK_RETRY: f32 = 10.0;
 
 /// Per-run remark trigger state. Holds the intro arm and the next-remark cadence clock.
 #[derive(Resource, Default)]
@@ -317,6 +329,8 @@ pub(crate) struct RemarkTrigger {
     intro_done: bool,
     intro_at: Option<f32>,
     next_remark: f32,
+    /// RNG for the [`REMARK_CHANCE`] roll (xorshift; `frand` self-seeds a zero state).
+    rng: u32,
 }
 
 fn reset_remark_trigger(mut r: ResMut<RemarkTrigger>) {
@@ -441,6 +455,13 @@ fn detect_hero_remarks(
     // if he leaves. The trigger just decides what to say.
 
     let Some(concept) = concept else { return };
+    // The dice roll: most due cadences pass in silence (see `REMARK_CHANCE`). Frame-time bits
+    // mixed into the rng keep the pattern from repeating run to run.
+    trigger.rng ^= now.to_bits();
+    if frand(&mut trigger.rng) > REMARK_CHANCE {
+        trigger.next_remark = now + REMARK_RETRY;
+        return;
+    }
     speak.write(Speak::new(concept));
     trigger.next_remark = now + REMARK_GAP;
 }
@@ -473,7 +494,10 @@ fn stop_displaced_hero_lines(
             if ends_at.is_some_and(|end| end - now <= FINISH_GRACE) {
                 continue; // almost done → let him finish the thought
             }
-            commands.entity(e).insert(HeroLineFadeOut);
+            // try_insert: the sink is `PlaybackMode::Despawn` and self-despawns the moment the
+            // clip ends (and `play_line` reaps it when a new line barges in), so it can be gone
+            // by the time this command applies.
+            commands.entity(e).try_insert(HeroLineFadeOut);
         }
     }
 }

@@ -12,7 +12,9 @@ mod block;
 mod camera;
 mod combat;
 
-pub(crate) use combat::{spawn_burst, spawn_chips, spawn_heal_burst, spawn_motes, CombatFx, Health};
+pub(crate) use combat::{
+    spawn_burst, spawn_chips, spawn_heal_burst, spawn_motes, spawn_shockwave, CombatFx, Health,
+};
 mod health;
 mod model;
 mod movement;

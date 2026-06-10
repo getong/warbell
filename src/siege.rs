@@ -455,7 +455,12 @@ impl Plugin for SiegePlugin {
             // Fresh run: reset on leaving the start screen or game-over (NOT on un-pausing,
             // which is a Playing↔Paused transition and never touches these).
             .add_systems(OnExit(AppState::StartScreen), reset_siege)
-            .add_systems(OnExit(AppState::GameOver), reset_siege);
+            .add_systems(OnExit(AppState::GameOver), reset_siege)
+            // Pause-menu Restart / Load also begins a fresh run (gated so a plain resume is inert).
+            .add_systems(
+                OnExit(AppState::Paused),
+                reset_siege.run_if(crate::game_state::restart_requested),
+            );
     }
 }
 
@@ -637,15 +642,15 @@ fn invader_brain(
     siege: Res<Siege>,
     mut keep: ResMut<KeepHp>,
     mut pending: ResMut<PendingHeroDamage>,
-    mut guard_dmg: ResMut<crate::villagers::GuardDamage>,
+    mut guard_dmg: ResMut<crate::villagers::NpcDamage>,
     mut bolts: ResMut<BoltSpawns>,
     mut commands: Commands,
     town: Res<crate::town::TownRes>,
     plot_spots: Res<crate::town::PlotSpots>,
     mut building_dmg: ResMut<crate::town::PendingBuildingDamage>,
     guards: Query<
-        (Entity, &Transform, &crate::villagers::Guard),
-        (Without<WaveInvader>, Without<crate::dying::Dying>),
+        (Entity, &Transform),
+        (With<crate::villagers::Guard>, Without<WaveInvader>, Without<crate::dying::Dying>),
     >,
     mut q: Query<
         (
@@ -666,11 +671,10 @@ fn invader_brain(
     let now = game.0; // pause-aware clock for logic (replan throttle, stuck-net)
     let rnow = time.elapsed_secs(); // raw clock for visuals/corpse-fade (matches ork_limbs & dying.rs)
 
-    // Living guards this frame (downed ones aren't worth diverting onto).
+    // Living guards this frame (the dying are already filtered out — death is permanent now).
     let live_guards: Vec<(Entity, Vec2)> = guards
         .iter()
-        .filter(|(_, _, g)| !g.is_downed())
-        .map(|(e, tf, _)| (e, Vec2::new(tf.translation.x, tf.translation.z)))
+        .map(|(e, tf)| (e, Vec2::new(tf.translation.x, tf.translation.z)))
         .collect();
     let guard_positions: Vec<Vec2> = live_guards.iter().map(|(_, p)| *p).collect();
 
@@ -765,7 +769,11 @@ fn invader_brain(
                         if o.shaman { orks::SHAMAN_CAST_CD } else { orks::ORK_ATTACK_CD * frenzy_cd };
                     if let Some((ge, _)) = guard_tgt {
                         let dmg = orks::variant_melee(o.variant) * crate::villagers::GUARD_ARMOR_MULT;
-                        guard_dmg.0.push((ge, dmg));
+                        guard_dmg.0.push(crate::villagers::NpcHit {
+                            victim: ge,
+                            amount: dmg,
+                            attacker: Some(e),
+                        });
                     }
                 } else {
                     // Hammering the keep.
