@@ -492,13 +492,16 @@ pub fn populate_forage(
 
 /// Canopy positions (tree-local) the gatherable apples hang at — also where they pop from. Only
 /// the first [`APPLES_PER_TREE`] are actually hung/harvested; the rest are spare spots.
+/// IMPORTANT: each spot sits ON the canopy lobes' outer shell (≈¼ apple-radius inside it), NOT
+/// at a lobe centre — buried fruit is invisible fruit. If `apple_tree_mesh`'s canopy changes,
+/// re-derive these so every apple still pokes out of the leaves.
 const APPLE_SPOTS: [(f32, f32, f32); 6] = [
-    (0.34, 0.84, 0.28),
-    (-0.36, 0.88, 0.14),
-    (0.10, 0.74, 0.42),
-    (0.40, 1.04, -0.08),
-    (-0.22, 1.10, 0.28),
-    (0.04, 1.22, 0.04),
+    (0.55, 0.80, 0.30),   // east-lobe shell, low + front
+    (-0.55, 0.86, 0.10),  // west-lobe shell
+    (0.18, 0.74, 0.55),   // south-lobe shell, hanging low
+    (0.50, 1.10, -0.25),  // upper-east shell, back quarter
+    (-0.40, 1.12, 0.35),  // upper-west shell, front quarter
+    (0.10, 1.42, 0.10),   // crown tip
 ];
 
 /// Apples one tree carries (and yields when stripped) — what hangs == what you bag. (5 of the 6
@@ -606,6 +609,10 @@ fn populate_apple_orchard(
         }
         let y = worldmap::ground_at_world(x, z).unwrap_or(0.0);
         let yaw = crate::wildlife::rng_range(&mut rng, 0.0, std::f32::consts::TAU);
+        if placed == 0 {
+            // One stable anchor for staging close-up shots of the orchard (FOREST_CAM framing).
+            info!("apple orchard: first tree at ({x:.1}, {z:.1})");
+        }
         // Register the trunk as a blocker so the NEXT apple tree (and any mover) keeps clear of it.
         crate::blockers::add(x, z, 0.45);
         commands
@@ -1080,8 +1087,9 @@ fn ore_crystal_mesh() -> Mesh {
 /// it tops the underbrush): a gnarled orchard trunk forking into three limbs, a full
 /// three-tone canopy (shadowed underside → orchard green → sunlit top, brighter than the
 /// forest's pines/broadleaf so it reads as special) dusted with pale blossom, and a root
-/// flare gripping the grass. Trunk base at y=0. The canopy covers every `APPLE_SPOTS`
-/// hang point (x ±0.4, y 0.74–1.22) — the apples are separate child entities that pop off.
+/// flare gripping the grass. Trunk base at y=0. The `APPLE_SPOTS` hang points ride this
+/// canopy's outer SHELL (the apples — separate child entities that pop off — must protrude
+/// from the leaves, never sink inside a lobe; keep the two in sync when reshaping).
 fn apple_tree_mesh() -> Mesh {
     let trunk = lin(0x6b4a2a);
     let leaf_dk = lin(0x3d7e2e);
