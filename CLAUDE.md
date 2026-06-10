@@ -4,12 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A **Bevy 0.18** port of a TypeScript/three.js game, **"D: Tileworld"**, whose source lives at
-`D:\tileworld\src\world` (the canonical reference for gameplay behaviour, tuning constants, and
-model meshes — "the old game" / "the original"). This started as a static forest-scene viewer and
-has grown into a near-parity playable game: a knight defends a central castle against night-wave
+**"D: Tileworld"** — a **Bevy 0.18** game. This started as a static forest-scene viewer and
+has grown into a full playable game: a knight defends a central castle against night-wave
 ork sieges, with combat, economy, an upgrade tree, inventory, villagers, succession, and five
-biomes on one enlarged island.
+biomes on one enlarged island. (It began life as a port of an old TypeScript/three.js game;
+that original is **obsolete and gone as a reference** — this repo + `crates/core` are the sole
+source of truth. Do not look for or cite "the old game".)
 
 > `README.md` and the `main.rs` module doc-comment now describe the actual game (both were
 > truthed-up after an earlier era where they still claimed "no player, no gameplay, just the
@@ -122,7 +122,7 @@ in several tuples because the `Plugins` trait maxes out at arity 15.
 `AppState` = coarse mode (`StartScreen` / `Playing` / `Paused` / `GameOver`). `Modal` = a substate
 that exists **only inside `Playing`** (`None` / `Shop` / `UpgradeTree` / `Inventory`). The entire
 world-sim is gated on `run_if(in_state(Modal::None))`: opening any panel — or leaving `Playing` —
-freezes the world but keeps rendering. This is the declarative port of the TS `isFrozen()`. Sim
+freezes the world but keeps rendering. Sim
 systems carry the gate; render/camera/anim/audio/HUD systems stay ungated so the frozen world
 still draws. New simulation systems **must** carry `.run_if(in_state(Modal::None))` or they'll run
 through pauses/panels.
@@ -133,7 +133,7 @@ Two related map systems share the ground pipeline in `biome.rs`:
 - **`biome.rs` + `biome_<name>.rs`** — the biome *framework*. Each biome exposes `config()`
   (declarative ground/atmosphere/scatter/particles) + optional `landmarks()`. Keys **1–5** swap a
   single 32×32 biome patch at runtime (despawns everything tagged `BiomeEntity`, rebuilds).
-- **`worldmap.rs`** — the actual playable island: a port of the TS `tileMap.ts` at base
+- **`worldmap.rs`** — the actual playable island: generated at base
   resolution scaled up by `MAP_SCALE = 1.5` (→ `COLS 216 × ROWS 162`). Elliptical island, five
   biome blobs, grass safe-zone (castle), four rivers + lake, coastal mountain ridges, rolling
   terraced knolls, plateaus. `classify` force-flattens grass under every town build plot (and
@@ -149,18 +149,18 @@ explicit gate-targeting code. Night-wave invaders follow `InvaderPath` waypoints
 
 ## Conventions that bite if you miss them
 
-- **Coordinate frame is world-space with the castle at the ORIGIN** (a deliberate divergence from
-  the TS game's grid-`-CENTER` origin — do NOT "fix" it). One tile = one world unit;
+- **Coordinate frame is world-space with the castle at the ORIGIN** (deliberate — do NOT "fix"
+  it). One tile = one world unit;
   `tile = floor(world + G)` where `GX/GZ` (in `worldmap.rs`) recentre the grid onto the origin.
-- **Enemy combat numbers are at full old-game / core parity (NOT rescaled).** An earlier pass
+- **Enemy combat numbers are at full core parity (NOT rescaled).** An earlier pass
   scaled ork HP/damage and wildlife damage *down* (~×0.35 HP, ~×0.5 dmg) for the smaller scene,
-  but that left enemies far too soft against a hero already at full old-game power (core
+  but that left enemies far too soft against a hero already at full core power (core
   `PLAYER_BASE_DAMAGE` 25 + weapons/crit/levels). They're now read straight from core:
   `siege::base_hp` → `ork_config(v).hp` (grunt 254 / scout 136 / berserker 306 / shaman 201),
   `orks::ORK_DAMAGE`=24 (variant_melee derives the rest), `SHAMAN_BOLT_DAMAGE`=26, and
   `wildlife::predator_stats` bite damage → `animal_config(s).attack_damage` (wolf 12 … golem 28).
   Wildlife HP already came from core. Per-night HP growth is the `siege::WAVES` `hp_scale` table
-  (1.1·1.15^n), unchanged. When porting a new TS/core combat number, use it **as-is** — don't
+  (1.1·1.15^n), unchanged. When wiring a new combat number from core, use it **as-is** — don't
   reintroduce the old rescale.
 - **Despawn races are pervasive** — many systems race to reap the same entity (corpses, kills,
   wave clears). Always use `try_despawn` (not `despawn`) and `try_insert` (not `insert`) on
@@ -190,18 +190,15 @@ explicit gate-targeting code. Night-wave invaders follow `InvaderPath` waypoints
 - **Forest's divergences are canonical, not bugs**: `siege.rs`'s wave director is richer than
   core's `wave.rs` and is the one in use; `KEEP_MAX_HP = 1000` / 12-per-s repair; the bespoke
   `Atmosphere`/IBL lighting; the custom CoC bokeh `dof.rs` over a plain DoF. Don't "restore" these
-  to match core/TS.
+  to match core.
 
 ## Reference material
 
 - `docs/superpowers/specs/2026-06-07-tileworld-parity-port-roadmap.md` — the P0–P6 roadmap + locked
   decisions + per-subsystem numbers. Read this before any gameplay-parity work.
-- `docs/specs/` — extracted TS visual specs + the **verified** Bevy 0.18.1 API doc.
+- `docs/specs/` — extracted visual specs + the **verified** Bevy 0.18.1 API doc.
 - `docs/superpowers/specs/*-design.md` — per-feature design docs (audio, hero, combat feedback,
   shaman spells, biome variety).
-- `D:\tileworld\src\world` — the original TS game (canonical gameplay/tuning/mesh reference). Key
-  files: `orkConfig.ts`, `Ork.tsx`, `projectileStore.ts`, `playerStore.ts`/`Character.tsx`,
-  `combatStore.ts`, `tileMap.ts`.
 
 ## Controls (gameplay)
 
@@ -209,7 +206,7 @@ explicit gate-targeting code. Night-wave invaders follow `InvaderPath` waypoints
 F1 debug egui tuning panel · F2 perf/state stats overlay · **E** contextual interact — walk up to a thing and a screen prompt names it:
 near the **keep** → War Table (upgrades), near the **merchant stall** → shop, near the **war bell**
 (prep only) → ring in the night (the unified resolver lives in `interaction.rs`; nearest in-range
-wins, proximity-only/no-facing, ported from the 3js single-`E` scheme) · **I** Satchel ·
+wins, proximity-only/no-facing) · **I** Satchel ·
 **Q/Z/X/C** quick-bar items · **F** open chest / forage / rescue · **R** recruit · **1–5** swap
 biome patch · **P/Esc** pause. (`B` is a debug ring-the-bell fallback in `siege::siege_controls`.)
 Fly-cam: Space/Ctrl up·down, Shift sprint, hold Right-Mouse to look.
