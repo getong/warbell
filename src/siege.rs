@@ -453,7 +453,15 @@ impl Plugin for SiegePlugin {
                     .run_if(in_state(Modal::None)),
             )
             // HUD keeps drawing while frozen.
-            .add_systems(Update, update_siege_hud)
+            .add_systems(Update, update_siege_hud);
+        // Clip-capture only: sustain the assault for a long siege recording (see `siege_clip_refill`).
+        if std::env::var("FOREST_CLIP").is_ok() && std::env::var("FOREST_WAVE").is_ok() {
+            app.add_systems(
+                Update,
+                siege_clip_refill.after(invader_brain).run_if(in_state(Modal::None)),
+            );
+        }
+        app
             // Fresh run: reset on leaving the start screen or game-over (NOT on un-pausing,
             // which is a Playing↔Paused transition and never touches these).
             .add_systems(OnExit(AppState::StartScreen), reset_siege)
@@ -1051,6 +1059,33 @@ fn seed_demo_wave(mut siege: ResMut<Siege>, armory: Option<Res<InvaderArmory>>, 
     siege.phase = GamePhase::Wave;
     siege.wave_index = wave_index as i32;
     siege.spawned = count;
+}
+
+/// Clip-capture only (`FOREST_CLIP` + `FOREST_WAVE`): hold the siege in a sustained assault so a
+/// long frame-sequence films a full battle. In normal play Night-1's six orks are shredded in
+/// seconds, which flips the director back to a daylit Prep mid-clip; here we pin the phase to Wave,
+/// floor the keep so it takes hits (red flashes) but never razes into a Defeat freeze, and refill
+/// the field to a full horde as orks fall. Registered only under the clip hook — never in real play.
+fn siege_clip_refill(
+    game: Res<GameTime>,
+    mut siege: ResMut<Siege>,
+    mut keep: ResMut<KeepHp>,
+    armory: Option<Res<InvaderArmory>>,
+    alive: Query<(), (With<WaveInvader>, Without<crate::dying::Dying>)>,
+    mut commands: Commands,
+    mut ring: Local<u32>,
+) {
+    const TARGET: usize = 18;
+    let Some(arm) = armory.as_deref() else { return };
+    siege.phase = GamePhase::Wave;
+    keep.hp = keep.hp.max(keep.max * 0.15);
+    let variants = [OrkVariant::Grunt, OrkVariant::Scout, OrkVariant::Berserker, OrkVariant::Shaman];
+    for _ in alive.iter().count()..TARGET {
+        let v = variants[(*ring as usize) % variants.len()];
+        let hp = (base_hp(v) * WAVES[0].hp_scale).round();
+        spawn_invader(&mut commands, &arm.0, v, hp, *ring, game.0);
+        *ring = ring.wrapping_add(1);
+    }
 }
 
 #[cfg(test)]

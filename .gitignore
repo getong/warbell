@@ -10,6 +10,9 @@
 /*.png
 /shots/
 
+# Promo / marketing captures (the FOREST_CLIP harness → ffmpeg renders GIFs/MP4s here).
+/promo/
+
 # Claude Code local runtime artifacts
 /.claude/scheduled_tasks.lock
 

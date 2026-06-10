@@ -87,6 +87,11 @@ fn main() {
     if std::env::var("FOREST_SHOT").is_ok() {
         window.resolution =
             bevy::window::WindowResolution::new(1920, 1080).with_scale_factor_override(1.0);
+    } else if std::env::var("FOREST_CLIP").is_ok() {
+        // Clip capture renders a PNG per frame, so 720p keeps the encode fast while still giving
+        // ffmpeg a crisp source to downscale into a GIF (and a clean 720p MP4).
+        window.resolution =
+            bevy::window::WindowResolution::new(1280, 720).with_scale_factor_override(1.0);
     }
     App::new()
         .add_plugins(
