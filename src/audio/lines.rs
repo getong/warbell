@@ -384,6 +384,23 @@ pub fn can_play(active: Option<&Active>, now: f32, new_priority: u8) -> bool {
     }
 }
 
+/// Hero-line spacing: while the shared ~20 s window is open, only a genuinely URGENT line —
+/// priority at or above this — may barge in. The hero's tiers below it (musings 5, chest/broke 10,
+/// comebacks 12) always wait the window out; at/above it sit the real warnings (low-HP/level 15,
+/// wave/first-stone 20, keep-hurt 25, nightfall 30).
+pub const HERO_URGENT_PRIORITY: u8 = 15;
+
+/// While the hero-line window is open, is a newcomer of `new_priority` still blocked?
+/// (`window_priority` = priority of the line that opened the window.) Two conditions to pass:
+/// the newcomer must be urgent ([`HERO_URGENT_PRIORITY`]) AND strictly out-rank the opener —
+/// merely out-ranking is not enough, or the hero ladders up his own priority tiers (musing,
+/// then a chest remark 3 s later because 10 > 5, then a level-up line because 15 > 10…) and
+/// never shuts up. An urgent line that does cut through re-stamps the window at its own
+/// priority, so everything quieter waits the full cooldown behind it.
+pub fn hero_window_blocks(new_priority: u8, window_priority: u8) -> bool {
+    new_priority < HERO_URGENT_PRIORITY || new_priority <= window_priority
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -436,6 +453,37 @@ mod tests {
         l.floor = 300.0;
         let (last, once) = (HashMap::new(), HashSet::new());
         assert!(passes_gates(&l, &last, &once, 0.0)); // never played → passes
+    }
+
+    #[test]
+    fn hero_window_blocks_ordinary_lines_even_when_they_outrank_the_opener() {
+        // A priority-5 musing opened the window. A chest remark (10) and a comeback (12) both
+        // out-rank it but are NOT urgent → still blocked. (The old relative-only rule let the
+        // hero ladder 5 → 10 → 15 back-to-back in a busy minute.)
+        assert!(hero_window_blocks(10, 5));
+        assert!(hero_window_blocks(12, 5));
+        assert!(hero_window_blocks(5, 5));
+    }
+
+    #[test]
+    fn hero_window_lets_urgent_lines_through_then_reseals_behind_them() {
+        assert!(!hero_window_blocks(30, 5)); // nightfall warning cuts through idle chatter
+        assert!(!hero_window_blocks(15, 10)); // low-HP cry cuts through a chest remark
+        // The urgent line re-stamps the window at ITS priority: equal-or-lower urgency now waits.
+        assert!(hero_window_blocks(15, 15));
+        assert!(hero_window_blocks(25, 30));
+    }
+
+    #[test]
+    fn urgent_threshold_splits_the_catalog_where_intended() {
+        // Warnings sit at/above the bar; idle observational remarks sit below it, so no remark
+        // can ever barge into an open window no matter what opened it.
+        for (id, urgent) in
+            [("night", true), ("keep_hurt", true), ("hurt", true), ("chest", false), ("people_a", false), ("reply_jab_a", false)]
+        {
+            let l = LINES.iter().find(|l| l.id == id).unwrap();
+            assert_eq!(l.priority >= HERO_URGENT_PRIORITY, urgent, "{id}");
+        }
     }
 
     #[test]
