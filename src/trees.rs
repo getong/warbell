@@ -152,12 +152,14 @@ pub fn tint_mesh(mut m: Mesh, tint: [f32; 3]) -> Mesh {
     m
 }
 
-/// The foliage tint spread: neutral / warm sun-dried / deep cool green. Hue+value jitter
-/// wide enough to read at gameplay distance but stay one family.
-pub const TREE_TINTS: [[f32; 3]; 3] = [
+/// The foliage tint spread: neutral / warm sun-dried / deep cool / sun-gilded / bright
+/// spring. Hue+value jitter wide enough to read at gameplay distance but stay one family.
+pub const TREE_TINTS: [[f32; 3]; 5] = [
     [1.0, 1.0, 1.0],
     [1.08, 1.04, 0.82],
     [0.80, 0.92, 0.86],
+    [1.14, 1.05, 0.66], // golden early-autumn edge
+    [0.90, 1.06, 0.74], // fresh yellow-green spring growth
 ];
 
 // ── Broadleaf "tree" — tapered trunk + 6 icosphere foliage layers (ico detail 1) ──

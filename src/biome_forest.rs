@@ -76,21 +76,37 @@ pub fn config() -> BiomeConfig {
                 tree: true,
                 block_radius: 0.0,
             },
-            // Bushes (also the tree-too-close fallback).
+            // Bushes (also the tree-too-close fallback) — same hue-spread trick as trees.
             PropClass {
-                variants: (0..props::NUM_BUSH_VARIANTS)
-                    .map(|v| (props::build_bush_mesh(v), 1.0))
-                    .collect(),
+                variants: {
+                    const BUSH_TINTS: [[f32; 3]; 3] =
+                        [[1.0, 1.0, 1.0], [1.10, 1.05, 0.78], [0.80, 0.94, 0.84]];
+                    let mut v: Vec<(Mesh, f32)> = Vec::new();
+                    for bv in 0..props::NUM_BUSH_VARIANTS {
+                        for t in BUSH_TINTS {
+                            v.push((crate::trees::tint_mesh(props::build_bush_mesh(bv), t), 1.0));
+                        }
+                    }
+                    v
+                },
                 chance: 0.06,
                 scale: (0.8, 1.35),
                 tree: false,
                 block_radius: 0.0,
             },
-            // Rocks.
+            // Rocks — subtle warm-sandstone / cool-slate tints break the uniform grey.
             PropClass {
-                variants: (0..props::NUM_ROCK_VARIANTS)
-                    .map(|v| (props::build_rock_mesh(v), 1.0))
-                    .collect(),
+                variants: {
+                    const ROCK_TINTS: [[f32; 3]; 3] =
+                        [[1.0, 1.0, 1.0], [1.08, 1.01, 0.90], [0.90, 0.95, 1.06]];
+                    let mut v: Vec<(Mesh, f32)> = Vec::new();
+                    for rv in 0..props::NUM_ROCK_VARIANTS {
+                        for t in ROCK_TINTS {
+                            v.push((crate::trees::tint_mesh(props::build_rock_mesh(rv), t), 1.0));
+                        }
+                    }
+                    v
+                },
                 chance: 0.03,
                 scale: (0.6, 1.6),
                 tree: false,
