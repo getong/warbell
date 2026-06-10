@@ -76,11 +76,27 @@ the `apt-get` line in a **SessionStart hook** (see the `session-start-hook` skil
 $env:FOREST_SHOT="shot.png"; cargo run      # renders ~90 frames so lighting/IBL settle, saves PNG, exits
 ```
 
-Env hooks that stage a scene for a shot (combine with `FOREST_SHOT`), all read at startup:
+For **GIFs / video** (itch.io promo, motion bugs) use the clip mode instead — it saves a numbered
+PNG per frame to a dir, then ffmpeg stitches it. A clamped fixed timestep keeps motion smooth
+despite the per-frame encode stall; `FOREST_CLIP_ORBIT` slowly circles a point. `siege_clip_refill`
+keeps a `FOREST_WAVE` assault topped up so a long siege actually films a battle.
+
+```powershell
+# island/biome flyover (orbit "cx,cy,cz,radius,height,deg_per_sec")
+$env:FOREST_CLIP="target/clips/desert"; $env:FOREST_CLIP_ORBIT="60,1.5,-39,22,14,7"; $env:FOREST_TIME="0.24"; cargo run
+# sustained night siege
+$env:FOREST_CLIP="target/clips/siege"; $env:FOREST_WAVE="1"; $env:FOREST_DEFEND="1"; $env:FOREST_TOWN="1"; $env:FOREST_CAM="0,15,30,0,2,-8"; cargo run
+# stitch (per-clip mp4 + gif): ffmpeg -framerate 30 -i frame_%05d.png -pix_fmt yuv420p out.mp4
+```
+Biome region centres (world XZ): snow (-69,-45) · desert (60,-39) · rock (66,4) · forest (-60,39) ·
+swamp (0,57). Clip knobs: `FOREST_CLIP_FRAMES` (150) · `FOREST_CLIP_FPS` (30) · `FOREST_CLIP_WARMUP` (30).
+
+Env hooks that stage a scene for a shot (combine with `FOREST_SHOT` **or** `FOREST_CLIP`), all read at startup:
 
 | Var | Effect |
 |---|---|
-| `FOREST_SHOT=path.png` | capture-and-exit harness (`capture.rs`) |
+| `FOREST_SHOT=path.png` | single-shot capture-and-exit harness (`capture.rs`) |
+| `FOREST_CLIP=dir` (+`_FRAMES`/`_FPS`/`_WARMUP`/`_ORBIT`) | frame-sequence recorder → ffmpeg GIF/video (`capture.rs`) |
 | `FOREST_CAM`, `FOREST_TIME`/`FOREST_DAY`/`FOREST_NIGHT` | camera pose / time-of-day for the shot |
 | `FOREST_HERO="x,z"` | drop the hero at a world XZ (e.g. deep in a biome region) to stage its reactive atmosphere/weather |
 | `FOREST_BIOME` | boot straight into a given biome |
