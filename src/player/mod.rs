@@ -132,8 +132,13 @@ impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         // Capture screenshots hold the scene's static overview camera → start in FreeRoam
         // so the follow-cam never hijacks the shot (the hero still spawns, at rest).
-        let start_mode =
-            if std::env::var("FOREST_SHOT").is_ok() { PlayMode::FreeRoam } else { PlayMode::Play };
+        let start_mode = if std::env::var("FOREST_SHOT").is_ok()
+            || std::env::var("FOREST_CLIP").is_ok()
+        {
+            PlayMode::FreeRoam
+        } else {
+            PlayMode::Play
+        };
         app.insert_resource(start_mode)
             .init_resource::<HeroState>()
             .init_resource::<PendingHeroDamage>()

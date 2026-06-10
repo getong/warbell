@@ -119,6 +119,7 @@ fn skip_menu() -> bool {
         return false;
     }
     std::env::var("FOREST_SHOT").is_ok()
+        || std::env::var("FOREST_CLIP").is_ok()
         || std::env::var("FOREST_WAVE").is_ok()
         || std::env::var("FOREST_BIOME").is_ok()
 }
