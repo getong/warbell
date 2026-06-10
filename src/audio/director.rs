@@ -9,8 +9,8 @@ use bevy::audio::{PlaybackMode, Volume};
 use bevy::prelude::*;
 
 use super::lines::{
-    can_play, passes_gates, pick_line, replies_to, speaker_voice, Active, Chain, Concept, Line,
-    Speaker,
+    can_play, hero_window_blocks, passes_gates, pick_line, replies_to, speaker_voice, Active,
+    Chain, Concept, Line, Speaker,
 };
 use super::AudioConfig;
 
@@ -131,10 +131,12 @@ pub fn speak_director(
         mgr.rng = rng;
         let Some(line) = chosen else { continue };
 
-        // Shared hero-line spacing (~20 s): drop a hero line still inside the window unless it
-        // strictly out-ranks the line that opened it (urgent warnings cut through idle chatter).
-        // Chain replies skip this — they go straight through `tick_chains`/`play_line`.
-        if line.speaker == Speaker::Hero && now < cd.until && line.priority <= cd.priority {
+        // Shared hero-line spacing (~20 s): drop a hero line still inside the window unless it's
+        // URGENT (priority ≥ `HERO_URGENT_PRIORITY`) AND strictly out-ranks the line that opened
+        // it — so warnings cut through idle chatter, but ordinary remarks can't ladder up the
+        // priority tiers back-to-back (see `hero_window_blocks`). Chain replies skip this — they
+        // go straight through `tick_chains`/`play_line` (the talk-back comeback is player-pressed).
+        if line.speaker == Speaker::Hero && now < cd.until && hero_window_blocks(line.priority, cd.priority) {
             continue;
         }
         if !can_play(mgr.active.get(&line.speaker), now, line.priority) {
