@@ -59,10 +59,12 @@ impl Plugin for VerbsPlugin {
                 Update,
                 (
                     mine_ore,
+                    ore_glow_pulse,
                     chop_tree,
                     forage_pickup,
                     forage_respawn,
                     apple_harvest,
+                    apple_tree_shake,
                     apple_regrow,
                     chest_interact,
                     chest_respawn,
@@ -282,7 +284,8 @@ pub fn populate_ore(
             stone_reward: ORE_STONE,
         };
         // Sink the rock slightly so it reads as embedded in the ground; a random yaw varies it.
-        let scale = crate::wildlife::rng_range(&mut rng, 0.8, 1.25);
+        // Scale floor kept high — an ore node should never shrink into "just another pebble".
+        let scale = crate::wildlife::rng_range(&mut rng, 1.0, 1.4);
         let yaw = crate::wildlife::rng_range(&mut rng, 0.0, std::f32::consts::TAU);
         let vi = (ore.variant as usize) % crystal_mats.len();
         let crystal_mat = crystal_mats[vi].clone();
@@ -303,23 +306,44 @@ pub fn populate_ore(
             .with_children(|p| {
                 p.spawn((Mesh3d(rock_mesh.clone()), MeshMaterial3d(rock_mat.clone()), Transform::default()));
                 p.spawn((Mesh3d(crystal_mesh.clone()), MeshMaterial3d(crystal_mat), Transform::default()));
-                // Soft coloured glow from the gem core — no shadows (cheap; ~18 of these on the map).
+                // Strong coloured glow from the gem core, pulsing slowly (`ore_glow_pulse`) so
+                // the node breathes like a live thing — no shadows (cheap; ~18 on the map).
                 p.spawn((
                     PointLight {
                         color: glow,
-                        intensity: 12_000.0,
-                        range: 4.5,
-                        radius: 0.15,
+                        intensity: ORE_GLOW_BASE,
+                        range: 7.0,
+                        radius: 0.2,
                         shadows_enabled: false,
                         ..default()
                     },
-                    Transform::from_xyz(0.0, 0.7, 0.0),
+                    Transform::from_xyz(0.0, 0.9, 0.0),
+                    OreGlow { phase: seed * std::f32::consts::TAU },
                 ));
             });
         placed += 1;
     }
     if placed < ORE_COUNT {
         info!("ore: placed {placed}/{ORE_COUNT} boulders");
+    }
+}
+
+/// Resting intensity of an ore node's gem light (the pulse swings around this).
+const ORE_GLOW_BASE: f32 = 28_000.0;
+
+/// The pulsing gem light of an ore node (a child of the [`OreNode`] entity); `phase` staggers
+/// the nodes so the whole field doesn't throb in lockstep.
+#[derive(Component)]
+struct OreGlow {
+    phase: f32,
+}
+
+/// Slow breathing pulse on every ore node's gem light — the "this is special, come mine me"
+/// beacon. Cheap: only mutates `PointLight::intensity` on ~18 lights.
+fn ore_glow_pulse(time: Res<Time>, mut q: Query<(&mut PointLight, &OreGlow)>) {
+    let t = time.elapsed_secs();
+    for (mut light, glow) in &mut q {
+        light.intensity = ORE_GLOW_BASE * (1.0 + 0.35 * (t * 2.1 + glow.phase).sin());
     }
 }
 
@@ -396,11 +420,13 @@ pub fn populate_forage(
 
     // Forest apples: standout apple TREES (permanent scenery) carrying a cluster of apples that
     // you strip the WHOLE tree at once by walking up — the apples pop off in a satisfying burst.
-    let apple_mesh = meshes.add(Sphere::new(0.11).mesh().ico(2).unwrap());
+    // The fruit is chunky and glossy-red with a warm emissive lift (≈0.26u after the tree's
+    // scale) so the apples read from well outside harvest range — see red dots, walk over.
+    let apple_mesh = meshes.add(Sphere::new(0.15).mesh().ico(2).unwrap());
     let apple_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.82, 0.16, 0.13),
-        emissive: LinearRgba::rgb(0.20, 0.02, 0.02),
-        perceptual_roughness: 0.5,
+        base_color: Color::srgb(0.88, 0.15, 0.10),
+        emissive: LinearRgba::rgb(0.40, 0.04, 0.03),
+        perceptual_roughness: 0.35,
         ..default()
     });
     let tree_mesh = meshes.add(apple_tree_mesh());
@@ -421,9 +447,15 @@ const APPLE_SPOTS: [(f32, f32, f32); 6] = [
     (0.04, 1.22, 0.04),
 ];
 
-/// Apples one tree carries (and yields when stripped) — what hangs == what you bag. (3 of the 6
-/// `APPLE_SPOTS`; bumped from 2 for more forest food.)
-const APPLES_PER_TREE: usize = 3;
+/// Apples one tree carries (and yields when stripped) — what hangs == what you bag. (5 of the 6
+/// `APPLE_SPOTS`; the canopy should look loaded with fruit, and the strip-burst should feel
+/// like a real haul.)
+const APPLES_PER_TREE: usize = 5;
+
+/// Uniform scale every apple tree spawns at — noticeably bigger than the surrounding forest
+/// scatter so the orchard trees stand proud of the underbrush (the canopy tops out ~2.5u).
+/// Children (the hanging apples) inherit it, which is what makes the fruit chunky + visible.
+const APPLE_TREE_SCALE: f32 = 1.7;
 
 /// A whole apple tree you strip at once: walk inside `harvest_r` → all apples pop off into the
 /// bag, then the tree regrows them after a delay. `ready` gates re-harvest during regrow.
@@ -438,6 +470,50 @@ struct AppleTree {
 /// One apple hanging on a tree (a child of the [`AppleTree`] entity); hidden while regrowing.
 #[derive(Component)]
 struct AppleFruit;
+
+/// Transient harvest wobble on an apple tree (inserted by [`apple_harvest`], driven + removed
+/// by [`apple_tree_shake`]): the whole tree wags and breathes for a moment as the fruit pops
+/// off, so stripping it FEELS like you grabbed the trunk and shook it.
+#[derive(Component)]
+struct TreeShake {
+    started: f32,
+    /// The tree's resting yaw, restored when the shake ends.
+    base_rot: Quat,
+}
+
+/// How long the harvest shake rings out (s).
+const SHAKE_DUR: f32 = 0.8;
+
+/// Wag + squash-and-stretch a shaken tree, decaying to rest over [`SHAKE_DUR`], then restore
+/// its resting pose and drop the component.
+fn apple_tree_shake(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut q: Query<(Entity, &mut Transform, &TreeShake)>,
+) {
+    let now = time.elapsed_secs();
+    for (e, mut tf, shake) in &mut q {
+        let t = now - shake.started;
+        if t >= SHAKE_DUR {
+            tf.rotation = shake.base_rot;
+            tf.scale = Vec3::splat(APPLE_TREE_SCALE);
+            commands.entity(e).try_remove::<TreeShake>();
+            continue;
+        }
+        let decay = 1.0 - t / SHAKE_DUR;
+        // Two off-frequency sways so the wag tumbles instead of metronoming, plus a quick
+        // vertical jiggle — the classic "shake the fruit loose" read.
+        let wag_x = (t * 26.0).sin() * 0.055 * decay;
+        let wag_z = (t * 21.0 + 1.3).sin() * 0.045 * decay;
+        tf.rotation = shake.base_rot * Quat::from_rotation_x(wag_x) * Quat::from_rotation_z(wag_z);
+        let squash = 1.0 + (t * 30.0).sin() * 0.04 * decay;
+        tf.scale = Vec3::new(
+            APPLE_TREE_SCALE * (2.0 - squash).max(0.5),
+            APPLE_TREE_SCALE * squash,
+            APPLE_TREE_SCALE * (2.0 - squash).max(0.5),
+        );
+    }
+}
 
 /// The apple mesh + material, reused for the harvest "pop" motes.
 #[derive(Resource, Clone)]
@@ -457,9 +533,9 @@ fn populate_apple_orchard(
 ) {
     const APPLE_TREES: u32 = 24;
     // Keep the apple tree's WHOLE canopy clear of any existing trunk/prop, not just its trunk
-    // point: forest canopy (~1.3) + apple canopy (~0.65). Without this an apple tree lands a
-    // trunk-width from a pine and the two crowns interpenetrate. ≈ the forest's own tree spacing.
-    const APPLE_CLEAR: f32 = 2.0;
+    // point: forest canopy (~1.3) + apple canopy (~0.65 × APPLE_TREE_SCALE ≈ 1.1). Without this
+    // an apple tree lands a trunk-width from a pine and the two crowns interpenetrate.
+    const APPLE_CLEAR: f32 = 2.8;
     let mut rng = 0xa9_71_3f_55u32 | 1;
     let (mut placed, mut attempts) = (0u32, 0u32);
     while placed < APPLE_TREES && attempts < APPLE_TREES * 400 + 800 {
@@ -477,14 +553,16 @@ fn populate_apple_orchard(
         let y = worldmap::ground_at_world(x, z).unwrap_or(0.0);
         let yaw = crate::wildlife::rng_range(&mut rng, 0.0, std::f32::consts::TAU);
         // Register the trunk as a blocker so the NEXT apple tree (and any mover) keeps clear of it.
-        crate::blockers::add(x, z, 0.3);
+        crate::blockers::add(x, z, 0.45);
         commands
             .spawn((
                 Mesh3d(tree_mesh.clone()),
                 MeshMaterial3d(tree_mat.clone()),
-                Transform::from_xyz(x, y, z).with_rotation(Quat::from_rotation_y(yaw)),
+                Transform::from_xyz(x, y, z)
+                    .with_rotation(Quat::from_rotation_y(yaw))
+                    .with_scale(Vec3::splat(APPLE_TREE_SCALE)),
                 crate::biome::BiomeEntity,
-                AppleTree { harvest_r: 2.0, apples: APPLES_PER_TREE as u32, ready: true, harvested_at: 0.0 },
+                AppleTree { harvest_r: 2.6, apples: APPLES_PER_TREE as u32, ready: true, harvested_at: 0.0 },
             ))
             .with_children(|p| {
                 for (ax, ay, az) in APPLE_SPOTS.into_iter().take(APPLES_PER_TREE) {
@@ -513,14 +591,14 @@ fn apple_harvest(
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
     assets: Option<Res<AppleAssets>>,
     mut commands: Commands,
-    mut trees: Query<(&mut AppleTree, &GlobalTransform, &Children)>,
-    mut fruit: Query<(&Transform, &mut Visibility), With<AppleFruit>>,
+    mut trees: Query<(Entity, &mut AppleTree, &Transform, &GlobalTransform, &Children)>,
+    mut fruit: Query<(&Transform, &mut Visibility), (With<AppleFruit>, Without<AppleTree>)>,
 ) {
     if !hero.alive {
         return;
     }
     let now = time.elapsed_secs();
-    for (mut tree, gt, children) in &mut trees {
+    for (te, mut tree, ltf, gt, children) in &mut trees {
         if !tree.ready {
             continue;
         }
@@ -533,6 +611,9 @@ fn apple_harvest(
         }
         tree.ready = false;
         tree.harvested_at = now;
+        // Kick the harvest shake from the tree's resting yaw (it can't already be shaking —
+        // `ready` only comes back long after the wobble has rung out).
+        commands.entity(te).try_insert(TreeShake { started: now, base_rot: ltf.rotation });
         // Pop each apple off where it hangs.
         for &c in children {
             if let Ok((ltf, mut vis)) = fruit.get_mut(c) {
@@ -920,19 +1001,29 @@ fn ore_rock_mesh() -> Mesh {
     ])
 }
 
-/// A tight cluster of upward crystal shards (varied size + tilt) — the glowing mineable core.
-/// Raised to crown the blocky rock so the gems stay visible above the tumbled stone blocks.
+/// A big eruption of upward crystal shards (varied size + tilt) — the glowing mineable core.
+/// Deliberately OVERSIZED relative to the rock (the tall centre spike clears a full unit) and
+/// the only gem crystals anywhere in the rocky biome, so an ore node is unmistakable from far
+/// off: see a glowing crystal → it's mineable. Crowns the blocky rock; small chips spill down
+/// its shoulders so the cluster reads rooted, not perched.
 fn ore_crystal_mesh() -> Mesh {
     cgroup(vec![
-        ccone(0.11, 0.48, v(0.0, 0.58, 0.0), Quat::IDENTITY),
-        ccone(0.08, 0.32, v(0.16, 0.50, 0.07), rz(-0.45)),
-        ccone(0.08, 0.34, v(-0.15, 0.51, -0.06), rz(0.5)),
-        ccone(0.07, 0.28, v(0.04, 0.48, 0.18), rx(0.5)),
-        ccone(0.06, 0.26, v(-0.06, 0.48, -0.17), rx(-0.5)),
+        // Tall centre spike + two strong leaners — the far-distance silhouette.
+        ccone(0.155, 0.92, v(0.0, 0.74, 0.0), Quat::IDENTITY),
+        ccone(0.115, 0.60, v(0.22, 0.56, 0.10), rz(-0.50)),
+        ccone(0.110, 0.62, v(-0.21, 0.57, -0.08), rz(0.55)),
+        // Mid fan filling the crown.
+        ccone(0.090, 0.46, v(0.06, 0.54, 0.24), rx(0.55)),
+        ccone(0.085, 0.44, v(-0.08, 0.54, -0.23), rx(-0.55)),
+        ccone(0.075, 0.36, v(0.18, 0.50, -0.16), rz(-0.35) * rx(-0.4)),
+        // Shoulder chips spilling down the rock.
+        ccone(0.060, 0.26, v(0.30, 0.36, 0.02), rz(-0.85)),
+        ccone(0.055, 0.24, v(-0.28, 0.36, 0.12), rz(0.90)),
     ])
 }
 
-/// Small standout apple tree: a gnarled orchard trunk forking into three limbs, a full
+/// Standout apple tree (authored at unit scale; spawned at [`APPLE_TREE_SCALE`], so in-world
+/// it tops the underbrush): a gnarled orchard trunk forking into three limbs, a full
 /// three-tone canopy (shadowed underside → orchard green → sunlit top, brighter than the
 /// forest's pines/broadleaf so it reads as special) dusted with pale blossom, and a root
 /// flare gripping the grass. Trunk base at y=0. The canopy covers every `APPLE_SPOTS`
