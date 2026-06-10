@@ -112,18 +112,20 @@ fn start_t() -> f32 {
 }
 
 // ── Phase-driven time of day (ported from DayNight.tsx) ───────────────────────────
-// The siege phase drives the clock: the prep "day" sweeps the sun across the sky as a
-// countdown (a glance tells you how long until night), the night holds through the whole wave,
-// and end screens snap to daylight. The clock EASES toward the target so dusk/dawn fall over a
-// few seconds.
-// The 150s prep day (siege PREP_DURATION) maps to the sun's full arc: ~5:00 low golden
-// morning (east) → 13:00 noon (overhead) → ~21:00 low golden evening (west). Wider than
-// before so the sun visibly rises and sets across the day instead of hanging mid-high.
+// The siege phase drives the clock. The prep "day" sweeps the sun in ONE continuous descent
+// from sunrise to full dark, so it's already night the instant the countdown hits 0 — a glance
+// at the sky reads how long until the wave. Through the wave the sun keeps creeping into deeper
+// night (time visibly passes) but is HARD-CAPPED before the next sunrise, so night always stays
+// night however long the wave runs. End screens ease quickly back to daylight.
+// The 150s prep day (siege PREP_DURATION) maps to the sun's arc: ~5:00 low golden morning (east)
+// → 13:00 noon (overhead) → dusk → nightfall right at countdown end.
 const T_DAWN: f32 = 0.03; // ~5:00 — low sunrise sun, east horizon
-const T_DUSK: f32 = 0.47; // ~21:00 — low sunset sun, west horizon
-const T_NIGHT: f32 = 0.75; // midnight — held for the whole wave
+const T_NIGHTFALL: f32 = 0.60; // full dark — prep's end target / wave start (sun below horizon)
+const T_NIGHT_CAP: f32 = 0.90; // deep pre-dawn — the sun holds here on long waves (sunrise ≈0.97)
+const T_NIGHT: f32 = 0.75; // midnight — only the FOREST_WAVE screenshot boot (`start_t`)
 const T_NOON: f32 = 0.25; // end-screen daylight
-const DAY_LERP_RATE: f32 = 0.7; // ease speed toward the target (≈ a few-second dusk/dawn)
+const DAY_LERP_RATE: f32 = 0.7; // quick-ease speed (≈ a couple-second dusk/dawn) for edge transitions
+const NIGHT_DRIFT_RATE: f32 = 0.003; // slow clock creep through the wave (~100s nightfall→cap)
 
 fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
     let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
@@ -198,26 +200,39 @@ fn advance_sky(
     // applies every frame, so the frozen scene keeps drawing.
     let frozen = *app.get() == AppState::Paused || modal.is_some_and(|m| *m.get() != Modal::None);
     if !clock.paused && !frozen {
+        // Ease `clock.t` along the SHORTEST arc on the [0,1) circle toward `target`, so a
+        // night→dawn wrap goes FORWARD through midnight (sun rises in the east) not backward.
+        let ease_to = |t: &mut f32, target: f32| {
+            let mut diff = target - *t;
+            diff = (diff + 0.5).rem_euclid(1.0) - 0.5;
+            *t += diff * (dt * DAY_LERP_RATE).min(1.0);
+        };
         match siege.as_deref() {
-            // Phase-driven: the prep day is a sky-as-countdown, night holds through the wave.
-            Some(s) => {
-                let target = match s.phase {
-                    GamePhase::Prep => {
-                        let prog = crate::siege::prep_progress(
-                            s.prep_seconds_left,
-                            crate::siege::mods_for(s.difficulty),
-                        );
-                        T_DAWN + (T_DUSK - T_DAWN) * prog
+            Some(s) => match s.phase {
+                // Prep is one continuous sunrise→nightfall descent used as a countdown: the
+                // sun reaches full dark exactly as the timer (prog→1) expires.
+                GamePhase::Prep => {
+                    let prog = crate::siege::prep_progress(
+                        s.prep_seconds_left,
+                        crate::siege::mods_for(s.difficulty),
+                    );
+                    ease_to(&mut clock.t, T_DAWN + (T_NIGHTFALL - T_DAWN) * prog);
+                }
+                GamePhase::Wave => {
+                    // Already night (the normal case after a full prep): let time creep slowly
+                    // into deeper night — dipping through midnight — then HOLD at the pre-dawn
+                    // cap so the wave never brightens back toward sunrise.
+                    if clock.t >= T_NIGHTFALL && clock.t <= T_NIGHT_CAP {
+                        clock.t = (clock.t + dt * NIGHT_DRIFT_RATE).min(T_NIGHT_CAP);
+                    } else {
+                        // Wave fired while the sun was still up (early war-bell / skip): snap to
+                        // nightfall over a couple seconds, forward through dusk.
+                        ease_to(&mut clock.t, T_NIGHTFALL);
                     }
-                    GamePhase::Wave => T_NIGHT,
-                    GamePhase::Victory | GamePhase::Defeat => T_NOON,
-                };
-                // Ease along the SHORTEST arc on the [0,1) circle, so the night→dawn wrap goes
-                // forward through midnight (sun rises in the east) rather than rewinding.
-                let mut diff = target - clock.t;
-                diff = (diff + 0.5).rem_euclid(1.0) - 0.5;
-                clock.t += diff * (dt * DAY_LERP_RATE).min(1.0);
-            }
+                }
+                // End screens ease quickly back to daylight (forward through dawn).
+                GamePhase::Victory | GamePhase::Defeat => ease_to(&mut clock.t, T_NOON),
+            },
             // Fallback (siege not yet inserted): the old free-running clock.
             None => clock.t += dt / clock.day_secs,
         }
