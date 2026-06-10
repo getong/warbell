@@ -362,15 +362,37 @@ struct ClassHandles {
     block_radius: f32,
 }
 
+/// Universal per-variant tint spread, baked at upload time: EVERY scattered prop in EVERY
+/// biome (trees, bushes, rocks, flowers, mushrooms, litter…) gets warm-light / cool-dark
+/// siblings, so no world entity is the one identical colour repeated forever. Deliberately
+/// subtle — hue families (flower petals, foliage greens) stay recognisable; the stronger
+/// class-specific spreads (e.g. `TREE_TINTS`) stack on top of this one.
+const PROP_TINTS: [[f32; 3]; 3] = [
+    [1.0, 1.0, 1.0],
+    [1.09, 1.05, 0.94], // warmer + lighter
+    [0.87, 0.92, 0.90], // cooler + darker
+];
+
 fn upload_classes(src: &[PropClass], meshes: &mut Assets<Mesh>) -> Vec<ClassHandles> {
     src.iter()
-        .map(|c| ClassHandles {
-            variants: c.variants.iter().map(|(m, _)| meshes.add(m.clone())).collect(),
-            weights: c.variants.iter().map(|(_, w)| *w).collect(),
-            chance: c.chance,
-            scale: c.scale,
-            tree: c.tree,
-            block_radius: c.block_radius,
+        .map(|c| {
+            let n = c.variants.len() * PROP_TINTS.len();
+            let mut variants = Vec::with_capacity(n);
+            let mut weights = Vec::with_capacity(n);
+            for (m, w) in &c.variants {
+                for t in PROP_TINTS {
+                    variants.push(meshes.add(crate::trees::tint_mesh(m.clone(), t)));
+                    weights.push(*w / PROP_TINTS.len() as f32);
+                }
+            }
+            ClassHandles {
+                variants,
+                weights,
+                chance: c.chance,
+                scale: c.scale,
+                tree: c.tree,
+                block_radius: c.block_radius,
+            }
         })
         .collect()
 }

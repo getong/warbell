@@ -59,6 +59,7 @@ const COL_GRASS: u32 = 0x6fb24c;
 /// Meadow macro-patch tones mottled into the grass base (see `ground_color`).
 const COL_GRASS_DARK: u32 = 0x4f8c38; // lush shaded patches
 const COL_GRASS_DRY: u32 = 0x8fa953; // dry, sun-bleached patches
+const COL_GRASS_GOLD: u32 = 0xa8b048; // broad sun-gilded meadow sweeps
 const COL_SAND: u32 = 0xcdb079;
 const COL_FOREST: u32 = 0x5d9e44;
 const COL_ROCK: u32 = 0x8d847a;
@@ -396,8 +397,10 @@ fn ground_color(x: f32, z: f32) -> [f32; 4] {
     // the patchiness is what makes the ground read as a living meadow at camera distance.
     let p1 = noise_a(x * 4.0 + 31.0, z * 4.0 - 17.0); // ~12-world-tile patches
     let p2 = noise_b(x * 9.0 - 11.0, z * 9.0 + 23.0); // ~4-tile speckle
+    let p3 = noise_a(x * 1.6 - 71.0, z * 1.6 + 59.0); // ~30-tile golden sweeps
     col = mix3(col, lin3(COL_GRASS_DARK), smoothstep(0.1, 1.3, p1) * 0.55);
     col = mix3(col, lin3(COL_GRASS_DRY), smoothstep(0.25, 1.4, p2) * 0.40);
+    col = mix3(col, lin3(COL_GRASS_GOLD), smoothstep(0.55, 1.5, p3) * 0.45);
     let wob = 2.4 * (x * 0.4 + 1.1).sin() + 2.4 * (z * 0.36 - 0.7).cos();
     for reg in &REGIONS {
         let fray = if reg.peak > 0 { 0.0 } else { edge_fray(x, z) };
@@ -409,6 +412,18 @@ fn ground_color(x: f32, z: f32) -> [f32; 4] {
     // Sandy coast fade.
     let dco = dist_from_coast(x, z) as f32;
     col = mix3(col, lin3(COL_SAND), smoothstep(3.5, 0.5, dco) * 0.85);
+    // Universal mottle — value jitter + a slow warm/cool hue wander over the *blended*
+    // colour, so biome interiors (forest, sand, snow…) get texture too, not just the open
+    // grass. Multiplicative and small: it breaks the flat fill without recolouring a biome.
+    let m1 = noise_a(x * 2.2 - 53.0, z * 2.2 + 41.0); // ~20-tile broad drift
+    let m2 = noise_b(x * 14.0 + 7.0, z * 14.0 - 29.0); // ~3-tile speckle
+    let v = 1.0 + 0.10 * m1 + 0.06 * m2;
+    let warm = 0.05 * noise_a(x * 1.4 + 91.0, z * 1.4 - 77.0); // +red/−blue ↔ −red/+blue
+    col = [
+        (col[0] * v * (1.0 + warm)).clamp(0.0, 1.0),
+        (col[1] * v).clamp(0.0, 1.0),
+        (col[2] * v * (1.0 - warm)).clamp(0.0, 1.0),
+    ];
     // Worn dirt approach-paths baked straight into the ground (not raised geometry — they're
     // just a brown blend in the terrain, like the original game's roads).
     let strength = crate::roads::road_strength(x - GX, z - GZ);
