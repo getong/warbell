@@ -121,6 +121,7 @@ fn step_bolts(
     hero: Res<HeroState>,
     fx: Option<Res<CombatFx>>,
     mut pending: ResMut<PendingHeroDamage>,
+    mut marks: MessageWriter<crate::aftermath::BattleMark>,
     mut commands: Commands,
     mut q: Query<(Entity, &mut Bolt, &mut Transform)>,
 ) {
@@ -142,6 +143,8 @@ fn step_bolts(
                 if let Some(fx) = &fx {
                     spawn_burst(&mut commands, fx, tf.translation, false);
                 }
+                // Leave a scorch on the turf where the bolt burst (aftermath.rs).
+                marks.write(crate::aftermath::BattleMark { at: tf.translation });
                 commands.entity(e).despawn();
             }
             BoltStep::Fizzle => commands.entity(e).despawn(),

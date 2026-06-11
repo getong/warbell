@@ -57,6 +57,24 @@ pub(crate) struct Ambience {
 #[derive(Component)]
 pub(crate) struct CampfireAudio;
 
+/// War-drum loop level at the source (spatial falloff handles distance from there). Loud:
+/// the drums should carry — hearing them faintly from across the river IS the feature.
+const WAR_DRUM_VOL: f32 = 1.3;
+/// Seconds of prep left when the camps start drumming (the warbands muster before dark).
+const DRUM_LEAD: f32 = 45.0;
+/// Drum fade rate (per second) — a slow swell, not a switch.
+const DRUM_FADE: f32 = 0.35;
+
+/// A camp's spatial war-drum sink + its current (lerped) volume level.
+#[derive(Component)]
+pub(crate) struct WarDrums {
+    level: f32,
+}
+
+/// Tag marking a flame that already carries its drum sink (mirrors [`CampfireAudio`]).
+#[derive(Component)]
+pub(crate) struct WarDrumAudio;
+
 /// Spawn the always-on (initially silent) ambience loops once at startup. Not tagged
 /// `BiomeEntity`, so they survive biome switches; only their volume changes.
 pub(crate) fn setup_ambience(asset: Res<AssetServer>, mut commands: Commands) {
@@ -109,6 +127,56 @@ pub(crate) fn attach_campfire_audio(
                 ));
             });
         });
+    }
+}
+
+/// Attach a silent spatial war-drum loop to each camp flame that lacks one (same re-attach
+/// lifecycle as [`attach_campfire_audio`] — camps are `BiomeEntity`s and rebuild on a biome
+/// switch). The synth-baked loop plays at volume 0 all day; [`war_drums`] rides the level.
+pub(crate) fn attach_war_drum_audio(
+    drums: Option<Res<super::synth::WarDrumLoop>>,
+    mut commands: Commands,
+    flames: Query<Entity, (With<crate::camps::Flicker>, Without<WarDrumAudio>)>,
+) {
+    let Some(drums) = drums else { return };
+    for e in &flames {
+        let clip = drums.0.clone();
+        commands.entity(e).queue_silenced(move |mut flame: EntityWorldMut| {
+            flame.insert(WarDrumAudio).with_children(|p| {
+                p.spawn((
+                    AudioPlayer(clip),
+                    PlaybackSettings {
+                        mode: PlaybackMode::Loop,
+                        volume: Volume::Linear(0.0),
+                        spatial: true,
+                        ..default()
+                    },
+                    Transform::default(),
+                    WarDrums { level: 0.0 },
+                ));
+            });
+        });
+    }
+}
+
+/// Swell the camp drums as the assault musters: silent through the day, fading in over the
+/// last [`DRUM_LEAD`] seconds of prep, full through the wave, dying off at dawn/victory.
+pub(crate) fn war_drums(
+    time: Res<Time>,
+    cfg: Res<AudioConfig>,
+    siege: Option<Res<crate::siege::Siege>>,
+    mut q: Query<(&mut WarDrums, &mut bevy::audio::SpatialAudioSink)>,
+) {
+    let on = siege.as_deref().is_some_and(|s| match s.phase {
+        crate::siege::GamePhase::Wave => true,
+        crate::siege::GamePhase::Prep => s.prep_seconds_left < DRUM_LEAD,
+        _ => false,
+    });
+    let target = if on { cfg.ambience_vol * WAR_DRUM_VOL } else { 0.0 };
+    let k = (time.delta_secs() * DRUM_FADE).min(1.0);
+    for (mut d, mut sink) in &mut q {
+        d.level += (target - d.level) * k;
+        sink.set_volume(Volume::Linear(d.level));
     }
 }
 

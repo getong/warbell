@@ -9,7 +9,9 @@
 //! gated behind the freeze-gate state machine in `game_state` — see `CLAUDE.md` for the
 //! conventions and `docs/superpowers/specs/` for the parity roadmap.
 
+mod aftermath;
 mod audio;
+mod banner;
 mod biome;
 mod bridges;
 mod biome_desert;
@@ -45,6 +47,7 @@ mod landmarks;
 mod lumberjack;
 mod miner;
 mod navgrid;
+mod nightsky;
 mod orbs;
 mod orks;
 mod outline;
@@ -161,6 +164,9 @@ fn main() {
             tutorial::TutorialPlugin, // tabbed "How to Play" help panel (toggle: H)
         ))
         .add_plugins((
+            nightsky::NightSkyPlugin, // stars + moon dome that fade in after dark
+            banner::BannerPlugin, // fluttering cloth flags (keep spire, towers, ork camps)
+            aftermath::AftermathPlugin, // persistent battle traces (stains, gear, scorches)
             town::TownPlugin, // city-building: plots, build menu, economy, burn/repair
             lumberjack::LumberjackPlugin, // woodcutters fell real trees (safe zone + threat sense)
             miner::MinerPlugin, // stone miners work real boulders + cart the stone home (ranges far)
