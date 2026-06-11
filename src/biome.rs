@@ -284,7 +284,8 @@ fn apply_build(
     mut ambient: ResMut<GlobalAmbientLight>,
     mut clear: ResMut<ClearColor>,
     mut fog_q: Query<&mut DistanceFog>,
-    mut sun_q: Query<(&mut DirectionalLight, &mut Transform)>,
+    // `With<Sun>`: the moon (scene.rs) is a second DirectionalLight — don't repaint it.
+    mut sun_q: Query<(&mut DirectionalLight, &mut Transform), With<crate::scene::Sun>>,
     mut castle_built: ResMut<crate::castle::CastleBuilt>,
 ) {
     if !pending.0 {
