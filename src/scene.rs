@@ -136,6 +136,15 @@ fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
+/// How deep into night the clock `t` is — 0 in daylight easing to 1 after dark, derived
+/// from the sun's elevation exactly like `advance_sky`'s `night`. Shared by the systems
+/// that react to nightfall outside this module (window lamplight, the star dome, drums…).
+pub fn night_of(t: f32) -> f32 {
+    let a = t * std::f32::consts::TAU;
+    let elev = Vec3::new(a.cos(), a.sin(), 0.55).normalize().y;
+    1.0 - smoothstep(-0.22, 0.08, elev)
+}
+
 fn lerp_col(a: Color, b: Color, t: f32) -> Color {
     let (a, b) = (a.to_linear(), b.to_linear());
     Color::LinearRgba(LinearRgba {

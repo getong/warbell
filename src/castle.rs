@@ -657,8 +657,9 @@ fn keep_parts() -> Vec<(Mesh, M)> {
     v.push((bx(2.16, 0.14, 2.16, 0.0, roof_y + 1.24, 0.0), M::DarkStone)); // cornice under the roof
     v.push((pyramid(1.4, 0.95, roof_y + 1.3), M::Roof));
     v.push((Sphere::new(0.18).mesh().ico(2).unwrap().translated_by(Vec3::new(0.0, roof_y + 2.2, 0.0)), M::Gold));
-    v.push((cyl(0.03, 0.6, 0.0, roof_y + 2.6, 0.0), M::Beam)); // spire pole
-    v.push((bx(0.42, 0.26, 0.025, 0.23, roof_y + 2.72, 0.0), M::Banner)); // pennant
+    // Spire pole — the pennant itself is a fluttering cloth entity (banner.rs), spawned in
+    // `build` so the merged keep geometry keeps only the pole.
+    v.push((cyl(0.03, 0.6, 0.0, roof_y + 2.6, 0.0), M::Beam));
     // Threshold steps + door + arch beam + flanking banners.
     v.push((bx(1.8, 0.1, 0.34, 0.0, 0.05, KEEP_D / 2.0 + 0.32), M::HouseStone)); // lower step
     v.push((bx(1.5, 0.1, 0.22, 0.0, 0.13, KEEP_D / 2.0 + 0.22), M::HouseStone)); // upper step
@@ -722,9 +723,8 @@ fn tower_parts() -> Vec<(Mesh, M)> {
     for (ax, az, rot) in [(0.0, 0.91, 0.0), (0.0, -0.91, 0.0), (0.91, 0.0, HALF_PI), (-0.91, 0.0, HALF_PI)] {
         v.push((bake(bx(0.16, 0.8, 0.06, 0.0, 0.0, 0.0), Vec3::new(ax, TOWER_H * 0.5, az), rot, Vec3::ONE), M::Slit));
     }
-    // Flag.
+    // Flag pole — the flag itself is a fluttering cloth entity (banner.rs), spawned in `build`.
     v.push((cyl(0.04, 1.0, 0.0, TOWER_H + 2.0, 0.0), M::Beam));
-    v.push((bx(0.55, 0.34, 0.03, 0.3, TOWER_H + 2.3, 0.0), M::Banner));
     v
 }
 
@@ -1065,6 +1065,29 @@ pub fn build(
     spawn(cart_corner_parts(), Vec3::new(-10.0, 0.0, -6.0), 2.3, Vec3::ONE, CastleKind::PreWalls);
     spawn(well_parts(), Vec3::new(10.0, 0.0, -6.0), 0.4, Vec3::ONE, CastleKind::PreWalls);
 
+    // Cloth flags (banner.rs) on the poles the merged geometry left bare: the keep spire's
+    // pennant (always shown) and each wall tower's flag (revealed with the Towers upgrade —
+    // `sync_castle` drives their visibility via the same `CastlePart` tag as the towers).
+    // Attach heights are the static flags' old local positions × the structures' Y scales.
+    let keep_flag = crate::banner::spawn_flag(
+        commands, meshes, std_mats,
+        Vec3::new(0.0, 4.88 * 0.7, 0.0), 0.85, 0.42, BANNER, Some(0xd9b34a),
+    );
+    commands
+        .entity(keep_flag)
+        .insert((CastlePart { kind: CastleKind::Always }, BiomeEntity));
+    for (x, z) in towers() {
+        let flag = crate::banner::spawn_flag(
+            commands, meshes, std_mats,
+            Vec3::new(x, 4.75 * 0.74, z), 0.68, 0.36, BANNER, None,
+        );
+        commands.entity(flag).insert((
+            CastlePart { kind: CastleKind::Towers },
+            Visibility::Hidden,
+            BiomeEntity,
+        ));
+    }
+
     // Grass biting back through the yard rim — sparse tufts + clover scattered over the wear
     // band (and a few worn survivor patches inside the yard) so the trodden earth reads as
     // walked-over lawn, not a stamped-out shape. PreWalls: the cobbled court replaces them.
@@ -1258,8 +1281,8 @@ pub enum CastleKind {
 }
 
 #[derive(Component)]
-struct CastlePart {
-    kind: CastleKind,
+pub(crate) struct CastlePart {
+    pub(crate) kind: CastleKind,
 }
 
 /// Which gated groups have had their (append-only) collision blockers registered, so each is
@@ -1314,10 +1337,27 @@ fn sync_castle(
     }
 }
 
+/// Windows are lamplight, not paint: barely lit by day, warm and bright once the townsfolk
+/// shutter themselves indoors at dusk — the visible half of the night curfew (`villagers`
+/// pulls everyone off the streets as night falls; the lit windows say where they went).
+/// One shared material drives every window on the island, so this is a single write.
+fn window_glow(
+    clock: Res<crate::scene::SkyClock>,
+    mats: Option<Res<VillageMats>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let Some(mats) = mats else { return };
+    let night = crate::scene::night_of(clock.t);
+    if let Some(m) = materials.get_mut(&mats.0.get(M::Window)) {
+        m.emissive = srgb(WINDOW_GLOW).to_linear() * (0.35 + 4.4 * night);
+    }
+}
+
 pub struct CastlePlugin;
 impl Plugin for CastlePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<CastleBuilt>().add_systems(Update, (drift_smoke, peck_hens, sync_castle));
+        app.init_resource::<CastleBuilt>()
+            .add_systems(Update, (drift_smoke, peck_hens, sync_castle, window_glow));
     }
 }
 
