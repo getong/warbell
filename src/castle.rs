@@ -1093,6 +1093,26 @@ pub fn build(
         ));
     }
 
+    // Curfew shutters over each house's front window — a wooden pair that swings shut as night
+    // falls (`shutters::drive_shutters`), so the lit town visibly buttons up before the siege (and
+    // a closed leaf hides the glowing pane, reading as "lamp out"). Built here, after the `spawn`
+    // closure releases `commands`; tagged per-house so each pair reveals with its dwelling. The two
+    // mirrored leaf meshes are baked at world size and shared across all houses.
+    let shutter_right = meshes.add(bx(0.20, 0.36, 0.03, -0.10, 0.0, 0.0));
+    let shutter_left = meshes.add(bx(0.20, 0.36, 0.03, 0.10, 0.0, 0.0));
+    for (i, (hx, hz)) in houses().into_iter().enumerate() {
+        crate::shutters::spawn_house_shutters(
+            commands,
+            &shutter_right,
+            &shutter_left,
+            mats.get(M::Wood),
+            hx,
+            hz,
+            face_center(hx, hz),
+            CastleKind::House(i as u8),
+        );
+    }
+
     // Cloth flags (banner.rs) on the poles the merged geometry left bare: the keep spire's
     // pennant (always shown) and each wall tower's flag (revealed with the Towers upgrade —
     // `sync_castle` drives their visibility via the same `CastlePart` tag as the towers).

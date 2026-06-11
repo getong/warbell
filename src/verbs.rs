@@ -349,6 +349,9 @@ pub struct Felling {
     /// Standing rotation, captured on the first drive frame (after the sway writes) so the
     /// topple composes from the true rest pose.
     base_rot: Option<Quat>,
+    /// Latches once the falling-tree SFX has fired — it plays mid-fall (a falling sound, not a
+    /// landing thud), so it must trigger before the landing frame and only once.
+    sfx_done: bool,
 }
 
 /// Seconds from the felling blow to the trunk hitting the ground.
@@ -357,6 +360,9 @@ const FELL_DUR: f32 = 1.05;
 const FELL_ANGLE: f32 = 1.5;
 /// The landing thud / leaf-burst point sits about this far out along the fallen trunk.
 const FELL_CROWN_REACH: f32 = 1.6;
+/// Lead the falling-tree SFX this far ahead of the landing frame: the clip is a *falling* sound
+/// (whoosh into a crash), so it has to start while the trunk is still toppling, not on impact.
+const FELL_SFX_LEAD: f32 = 0.5;
 
 #[allow(clippy::too_many_arguments)]
 fn drive_felling(
@@ -386,13 +392,17 @@ fn drive_felling(
             if let Some(fx) = &fx {
                 crate::player::spawn_shockwave(&mut commands, fx, &mut materials, Vec3::new(at.x, gy, at.z), now);
             }
-            // The tree hits the ground: a full crack+crash for woody trees, just the dry crack
-            // for a cactus. Earshot-gated (woodcutters fell trees all day across the island).
+            commands.entity(e).try_remove::<Felling>();
+            continue;
+        }
+        // Mid-fall: kick the falling-tree SFX `FELL_SFX_LEAD` before the landing frame so the
+        // whoosh runs over the topple and the crash lands as the trunk hits. Fires once; a full
+        // crack+crash for woody trees, just the dry crack for a cactus. Earshot-gated.
+        if !fell.sfx_done && t >= FELL_DUR - FELL_SFX_LEAD {
+            fell.sfx_done = true;
             if hero.pos.distance(Vec2::new(tf.translation.x, tf.translation.z)) < 18.0 {
                 cues.write(AudioCue::TreeFall { cactus });
             }
-            commands.entity(e).try_remove::<Felling>();
-            continue;
         }
         let k = t / FELL_DUR;
         let base = *fell.base_rot.get_or_insert(tf.rotation);
@@ -497,7 +507,7 @@ pub fn topple_tree(commands: &mut Commands, e: Entity, at: Vec3, dir: Vec2, now:
     let dir = if dir.length_squared() > 1e-6 { dir.normalize() } else { Vec2::Y };
     commands.entity(e).try_insert((
         Stump { regrow_at: now + TREE_REGROW },
-        Felling { started: now, dir, base_rot: None },
+        Felling { started: now, dir, base_rot: None, sfx_done: false },
     ));
 }
 

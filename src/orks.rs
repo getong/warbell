@@ -160,6 +160,11 @@ enum OrkMode {
 #[derive(Component)]
 pub struct Ork {
     home: Vec2,
+    /// This ork's personal patrol spot in the camp (its `WARBAND` ring offset), distinct from the
+    /// shared camp `home`/centre. Idle wander + the return-to-camp target orbit THIS, so a warband
+    /// fans out around the fire instead of all four piling onto the dead centre. (`home` stays the
+    /// camp centre — leash range + the respawn camp-match key off it.)
+    anchor: Vec2,
     target: Vec2,
     // `pub(crate)` fields are the ones the night-wave invader brain in `siege.rs` reads/writes.
     pub(crate) pos: Vec2,
@@ -347,7 +352,7 @@ fn ork_brain(
                 if matches!(o.mode, OrkMode::Hunt | OrkMode::Attack) {
                     o.mode = OrkMode::Idle;
                     o.timer = rng_range(&mut o.rng, 0.5, 1.5);
-                    o.target = o.home;
+                    o.target = o.anchor; // amble back to its own spot, not the camp's dead centre
                 }
             }
         }
@@ -711,7 +716,9 @@ fn ork_brawl(
 fn pick_patrol(o: &mut Ork) {
     let ang = rng01(&mut o.rng) * TAU;
     let r = rng_range(&mut o.rng, o.wander_r * 0.3, o.wander_r);
-    o.target = o.home + Vec2::new(ang.cos() * r, ang.sin() * r);
+    // Wander around the ork's OWN spot (not the shared camp centre), so the warband mills as
+    // four loose orbits instead of one converging knot.
+    o.target = o.anchor + Vec2::new(ang.cos() * r, ang.sin() * r);
     o.mode = OrkMode::Patrol;
     o.timer = rng_range(&mut o.rng, 3.0, 7.0);
 }
@@ -1015,6 +1022,7 @@ impl Armory {
 
         let ork = Ork {
             home,
+            anchor: pos,
             target: pos,
             pos,
             facing,

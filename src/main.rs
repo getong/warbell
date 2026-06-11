@@ -63,6 +63,7 @@ mod ruins;
 mod savegame;
 mod scene;
 mod separation;
+mod shutters;
 mod siege;
 mod steer;
 mod subtitles;
@@ -76,6 +77,7 @@ mod trees;
 mod tutorial;
 mod ui;
 mod verbs;
+mod vignettes;
 mod villagers;
 mod visual;
 mod water;
@@ -168,6 +170,7 @@ fn main() {
         .add_plugins((
             nightsky::NightSkyPlugin, // stars + moon dome that fade in after dark
             firelight::FireLightPlugin, // flickering point-lights on campfires + torches (night)
+            shutters::ShutterPlugin, // house window shutters swing shut at dusk (curfew read)
             banner::BannerPlugin, // fluttering cloth flags (keep spire, towers, ork camps)
             aftermath::AftermathPlugin, // persistent battle traces (stains, gear, scorches)
             town::TownPlugin, // city-building: plots, build menu, economy, burn/repair
