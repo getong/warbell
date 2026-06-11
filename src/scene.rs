@@ -83,6 +83,11 @@ impl Plugin for ScenePlugin {
 #[derive(Component)]
 pub struct Sun;
 
+/// Marks the moon — the second directional light that keys the NIGHT (anti-solar position,
+/// cool blue, shadows). See `advance_sky` for why night depth needs it.
+#[derive(Component)]
+pub struct Moon;
+
 #[derive(Resource)]
 pub struct SkyClock {
     pub t: f32,
@@ -198,7 +203,8 @@ fn advance_sky(
     siege: Option<Res<Siege>>,
     mut clock: ResMut<SkyClock>,
     mut ambient: ResMut<GlobalAmbientLight>,
-    mut sun_q: Query<(&mut DirectionalLight, &mut Transform), With<Sun>>,
+    mut sun_q: Query<(&mut DirectionalLight, &mut Transform), (With<Sun>, Without<Moon>)>,
+    mut moon_q: Query<(&mut DirectionalLight, &mut Transform), (With<Moon>, Without<Sun>)>,
     mut fog_q: Query<&mut DistanceFog>,
     mut env_q: Query<&mut GeneratedEnvironmentMapLight>,
     mut grade_q: Query<&mut ColorGrading>,
@@ -282,13 +288,10 @@ fn advance_sky(
 
     for (mut light, mut tf) in &mut sun_q {
         *tf = Transform::from_translation(sun_dir * 120.0).looking_at(Vec3::ZERO, Vec3::Y);
-        // A moonlight KEY (≈3 800 lux, was 1 700): night depth works exactly like day depth —
-        // the directional light must dominate the ambient/IBL fill or lit vs shadowed ground
-        // flattens out. At 1 700 the moon barely beat the ≈600 fill (2.5:1, vs day's ~25:1) and
-        // night read flat AND dark; 3 800 against the trimmed fill below gives moonlit faces +
-        // readable cast shadows while the Atmosphere sky stays dark (a below-horizon sun feeds
-        // it little). Daytime peak unchanged (≈14 100).
-        light.illuminance = 3800.0 + 10_300.0 * day;
+        // At night the sun is BELOW the horizon shining up — it lights no top face, so its
+        // night lux only feeds the Atmosphere's dusk glow. Keep that floor LOW (≈800): the
+        // actual night key light is the Moon below. Daytime peak unchanged (≈14 100).
+        light.illuminance = 800.0 + 13_300.0 * day;
         // Warm at the horizon → warm gold overhead (never neutral-white: the warm key light
         // is what gives the daytime scene its colour depth), then cooled toward moonlit blue
         // as the sun drops below the horizon (so the "moon" doesn't cast an orange glow).
@@ -307,6 +310,19 @@ fn advance_sky(
             light.color = lerp_col(light.color, t.sun_color, bw);
             light.illuminance *= 1.0 + (t.sun_illuminance / BASE_SUN_LUX - 1.0) * bw;
         }
+    }
+
+    // The MOON: night's real key light, parked at the anti-solar point (so it rises as the sun
+    // sets and stands high at midnight) — this is what gives night the same lit-vs-shadow depth
+    // the sun gives day; without it the night ground was pure ambient fill and read flat (player
+    // feedback). ≈3 800 lux against the ≈600 fill ≈ 6:1 contrast: moonlit faces + readable cast
+    // shadows. It also feeds the Atmosphere a faint blue, which reads as moonlit night sky.
+    // Shadows toggle off by day so the second cascade set doesn't double the day shadow cost.
+    let moon_dir = Vec3::new(-a.cos(), -a.sin(), 0.45).normalize();
+    for (mut light, mut tf) in &mut moon_q {
+        *tf = Transform::from_translation(moon_dir * 120.0).looking_at(Vec3::ZERO, Vec3::Y);
+        light.illuminance = 3800.0 * night;
+        light.shadows_enabled = night > 0.05;
     }
 
     // Ambient: night floor trimmed to ≈240 (was 270) — the moonlight key above is now the
@@ -531,6 +547,28 @@ fn setup_sun(mut commands: Commands) {
         .build(),
         // High, slightly-side sun → bright blue daytime sky + soft directional shadows.
         Transform::from_xyz(16.0, 40.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
+
+    // The moon — the night's key light (see the `Moon` marker + `advance_sky`). Spawned dark
+    // (day): `advance_sky` drives its illuminance/shadows from the `night` curve every frame.
+    // No `SunDisk` (no second disk in the sky) and no `VolumetricLight` (god rays stay the
+    // sun's). Same cascade reach as the sun so moonlit tree shadows read in the mid-ground.
+    commands.spawn((
+        Moon,
+        DirectionalLight {
+            color: Color::srgb(0.55, 0.66, 1.0), // cool moonlit blue (matches the night sun tint)
+            illuminance: 0.0,
+            shadows_enabled: false,
+            ..default()
+        },
+        CascadeShadowConfigBuilder {
+            num_cascades: 4,
+            maximum_distance: 150.0,
+            first_cascade_far_bound: 12.0,
+            ..default()
+        }
+        .build(),
+        Transform::from_xyz(-16.0, 40.0, -10.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 
     // A single big fog box enclosing the island + the air above it; the sun's shafts only
