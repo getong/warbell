@@ -34,18 +34,22 @@ pub const TEXT: Color = rgb(243, 243, 245); // #f3f3f5 — body
 pub const TEXT_DIM: Color = rgb(185, 194, 212); // #b9c2d4 — secondary
 pub const TEXT_FAINT: Color = rgba(147, 161, 184, 1.0); // #93a1b8 — tertiary
 
-// Panels / chrome
-pub const PANEL: Color = rgba(22, 28, 40, 0.95); // modal card bg
-pub const PANEL_HUD: Color = rgba(20, 26, 38, 0.78); // persistent-HUD chrome bg
-pub const SCRIM: Color = rgba(8, 8, 14, 0.62); // modal backdrop (blur approximated darker)
-pub const BORDER_SOFT: Color = rgba(255, 255, 255, 0.10);
-pub const BTN_BG: Color = rgba(255, 255, 255, 0.04);
-pub const BTN_BG_HOVER: Color = rgba(255, 255, 255, 0.09);
+// Panels / chrome — warm iron/charcoal-brown, not web blue-grey. The signature frame is
+// outer 2px IRON_EDGE + inner 1px GOLD_HAIRLINE + 6px corner notches (see `widgets::chrome_layers`).
+pub const PANEL: Color = rgba(30, 24, 18, 0.96); // modal card bg (warm iron)
+pub const PANEL_HUD: Color = rgba(27, 22, 16, 0.84); // persistent-HUD chrome bg
+pub const SCRIM: Color = rgba(12, 9, 6, 0.66); // modal backdrop (warm-dark)
+pub const IRON_EDGE: Color = rgba(9, 7, 5, 0.92); // outer frame border
+pub const GOLD_HAIRLINE: Color = rgba(224, 168, 74, 0.34); // inner frame hairline
+pub const GOLD_NOTCH: Color = rgba(224, 168, 74, 0.58); // corner notch squares
+pub const BORDER_SOFT: Color = rgba(224, 184, 120, 0.14);
+pub const BTN_BG: Color = rgba(232, 196, 130, 0.05);
+pub const BTN_BG_HOVER: Color = rgba(232, 196, 130, 0.11);
 
 // Slots / cells
-pub const SLOT_BG: Color = rgba(140, 140, 150, 0.16);
-pub const SLOT_BORDER: Color = rgba(80, 84, 92, 0.9);
-pub const SLOT_BORDER_HOVER: Color = rgba(180, 184, 196, 0.95);
+pub const SLOT_BG: Color = rgba(146, 122, 86, 0.14);
+pub const SLOT_BORDER: Color = rgba(98, 78, 50, 0.9);
+pub const SLOT_BORDER_HOVER: Color = rgba(216, 178, 114, 0.95);
 
 // Bars
 pub const HP_TOP: Color = rgb(214, 58, 58);
@@ -55,7 +59,12 @@ pub const XP_BOT: Color = rgb(58, 123, 213); // #3a7bd5
 pub const STAM_TOP: Color = rgb(143, 168, 200); // #8fa8c8
 pub const STAM_BOT: Color = rgb(74, 102, 144); // #4a6690
 
-// Primary action button (Play / Resume)
+// Primary action button (Play / Resume) — bronze-gold, dark text (`INK`).
+pub const PRIMARY: Color = rgb(196, 144, 62); // bronze base
+pub const PRIMARY_HI: Color = rgb(222, 170, 84); // hover
+pub const PRIMARY_BORDER: Color = rgb(244, 204, 132);
+
+// XP bar blue (was also the old primary-button blue; the button is bronze now).
 pub const BLUE: Color = rgb(74, 111, 200); // #4a6fc8
 pub const BLUE_HI: Color = rgb(98, 134, 219); // #6286db
 pub const BLUE_BORDER: Color = rgb(130, 162, 234); // #82a2ea

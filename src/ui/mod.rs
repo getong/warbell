@@ -8,10 +8,12 @@
 use bevy::prelude::*;
 
 pub mod anim;
+pub mod focus;
 pub mod fonts;
 pub mod icons;
 pub mod notice;
 pub mod settings;
+pub mod texture;
 pub mod theme;
 pub mod widgets;
 
@@ -31,6 +33,9 @@ impl Plugin for UiKitPlugin {
             anim::AnimPlugin,
             notice::NoticePlugin,
             settings::SettingsPlugin,
+            texture::UiTexturePlugin,
+            focus::FocusPlugin,
+            focus::TooltipPlugin,
         ));
     }
 }
