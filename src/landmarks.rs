@@ -151,15 +151,34 @@ pub fn attach(
     materials: &mut Assets<StandardMaterial>,
 ) {
     let m = meta(biome);
+    attach_custom(commands, entity, m.name, m.lore, m.buff, m.buff_mag, m.beacon, pos, meshes, materials);
+}
+
+/// Like [`attach`] but with explicit POI flavour (name / lore / shrine buff / beacon tint) rather
+/// than the per-biome defaults — used by the [`crate::vignettes`] set-pieces, which share a biome
+/// with a ruin but tell their own story, so they need their own name, buff and beacon hue.
+#[allow(clippy::too_many_arguments)]
+pub fn attach_custom(
+    commands: &mut Commands,
+    entity: Entity,
+    name: &'static str,
+    lore: &'static str,
+    buff: BuffKind,
+    buff_mag: f64,
+    beacon: Color,
+    pos: Vec3,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+) {
     commands.entity(entity).try_insert(Landmark {
-        name: m.name,
-        lore: m.lore,
-        buff: m.buff,
-        buff_mag: m.buff_mag,
+        name,
+        lore,
+        buff,
+        buff_mag,
         discovered: false,
         shrine_ready_at: 0.0,
     });
-    spawn_beacon(commands, meshes, materials, m.name, pos, m.beacon);
+    spawn_beacon(commands, meshes, materials, name, pos, beacon);
 }
 
 /// Raise a column of emissive will-o'-wisp motes over a landmark. Tagged [`BiomeEntity`] so the

@@ -778,6 +778,11 @@ pub fn build(
     // ── Signature landmarks: one per biome region (frozen spire, pyramid, trilithon, …) ──
     crate::ruins::populate_landmarks(commands, meshes, std_mats);
 
+    // ── Biome vignettes: one mute set-piece story per region (abandoned camp, lost caravan,
+    //    collapsed watchtower, …) — discoverable POIs + pilgrim destinations. After the landmarks
+    //    so each routes around the ruin already planted in its biome.
+    crate::vignettes::populate_vignettes(commands, meshes, std_mats);
+
     // ── River bridges: plank decks at the real river crossings (also nav-grid walkable). ──
     crate::bridges::populate(commands, meshes, std_mats);
     // (Roads are NOT spawned as geometry — they're baked into the ground colour by

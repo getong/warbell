@@ -5,8 +5,8 @@
 //! warband charging the same hero, or a knot of guards on one invader, would pile into one
 //! overlapping blob. The hero already shoves out of creature bodies one-way
 //! (`player::movement::shove_out_of`); this is the symmetric version for the AI crowd: each frame
-//! every live ork + villager body that overlaps another gets nudged apart, so two bodies meet at
-//! their skins instead of merging.
+//! every live ork + villager + animal body that overlaps another gets nudged apart, so two bodies
+//! meet at their skins instead of merging.
 //!
 //! It's a relaxation pass, not a hard constraint: each overlap is resolved a *fraction* per frame
 //! (full per-frame resolution makes dense piles jitter), capped to a small step, and slid against
@@ -19,6 +19,7 @@ use bevy::prelude::*;
 
 use crate::orks::Ork;
 use crate::villagers::Villager;
+use crate::wildlife::Animal;
 use crate::{blockers, steer, worldmap};
 
 pub struct SeparationPlugin;
@@ -47,16 +48,20 @@ fn separate_agents(
     mut set: ParamSet<(
         Query<(Entity, &mut Ork, &mut Transform), Without<crate::dying::Dying>>,
         Query<(Entity, &mut Villager, &mut Transform), Without<crate::dying::Dying>>,
+        Query<(Entity, &mut Animal, &mut Transform), Without<crate::dying::Dying>>,
     )>,
 ) {
-    // 1. Snapshot every live ork + villager body. (Read through the mut queries one at a time —
-    // both touch `Transform`, which is why they live in a `ParamSet`.)
+    // 1. Snapshot every live ork + villager + animal body. (Read through the mut queries one at a
+    // time — all three touch `Transform`, which is why they live in a `ParamSet`.)
     let mut bodies: Vec<Body> = Vec::new();
     for (e, o, _) in set.p0().iter() {
         bodies.push((e, o.pos, o.body_r));
     }
     for (e, v, _) in set.p1().iter() {
         bodies.push((e, v.pos, v.body_r));
+    }
+    for (e, a, _) in set.p2().iter() {
+        bodies.push((e, a.pos, a.body_r));
     }
     if bodies.len() < 2 {
         return;
@@ -122,6 +127,12 @@ fn separate_agents(
         if let Some(&p) = pushes.get(&e) {
             let r = v.body_r;
             apply(&mut v.pos, &mut tf, r, p);
+        }
+    }
+    for (e, mut a, mut tf) in set.p2().iter_mut() {
+        if let Some(&p) = pushes.get(&e) {
+            let r = a.body_r;
+            apply(&mut a.pos, &mut tf, r, p);
         }
     }
 }
