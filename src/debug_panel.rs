@@ -105,6 +105,7 @@ fn panel_ui(
     mut fog_volume: Query<&mut FogVolume>,
     mut ambient: ResMut<GlobalAmbientLight>,
     mut egui_wants: ResMut<EguiWantsPointer>,
+    mut director: ResMut<crate::cinematic::DirectorState>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
     // Tell the camera controllers whether egui owns the pointer this frame (cursor over the
@@ -118,6 +119,34 @@ fn panel_ui(
         .default_width(280.0)
         .show(ctx, |ui| {
             ui.label("F1 toggles this panel");
+
+            // ── Trailer Director: staged scenes/animations to film with the free-cam (`). ──
+            egui::CollapsingHeader::new("🎬 Director").show(ui, |ui| {
+                use crate::cinematic::HeroGesture as G;
+                ui.checkbox(&mut director.sky_run, "Day→night→dawn timelapse");
+                ui.add(egui::Slider::new(&mut director.sky_speed, 0.01..=0.25).text("sky speed"));
+                ui.separator();
+                ui.label("Hero gesture (stand still, then pick):");
+                ui.horizontal(|ui| {
+                    if ui.button("None").clicked() { director.gesture = None; }
+                    if ui.button("Wave").clicked() { director.gesture = Some(G::Wave); }
+                    if ui.button("Salute").clicked() { director.gesture = Some(G::Salute); }
+                });
+                ui.horizontal(|ui| {
+                    if ui.button("Point").clicked() { director.gesture = Some(G::Point); }
+                    if ui.button("Arms-cross").clicked() { director.gesture = Some(G::ArmsCrossed); }
+                });
+                ui.horizontal(|ui| {
+                    if ui.button("Cheer").clicked() { director.gesture = Some(G::Cheer); }
+                    if ui.button("Work").clicked() { director.gesture = Some(G::Work); }
+                });
+                ui.separator();
+                if ui.button("Build stronghold (timelapse)").clicked() { director.build_run = true; }
+                ui.horizontal(|ui| {
+                    if ui.button("March orks from fortress").clicked() { director.march = true; }
+                    if ui.button("Clear marchers").clicked() { director.clear_marchers = true; }
+                });
+            });
 
             if let Ok((
                 mut fog,

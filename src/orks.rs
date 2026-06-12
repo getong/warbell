@@ -298,7 +298,12 @@ fn ork_brain(
     mut was_clearing: Local<bool>,
     mut q: Query<
         (Entity, &mut Ork, &mut Transform, Option<&crate::player::Health>),
-        (Without<WaveInvader>, Without<crate::dying::Dying>),
+        (
+            Without<WaveInvader>,
+            Without<crate::dying::Dying>,
+            // Staged fortress marchers are driven by `siege::director_march`, not the camp brain.
+            Without<crate::cinematic::DirectorMarcher>,
+        ),
     >,
 ) {
     let dt = time.delta_secs().min(0.05);

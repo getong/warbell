@@ -108,6 +108,8 @@ impl Plugin for TownPlugin {
             // Self-explanation (ungated visuals): the gold ring marks WHICH plot the build
             // menu will use; the timber pad marks where the NEXT house will rise.
             .add_systems(Update, (sync_plot_highlight, sync_house_site_pad))
+            // Trailer Director (F1 → "Build stronghold"): live, real-time construction timelapse.
+            .add_systems(Update, director_build_timelapse.run_if(in_state(Modal::None)))
             .add_systems(
                 Update,
                 (auto_assign_workers, sync_staffed, release_orphan_workers, sync_plot_visibility)
@@ -707,38 +709,105 @@ fn demo_build_timelapse(
     }
     let mat = &mats.0;
     for s in (*last + 1)..=step {
-        match s {
-            0 => def.walls = true, // palisade goes up (the bare yard gives way to the courtyard)
-            1 => raise_plot(0, BuildKind::Farm, &mut town, &mut bank, &mut commands, &mut meshes, mat, &spots),
-            2 => {
-                town.0.build_house(&mut bank.0);
-            }
-            3 => def.gate = true,
-            4 => raise_plot(1, BuildKind::Lumber, &mut town, &mut bank, &mut commands, &mut meshes, mat, &spots),
-            5 => {
-                town.0.build_house(&mut bank.0);
-            }
-            6 => def.towers = true, // four corner watchtowers
-            7 => raise_plot(2, BuildKind::Mine, &mut town, &mut bank, &mut commands, &mut meshes, mat, &spots),
-            8 => raise_plot(3, BuildKind::Farm, &mut town, &mut bank, &mut commands, &mut meshes, mat, &spots),
-            9 => {
-                def.tower_mastery = true;
-                def.keep_archers = true; // archers man the keep roof
-            }
-            10 => {
-                town.0.build_house(&mut bank.0);
-            }
-            11 => raise_plot(4, BuildKind::Lumber, &mut town, &mut bank, &mut commands, &mut meshes, mat, &spots),
-            12 => def.ballista = true, // ballista north of the gate
-            13 => raise_plot(5, BuildKind::Mine, &mut town, &mut bank, &mut commands, &mut meshes, mat, &spots),
-            14 => raise_plot(6, BuildKind::Farm, &mut town, &mut bank, &mut commands, &mut meshes, mat, &spots),
-            15 => {
-                def.shrine = true;
-                town.0.build_house(&mut bank.0);
-            }
-            16 => raise_plot(7, BuildKind::Lumber, &mut town, &mut bank, &mut commands, &mut meshes, mat, &spots),
-            _ => {}
+        build_step(s, &mut town, &mut bank, &mut def, &mut commands, &mut meshes, mat, &spots);
+    }
+    *last = step;
+}
+
+/// One step (0..=16) of the stronghold construction timelapse, shared by the clip demo
+/// ([`demo_build_timelapse`]) and the live Director ([`director_build_timelapse`]): defence flags
+/// flip (castle.rs reveals the parts off `Defenses`), producer plots + houses spawn their meshes.
+#[allow(clippy::too_many_arguments)]
+fn build_step(
+    s: i32,
+    town: &mut TownRes,
+    bank: &mut Bank,
+    def: &mut crate::economy::Defenses,
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    mat: &Mats,
+    spots: &PlotSpots,
+) {
+    match s {
+        0 => def.walls = true, // palisade goes up (the bare yard gives way to the courtyard)
+        1 => raise_plot(0, BuildKind::Farm, town, bank, commands, meshes, mat, spots),
+        2 => {
+            town.0.build_house(&mut bank.0);
         }
+        3 => def.gate = true,
+        4 => raise_plot(1, BuildKind::Lumber, town, bank, commands, meshes, mat, spots),
+        5 => {
+            town.0.build_house(&mut bank.0);
+        }
+        6 => def.towers = true, // four corner watchtowers
+        7 => raise_plot(2, BuildKind::Mine, town, bank, commands, meshes, mat, spots),
+        8 => raise_plot(3, BuildKind::Farm, town, bank, commands, meshes, mat, spots),
+        9 => {
+            def.tower_mastery = true;
+            def.keep_archers = true; // archers man the keep roof
+        }
+        10 => {
+            town.0.build_house(&mut bank.0);
+        }
+        11 => raise_plot(4, BuildKind::Lumber, town, bank, commands, meshes, mat, spots),
+        12 => def.ballista = true, // ballista north of the gate
+        13 => raise_plot(5, BuildKind::Mine, town, bank, commands, meshes, mat, spots),
+        14 => raise_plot(6, BuildKind::Farm, town, bank, commands, meshes, mat, spots),
+        15 => {
+            def.shrine = true;
+            town.0.build_house(&mut bank.0);
+        }
+        16 => raise_plot(7, BuildKind::Lumber, town, bank, commands, meshes, mat, spots),
+        _ => {}
+    }
+}
+
+/// Live Director build timelapse (F1 → "Build stronghold"): the same 17-step reveal as the clip
+/// demo, but stepped off REAL time so the user films it with the free-cam. One-shot per toggle —
+/// flip `build_run` off and on to re-prime (it does not despawn what's already up).
+#[allow(clippy::too_many_arguments)]
+pub fn director_build_timelapse(
+    state: Res<crate::cinematic::DirectorState>,
+    spots: Res<PlotSpots>,
+    mats: Option<Res<VillageMats>>,
+    mut town: ResMut<TownRes>,
+    mut bank: ResMut<Bank>,
+    mut def: ResMut<crate::economy::Defenses>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    time: Res<Time>,
+    mut last: Local<i32>,
+    mut primed: Local<bool>,
+    mut acc: Local<f32>,
+) {
+    const SECS_PER_STEP: f32 = 0.7;
+    if !state.build_run {
+        if *primed {
+            *primed = false;
+            *last = -1;
+            *acc = 0.0;
+        }
+        return;
+    }
+    if spots.0.is_empty() {
+        return;
+    }
+    let Some(mats) = mats else { return };
+    if !*primed {
+        *primed = true;
+        *last = -1;
+        *acc = 0.0;
+        bank.0.add_wood(4000.0);
+        bank.0.add_stone(4000.0);
+    }
+    *acc += time.delta_secs();
+    let step = ((*acc / SECS_PER_STEP) as i32).min(16);
+    if step <= *last {
+        return;
+    }
+    let mat = &mats.0;
+    for s in (*last + 1)..=step {
+        build_step(s, &mut town, &mut bank, &mut def, &mut commands, &mut meshes, mat, &spots);
     }
     *last = step;
 }
