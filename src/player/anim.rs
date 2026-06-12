@@ -14,6 +14,7 @@ const ARM_FORWARD: f32 = 0.5;
 pub fn hero_anim(
     time: Res<Time>,
     player: Res<super::PlayerRes>,
+    dir: Res<crate::cinematic::DirectorState>,
     hero_q: Query<(&Hero, &HeroHealth, &Children)>,
     mut parts: Query<(&HeroPart, &mut Transform)>,
 ) {
@@ -43,6 +44,11 @@ pub fn hero_anim(
     // Active swing phase (0..1), if mid-attack.
     let attack_p = hero.attacking.then(|| (hero.attack_t / ATTACK_DURATION).clamp(0.0, 1.0));
 
+    // Staged trailer gesture (F1 Director): when set, it overrides the sword/shield arms with a
+    // posed/looping animation the normal game never plays. `(armR, armL)` — `None` per arm = keep
+    // the default animation for that arm.
+    let gesture_arms = dir.gesture.map(|g| gesture_pose(g, t - dir.gesture_start));
+
     // Frame-rate-independent damp toward the shield's target pose (~0.25s settle).
     let damp = 1.0 - 0.004_f32.powf(dt);
 
@@ -52,19 +58,24 @@ pub fn hero_anim(
             HeroLimb::LegR => tf.rotation = Quat::from_rotation_x(leg_swing),
             HeroLimb::LegL => tf.rotation = Quat::from_rotation_x(-leg_swing),
             HeroLimb::ArmR => {
-                // Mid-swing → the slash (begins/ends at the forward rest pose, so no pop);
-                // otherwise the arm rests forward (blade presented) + walk swing + idle sway.
-                tf.rotation = match attack_p {
-                    Some(p) => attack_arm_quat(p),
-                    None => Quat::from_rotation_x(arm_swing + idle_sway - ARM_FORWARD),
+                // Gesture override wins; else mid-swing → the slash (begins/ends at the forward
+                // rest pose, so no pop); else the arm rests forward + walk swing + idle sway.
+                tf.rotation = match gesture_arms {
+                    Some((Some(q), _)) => q,
+                    _ => match attack_p {
+                        Some(p) => attack_arm_quat(p),
+                        None => Quat::from_rotation_x(arm_swing + idle_sway - ARM_FORWARD),
+                    },
                 };
             }
             HeroLimb::ArmL => {
-                tf.rotation = if blocking {
-                    // Raise the shield arm across the front to brace behind the plate.
-                    Quat::from_euler(EulerRot::XYZ, -1.25, 0.0, 0.4)
-                } else {
-                    Quat::from_rotation_x(-arm_swing - idle_sway)
+                tf.rotation = match gesture_arms {
+                    Some((_, Some(q))) => q,
+                    _ if blocking => {
+                        // Raise the shield arm across the front to brace behind the plate.
+                        Quat::from_euler(EulerRot::XYZ, -1.25, 0.0, 0.4)
+                    }
+                    _ => Quat::from_rotation_x(-arm_swing - idle_sway),
                 };
             }
             HeroLimb::Head => tf.rotation = Quat::from_rotation_y(head_scan),
@@ -78,6 +89,32 @@ pub fn hero_anim(
                 tf.rotation = tf.rotation.slerp(tr, damp);
             }
         }
+    }
+}
+
+/// Staged-gesture arm poses (Director). Returns `(right_arm, left_arm)` rotations; `None` per arm
+/// means "leave that arm on its normal animation". `ph` is seconds since the gesture began (loop
+/// phase). The sword arm is `ArmR`, the shield arm `ArmL`; on this rig a more-negative X pitches
+/// the arm up/forward, +Z splays it outward. Rough by design — eyeball + nudge against a capture.
+fn gesture_pose(g: crate::cinematic::HeroGesture, ph: f32) -> (Option<Quat>, Option<Quat>) {
+    use crate::cinematic::HeroGesture::*;
+    let e = |x: f32, y: f32, z: f32| Quat::from_euler(EulerRot::XYZ, x, y, z);
+    match g {
+        // Arm overhead, hand flicking side to side.
+        Wave => (Some(e(-2.5, 0.0, 0.30 + (ph * 7.0).sin() * 0.40)), None),
+        // Hand snapped to the brow.
+        Salute => (Some(e(-2.55, 0.0, 0.95)), None),
+        // Arm thrust out horizontally, commanding.
+        Point => (Some(e(-1.55, 0.0, 0.05)), None),
+        // Both forearms folded across the chest.
+        ArmsCrossed => (Some(e(-1.15, 0.0, 0.80)), Some(e(-1.15, 0.0, -0.80))),
+        // Both arms thrown overhead, a small triumphant pump.
+        Cheer => {
+            let p = (ph * 4.0).sin() * 0.15;
+            (Some(e(-2.7 + p, 0.0, -0.25)), Some(e(-2.7 + p, 0.0, 0.25)))
+        }
+        // A repeating chop/hammer swing (reuses the attack arc on a loop) — "at work".
+        Work => (Some(attack_arm_quat((ph * 1.3).fract())), None),
     }
 }
 

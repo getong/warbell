@@ -23,6 +23,7 @@ mod blockers;
 mod boats;
 mod camps;
 mod capture;
+mod cinematic;
 mod castle;
 mod castle_decor;
 mod combat_fx;
@@ -183,6 +184,7 @@ fn main() {
             separation::SeparationPlugin, // orks + townsfolk shove apart so bodies don't interpenetrate
             castle_decor::CastleDecorPlugin, // courtyard dressing + upgrade-bought set pieces
             ork_fortress::OrkFortressPlugin, // Gnashfang Hold + the Blight: fortress, patrols, hero-firing towers
+            cinematic::CinematicPlugin, // keyframed camera paths for trailer shots (FOREST_SHOT_ID)
         ))
         .run();
 }

@@ -452,7 +452,7 @@ impl Plugin for SiegePlugin {
             // Sim — frozen behind any panel / outside Playing.
             .add_systems(
                 Update,
-                (run_director, invader_brain, siege_controls, night_warning)
+                (run_director, invader_brain, siege_controls, night_warning, director_march)
                     .after(advance_game_clock)
                     .run_if(in_state(Modal::None)),
             )
@@ -557,6 +557,69 @@ fn spawn_invader(
         crate::navgrid::NavPath::default(),
         Health { hp, max: hp },
     ));
+}
+
+/// Trailer Director (F1 → "March orks from fortress"): spawn a column of orks at Gnashfang Hold's
+/// gate and march them toward the keep, so the user can film the assault forming from the fortress
+/// (the normal game spawns invaders on the keep's ring — this cinematic march doesn't otherwise
+/// exist). These carry [`DirectorMarcher`] (NOT `WaveInvader`), so neither the camp brain
+/// (`orks::ork_brain`, which excludes them) nor `invader_brain` touches them — this system owns
+/// their movement + transform entirely.
+pub fn director_march(
+    mut state: ResMut<crate::cinematic::DirectorState>,
+    armory: Option<Res<InvaderArmory>>,
+    time: Res<Time>,
+    mut commands: Commands,
+    mut q: Query<
+        (Entity, &mut orks::Ork, &mut Transform),
+        With<crate::cinematic::DirectorMarcher>,
+    >,
+) {
+    if state.clear_marchers {
+        state.clear_marchers = false;
+        for (e, _, _) in &q {
+            commands.entity(e).try_despawn();
+        }
+        return;
+    }
+    if state.march {
+        state.march = false;
+        if let Some(armory) = armory.as_ref() {
+            // Gnashfang Hold gate ≈ (12, 80.9); fan a 3-wide column back from it.
+            let gate = Vec2::new(12.0, 80.9);
+            let variants = [
+                orks::OrkVariant::Grunt, orks::OrkVariant::Scout, orks::OrkVariant::Berserker,
+                orks::OrkVariant::Grunt, orks::OrkVariant::Shaman, orks::OrkVariant::Grunt,
+            ];
+            for i in 0u32..18 {
+                let col = (i % 3) as f32 - 1.0;
+                let row = (i / 3) as f32;
+                let pos = gate + Vec2::new(col * 2.4, row * 2.6);
+                let v = variants[(i as usize) % variants.len()];
+                let seed = i.wrapping_mul(0x9e37_79b1) ^ 0x55;
+                let e = armory.0.spawn(&mut commands, v, INVADER_FACTION, KEEP_POS, pos, seed);
+                commands.entity(e).insert(crate::cinematic::DirectorMarcher);
+            }
+        }
+    }
+    // March the column toward the keep; we drive the transform ourselves (no brain owns these).
+    let dt = time.delta_secs().min(0.05);
+    for (_, mut o, mut tf) in &mut q {
+        let speed = o.speed;
+        let to = KEEP_POS - o.pos;
+        let dist = to.length();
+        if dist > 6.0 {
+            let dir = to / dist;
+            o.pos += dir * speed * dt;
+            o.facing = dir.x.atan2(dir.y);
+            o.moving = true;
+        } else {
+            o.moving = false;
+        }
+        let gy = crate::worldmap::ground_at_world(o.pos.x, o.pos.y).unwrap_or(tf.translation.y);
+        tf.translation = Vec3::new(o.pos.x, gy, o.pos.y);
+        tf.rotation = Quat::from_rotation_y(o.facing);
+    }
 }
 
 /// The assault director: counts down prep, spawns the wave on an interval, advances to the next
