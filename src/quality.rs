@@ -1,5 +1,9 @@
 //! Graphics quality presets — an **explicit** switch (set from Settings, top-right, or the
-//! keyboard), cycling **High → Ultra → Low**. No automatic scaling: the player picks, we apply.
+//! keyboard), cycling **High → Ultra → Low**. The STARTUP default is hardware-aware: on an
+//! integrated GPU, virtual GPU, CPU renderer, or other weak adapter the game boots on Low;
+//! discrete GPUs (the only ones that can afford the full Ultra cost) boot on Ultra. Manual
+//! cycling is always available at runtime and is the only way to change the preset once the
+//! game is running.
 //!
 //! - **High**: the hand-tuned default look. The volumetric god-ray pass is **off** — at the
 //!   scene's subtle fog settings the shafts are imperceptible yet still the frame's biggest GPU
@@ -10,8 +14,13 @@
 //!   fog line, and a bloom lift. GPU cost is the volumetric pass + bigger shadow atlas — a
 //!   deliberate "I have the GPU for it" choice. (There used to be a separate "God Rays" showcase
 //!   preset; it blacked out the Atmosphere sky — see [`ultra_fog`] — and Ultra replaces it.)
-//! - **Low**: same as High (no god-rays) plus eased SSAO / SMAA / shadow-map resolution for weak
-//!   GPUs. Stays fully playable and legible.
+//! - **Low**: tuned for integrated GPUs (measured: ~4.3 ms SSAO + ~6-7 ms across 4 shadow
+//!   cascades at 19 FPS on a typical iGPU). SSAO is **removed** entirely (the component is
+//!   stripped from the camera — even the lowest-quality SSAO pass still walks the full-res depth
+//!   buffer). Shadow cascades stop at 100 tiles (authored 150) — linear fog is already opaque
+//!   there, so the far ground was invisible anyway, and this cuts one cascade's re-draw cost.
+//!   SMAA Low and 1024 shadow atlas. Stays fully playable and legible; cycling to High/Ultra
+//!   re-inserts SSAO at the preset's quality level.
 //!
 //! The reliable on/off for the volumetric pass is the **sun's `VolumetricLight`** (Bevy's retained
 //! render world only tears the pass down when no `VolumetricLight` exists — its extractor never
@@ -20,7 +29,8 @@
 //! restore them exactly.
 //!
 //! `FOREST_QUALITY=ultra|high|low` picks the startup preset (screenshot harness / demo
-//! recording — same idea as the other `FOREST_*` staging hooks).
+//! recording — same idea as the other `FOREST_*` staging hooks). The env var wins over the
+//! hardware-aware default.
 
 use bevy::anti_alias::smaa::{Smaa, SmaaPreset};
 use bevy::light::{
@@ -29,6 +39,7 @@ use bevy::light::{
 use bevy::pbr::{ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel};
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
+use bevy::render::renderer::RenderAdapterInfo;
 
 use crate::scene::Sun;
 
@@ -79,15 +90,64 @@ struct RenderDefaults {
     cascades: Option<CascadeShadowConfig>,
 }
 
+/// Marker: the startup quality was set by `FOREST_QUALITY` env override and must not be
+/// overwritten by the hardware-detection system.
+#[derive(Resource)]
+struct QualityLockedByEnv;
+
 pub struct QualityPlugin;
 
 impl Plugin for QualityPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(GraphicsQuality::from_env().unwrap_or_default())
-            .init_resource::<RenderDefaults>()
+        // If the env var is set, lock in that preset and mark it so the adapter-detection
+        // startup system skips overwriting it.
+        if let Some(q) = GraphicsQuality::from_env() {
+            app.insert_resource(q).insert_resource(QualityLockedByEnv);
+        } else {
+            app.insert_resource(GraphicsQuality::default());
+        }
+
+        app.init_resource::<RenderDefaults>()
+            // Hardware-aware default: runs at Startup, after the render plugin's `finish()` has
+            // inserted RenderAdapterInfo into the main world. Overwrites the default only when no
+            // env override was given and the adapter is a weak device type.
+            .add_systems(Startup, detect_adapter_quality)
             // Applies once at startup (the resource counts as "changed" when added) and again on
             // every Settings toggle — never per-frame.
             .add_systems(Update, apply_quality.run_if(resource_changed::<GraphicsQuality>));
+    }
+}
+
+/// Reads the wgpu adapter type at startup and downgrades the quality preset to `Low` for
+/// integrated GPUs, virtual GPUs, CPU renderers, and other weak adapters, **unless** the
+/// `FOREST_QUALITY` env var already locked the preset. Discrete GPUs (and "Other" —
+/// conservative: unknown adapters might be discrete) keep the default (Ultra).
+fn detect_adapter_quality(
+    adapter_info: Option<Res<RenderAdapterInfo>>,
+    locked: Option<Res<QualityLockedByEnv>>,
+    mut quality: ResMut<GraphicsQuality>,
+) {
+    // Env override wins; do nothing.
+    if locked.is_some() {
+        return;
+    }
+    let Some(info) = adapter_info else {
+        // Renderer not yet initialized (shouldn't happen at Startup, but be safe).
+        return;
+    };
+
+    use wgpu::DeviceType;
+    let weak = matches!(
+        info.0.device_type,
+        DeviceType::IntegratedGpu | DeviceType::VirtualGpu | DeviceType::Cpu
+    );
+    if weak {
+        info!(
+            "Integrated/virtual GPU detected (adapter: {:?}, type: {:?}) — starting on Low quality.",
+            info.0.name,
+            info.0.device_type
+        );
+        *quality = GraphicsQuality::Low;
     }
 }
 
@@ -129,7 +189,10 @@ struct PresetVals {
     god_rays: bool,
     /// Volumetric raymarch steps (only applied when `god_rays`).
     steps: u32,
-    ao: ScreenSpaceAmbientOcclusionQualityLevel,
+    /// `Some(level)` inserts / updates the SSAO component on the camera;
+    /// `None` removes it entirely (Low preset — even the lowest SSAO quality still walks the
+    /// full-res depth buffer; iGPUs measure ~4.3 ms just for that pass).
+    ao: Option<ScreenSpaceAmbientOcclusionQualityLevel>,
     smaa: SmaaPreset,
     shadow_size: usize,
     /// God-ray `FogVolume` override; `None` restores the authored volume.
@@ -146,7 +209,7 @@ fn preset(quality: GraphicsQuality) -> PresetVals {
         GraphicsQuality::High => PresetVals {
             god_rays: false,
             steps: 32,
-            ao: Q::Medium,
+            ao: Some(Q::Medium),
             smaa: SmaaPreset::High,
             shadow_size: 2048,
             fog: None,
@@ -158,7 +221,7 @@ fn preset(quality: GraphicsQuality) -> PresetVals {
             // 64 steps: the showcase's 48 still shows faint banding on long horizon rays; Ultra
             // is the "I have the GPU" preset, so buy the smooth march.
             steps: 64,
-            ao: Q::Ultra,
+            ao: Some(Q::Ultra),
             smaa: SmaaPreset::Ultra,
             shadow_size: 4096,
             fog: Some(ultra_fog()),
@@ -170,15 +233,22 @@ fn preset(quality: GraphicsQuality) -> PresetVals {
             // it with the 4096 atlas (at 2048 the stretched cascades visibly pixelate).
             cascade_far: Some(190.0),
         },
+        // Low: tuned for integrated GPUs. Key savings vs High:
+        //   • SSAO removed (None): ~4.3 ms saved — the depth-buffer walk happens regardless of
+        //     the quality level, so even Q::Low still hurts on an iGPU.
+        //   • cascade_far 100 (vs 150 authored): shadows stop where the fog is already opaque,
+        //     cutting the farthest cascade's redraw. Saves ~2-3 ms of the ~6-7 ms cascade total.
+        //   • 1024 shadow atlas, SMAA Low.
+        // Manual cycling Low → High/Ultra re-inserts SSAO at the target preset's level.
         GraphicsQuality::Low => PresetVals {
             god_rays: false,
             steps: 32,
-            ao: Q::Low,
+            ao: None,
             smaa: SmaaPreset::Low,
             shadow_size: 1024,
             fog: None,
             bloom: None,
-            cascade_far: None,
+            cascade_far: Some(100.0),
         },
     }
 }
@@ -189,11 +259,11 @@ fn apply_quality(
     mut defaults: ResMut<RenderDefaults>,
     mut commands: Commands,
     sun: Query<Entity, With<Sun>>,
+    cam: Query<Entity, With<Camera3d>>,
     mut cam_fog: Query<&mut VolumetricFog>,
     mut fog_vol: Query<&mut FogVolume>,
     mut bloom: Query<&mut Bloom>,
     mut cascades: Query<&mut CascadeShadowConfig>,
-    mut ssao: Query<&mut ScreenSpaceAmbientOcclusion>,
     mut smaa: Query<&mut Smaa>,
     mut shadowmap: ResMut<DirectionalLightShadowMap>,
 ) {
@@ -249,9 +319,24 @@ fn apply_quality(
         };
     }
 
-    for mut s in ssao.iter_mut() {
-        s.quality_level = p.ao;
+    // SSAO: Low removes the component entirely (saves the full depth-buffer walk cost on iGPUs);
+    // High/Ultra insert it with the preset's quality level. We act on every camera carrying
+    // Camera3d so flycam + follow-cam are both covered (scene.rs only spawns one camera, but
+    // this is robust to future additions).
+    for cam_e in cam.iter() {
+        match p.ao {
+            Some(level) => {
+                commands.entity(cam_e).insert(ScreenSpaceAmbientOcclusion {
+                    quality_level: level,
+                    ..default()
+                });
+            }
+            None => {
+                commands.entity(cam_e).remove::<ScreenSpaceAmbientOcclusion>();
+            }
+        }
     }
+
     for mut s in smaa.iter_mut() {
         s.preset = p.smaa;
     }
