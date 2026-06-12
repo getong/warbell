@@ -18,6 +18,9 @@ tileworld_core = { path = "crates/core", features = ["serde"] }
 # Save/continue: JSON snapshot of a run, written at each dawn (`src/savegame.rs`).
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Same wgpu version bevy 0.18.1 depends on — used in quality.rs to inspect
+# RenderAdapterInfo::device_type for the hardware-aware startup preset.
+wgpu = { version = "27.0.1", default-features = false }
 
 # Windows-only: embed the app icon + version metadata (ProductName/Company/version) into the
 # .exe resource section via build.rs. This is what Explorer, the taskbar, the winit window, and
