@@ -1038,7 +1038,7 @@ fn sync_house_site_pad(
             None => *vis = Visibility::Hidden, // all twelve dwellings stand
         }
     } else if let (Some(p), Some(mats)) = (site, mats) {
-        spawn_textured(&mut commands, &mut meshes, &mats.0, HouseSitePad, crate::town_meshes::plot_parts(), p);
+        spawn_textured(&mut commands, &mut meshes, &mats.0, HouseSitePad, crate::town_meshes::house_site_parts(), p);
     }
 }
 
