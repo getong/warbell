@@ -16,6 +16,8 @@
 //!   mouth, ore crate and cut-stone yard, a parked handcart and a lantern for the early shift.
 //! - **Plot** — a marked-out construction site: a cleared earth pad framed in timber beams,
 //!   corner survey stakes, and a little "build here" signpost.
+//! - **House site** — the next dwelling slot in the walls: a half-raised timber house frame
+//!   with the lumber stacked beside it (visually distinct from the flat producer plots).
 
 use bevy::prelude::*;
 
@@ -280,5 +282,53 @@ pub fn plot_parts() -> Vec<(Mesh, M)> {
     let px = r - 0.2;
     v.push((bx(0.1, 0.8, 0.1, px, 0.4, -r + 0.2), M::Wood));
     v.push((bx(0.6, 0.34, 0.06, px, 0.74, -r + 0.2), M::Beam));
+    v
+}
+
+// ── House site: a half-raised dwelling frame ─────────────────────────────────────────
+
+/// The **house** site — deliberately distinct from the generic build plot above: where a plot
+/// is a flat staked-out pad ("anything could go here"), the house site is a half-raised timber
+/// dwelling frame — sill, corner posts, top plates, king posts and a ridge pole, the lumber
+/// stacked beside it — so "the next home goes up right HERE" reads at a glance.
+pub fn house_site_parts() -> Vec<(Mesh, M)> {
+    let (w, d) = (2.4, 1.9); // dwelling footprint (smaller than a producer plot)
+    let (hx, hz) = (w / 2.0, d / 2.0);
+    let post_h = 1.0;
+    let plate_y = 0.2 + post_h; // top of the corner posts
+    let mut v: Vec<(Mesh, M)> = vec![
+        // Packed-earth floor pad — paler than the plot's tilled soil.
+        (bx(w + 0.6, 0.08, d + 0.6, 0.0, 0.04, 0.0), M::Packed),
+    ];
+    // Sill frame on the pad.
+    for sz in [-hz, hz] {
+        v.push((bx(w + 0.14, 0.14, 0.14, 0.0, 0.14, sz), M::Beam));
+    }
+    for sx in [-hx, hx] {
+        v.push((bx(0.14, 0.14, d + 0.14, sx, 0.14, 0.0), M::Beam));
+    }
+    // Corner posts + top plates: the raised box skeleton.
+    for sx in [-hx, hx] {
+        for sz in [-hz, hz] {
+            v.push((bx(0.12, post_h, 0.12, sx, 0.2 + post_h / 2.0, sz), M::Beam));
+        }
+        v.push((bx(0.12, 0.12, d + 0.14, sx, plate_y, 0.0), M::Beam));
+    }
+    for sz in [-hz, hz] {
+        v.push((bx(w + 0.14, 0.12, 0.12, 0.0, plate_y, sz), M::Beam));
+    }
+    // King posts + ridge pole — the roofline-to-be (ridge runs along X like the dwellings').
+    for sx in [-hx, hx] {
+        v.push((bx(0.1, 0.55, 0.1, sx, plate_y + 0.3, 0.0), M::Beam));
+    }
+    v.push((bx(w + 0.3, 0.1, 0.1, 0.0, plate_y + 0.56, 0.0), M::Beam));
+    // The lumber waiting by the front edge: a stacked pyramid of dressed beams.
+    let lz = hz + 0.42;
+    for (n, y) in [(3, 0.09), (2, 0.24)] {
+        for i in 0..n {
+            let x = (i as f32 - (n - 1) as f32 * 0.5) * 0.2;
+            v.push((bx(1.3, 0.15, 0.17, x - 0.4, y, lz), M::Wood));
+        }
+    }
     v
 }
