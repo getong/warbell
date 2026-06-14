@@ -16,9 +16,20 @@
 //! `FOREST_TREE="x,z"` places it at a world XZ. Frame it with `FOREST_CAM` + `FOREST_SHOT`.
 
 use bevy::asset::RenderAssetUsages;
-use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::camera::visibility::{RenderLayers, VisibilityRange};
+use bevy::camera::{RenderTarget, ScalingMode};
+use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::light::NotShadowCaster;
+use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
+use bevy::render::view::screenshot::{save_to_disk, Screenshot};
+
+/// Final tree height (world units): the ~2u scatter trees in `biome_forest`.
+const TARGET_H: f32 = 2.1;
+/// Billboard bake frame height (world units), base-aligned so the impostor quad lines the
+/// 3D model up exactly at the LOD swap distance.
+const FRAME_H: f32 = 2.4;
 
 pub struct RealTreePlugin;
 
@@ -26,6 +37,16 @@ impl Plugin for RealTreePlugin {
     fn build(&self, app: &mut App) {
         if std::env::var("FOREST_TREE").is_ok() {
             app.add_systems(Startup, spawn_real_tree);
+        }
+        // bake one variant's billboard impostor to a transparent PNG (offline tool)
+        if std::env::var("FOREST_TREE_BAKE").is_ok() {
+            app.add_systems(Startup, bake_setup)
+                .add_systems(Update, drive_bake);
+        }
+        // LOD slice: near = full 3D model, far = baked billboard, VisibilityRange crossfade
+        if std::env::var("FOREST_TREE_LOD").is_ok() {
+            app.add_systems(Startup, spawn_lod_demo)
+                .add_systems(Update, face_camera);
         }
     }
 }
@@ -298,7 +319,7 @@ fn variants() -> [Variant; 5] {
     ]
 }
 
-// ── spawn ───────────────────────────────────────────────────────────────────────────
+// ── reusable build helpers ────────────────────────────────────────────────────────────
 
 /// Highest y across a mesh's vertices (its AABB top), for height normalisation.
 fn mesh_top(m: &Mesh) -> f32 {
@@ -309,6 +330,67 @@ fn mesh_top(m: &Mesh) -> f32 {
         1.0
     }
 }
+
+/// Build a variant's `(bark, canopy)` meshes plus the uniform scale that normalises the
+/// tree to [`TARGET_H`]. Deterministic per `Variant::seed`.
+fn build_variant(v: &Variant) -> (Mesh, Mesh, f32) {
+    let mut rng = Rng(v.seed);
+    let mut parts = Vec::new();
+    let mut tips = Vec::new();
+
+    segment(&mut parts, Vec3::ZERO, Vec3::Y, v.trunk_h, v.trunk_r, v.trunk_r * 0.82);
+    grow(
+        &mut parts,
+        &mut tips,
+        &mut rng,
+        Vec3::Y * v.trunk_h,
+        v.lean.normalize(),
+        v.branch_len,
+        v.trunk_r * 0.82,
+        v.depth,
+    );
+
+    let mut bark = parts
+        .into_iter()
+        .reduce(|mut a, b| {
+            a.merge(&b).expect("bark parts share attributes");
+            a
+        })
+        .expect("at least the trunk");
+    if let Err(e) = bark.generate_tangents() {
+        warn!("realtree[{}]: tangent generation failed ({e:?})", v.name);
+    }
+
+    let canopy = build_canopy(&tips, &mut rng, v.density, v.leaf_size);
+    let natural_h = mesh_top(&bark).max(mesh_top(&canopy)).max(0.01);
+    (bark, canopy, TARGET_H / natural_h)
+}
+
+/// The shared normal-mapped bark material.
+fn bark_material(assets: &AssetServer, mats: &mut Assets<StandardMaterial>) -> Handle<StandardMaterial> {
+    mats.add(StandardMaterial {
+        base_color: Color::WHITE,
+        base_color_texture: Some(assets.load("textures/tree/bark_color.png")),
+        normal_map_texture: Some(assets.load("textures/tree/bark_normal.png")),
+        perceptual_roughness: 0.9,
+        ..default()
+    })
+}
+
+/// A per-variant tinted, alpha-cutout leaf-card material.
+fn leaf_material(tint: Color, tex: Handle<Image>, mats: &mut Assets<StandardMaterial>) -> Handle<StandardMaterial> {
+    mats.add(StandardMaterial {
+        base_color: tint,
+        base_color_texture: Some(tex),
+        perceptual_roughness: 0.75,
+        alpha_mode: AlphaMode::Mask(0.5),
+        cull_mode: None,
+        double_sided: true,
+        ..default()
+    })
+}
+
+// ── spawn: the FOREST_TREE variant row ────────────────────────────────────────────────
 
 fn spawn_real_tree(
     mut commands: Commands,
@@ -325,65 +407,15 @@ fn spawn_real_tree(
         })
         .unwrap_or((0.0, 16.0));
 
-    // Match the scatter trees: biome_forest builds 1.5u trees scaled ~0.98–1.93 → ~2u tall.
-    const TARGET_H: f32 = 2.1;
     const SPACING: f32 = 2.6;
-
-    // one shared bark material; the canopy gets a per-variant tinted material
-    let bark_mat = mats.add(StandardMaterial {
-        base_color: Color::WHITE,
-        base_color_texture: Some(assets.load("textures/tree/bark_color.png")),
-        normal_map_texture: Some(assets.load("textures/tree/bark_normal.png")),
-        perceptual_roughness: 0.9,
-        ..default()
-    });
+    let bark_mat = bark_material(&assets, &mut mats);
     let leaf_tex = assets.load("textures/tree/leaf.png");
 
     let vs = variants();
     let n = vs.len();
     for (i, v) in vs.iter().enumerate() {
-        let mut rng = Rng(v.seed);
-        let mut parts = Vec::new();
-        let mut tips = Vec::new();
-
-        segment(&mut parts, Vec3::ZERO, Vec3::Y, v.trunk_h, v.trunk_r, v.trunk_r * 0.82);
-        grow(
-            &mut parts,
-            &mut tips,
-            &mut rng,
-            Vec3::Y * v.trunk_h,
-            v.lean.normalize(),
-            v.branch_len,
-            v.trunk_r * 0.82,
-            v.depth,
-        );
-
-        let mut bark = parts
-            .into_iter()
-            .reduce(|mut a, b| {
-                a.merge(&b).expect("bark parts share attributes");
-                a
-            })
-            .expect("at least the trunk");
-        if let Err(e) = bark.generate_tangents() {
-            warn!("realtree[{}]: tangent generation failed ({e:?})", v.name);
-        }
-
-        let canopy = build_canopy(&tips, &mut rng, v.density, v.leaf_size);
-
-        // normalise: scale the whole tree so its tallest leaf sits at TARGET_H
-        let natural_h = mesh_top(&bark).max(mesh_top(&canopy)).max(0.01);
-        let scale = TARGET_H / natural_h;
-
-        let leaf_mat = mats.add(StandardMaterial {
-            base_color: v.leaf_tint,
-            base_color_texture: Some(leaf_tex.clone()),
-            perceptual_roughness: 0.75,
-            alpha_mode: AlphaMode::Mask(0.5),
-            cull_mode: None,
-            double_sided: true,
-            ..default()
-        });
+        let (bark, canopy, scale) = build_variant(v);
+        let leaf_mat = leaf_material(v.leaf_tint, leaf_tex.clone(), &mut mats);
 
         // lay the variants out in a row, centred on (cx,cz)
         let x = cx + (i as f32 - (n as f32 - 1.0) * 0.5) * SPACING;
@@ -401,5 +433,233 @@ fn spawn_real_tree(
                     NotShadowCaster, // many cutout tris aren't worth the shadow pass
                 ));
             });
+    }
+}
+
+// ── billboard baker (offline impostor tool) ───────────────────────────────────────────
+//
+// `FOREST_TREE_BAKE=path.png` (+ optional `FOREST_TREE_VARIANT=<0..4>`) renders ONE variant
+// to a transparent PNG: the tree is placed on a private render layer, an orthographic camera
+// on that same layer renders it (and only it) to an off-screen image with a transparent
+// clear colour, and we screenshot that image. The resulting cutout is the far-LOD impostor.
+
+#[derive(Resource)]
+struct BakeTarget {
+    image: Handle<Image>,
+    path: String,
+    clock: u32,
+}
+
+fn bake_setup(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut mats: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    assets: Res<AssetServer>,
+) {
+    let path = std::env::var("FOREST_TREE_BAKE").unwrap_or_else(|_| "billboard.png".into());
+    let vi = std::env::var("FOREST_TREE_VARIANT")
+        .ok()
+        .and_then(|s| s.trim().parse::<usize>().ok())
+        .unwrap_or(0);
+    let vs = variants();
+    let v = &vs[vi.min(vs.len() - 1)];
+
+    // off-screen RGBA target the bake camera renders to (and we screenshot)
+    const SIZE: u32 = 1024;
+    let mut img = Image::new_fill(
+        Extent3d { width: SIZE, height: SIZE, depth_or_array_layers: 1 },
+        TextureDimension::D2,
+        &[0, 0, 0, 0],
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::default(),
+    );
+    img.texture_descriptor.usage =
+        TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC | TextureUsages::TEXTURE_BINDING;
+    let image = images.add(img);
+
+    // the tree, on its own render layer so the world/sky never bleed into the cutout
+    let layer = RenderLayers::layer(1);
+    let (bark, canopy, scale) = build_variant(v);
+    let bark_mat = bark_material(&assets, &mut mats);
+    let leaf_mat = leaf_material(v.leaf_tint, assets.load("textures/tree/leaf.png"), &mut mats);
+    commands
+        .spawn((
+            Transform::from_scale(Vec3::splat(scale)),
+            Visibility::Visible,
+            layer.clone(),
+        ))
+        .with_children(|p| {
+            p.spawn((Mesh3d(meshes.add(bark)), MeshMaterial3d(bark_mat), layer.clone()));
+            p.spawn((Mesh3d(meshes.add(canopy)), MeshMaterial3d(leaf_mat), layer.clone()));
+        });
+
+    // a private sun for the layer (the world's DirectionalLight is on layer 0)
+    commands.spawn((
+        DirectionalLight { illuminance: 9000.0, ..default() },
+        Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, -0.6, -0.9, 0.0)),
+        layer.clone(),
+    ));
+
+    // orthographic camera: frame y∈[0,FRAME_H] (base-aligned), transparent clear
+    commands.spawn((
+        Camera3d::default(),
+        Camera {
+            clear_color: ClearColorConfig::Custom(Color::NONE),
+            order: -1,
+            ..default()
+        },
+        RenderTarget::Image(image.clone().into()),
+        Projection::from(OrthographicProjection {
+            scaling_mode: ScalingMode::FixedVertical { viewport_height: FRAME_H },
+            ..OrthographicProjection::default_3d()
+        }),
+        Tonemapping::None,
+        Transform::from_xyz(0.0, FRAME_H * 0.5, 12.0).looking_at(Vec3::new(0.0, FRAME_H * 0.5, 0.0), Vec3::Y),
+        layer,
+    ));
+
+    commands.insert_resource(BakeTarget { image, path, clock: 0 });
+}
+
+fn drive_bake(
+    mut bake: ResMut<BakeTarget>,
+    mut commands: Commands,
+    mut exit: MessageWriter<AppExit>,
+) {
+    bake.clock += 1;
+    // let the scene/IBL settle, then capture the off-screen image and save it
+    if bake.clock == 60 {
+        let path = bake.path.clone();
+        info!("realtree: baking billboard → {path}");
+        commands
+            .spawn(Screenshot::image(bake.image.clone()))
+            .observe(save_to_disk(path));
+    }
+    if bake.clock > 90 {
+        exit.write(AppExit::Success);
+    }
+}
+
+// ── LOD demo: near = 3D model, far = baked billboard, VisibilityRange crossfade ────────
+
+/// A camera-facing impostor quad (yaw only) tagged for [`face_camera`].
+#[derive(Component)]
+struct Billboard;
+
+fn spawn_lod_demo(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut mats: ResMut<Assets<StandardMaterial>>,
+    assets: Res<AssetServer>,
+) {
+    // centre of the receding row; same default open spot as the bake/showcase
+    let (cx, cz) = std::env::var("FOREST_TREE_LOD")
+        .ok()
+        .and_then(|s| {
+            let p: Vec<f32> = s.split(',').filter_map(|t| t.trim().parse().ok()).collect();
+            (p.len() == 2).then(|| (p[0], p[1]))
+        })
+        .unwrap_or((0.0, -42.0));
+
+    // LOD switch distance + crossfade half-width (camera→tree, world units)
+    const R: f32 = 18.0;
+    const F: f32 = 2.5;
+    // higher LOD's end == lower LOD's start, so the dither crossfade lines up (Bevy docs)
+    let full_range = VisibilityRange { start_margin: 0.0..0.0, end_margin: (R - F)..(R + F), use_aabb: false };
+    let bill_range = VisibilityRange { start_margin: (R - F)..(R + F), end_margin: 400.0..400.0, use_aabb: false };
+
+    // one variant for the slice so the only visible difference is model vs. impostor
+    let v = &variants()[0];
+    let (bark, canopy, scale) = build_variant(v);
+    let bark_h = meshes.add(bark);
+    let canopy_h = meshes.add(canopy);
+    let bark_mat = bark_material(&assets, &mut mats);
+    let leaf_mat = leaf_material(v.leaf_tint, assets.load("textures/tree/leaf.png"), &mut mats);
+
+    // billboard quad (base-aligned, FRAME_H square) + its baked impostor texture
+    let bill_mesh = meshes.add(billboard_quad());
+    let bill_mat = mats.add(StandardMaterial {
+        base_color: Color::WHITE,
+        base_color_texture: Some(assets.load("textures/tree/billboard_oak.png")),
+        alpha_mode: AlphaMode::Mask(0.5),
+        cull_mode: None,
+        double_sided: true,
+        perceptual_roughness: 0.9,
+        ..default()
+    });
+
+    // Stage the demo on its own flat platform lifted high above the map, so the LOD ramp
+    // frames cleanly against sky instead of fighting the real island's uneven terrain.
+    let base = Vec3::new(cx, 100.0, cz);
+    let ground_mat = mats.add(StandardMaterial {
+        base_color: Color::srgb(0.34, 0.55, 0.24),
+        perceptual_roughness: 1.0,
+        ..default()
+    });
+    commands.spawn((
+        Name::new("LOD demo ground"),
+        Mesh3d(meshes.add(Cuboid::new(30.0, 0.4, 10.0))),
+        MeshMaterial3d(ground_mat),
+        Transform::from_translation(base - Vec3::Y * 0.2),
+    ));
+
+    // a line of identical trees marching away along +X; viewed from the near end they form
+    // a monotonic distance ramp so one frame captures the full model→impostor handoff.
+    for k in 0..7 {
+        let pos = base + Vec3::new((k as f32 - 3.0) * 3.0, 0.0, 0.0);
+        // full model (scaled), fades out past R
+        commands
+            .spawn((
+                Name::new("LOD full"),
+                Transform::from_translation(pos).with_scale(Vec3::splat(scale)),
+                Visibility::Visible,
+                full_range.clone(),
+            ))
+            .with_children(|p| {
+                p.spawn((Mesh3d(bark_h.clone()), MeshMaterial3d(bark_mat.clone())));
+                p.spawn((Mesh3d(canopy_h.clone()), MeshMaterial3d(leaf_mat.clone()), NotShadowCaster));
+            });
+        // impostor (unscaled — quad already authored in world units), fades in past R
+        commands.spawn((
+            Name::new("LOD billboard"),
+            Mesh3d(bill_mesh.clone()),
+            MeshMaterial3d(bill_mat.clone()),
+            Transform::from_translation(pos),
+            bill_range.clone(),
+            Billboard,
+            NotShadowCaster,
+        ));
+    }
+}
+
+/// A base-aligned quad in the XY plane, `FRAME_H` tall and wide, UV 0..1 (v flipped so the
+/// baked image is upright). Matches the bake camera framing so the impostor overlays the
+/// 3D model exactly at the swap distance.
+fn billboard_quad() -> Mesh {
+    let h = FRAME_H;
+    let hw = FRAME_H * 0.5;
+    let pos = vec![[-hw, 0.0, 0.0], [hw, 0.0, 0.0], [hw, h, 0.0], [-hw, h, 0.0]];
+    let nor = vec![[0.0, 0.0, 1.0]; 4];
+    let uv = vec![[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]];
+    let mut m = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    m.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
+    m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, nor);
+    m.insert_attribute(Mesh::ATTRIBUTE_UV_0, uv);
+    m.insert_indices(Indices::U32(vec![0, 1, 2, 0, 2, 3]));
+    m
+}
+
+/// Yaw every [`Billboard`] to face the camera (impostors are flat, so they must turn).
+fn face_camera(
+    cam: Query<&GlobalTransform, With<Camera3d>>,
+    mut bills: Query<&mut Transform, With<Billboard>>,
+) {
+    let Ok(cam) = cam.single() else { return };
+    let cp = cam.translation();
+    for mut t in &mut bills {
+        let d = cp - t.translation;
+        let yaw = d.x.atan2(d.z);
+        t.rotation = Quat::from_rotation_y(yaw);
     }
 }
