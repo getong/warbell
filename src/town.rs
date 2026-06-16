@@ -1121,20 +1121,54 @@ fn build_strip_input(mut mode: ResMut<BuildMode>, q: Query<(&Interaction, &Build
     }
 }
 
-/// Each frame, highlight the selected card's border + rewrite the hint to the placement instruction
-/// (or the afford shortfall, in red). Cards are built once; only highlight + hint change live, so
-/// clicks aren't eaten.
+/// Alpha applied to every text + icon inside a build card the player can't afford yet, so the whole
+/// card reads "greyed out". Re-checked each frame against the live bank, so it un-greys the instant a
+/// production tick / loot makes it affordable.
+const BUILD_DIM_ALPHA: f32 = 0.3;
+/// Dark wash laid over a build card the player can't afford, so the whole card visibly recedes.
+const BUILD_DIM_BG: Color = Color::srgba(0.0, 0.0, 0.0, 0.32);
+
+/// Each frame, highlight the selected card's border, **grey out any building the player can't afford**
+/// (the card gets a dark wash and every text + icon descendant fades to [`BUILD_DIM_ALPHA`]), and
+/// rewrite the hint to the placement instruction (or the selected building's afford shortfall, in
+/// red). Cards are built once; only highlight + alpha + hint change live, so clicks aren't eaten.
 fn build_strip_update(
     mode: Res<BuildMode>,
     bank: Res<Bank>,
-    mut rows: Query<(&BuildOption, &mut BorderColor)>,
+    mut rows: Query<(Entity, &BuildOption, &mut BorderColor, &mut BackgroundColor)>,
+    kids: Query<&Children>,
+    mut texts: Query<&mut TextColor, Without<BuildHint>>,
+    mut imgs: Query<&mut ImageNode>,
     mut hint: Query<(&mut Text, &mut TextColor), With<BuildHint>>,
 ) {
     if !mode.active {
         return;
     }
-    for (opt, mut bc) in &mut rows {
-        *bc = BorderColor::all(if opt.0 == mode.sel { GOLD } else { BORDER_SOFT });
+    for (card, opt, mut bc, mut bg) in &mut rows {
+        let unaffordable = cost_shortfall(BUILD_TYPES[opt.0].cost(), &bank.0).is_some();
+        *bc = BorderColor::all(if opt.0 == mode.sel {
+            GOLD
+        } else if unaffordable {
+            BORDER_SOFT.with_alpha(0.06)
+        } else {
+            BORDER_SOFT
+        });
+        bg.0 = if unaffordable { BUILD_DIM_BG } else { BTN_BG };
+        // Fade the card's contents when unaffordable. Absolute alpha (not a per-frame multiply), so
+        // it both greys out and restores cleanly as resources change.
+        let a = if unaffordable { BUILD_DIM_ALPHA } else { 1.0 };
+        let mut stack = vec![card];
+        while let Some(e) = stack.pop() {
+            if let Ok(mut t) = texts.get_mut(e) {
+                t.0.set_alpha(a);
+            }
+            if let Ok(mut img) = imgs.get_mut(e) {
+                img.color.set_alpha(a);
+            }
+            if let Ok(c) = kids.get(e) {
+                stack.extend(c.iter());
+            }
+        }
     }
     let kind = mode.kind();
     let (msg, short) = match cost_shortfall(kind.cost(), &bank.0) {
