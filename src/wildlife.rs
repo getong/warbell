@@ -393,15 +393,22 @@ fn animal_brain(
             }
         }
 
-        // Decaying knockback shove from a recent hero blow — slid against terrain (so a shove
-        // can't punt an animal through a cliff/water), mirroring `orks::apply_knockback`.
+        // Decaying knockback shove from a recent hero blow — slid against terrain AND props (so a
+        // shove can't punt an animal through a cliff/water or a wall), mirroring
+        // `orks::apply_knockback`. Waive the prop test when already wedged inside one so the shove
+        // can carry the animal out.
         if a.kb.length_squared() > 0.0025 {
             let cur_y = footing(a.pos.x, a.pos.y).unwrap_or(tf.translation.y);
+            let inside = crate::blockers::is_blocked(a.pos.x, a.pos.y);
             let step = a.kb * dt;
-            if steer::can_stand(a.pos.x + step.x, a.pos.y, a.body_r, cur_y) {
+            if steer::can_stand(a.pos.x + step.x, a.pos.y, a.body_r, cur_y)
+                && (inside || !crate::blockers::is_blocked(a.pos.x + step.x, a.pos.y))
+            {
                 a.pos.x += step.x;
             }
-            if steer::can_stand(a.pos.x, a.pos.y + step.y, a.body_r, cur_y) {
+            if steer::can_stand(a.pos.x, a.pos.y + step.y, a.body_r, cur_y)
+                && (inside || !crate::blockers::is_blocked(a.pos.x, a.pos.y + step.y))
+            {
                 a.pos.y += step.y;
             }
             a.kb *= (1.0 - 9.0 * dt).max(0.0);

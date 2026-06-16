@@ -236,13 +236,20 @@ pub(crate) fn apply_knockback(o: &mut Ork, dt: f32) {
         return;
     }
     let cur_y = steer::footing(o.pos.x, o.pos.y).unwrap_or(0.0);
+    // Already wedged inside a prop/building footprint? Waive the blocker test so the shove can
+    // carry the ork OUT — same escape rule `steer::step_clear` uses (else a corner traps it).
+    let inside = crate::blockers::is_blocked(o.pos.x, o.pos.y);
     let step = o.kb * dt;
     let nx = o.pos.x + step.x;
     let nz = o.pos.y + step.y;
-    if steer::can_stand(nx, o.pos.y, o.body_r, cur_y) {
+    if steer::can_stand(nx, o.pos.y, o.body_r, cur_y)
+        && (inside || !crate::blockers::is_blocked(nx, o.pos.y))
+    {
         o.pos.x = nx;
     }
-    if steer::can_stand(o.pos.x, nz, o.body_r, cur_y) {
+    if steer::can_stand(o.pos.x, nz, o.body_r, cur_y)
+        && (inside || !crate::blockers::is_blocked(o.pos.x, nz))
+    {
         o.pos.y = nz;
     }
     o.kb *= (1.0 - 9.0 * dt).max(0.0);
