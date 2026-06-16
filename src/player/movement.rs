@@ -116,6 +116,7 @@ pub(super) struct Bodies<'w, 's> {
 pub fn player_move(
     time: Res<Time>,
     mode: Res<PlayMode>,
+    build_mode: Res<crate::town::BuildMode>,
     player: Res<PlayerRes>,
     buffs: Res<crate::inventory::Buffs>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -132,9 +133,10 @@ pub fn player_move(
     let Ok((mut hero, mut tf)) = hero_q.single_mut() else { return };
     let t = time.elapsed_secs();
 
-    // Hold still in FreeRoam (fly-cam drives the view) or while down (awaiting respawn), but
-    // keep the mirror current; `alive=false` when down so orks stop chasing the corpse.
-    if *mode != PlayMode::Play || !player.0.is_alive() {
+    // Hold still in FreeRoam (fly-cam drives the view), while down (awaiting respawn), or in build
+    // mode (WASD then drives the build palette, not the knight). Keep the mirror current; `alive=false`
+    // when down so orks stop chasing the corpse.
+    if *mode != PlayMode::Play || !player.0.is_alive() || build_mode.active {
         hero.moving = false;
         let idle_bob = (t * 1.4).sin() * 0.025;
         tf.translation = Vec3::new(hero.pos.x, hero.y + idle_bob, hero.pos.y);

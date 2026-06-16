@@ -5,6 +5,7 @@
 //! The backtick key flips [`PlayMode`]: in **FreeRoam** this system yields and
 //! `controls::fly_camera` drives the camera instead (for debugging).
 
+use bevy::ecs::system::SystemParam;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
@@ -13,6 +14,17 @@ use crate::controls::FlyCam;
 use crate::game_state::{AppState, Modal};
 
 use super::{Hero, PlayMode};
+
+/// The "is the cursor interactive / where should the camera frame" inputs, bundled to keep
+/// `player_camera` under Bevy's 16-param system cap. Build mode flips the camera up over the town
+/// and frees the cursor (`build_mode.active`).
+#[derive(SystemParam)]
+pub struct CamGate<'w> {
+    app: Res<'w, State<AppState>>,
+    modal: Option<Res<'w, State<Modal>>>,
+    egui_wants: Res<'w, crate::debug_panel::EguiWantsPointer>,
+    build_mode: Res<'w, crate::town::BuildMode>,
+}
 
 const SENS_X: f32 = 0.0035;
 const SENS_Y: f32 = 0.0016;
@@ -86,9 +98,8 @@ pub fn player_camera(
     time: Res<Time>,
     feedback: Option<Res<crate::combat_fx::HitFeedback>>,
     mut base_fov: Local<Option<f32>>,
-    app: Res<State<AppState>>,
-    modal: Option<Res<State<Modal>>>,
-    egui_wants: Res<crate::debug_panel::EguiWantsPointer>,
+    gate: CamGate,
+    mut build_blend: Local<f32>,
 ) {
     if *mode != PlayMode::Play {
         return;
@@ -99,9 +110,12 @@ pub fn player_camera(
     // Cursor only locks while actually playing with no panel up; a modal/menu frees it so its
     // buttons are clickable (and a button-click can't re-grab the view). The debug panel
     // (egui_wants) also blocks the grab so clicking a slider never locks + rotates the view.
-    let interactive = *app.get() == AppState::Playing
-        && modal.map_or(true, |m| *m.get() == Modal::None)
-        && !egui_wants.0;
+    // Build mode is non-interactive too: the cursor stays FREE so the player clicks the palette +
+    // plots (and combat/arts already gate on `orbit.locked`, so freeing it disables attacking).
+    let interactive = *gate.app.get() == AppState::Playing
+        && gate.modal.as_ref().map_or(true, |m| *m.get() == Modal::None)
+        && !gate.egui_wants.0
+        && !gate.build_mode.active;
     if let Ok(mut cur) = cursor_q.single_mut() {
         if interactive {
             if buttons.just_pressed(MouseButton::Left) && !orbit.locked {
@@ -132,11 +146,20 @@ pub fn player_camera(
         orbit.dist = (orbit.dist - s * ZOOM_SENS).clamp(MIN_DIST, MAX_DIST);
     }
 
-    let target = Vec3::new(hero.pos.x, hero.y + EYE_H, hero.pos.y);
+    let follow_target = Vec3::new(hero.pos.x, hero.y + EYE_H, hero.pos.y);
     let (a, p, r) = (orbit.azimuth, orbit.pitch, orbit.dist);
-    cam_tf.translation =
-        target + Vec3::new(a.sin() * p.cos() * r, p.sin() * r, a.cos() * p.cos() * r);
-    cam_tf.look_at(target, Vec3::Y);
+    let follow_eye =
+        follow_target + Vec3::new(a.sin() * p.cos() * r, p.sin() * r, a.cos() * p.cos() * r);
+
+    // Build mode eases the camera up over the settlement (centred on the castle/origin) so EVERY plot
+    // is visible — it doesn't matter which way the hero was facing. Blend back on exit.
+    let want = if gate.build_mode.active { 1.0 } else { 0.0 };
+    *build_blend += (want - *build_blend) * (1.0 - (-time.delta_secs() * 7.0).exp());
+    let blend = (*build_blend).clamp(0.0, 1.0);
+    let eye = follow_eye.lerp(Vec3::new(0.0, 30.0, 22.0), blend);
+    let look = follow_target.lerp(Vec3::new(0.0, 2.0, 0.0), blend);
+    cam_tf.translation = eye;
+    cam_tf.look_at(look, Vec3::Y);
 
     // Trauma-based screen shake + FOV punch layered on the settled pose (fed by combat_fx on hits).
     if let Some(fb) = feedback {

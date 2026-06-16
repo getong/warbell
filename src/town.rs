@@ -130,40 +130,12 @@ impl BuildType {
     }
 }
 
-/// Where the selected building would land given the hero's position — the plot/slot a press of
-/// **E** in build mode would raise it on. `None` = the hero isn't standing on a valid spot for
-/// the selected type (so nothing happens, and the strip says "walk to a glowing spot").
-enum BuildSpot {
-    Plot(usize),
-    House(Vec2),
-}
-
-/// Range (world units) the hero must be within to place on a plot / the house slot — mirrors the
-/// old `interaction.rs` `BUILD_DIST` / `HOUSE_DIST`.
-const BUILD_DIST: f32 = 3.0;
-const HOUSE_DIST: f32 = 3.0;
-
-/// The plot/slot the hero is standing on for `kind`, or `None`. Producers pick the nearest free
-/// outer plot in range; House the next courtyard slot if the hero is on it.
-fn current_build_spot(kind: BuildType, pos: Vec2, town: &Town, spots: &PlotSpots) -> Option<BuildSpot> {
-    match kind {
-        BuildType::House => {
-            let site = crate::castle::next_house_site(town.houses)?;
-            (pos.distance(site) < HOUSE_DIST).then_some(BuildSpot::House(site))
-        }
-        BuildType::Producer(_) => {
-            let mut best: Option<(usize, f32)> = None;
-            for (idx, spot) in spots.0.iter().enumerate() {
-                if town.plots.get(idx).is_some_and(|p| p.is_buildable()) {
-                    let d = pos.distance(*spot);
-                    if d < BUILD_DIST && best.map_or(true, |(_, bd)| d < bd) {
-                        best = Some((idx, d));
-                    }
-                }
-            }
-            best.map(|(i, _)| BuildSpot::Plot(i))
-        }
-    }
+/// The free producer plots (indices into `PlotSpots`), in order — the plots a producer can be
+/// raised on right now (Empty/Rubble). Used by `build_nav` (targeting) + `sync_build_rings` (glow).
+fn free_plots(town: &Town, spots: &PlotSpots) -> Vec<usize> {
+    (0..spots.0.len())
+        .filter(|&i| town.plots.get(i).is_some_and(|p| p.is_buildable()))
+        .collect()
 }
 
 /// Wood/stone still short of a cost, as a player-facing line — `None` if affordable.
@@ -178,16 +150,24 @@ fn cost_shortfall(cost: Cost, bank: &tileworld_core::resource_store::ResourceSta
     }
 }
 
-/// **Build mode** — the live, world-unfrozen placement state. Toggled by the HUD `Build` button
-/// (`hud.rs`). While `active`, every valid plot glows (`sync_build_rings`), a docked palette names
-/// what to raise, and walking onto a lit spot + **E** raises it there (`build_place`). A plain
-/// resource read under `Modal::None` (NOT a freeze-gated `Modal`) precisely because the player
-/// walks the knight around while placing.
+/// **Build mode** — a near-town placement screen. Entered by the contextual **B** prompt that shows
+/// when the hero is in the town (like the chest/keep prompts), it frames the camera on the settlement
+/// (`player::camera`), frees the mouse cursor and freezes the hero (so WASD/mouse drive *building*,
+/// not the knight), pops a big palette, and lights every buildable plot. Pick a building (click a card
+/// / A·D / ←→) and a plot (hover the mouse / W·S / ↑↓), then place with a **left-click or Enter** — no
+/// hidden keys. A plain resource read under `Modal::None` (NOT a freeze `Modal`) so the world keeps
+/// rendering. Esc / B / the Done button leaves it.
 #[derive(Resource, Default)]
 pub struct BuildMode {
     pub active: bool,
     /// Index into [`BUILD_TYPES`] — the currently selected building.
     pub sel: usize,
+    /// The producer plot currently targeted for placement (mouse-hover or W·S / ↑↓). `None` until a
+    /// free plot is targeted; ignored for House (its courtyard slot is the only spot).
+    pub target: Option<usize>,
+    /// The mouse cursor is over a glowing spot this frame — so a left-click places there (a click on
+    /// a palette card, where `hover` is false, only selects and never accidentally places).
+    pub hover: bool,
 }
 
 impl BuildMode {
@@ -196,33 +176,36 @@ impl BuildMode {
     }
 }
 
-/// **B** enters build mode and then cycles the selected building (House → Farm → Lumber → Mine →
-/// off); the HUD `Build` button toggles it too, and a palette row click selects directly. Esc-exit
-/// lives in `game_state::pause_toggle` (so Esc leaves build mode instead of pausing). Keyboard-first
-/// on purpose: combat locks the mouse cursor (`player::camera`), so a click-only entry would be dead
-/// at dawn — right after a night of fighting, the prime rebuild moment.
-fn build_mode_keys(
+/// How close to the castle (origin) the hero must be for the **B** Build prompt / build mode. Covers
+/// the courtyard + the outer plot ring (plots sit ≤ ~21 units out).
+const TOWN_BUILD_RADIUS: f32 = 26.0;
+
+/// Is the hero in the town build-zone (near the castle at the origin)?
+fn in_town(pos: Vec2) -> bool {
+    pos.length() < TOWN_BUILD_RADIUS
+}
+
+/// **B** enters build mode when the hero is in the town during Prep (the contextual prompt only shows
+/// there), and exits from anywhere. The night assault force-exits it. Building/plot *selection* lives
+/// in `build_nav`; Esc-exit lives in `game_state::pause_toggle`.
+fn build_mode_toggle(
     keys: Res<ButtonInput<KeyCode>>,
+    hero: Res<HeroState>,
     siege: Option<Res<crate::siege::Siege>>,
     mut mode: ResMut<BuildMode>,
 ) {
-    // Build mode is a daytime activity — the night assault force-exits it (you defend, not build).
     let prep = siege.map_or(true, |s| s.phase == crate::siege::GamePhase::Prep);
     if mode.active && !prep {
-        mode.active = false;
+        mode.active = false; // night fell — drop out of build mode
         return;
     }
     if keys.just_pressed(KeyCode::KeyB) {
-        if !mode.active {
-            if prep {
-                mode.active = true;
-                mode.sel = 0;
-            }
-        } else if mode.sel + 1 < BUILD_TYPES.len() {
-            mode.sel += 1;
-        } else {
+        if mode.active {
             mode.active = false;
+        } else if prep && in_town(hero.pos) {
+            mode.active = true;
             mode.sel = 0;
+            mode.target = None;
         }
     }
 }
@@ -250,13 +233,14 @@ impl Plugin for TownPlugin {
             // despawn the palette on toggle, drive its rows, glow every valid plot, and place on E.
             .add_systems(
                 Update,
-                (build_mode_keys, build_strip_input, build_strip_update, build_place)
+                (build_mode_toggle, build_strip_input, build_nav, build_strip_update, build_place)
+                    .chain()
                     .run_if(in_state(Modal::None)),
             )
-            // Ungated, but self-gated on `Modal::None` inside: the palette + glow rings must be
-            // REAPED when play is left or a panel opens (a `Modal::None` run-condition would just
-            // stop running and strand the strip over the pause / game-over screen).
-            .add_systems(Update, (sync_build_strip, sync_build_rings))
+            // Ungated, but self-gated on `Modal::None` inside: the palette + glow rings + the "[B]
+            // Build" town prompt must be REAPED/hidden when play is left or a panel opens (a
+            // `Modal::None` run-condition would just stop running and strand them over those screens).
+            .add_systems(Update, (sync_build_strip, sync_build_rings, build_prompt))
             // The timber pad marks where the NEXT house will rise (visible even outside build mode).
             .add_systems(Update, sync_house_site_pad)
             // Trailer Director (F1 → "Build stronghold"): live, real-time construction timelapse.
@@ -1033,18 +1017,22 @@ fn sync_build_strip(
     }
 }
 
-/// Build the docked palette: a hint line + one row per [`BUILD_TYPES`] entry (icon + name + cost).
-/// Docked bottom-centre above the quick-bar so the glowing plots stay visible behind it.
+/// Build the big build palette (bottom-centre): a title, a row of four large building cards
+/// (icon + name + description + cost), and a hint line. The cards stay visible over the glowing
+/// settlement behind them. Selection highlight + the hint are driven live by `build_strip_update`.
 fn spawn_build_strip(commands: &mut Commands, fonts: &UiFonts, icons: &crate::ui::icons::IconAtlas) {
     commands
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                bottom: Val::Px(96.0),
+                bottom: Val::Px(22.0),
                 left: Val::Px(0.0),
                 width: Val::Percent(100.0),
-                flex_direction: FlexDirection::Column,
+                // Reversed so the first child (the card row) sits at the bottom and the hint declared
+                // after it reads as a header ABOVE the cards.
+                flex_direction: FlexDirection::ColumnReverse,
                 align_items: AlignItems::Center,
+                row_gap: Val::Px(7.0),
                 ..default()
             },
             bevy::ui::FocusPolicy::Pass,
@@ -1052,36 +1040,32 @@ fn spawn_build_strip(commands: &mut Commands, fonts: &UiFonts, icons: &crate::ui
             BuildUi,
         ))
         .with_children(|root| {
+            // Card row.
             root.spawn((
                 Node {
-                    width: Val::Px(284.0),
-                    flex_direction: FlexDirection::Column,
-                    row_gap: Val::Px(5.0),
-                    padding: UiRect::all(Val::Px(8.0)),
-                    border: border(1.0),
+                    flex_direction: FlexDirection::Row,
+                    column_gap: Val::Px(10.0),
+                    padding: UiRect::all(Val::Px(10.0)),
+                    border: border(2.0),
                     border_radius: radius(R_PANEL),
                     ..default()
                 },
                 widgets::card_paint(),
                 anim(AnimKind::PopIn, 0.0, 0.18),
             ))
-            .with_children(|card| {
-                card.spawn((
-                    Node { max_width: Val::Px(268.0), ..default() },
-                    label(&fonts.regular, "Walk onto a glowing spot \u{2014} press E to raise it.", 11.0, GREY),
-                    BuildHint,
-                ));
+            .with_children(|row| {
                 for (i, item) in BUILD_TYPES.iter().enumerate() {
                     let c = item.cost();
-                    card.spawn((
+                    row.spawn((
                         Button,
                         Interaction::default(),
                         Node {
-                            flex_direction: FlexDirection::Row,
+                            width: Val::Px(152.0),
+                            flex_direction: FlexDirection::Column,
                             align_items: AlignItems::Center,
-                            column_gap: Val::Px(8.0),
-                            padding: UiRect::axes(Val::Px(9.0), Val::Px(6.0)),
-                            border: border(1.0),
+                            row_gap: Val::Px(5.0),
+                            padding: UiRect::axes(Val::Px(10.0), Val::Px(12.0)),
+                            border: border(2.0),
                             border_radius: radius(R_CARD),
                             ..default()
                         },
@@ -1089,47 +1073,62 @@ fn spawn_build_strip(commands: &mut Commands, fonts: &UiFonts, icons: &crate::ui
                         BorderColor::all(BORDER_SOFT),
                         BuildOption(i),
                     ))
-                    .with_children(|b| {
+                    .with_children(|cd| {
                         if let Some(entry) = icons.get_tintable(item.icon_id()) {
-                            b.spawn(widgets::icon_tinted(entry, 20.0, GOLD));
+                            cd.spawn(widgets::icon_tinted(entry, 40.0, GOLD));
                         }
-                        b.spawn(label(&fonts.semibold, item.label(), 13.0, Color::WHITE));
-                        b.spawn(Node { flex_grow: 1.0, ..default() }); // cost hugs the right edge
-                        for (key, amount) in [("stat:wood", c.wood), ("stat:stone", c.stone)] {
-                            if amount <= 0.0 {
-                                continue;
+                        cd.spawn(label(&fonts.semibold, item.label(), 16.0, Color::WHITE));
+                        cd.spawn((
+                            Node { max_width: Val::Px(132.0), ..default() },
+                            label(&fonts.regular, item.desc(), 10.5, GREY),
+                        ));
+                        cd.spawn(Node {
+                            flex_direction: FlexDirection::Row,
+                            align_items: AlignItems::Center,
+                            column_gap: Val::Px(6.0),
+                            margin: UiRect::top(Val::Px(2.0)),
+                            ..default()
+                        })
+                        .with_children(|costrow| {
+                            for (key, amount) in [("stat:wood", c.wood), ("stat:stone", c.stone)] {
+                                if amount <= 0.0 {
+                                    continue;
+                                }
+                                if let Some(entry) = icons.get_tintable(key) {
+                                    costrow.spawn(widgets::icon_tinted(entry, 13.0, Color::WHITE));
+                                }
+                                costrow.spawn(label(&fonts.semibold, format!("{}", amount as i64), 13.0, Color::WHITE));
                             }
-                            if let Some(entry) = icons.get_tintable(key) {
-                                b.spawn(widgets::icon_tinted(entry, 11.0, Color::WHITE));
-                            }
-                            b.spawn(label(&fonts.semibold, format!("{}", amount as i64), 11.0, Color::WHITE));
-                        }
+                        });
                     });
                 }
             });
+            // Hint line under the cards (driven by `build_strip_update`).
+            root.spawn((
+                label(&fonts.bold, "Click a building, then a glowing plot \u{00b7} A\u{00b7}D pick \u{00b7} W\u{00b7}S aim \u{00b7} Enter place \u{00b7} Esc leave", 12.0, GOLD),
+                BuildHint,
+            ));
         });
 }
 
-/// A palette row clicked → select that building (drives which spots glow + what E raises).
+/// A palette card clicked → select that building (changing it re-targets a plot).
 fn build_strip_input(mut mode: ResMut<BuildMode>, q: Query<(&Interaction, &BuildOption), Changed<Interaction>>) {
     for (interaction, opt) in &q {
-        if *interaction == Interaction::Pressed {
+        if *interaction == Interaction::Pressed && mode.sel != opt.0 {
             mode.sel = opt.0;
+            mode.target = None; // new building → re-pick a plot
         }
     }
 }
 
-/// Each frame: highlight the selected row's border + rewrite the hint line to the selected
-/// building's placement state ("walk to a glowing spot" / "press E here") or its afford shortfall.
-/// (Rows are built once; only their highlight + the hint change live, so clicks aren't eaten.)
+/// Each frame, highlight the selected card's border + rewrite the hint to the placement instruction
+/// (or the afford shortfall, in red). Cards are built once; only highlight + hint change live, so
+/// clicks aren't eaten.
 fn build_strip_update(
     mode: Res<BuildMode>,
-    town: Res<TownRes>,
     bank: Res<Bank>,
-    hero: Res<HeroState>,
-    spots: Res<PlotSpots>,
     mut rows: Query<(&BuildOption, &mut BorderColor)>,
-    mut hint: Query<&mut Text, With<BuildHint>>,
+    mut hint: Query<(&mut Text, &mut TextColor), With<BuildHint>>,
 ) {
     if !mode.active {
         return;
@@ -1138,29 +1137,108 @@ fn build_strip_update(
         *bc = BorderColor::all(if opt.0 == mode.sel { GOLD } else { BORDER_SOFT });
     }
     let kind = mode.kind();
-    let on_spot = current_build_spot(kind, hero.pos, &town.0, &spots).is_some();
-    let msg = match cost_shortfall(kind.cost(), &bank.0) {
-        Some(short) => format!("{} \u{2014} {short}", kind.label()),
-        None if on_spot => format!("Press E to raise the {} here", kind.label()),
-        None => format!("{} \u{00b7} walk to a glowing spot, E to raise", kind.desc()),
+    let (msg, short) = match cost_shortfall(kind.cost(), &bank.0) {
+        Some(short) => (format!("{} \u{2014} {short}", kind.label()), true),
+        None => (
+            format!("Place a {} \u{2014} click a glowing plot, or W\u{00b7}S + Enter \u{00b7} A\u{00b7}D change \u{00b7} Esc leave", kind.label()),
+            false,
+        ),
     };
-    if let Ok(mut text) = hint.single_mut() {
+    if let Ok((mut text, mut col)) = hint.single_mut() {
         if text.0 != msg {
             text.0 = msg;
         }
+        col.0 = if short { RED_HI } else { GOLD };
     }
 }
 
-/// In build mode, **E** raises the selected building on the plot/slot the hero stands on. Producers
-/// spawn their mesh here; a House just bumps the core count (the courtyard reveals the dwelling).
-/// A float always answers the press — the new beds, or exactly what's short (never a silent no-op).
+/// Drive selection in build mode: **A·D / ←→** change the building; the **mouse** hovers a glowing
+/// spot (and, for a producer, targets that plot); **W·S / ↑↓** cycle the targeted plot. Sets
+/// `mode.target` (which producer plot) + `mode.hover` (cursor over a placeable spot → left-click places).
 #[allow(clippy::too_many_arguments)]
+fn build_nav(
+    mut mode: ResMut<BuildMode>,
+    keys: Res<ButtonInput<KeyCode>>,
+    town: Res<TownRes>,
+    spots: Res<PlotSpots>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    cam: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+) {
+    if !mode.active {
+        return;
+    }
+    // Building selection — A·D or ←→ (wraps; clears the plot target so it re-picks).
+    let n = BUILD_TYPES.len();
+    if keys.just_pressed(KeyCode::KeyA) || keys.just_pressed(KeyCode::ArrowLeft) {
+        mode.sel = (mode.sel + n - 1) % n;
+        mode.target = None;
+    }
+    if keys.just_pressed(KeyCode::KeyD) || keys.just_pressed(KeyCode::ArrowRight) {
+        mode.sel = (mode.sel + 1) % n;
+        mode.target = None;
+    }
+
+    // Spots that glow for the selected building: each free producer plot, or the one house slot.
+    let house = mode.kind().is_house();
+    let free = free_plots(&town.0, &spots);
+    let cands: Vec<(Option<usize>, Vec2)> = if house {
+        crate::castle::next_house_site(town.0.houses).map(|s| (None, s)).into_iter().collect()
+    } else {
+        free.iter().map(|&i| (Some(i), spots.0[i])).collect()
+    };
+
+    // Mouse hover: the glowing spot nearest the cursor (within a screen radius) is the target.
+    let mut hovered = false;
+    if let (Ok(win), Ok((camera, cam_tf))) = (windows.single(), cam.single()) {
+        if let Some(cursor) = win.cursor_position() {
+            let mut best: Option<(Option<usize>, f32)> = None;
+            for &(idx, s) in &cands {
+                let y = crate::worldmap::ground_at_world(s.x, s.y).unwrap_or(0.0);
+                if let Ok(sp) = camera.world_to_viewport(cam_tf, Vec3::new(s.x, y + 0.5, s.y)) {
+                    let d = sp.distance(cursor);
+                    if d < 90.0 && best.map_or(true, |(_, bd)| d < bd) {
+                        best = Some((idx, d));
+                    }
+                }
+            }
+            if let Some((idx, _)) = best {
+                hovered = true;
+                if let Some(i) = idx {
+                    mode.target = Some(i);
+                }
+            }
+        }
+    }
+    mode.hover = hovered;
+
+    // Producer plot targeting via keyboard (W·S / ↑↓); keep a valid default target.
+    if house {
+        mode.target = None;
+    } else if !free.is_empty() {
+        let mut t = mode.target.filter(|x| free.contains(x)).unwrap_or(free[0]);
+        let pos = free.iter().position(|&x| x == t).unwrap_or(0) as i32;
+        let len = free.len() as i32;
+        if keys.just_pressed(KeyCode::KeyW) || keys.just_pressed(KeyCode::ArrowUp) {
+            t = free[(((pos - 1) % len + len) % len) as usize];
+        }
+        if keys.just_pressed(KeyCode::KeyS) || keys.just_pressed(KeyCode::ArrowDown) {
+            t = free[(((pos + 1) % len + len) % len) as usize];
+        }
+        mode.target = Some(t);
+    } else {
+        mode.target = None;
+    }
+}
+
+/// Place the selected building: a **left-click on a glowing plot** (`mode.hover`) or **Enter**. A
+/// producer goes on the targeted plot; a House on the courtyard slot. A float always answers — the
+/// new beds, or exactly what's short.
 #[allow(clippy::too_many_arguments)]
 fn build_place(
-    keys: Res<ButtonInput<KeyCode>>,
     mode: Res<BuildMode>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
     siege: Option<Res<crate::siege::Siege>>,
-    hero: Res<HeroState>,
     spots: Res<PlotSpots>,
     mut town: ResMut<TownRes>,
     mut bank: ResMut<Bank>,
@@ -1171,19 +1249,23 @@ fn build_place(
     mut meshes: ResMut<Assets<Mesh>>,
     existing: Query<(Entity, &BuildingMesh)>,
 ) {
-    if !mode.active || !keys.just_pressed(KeyCode::KeyE) {
+    if !mode.active {
         return;
     }
-    // No raising buildings mid-assault — build mode is a daytime activity (`build_mode_keys` also
-    // force-exits at dusk; this guards the in-frame race where E lands the same tick night falls).
+    let place = keys.just_pressed(KeyCode::Enter) || (mouse.just_pressed(MouseButton::Left) && mode.hover);
+    if !place {
+        return;
+    }
+    // No raising buildings mid-assault (build_mode_toggle force-exits at dusk; this guards the race).
     if siege.is_some_and(|s| s.phase != crate::siege::GamePhase::Prep) {
         return;
     }
     let Some(mats) = mats else { return };
-    let kind = mode.kind();
-    let Some(spot) = current_build_spot(kind, hero.pos, &town.0, &spots) else { return };
-    match (kind, spot) {
-        (BuildType::Producer(k), BuildSpot::Plot(idx)) => {
+    match mode.kind() {
+        BuildType::Producer(k) => {
+            let Some(idx) = mode.target.filter(|&i| town.0.plots.get(i).is_some_and(|p| p.is_buildable())) else {
+                return;
+            };
             if town.0.build(idx, k, &mut bank.0) {
                 for (e, bm) in &existing {
                     if bm.idx == idx {
@@ -1193,11 +1275,12 @@ fn build_place(
                 spawn_building(&mut commands, &mut meshes, &mats.0, idx, k, &spots);
                 cues.write(crate::audio::AudioCue::UiSelect);
             } else {
-                let at = spots.0.get(idx).copied().unwrap_or(hero.pos);
+                let at = spots.0.get(idx).copied().unwrap_or(Vec2::ZERO);
                 push_cant_afford(&mut floats, k.cost(), &bank.0, k.label(), at);
             }
         }
-        (BuildType::House, BuildSpot::House(site)) => {
+        BuildType::House => {
+            let Some(site) = crate::castle::next_house_site(town.0.houses) else { return };
             if town.0.build_house(&mut bank.0) {
                 let y = crate::worldmap::ground_at_world(site.x, site.y).unwrap_or(0.0);
                 cues.write(crate::audio::AudioCue::UiSelect);
@@ -1211,7 +1294,6 @@ fn build_place(
                 push_cant_afford(&mut floats, HOUSE_COST, &bank.0, "House", site);
             }
         }
-        _ => {}
     }
 }
 
@@ -1264,7 +1346,6 @@ fn sync_build_rings(
     modal: Option<Res<State<Modal>>>,
     town: Res<TownRes>,
     spots: Res<PlotSpots>,
-    hero: Option<Res<HeroState>>,
     time: Res<Time>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -1310,24 +1391,23 @@ fn sync_build_rings(
     *prev_shown = true;
     let kind = mode.kind();
     let pulse = 1.0 + (time.elapsed_secs() * 2.6).sin() * 0.05;
-    let hero_pos = hero.map(|h| h.pos);
     for (ring, mut tf, mut vis) in &mut rings {
-        let (spot, ring_on) = match ring.0 {
+        // `selected` = the plot the player has targeted (mouse / W·S) — it swells so "this one" reads.
+        let (spot, ring_on, selected) = match ring.0 {
             BuildRingKind::Plot(idx) => {
                 let free = town.0.plots.get(idx).is_some_and(|p| p.is_buildable());
-                (spots.0.get(idx).copied(), !kind.is_house() && free)
+                (spots.0.get(idx).copied(), !kind.is_house() && free, mode.target == Some(idx))
             }
             BuildRingKind::House => {
                 let site = crate::castle::next_house_site(town.0.houses);
-                (site, kind.is_house() && site.is_some())
+                (site, kind.is_house() && site.is_some(), true)
             }
         };
         match (ring_on, spot) {
             (true, Some(p)) => {
                 let y = crate::worldmap::ground_at_world(p.x, p.y).unwrap_or(0.0);
-                let near = hero_pos.is_some_and(|hp| hp.distance(p) < BUILD_DIST.max(HOUSE_DIST));
                 tf.translation = Vec3::new(p.x, y + 0.06, p.y);
-                tf.scale = Vec3::splat(pulse * if near { 1.12 } else { 1.0 });
+                tf.scale = Vec3::splat(pulse * if selected { 1.2 } else { 0.9 });
                 *vis = Visibility::Visible;
             }
             _ => *vis = Visibility::Hidden,
@@ -1345,6 +1425,78 @@ fn spawn_build_ring(commands: &mut Commands, mesh: Handle<Mesh>, mat: Handle<Sta
         Visibility::Hidden,
         BuildRing(kind),
     ));
+}
+
+/// The contextual "[B] Build" chip.
+#[derive(Component)]
+struct BuildPromptUi;
+
+/// Show the "[B] Build" chip (styled like the chest/keep prompts) only while the hero is in the town
+/// during Prep and not already building — so building is a near-town action you discover by walking
+/// up to your settlement, not an always-on button. Lazy-spawned hidden; toggled by `Display`.
+fn build_prompt(
+    mode: Res<BuildMode>,
+    hero: Option<Res<HeroState>>,
+    siege: Option<Res<crate::siege::Siege>>,
+    modal: Option<Res<State<Modal>>>,
+    fonts: Res<UiFonts>,
+    mut commands: Commands,
+    mut q: Query<&mut Node, With<BuildPromptUi>>,
+) {
+    let prep = siege.map_or(true, |s| s.phase == crate::siege::GamePhase::Prep);
+    let playing_none = modal.map_or(false, |m| *m.get() == Modal::None);
+    let near = hero.is_some_and(|h| in_town(h.pos));
+    let show = playing_none && prep && near && !mode.active;
+    if let Ok(mut node) = q.single_mut() {
+        node.display = if show { Display::Flex } else { Display::None };
+        return;
+    }
+    // Lazy-spawn the chip (hidden) on first run — a keycap "B" + "Build", like the E prompts.
+    commands
+        .spawn((
+            BuildPromptUi,
+            Node {
+                position_type: PositionType::Absolute,
+                bottom: Val::Px(150.0),
+                left: Val::Px(0.0),
+                right: Val::Px(0.0),
+                display: Display::None,
+                flex_direction: FlexDirection::Row,
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            bevy::ui::FocusPolicy::Pass,
+            GlobalZIndex(58),
+        ))
+        .with_children(|root| {
+            root.spawn((
+                Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(8.0),
+                    padding: UiRect::axes(Val::Px(12.0), Val::Px(7.0)),
+                    border: border(1.0),
+                    border_radius: radius(R_CARD),
+                    ..default()
+                },
+                BackgroundColor(PANEL_HUD),
+                BorderColor::all(rgba(255, 213, 140, 0.5)),
+                shadow_hud(),
+            ))
+            .with_children(|p| {
+                p.spawn((
+                    Node {
+                        padding: UiRect::axes(Val::Px(8.0), Val::Px(3.0)),
+                        border: border(1.0),
+                        border_radius: radius(5.0),
+                        ..default()
+                    },
+                    widgets::keycap_paint(),
+                    children![label(&fonts.extrabold, "B", 12.0, rgba(255, 224, 170, 0.92))],
+                ));
+                p.spawn(label(&fonts.bold, "Build", 14.0, GOLD));
+            });
+        });
 }
 
 /// Keep one construction-site pad standing on the next free dwelling slot inside the walls,
