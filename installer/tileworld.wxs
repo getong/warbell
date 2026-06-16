@@ -22,8 +22,8 @@
     <!-- Branding: app icon for Add/Remove Programs + the Start-menu shortcut. -->
     <Icon Id="WarbellIcon" SourceFile="$(SourceDir)\branding\warbell.ico" />
     <Property Id="ARPPRODUCTICON" Value="WarbellIcon" />
-    <Property Id="ARPHELPLINK" Value="https://github.com/miskibin/tileworld-bevy-forest" />
-    <Property Id="ARPURLINFOABOUT" Value="https://github.com/miskibin/tileworld-bevy-forest" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/miskibin/warbell" />
+    <Property Id="ARPURLINFOABOUT" Value="https://miskibin.github.io/warbell/" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="Warbell">

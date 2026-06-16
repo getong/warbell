@@ -4,7 +4,7 @@
     {
       "name": "warbell-site",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["serve", "-l", "5500", "D:/warbell-game"],
+      "runtimeArgs": ["serve", "-l", "5500", "site"],
       "port": 5500
     }
   ]

@@ -17,9 +17,9 @@
     <MediaTemplate EmbedCab="yes"/>
     <ui:WixUI Id="WixUI_Minimal"/>
 
-    <Property Id="ARPURLINFOABOUT" Value="https://miskibin.github.io/warbell-game/"/>
+    <Property Id="ARPURLINFOABOUT" Value="https://miskibin.github.io/warbell/"/>
     <Property Id="ARPCONTACT"      Value="miskibin"/>
-    <Property Id="ARPHELPLINK"     Value="https://github.com/miskibin/warbell-game"/>
+    <Property Id="ARPHELPLINK"     Value="https://github.com/miskibin/warbell"/>
     <Property Id="ARPNOREPAIR"     Value="1"/>
 
     <Feature Id="MainFeature" Title="Warbell" Level="1">
