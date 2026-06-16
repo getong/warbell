@@ -108,9 +108,10 @@ pub static QUESTS: &[QuestDef] = &[
         id: "build_farm",
         title: "Build a Farm",
         why: "Your people need food, and a well-fed town draws in new settlers.",
-        explain: "Stand on any open plot (a gold ring marks it) and press E to open the build \
-                  menu. A staffed Farm feeds the town; surplus food pulls in new villagers.",
-        action: "Stand on a plot — E",
+        explain: "Walk up to your town and press B for build mode — the plots light up. Pick the \
+                  Farm, then click a glowing plot (or aim with W·S and press Enter) to raise it. A \
+                  staffed Farm feeds the town; surplus food pulls in new villagers.",
+        action: "Press B by your town",
         icon: "stat:food",
         objective: Objective::BuildFarm,
         reward: Reward { gold: 0, wood: 6.0, stone: 0.0, item: None },

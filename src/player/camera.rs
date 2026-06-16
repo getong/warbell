@@ -36,6 +36,12 @@ const ZOOM_SENS: f32 = 0.7;
 /// Look-target height above the hero's feet (roughly the helm).
 const EYE_H: f32 = 1.0;
 
+/// Build-mode camera pose — eye + look-at, framing the WHOLE settlement (centred on the castle at
+/// the origin) above the bottom build palette. Pulled back + steep so every plot fits and the near
+/// plots clear the palette. Tune here if the framing sits too low / too far.
+const BUILD_CAM_EYE: Vec3 = Vec3::new(0.0, 40.0, 24.0);
+const BUILD_CAM_LOOK: Vec3 = Vec3::new(0.0, 0.0, 2.0);
+
 #[derive(Resource)]
 pub struct OrbitCam {
     pub azimuth: f32,
@@ -156,8 +162,8 @@ pub fn player_camera(
     let want = if gate.build_mode.active { 1.0 } else { 0.0 };
     *build_blend += (want - *build_blend) * (1.0 - (-time.delta_secs() * 7.0).exp());
     let blend = (*build_blend).clamp(0.0, 1.0);
-    let eye = follow_eye.lerp(Vec3::new(0.0, 30.0, 22.0), blend);
-    let look = follow_target.lerp(Vec3::new(0.0, 2.0, 0.0), blend);
+    let eye = follow_eye.lerp(BUILD_CAM_EYE, blend);
+    let look = follow_target.lerp(BUILD_CAM_LOOK, blend);
     cam_tf.translation = eye;
     cam_tf.look_at(look, Vec3::Y);
 
