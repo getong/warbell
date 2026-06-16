@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://miskibin.github.io/warbell/sitemap.xml
+

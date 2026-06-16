@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>Warbell — Changelog | Patch Notes &amp; Version History</title>
+<meta name="description" content="Every Warbell patch, version by version — new features, balance changes and bug fixes, from the first public build to the latest release.">
+<meta name="keywords" content="warbell, changelog, patch notes, version history, updates, release notes, warbell game">
+<meta name="author" content="miskibin">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://miskibin.github.io/warbell/changelog.html">
+
+<!-- Favicons -->
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="screenshots/castle-after.png">
+
+<!-- Open Graph -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Warbell">
+<meta property="og:title" content="Warbell — Changelog">
+<meta property="og:description" content="Every Warbell patch, version by version — new features, balance and fixes.">
+<meta property="og:url" content="https://miskibin.github.io/warbell/changelog.html">
+<meta property="og:image" content="https://miskibin.github.io/warbell/screenshots/castle-after.png">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700;800;900&family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+
+<style>
+:root{
+  --bg:#0d0a06;
+  --bg2:#15110b;
+  --panel:#1c1610;
+  --panel-2:#241c13;
+  --edge:#352a1c;
+  --edge-hi:#4a3a26;
+  --ink:#efe4ce;
+  --ink-dim:#b09a72;
+  --ink-faint:#7e6c4d;
+  --gold:#d8a14a;
+  --gold-hi:#f4cd78;
+  --gold-deep:#7a5520;
+  --day:#e9b24c;
+  --night:#8f6bd6;
+  --night-deep:#4a357e;
+  --blood:#b5402f;
+  --blood-hi:#dd5a45;
+  --shadow:rgba(0,0,0,.6);
+  --r:8px;
+  --ease:cubic-bezier(.2,.7,.2,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;scroll-behavior:smooth}
+body{
+  font-family:'EB Garamond',Georgia,serif;
+  background:var(--bg);color:var(--ink);
+  line-height:1.7;font-size:18px;overflow-x:hidden;
+}
+h1,h2,h3,h4,.cinzel{font-family:'Cinzel',serif;letter-spacing:.03em}
+a{color:var(--gold);text-decoration:none;transition:color .18s var(--ease)}
+a:hover{color:var(--gold-hi)}
+.wrap{max-width:1140px;margin:0 auto;padding:0 32px}
+.eyebrow{
+  font-family:'Cinzel',serif;font-size:12px;letter-spacing:.26em;text-transform:uppercase;
+  color:var(--blood-hi);display:inline-block;margin-bottom:18px;
+}
+
+/* film grain + motes (shared with the home page) */
+.grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.04;mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+.motes{position:fixed;inset:0;z-index:1;pointer-events:none;overflow:hidden}
+.mote{position:absolute;bottom:-10px;width:3px;height:3px;border-radius:50%;
+  background:radial-gradient(circle,rgba(244,205,120,.9),rgba(244,205,120,0));animation:rise linear infinite}
+@keyframes rise{0%{transform:translateY(0) translateX(0);opacity:0}10%{opacity:.7}90%{opacity:.5}100%{transform:translateY(-110vh) translateX(40px);opacity:0}}
+
+/* ── Nav (shared) ── */
+.nav{position:fixed;top:0;left:0;right:0;z-index:60;height:64px;
+  display:flex;align-items:center;justify-content:space-between;padding:0 32px;
+  transition:background .3s var(--ease),border-color .3s var(--ease),height .3s var(--ease);
+  border-bottom:1px solid transparent;}
+.nav.solid{height:56px;background:rgba(13,10,6,.86);border-bottom-color:rgba(216,161,74,.16);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);}
+.nav-logo{display:flex;align-items:center;gap:10px;font-family:'Cinzel',serif;font-weight:800;font-size:18px;color:var(--gold);letter-spacing:.1em}
+.nav-logo svg{width:22px;height:22px}
+.nav-links{display:flex;align-items:center;gap:28px}
+.nav-links .lnk{font-family:'Cinzel',serif;font-size:13px;letter-spacing:.06em;color:var(--ink-dim);text-transform:uppercase}
+.nav-links .lnk:hover{color:var(--gold-hi)}
+.nav-links .lnk.active{color:var(--gold-hi)}
+.nav-cta{font-family:'Cinzel',serif;font-size:13px;font-weight:700;letter-spacing:.04em;
+  padding:9px 20px;border-radius:5px;color:#15100a;
+  background:linear-gradient(180deg,var(--gold-hi),var(--gold));border:1px solid var(--gold-deep);
+  box-shadow:0 2px 10px rgba(0,0,0,.4);transition:transform .14s var(--ease),box-shadow .14s var(--ease);}
+.nav-cta:hover{color:#15100a;transform:translateY(-1px);box-shadow:0 6px 20px rgba(216,161,74,.35)}
+@media(max-width:760px){.nav-links .lnk{display:none}}
+
+/* ── Page header ── */
+.page-hero{position:relative;padding:148px 0 56px;text-align:center;overflow:hidden;
+  background:radial-gradient(120% 100% at 50% 0%,#1a0f0c 0%,var(--bg) 64%)}
+.page-hero h1{font-size:clamp(42px,8vw,82px);color:var(--gold);line-height:1;margin-bottom:14px;
+  text-shadow:0 2px 0 #191006,0 8px 50px rgba(0,0,0,.9),0 0 90px rgba(216,161,74,.16)}
+.page-hero .tagline{color:var(--ink);font-style:italic;font-size:clamp(18px,2.4vw,23px);margin-bottom:8px}
+.page-hero .subline{font-family:'Cinzel',serif;font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-dim)}
+.page-hero .rule{width:64px;height:1px;margin:24px auto 0;background:linear-gradient(90deg,transparent,var(--gold),transparent)}
+
+/* ── Timeline ── */
+.log{max-width:840px;margin:0 auto;padding:46px 32px 30px}
+.rel{position:relative;padding:0 0 8px 36px;margin-bottom:42px;border-left:1px solid var(--edge)}
+.rel:last-child{border-left-color:transparent;margin-bottom:14px}
+.rel::before{content:"";position:absolute;left:-7px;top:7px;width:13px;height:13px;border-radius:50%;
+  background:linear-gradient(180deg,var(--gold-hi),var(--gold));box-shadow:0 0 0 4px var(--bg),0 0 14px rgba(216,161,74,.45)}
+.rel.latest::before{box-shadow:0 0 0 4px var(--bg),0 0 24px rgba(216,161,74,.9)}
+.rel-head{display:flex;align-items:baseline;gap:13px;flex-wrap:wrap;margin-bottom:4px}
+.rel-ver{font-family:'Cinzel',serif;font-size:27px;font-weight:800;color:var(--gold-hi);letter-spacing:.03em}
+.rel-date{font-family:'Cinzel',serif;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-faint)}
+.rel-badge{font-family:'Cinzel',serif;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#15100a;
+  background:linear-gradient(180deg,var(--gold-hi),var(--gold));padding:3px 10px;border-radius:20px}
+.rel-sum{color:var(--ink-dim);font-style:italic;margin:2px 0 18px;font-size:17px}
+.rel-card{background:var(--panel);border:1px solid var(--edge);border-top:2px solid var(--gold-deep);
+  border-radius:var(--r);padding:24px 28px;box-shadow:0 6px 22px var(--shadow)}
+.grp{margin-bottom:20px}.grp:last-child{margin-bottom:0}
+.grp-h{margin-bottom:11px}
+.tag{font-family:'Cinzel',serif;font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+  padding:4px 11px;border-radius:20px;border:1px solid}
+.tag.new{color:var(--gold-hi);border-color:var(--gold-deep);background:rgba(216,161,74,.12)}
+.tag.fix{color:var(--blood-hi);border-color:#6e2c22;background:rgba(181,64,47,.12)}
+.tag.perf{color:#b89bf0;border-color:var(--night-deep);background:rgba(143,107,214,.14)}
+.rel-card ul{list-style:none;display:flex;flex-direction:column;gap:9px}
+.rel-card li{position:relative;padding-left:20px;color:var(--ink-dim);font-size:16px;line-height:1.62}
+.rel-card li::before{content:"";position:absolute;left:3px;top:11px;width:5px;height:5px;border-radius:50%;background:var(--gold-deep)}
+.rel-card li strong{color:var(--ink);font-weight:600}
+.rel-foot{margin-top:16px;padding-top:14px;border-top:1px solid var(--edge)}
+.rel-foot a{font-family:'Cinzel',serif;font-size:12px;letter-spacing:.05em}
+.log-note{max-width:840px;margin:0 auto;padding:0 32px 40px;text-align:center;color:var(--ink-faint);font-size:15px;font-style:italic}
+.log-note a{font-style:normal}
+
+/* ── Footer (shared) ── */
+footer{padding:58px 0 70px;text-align:center;color:var(--ink-faint);border-top:1px solid var(--edge);background:var(--bg2)}
+.f-logo{font-family:'Cinzel',serif;font-weight:900;font-size:26px;color:var(--gold);letter-spacing:.08em;margin-bottom:16px}
+.f-links{display:flex;gap:26px;justify-content:center;flex-wrap:wrap;margin-bottom:18px;font-size:15px}
+footer .sm{font-size:13px;opacity:.6;letter-spacing:.03em}
+
+/* ── Reveal ── */
+.rv{opacity:0;transform:translateY(24px);transition:opacity .6s var(--ease),transform .6s var(--ease)}
+.rv.in{opacity:1;transform:none}
+@media(prefers-reduced-motion:reduce){.rv{opacity:1;transform:none;transition:none}.mote{animation:none}}
+</style>
+</head>
+<body>
+
+<div class="grain"></div>
+<div class="motes" id="motes"></div>
+
+<nav class="nav" id="nav">
+  <a class="nav-logo" href="index.html#top">
+    <svg viewBox="0 0 32 32" fill="none"><path d="M16 3l11 4.5V17c0 6.8-5.2 11.2-11 12.5C10.2 28.2 5 23.8 5 17V7.5z" fill="#1c1610" stroke="#d8a14a" stroke-width="1.6" stroke-linejoin="round"/><text x="16" y="22" font-family="Cinzel,serif" font-size="13" font-weight="900" fill="#d8a14a" text-anchor="middle">W</text></svg>
+    WARBELL
+  </a>
+  <div class="nav-links">
+    <a class="lnk" href="index.html#loop">The Loop</a>
+    <a class="lnk" href="index.html#features">Features</a>
+    <a class="lnk" href="index.html#island">Island</a>
+    <a class="lnk active" href="changelog.html">Changelog</a>
+    <a class="nav-cta" href="https://github.com/miskibin/warbell/releases/latest/download/Warbell-Setup.msi">⚔ Download</a>
+  </div>
+</nav>
+
+<header class="page-hero" id="top">
+  <span class="eyebrow">Version History</span>
+  <h1>Patch Notes</h1>
+  <p class="tagline">Every night the keep holds, the game gets a little sharper.</p>
+  <p class="subline">Newest first · Windows builds</p>
+  <div class="rule"></div>
+</header>
+
+<main class="log">
+
+  <!-- ── v0.6.2 ── -->
+  <article class="rel latest rv">
+    <div class="rel-head">
+      <span class="rel-ver">v0.6.2</span>
+      <span class="rel-badge">Latest</span>
+      <span class="rel-date">June 16, 2026</span>
+    </div>
+    <p class="rel-sum">Build mode polish — the camera now frames your whole town.</p>
+    <div class="rel-card">
+      <div class="grp">
+        <div class="grp-h"><span class="tag fix">Fixed</span></div>
+        <ul>
+          <li><strong>Build camera</strong> now frames your <strong>whole settlement, centred</strong> — the plots nearest the camera no longer hide behind the build menu.</li>
+          <li>The <strong>"Build a Farm" tutorial step</strong> stopped pointing at the old "stand on a plot, press E" flow — it now teaches the new one (press <strong>B</strong> by your town, then click a glowing plot).</li>
+        </ul>
+      </div>
+      <div class="rel-foot"><a href="https://github.com/miskibin/warbell/releases/tag/v0.6.2">Release on GitHub →</a></div>
+    </div>
+  </article>
+
+  <!-- ── v0.6.1 ── -->
+  <article class="rel rv">
+    <div class="rel-head">
+      <span class="rel-ver">v0.6.1</span>
+      <span class="rel-date">June 16, 2026</span>
+    </div>
+    <p class="rel-sum">Build mode, reworked — walk to your town, press B, and build with the mouse.</p>
+    <div class="rel-card">
+      <div class="grp">
+        <div class="grp-h"><span class="tag new">Build mode, reworked</span></div>
+        <ul>
+          <li><strong>Walk up to your town</strong> and a <strong>[B] Build</strong> prompt appears — the same contextual prompt as opening a chest, so building is something you do at your settlement, not a menu you hunt for.</li>
+          <li>Press <strong>B</strong> and it takes over cleanly: the <strong>mouse cursor frees</strong>, the camera <strong>lifts up over your settlement</strong> so you see every plot at once (whichever way you were facing), and a <strong>big building menu</strong> opens.</li>
+          <li><strong>Pick a building</strong> (click a card, or A / D) and <strong>a spot</strong> (hover the mouse over a glowing plot, or W / S), then <strong>place it with a left-click or Enter</strong>. No hidden keys, no walking the knight onto tiles. Esc or B leaves build mode.</li>
+        </ul>
+      </div>
+      <div class="grp">
+        <div class="grp-h"><span class="tag fix">Fixed &amp; tuned</span></div>
+        <ul>
+          <li><strong>Inventory</strong> — bag icons are now colour-coded by item, and hunting wildlife no longer rains <strong>duplicate gear</strong>.</li>
+          <li><strong>Rocky biome</strong> — taller, more dramatic mountains with less cluttered ground scatter.</li>
+        </ul>
+      </div>
+      <div class="rel-foot"><a href="https://github.com/miskibin/warbell/releases/tag/v0.6.1">Release on GitHub →</a></div>
+    </div>
+  </article>
+
+  <!-- ── v0.6.0 ── -->
+  <article class="rel rv">
+    <div class="rel-head">
+      <span class="rel-ver">v0.6.0</span>
+      <span class="rel-date">June 16, 2026</span>
+    </div>
+    <p class="rel-sum">The town comes alive — a real build mode, a guided tutorial, and a keep that finally talks back.</p>
+    <div class="rel-card">
+      <div class="grp">
+        <div class="grp-h"><span class="tag new">New</span></div>
+        <ul>
+          <li><strong>Build mode</strong> — press <strong>B</strong> (or the on-screen <strong>Build</strong> button) and every spot you can build on lights up. One menu covers houses, farms, woodcutters and stone miners: pick what to raise, walk your knight onto a glowing plot, and press <strong>E</strong>. No more guessing where things go.</li>
+          <li><strong>Guided tutorial</strong> — a step-by-step quest chain walks new defenders through the whole loop: gather, build, upgrade, and hold the first night.</li>
+          <li><strong>The hero speaks</strong> — contextual voice guidance calls out what to do next (raise a farm, build houses, ring the bell), villagers comment on the town, and each biome warden taunts you as you close in.</li>
+          <li><strong>Treasure chests</strong> — walk up to a chest and a prompt names it; press <strong>E</strong> to crack it open, the same unified interaction as the keep, the shop and the war bell.</li>
+        </ul>
+      </div>
+      <div class="grp">
+        <div class="grp-h"><span class="tag new">Combat &amp; balance</span></div>
+        <ul>
+          <li><strong>Warden bosses</strong> now wind up a clearly telegraphed lethal strike — read it and dodge or block instead of dying out of nowhere. Bosses are tankier, with their own roars and battle music.</li>
+          <li>More <strong>ore</strong> scattered across the island to feed your stone economy.</li>
+          <li><strong>Healing</strong> consumables now cost a little stamina and restore less, so you can't face-tank a whole siege.</li>
+          <li>Refreshed combat audio — meatier sword hits, blocks and ore-chipping.</li>
+        </ul>
+      </div>
+      <div class="grp">
+        <div class="grp-h"><span class="tag fix">Fixed</span></div>
+        <ul>
+          <li><strong>Solid world</strong> — you (and the orks) no longer clip through landmarks, large boulders, or bosses; collisions now use a proper body radius.</li>
+        </ul>
+      </div>
+      <div class="rel-foot"><a href="https://github.com/miskibin/warbell/releases/tag/v0.6.0">Release on GitHub →</a></div>
+    </div>
+  </article>
+
+  <!-- ── v0.5.2 ── -->
+  <article class="rel rv">
+    <div class="rel-head">
+      <span class="rel-ver">v0.5.2</span>
+      <span class="rel-date">June 15, 2026</span>
+    </div>
+    <p class="rel-sum">A stability &amp; polish patch.</p>
+    <div class="rel-card">
+      <div class="grp">
+        <div class="grp-h"><span class="tag fix">Fixed</span></div>
+        <ul>
+          <li><strong>Crash hardening</strong> — eliminated a class of intermittent crashes during sieges, biome swaps, and combat (defender / shaman bolts, HP bars, reward orbs, knockbacks).</li>
+          <li><strong>Save fix</strong> — freed fortress captives no longer duplicate your villagers when you Continue a run.</li>
+          <li><strong>Continue</strong> now clears leftover potion / shrine buffs from the previous session on every load path.</li>
+          <li><strong>Recruit</strong> refuses (instead of wasting your Mercenary Contract) when housing is full.</li>
+          <li><strong>Wildlife</strong> is no longer hunted to local extinction — prey now respawns after a predator kill.</li>
+          <li><strong>Audio</strong> — the hero no longer speaks over a paused game or open menu.</li>
+          <li><strong>Quick-slot</strong> labels corrected to <strong>Y / T</strong> (Z / X / C are the combat arts).</li>
+          <li>Shaman bolts in flight when a night is won no longer damage you into the next day.</li>
+        </ul>
+      </div>
+      <div class="grp">
+        <div class="grp-h"><span class="tag new">New</span></div>
+        <ul>
+          <li><strong>Autumn foliage</strong> — turning trees with dappled red / gold / olive crowns scattered across the island.</li>
+        </ul>
+      </div>
+      <div class="grp">
+        <div class="grp-h"><span class="tag perf">Under the hood</span></div>
+        <ul>
+          <li>Steadier framerate (skipped redundant per-frame UI / grade work), the pathfinding budget raised so far-spawning raiders always find the keep, and a deep code-review pass across combat, economy, and save systems.</li>
+        </ul>
+      </div>
+      <div class="rel-foot"><a href="https://github.com/miskibin/warbell/releases/tag/v0.5.2">Release on GitHub →</a></div>
+    </div>
+  </article>
+
+  <!-- ── v0.5.1 ── -->
+  <article class="rel rv">
+    <div class="rel-head">
+      <span class="rel-ver">v0.5.1</span>
+      <span class="rel-date">June 14, 2026</span>
+    </div>
+    <p class="rel-sum">Hotfix.</p>
+    <div class="rel-card">
+      <div class="grp">
+        <div class="grp-h"><span class="tag fix">Fixed</span></div>
+        <ul>
+          <li>The installer now bundles game assets in the correct <strong>assets/</strong> folder next to the executable, so a fresh install launches correctly. (v0.5.0 installed asset folders into the application root, so the game could not find its shaders / audio / fonts.)</li>
+        </ul>
+      </div>
+      <div class="rel-foot"><a href="https://github.com/miskibin/warbell/releases/tag/v0.5.1">Release on GitHub →</a></div>
+    </div>
+  </article>
+
+  <!-- ── v0.5.0 ── -->
+  <article class="rel rv">
+    <div class="rel-head">
+      <span class="rel-ver">v0.5.0</span>
+      <span class="rel-date">June 14, 2026</span>
+    </div>
+    <p class="rel-sum">Biome bosses, deeper horizons, and a big performance win.</p>
+    <div class="rel-card">
+      <div class="grp">
+        <div class="grp-h"><span class="tag new">New</span></div>
+        <ul>
+          <li><strong>Biome Wardens</strong> — each of the five biomes now harbours a world boss, with its own fight and a permanent boon reward for the victor.</li>
+          <li><strong>Distant isles</strong> — hazed background islands ring the open sea, giving the horizon real depth.</li>
+          <li>Polished bridges and richer swamp / blight ground texturing.</li>
+        </ul>
+      </div>
+      <div class="grp">
+        <div class="grp-h"><span class="tag perf">Performance &amp; stability</span></div>
+        <ul>
+          <li><strong>Fixed a memory leak that slowly strangled the framerate over a long campaign.</strong> Floating combat numbers were leaking GPU glyph-atlas textures every frame; after a few nights of fighting this pinned the GPU at 100% and dropped the game to single-digit FPS, never recovering. Sieges now stay smooth night after night.</li>
+          <li>Night lighting no longer renders a redundant second shadow set — cheaper shadows after dusk.</li>
+          <li>Burning-building flames are batched and no longer stack duplicates.</li>
+          <li>The integrated-GPU <strong>Low</strong> preset is cheaper and is auto-selected on weaker hardware.</li>
+        </ul>
+      </div>
+      <div class="rel-foot"><a href="https://github.com/miskibin/warbell/releases/tag/v0.5.0">Release on GitHub →</a></div>
+    </div>
+  </article>
+
+  <!-- ── v0.4.0 ── -->
+  <article class="rel rv">
+    <div class="rel-head">
+      <span class="rel-ver">v0.4.0</span>
+      <span class="rel-date">June 12, 2026</span>
+    </div>
+    <p class="rel-sum">The ork fortress and the trailer toolkit.</p>
+    <div class="rel-card">
+      <div class="grp">
+        <div class="grp-h"><span class="tag new">New</span></div>
+        <ul>
+          <li><strong>Ork fortress (Gnashfang Hold)</strong> — an off-map tower with fire attacks.</li>
+          <li>Cinematic fly-cam with two-stage smoothing for trailer filming.</li>
+          <li>F1 staged-scene director for recording.</li>
+          <li>Construction pop-in + dust FX when structures raise.</li>
+          <li>New website screenshots with the before / after castle comparison slider.</li>
+          <li>Various combat and audio polish.</li>
+        </ul>
+      </div>
+      <div class="rel-foot"><a href="https://github.com/miskibin/warbell/releases/tag/v0.4.0">Release on GitHub →</a></div>
+    </div>
+  </article>
+
+  <!-- ── v0.3.0 ── -->
+  <article class="rel rv">
+    <div class="rel-head">
+      <span class="rel-ver">v0.3.0</span>
+      <span class="rel-date">June 12, 2026</span>
+    </div>
+    <p class="rel-sum">The first public Windows build.</p>
+    <div class="rel-card">
+      <div class="grp">
+        <div class="grp-h"><span class="tag new">First release</span></div>
+        <ul>
+          <li>A knight defends a central keep against night-wave ork sieges across a five-biome island: real-time combat, an economy, an upgrade tree, villagers, a bloodline succession loop, and wildlife.</li>
+          <li>Windows 10 / 11, 64-bit — distributed as <strong>warbell-windows.zip</strong>.</li>
+        </ul>
+      </div>
+      <div class="rel-foot"><a href="https://github.com/miskibin/warbell/releases/tag/v0.3.0">Release on GitHub →</a></div>
+    </div>
+  </article>
+
+</main>
+
+<p class="log-note">Full notes for every build live on <a href="https://github.com/miskibin/warbell/releases">GitHub Releases</a>.</p>
+
+<footer>
+  <div class="wrap">
+    <p class="f-logo">WARBELL</p>
+    <div class="f-links">
+      <a href="index.html">Home</a>
+      <a href="https://github.com/miskibin/warbell/releases/latest/download/Warbell_0.5.2_x64_en-US.msi">Download</a>
+      <a href="https://github.com/miskibin/warbell">GitHub</a>
+      <a href="https://www.youtube.com/watch?v=AMRBW26xBFQ">Trailer</a>
+    </div>
+    <p class="sm">A game by miskibin · Made with care, swords, and far too many orks.</p>
+  </div>
+</footer>
+
+<script>
+// floating motes
+(function(){
+  const host=document.getElementById('motes');
+  const N=window.innerWidth<700?8:16;
+  for(let i=0;i<N;i++){
+    const m=document.createElement('span');m.className='mote';
+    const dur=10+(i*1.7)%14, delay=-(i*2.1)%18, x=(i*61)%100, s=2+(i%3);
+    m.style.left=x+'%';m.style.width=s+'px';m.style.height=s+'px';
+    m.style.animationDuration=dur+'s';m.style.animationDelay=delay+'s';
+    host.appendChild(m);
+  }
+})();
+
+// sticky nav
+const nav=document.getElementById('nav');
+const onScroll=()=>nav.classList.toggle('solid',window.scrollY>40);
+onScroll();window.addEventListener('scroll',onScroll,{passive:true});
+
+// scroll reveal (fail-safe: content can never stay invisible)
+const rvEls=[...document.querySelectorAll('.rv')];
+const reveal=el=>el.classList.add('in');
+const io=new IntersectionObserver((ents)=>{
+  ents.forEach(e=>{if(e.isIntersecting){reveal(e.target);io.unobserve(e.target);}});
+},{threshold:0,rootMargin:'0px 0px -6% 0px'});
+rvEls.forEach(el=>io.observe(el));
+function sweep(){rvEls.forEach(el=>{if(!el.classList.contains('in')&&el.getBoundingClientRect().top<innerHeight*0.95){reveal(el);io.unobserve(el);}});}
+window.addEventListener('load',sweep);
+window.addEventListener('scroll',sweep,{passive:true});
+sweep();
+// hard guarantee — force the revealed state inline so content can never stay invisible,
+// even if the IntersectionObserver never fires or a transition never composites
+setTimeout(()=>rvEls.forEach(el=>{el.classList.add('in');el.style.opacity='1';el.style.transform='none';}),2600);
+</script>
+</body>
+</html>
+
