@@ -194,9 +194,11 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
     // ── Filled in as the town grows (House(n): shown once houses > n) ───────────
     set(garden_parts(), Vec3::new(-4.2, 0.0, -9.4), 0.15, DecorGate::House(1), Vec2::new(0.6, 0.48));
     set(woodpile_parts(), Vec3::new(5.4, 0.0, -9.5), 0.4, DecorGate::House(2), Vec2::new(0.62, 0.32));
-    set(laundry_parts(), Vec3::new(-10.0, 0.0, -10.2), 0.05, DecorGate::House(1), Vec2::new(1.35, 0.14));
+    // Laundry line = cloth hung overhead on a string between two thin posts — you walk UNDER it.
+    // No collision (a 2.6-wide box across the lane just walls off the courtyard for no reason).
+    set(laundry_parts(), Vec3::new(-10.0, 0.0, -10.2), 0.05, DecorGate::House(1), Vec2::ZERO);
     set(garden_parts(), Vec3::new(4.2, 0.0, 9.4), -0.2, DecorGate::House(6), Vec2::new(0.6, 0.48));
-    set(laundry_parts(), Vec3::new(10.0, 0.0, 10.2), -0.08, DecorGate::House(7), Vec2::new(1.35, 0.14));
+    set(laundry_parts(), Vec3::new(10.0, 0.0, 10.2), -0.08, DecorGate::House(7), Vec2::ZERO);
 
     // ── Upgrade set pieces ───────────────────────────────────────────────────────
     // The armory corner west of the plaza: racked spears + shields + a leather stand (tier 1),
