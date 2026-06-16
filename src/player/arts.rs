@@ -48,13 +48,20 @@ const DASH_MULT: f32 = 1.0;
 /// Seconds of invulnerability granted from the blink's start.
 const DASH_IFRAME: f32 = 0.45;
 
-// Bramble Sweep — the SUSTAIN: 360° cleave that heals the hero on cast AND for each foe struck.
+// Bramble Sweep — the SUSTAIN: 360° cleave that heals the hero (and nearby allies) on cast AND
+// for each foe struck.
 const SWEEP_RADIUS: f32 = 2.8;
 const SWEEP_MULT: f32 = 1.4;
 /// Flat HP the hero heals every time the sweep is cast (even hitting nothing).
 const SWEEP_BASE_HEAL: f32 = 28.0;
 /// Extra HP healed per foe the sweep strikes.
 const SWEEP_LIFESTEAL: f32 = 18.0;
+/// Bramble Sweep is also a **field medic**: every ally (guard/villager) within this radius of the
+/// hero is mended on cast, so the move keeps your warband alive in a melee, not just you — the
+/// keystone for surviving a pitched fight with an army at your back. Both tunable.
+const SWEEP_ALLY_RADIUS: f32 = 6.0;
+/// Flat HP each nearby ally regains when the sweep is cast.
+const SWEEP_ALLY_HEAL: f32 = 24.0;
 
 /// Which art fired this frame (at most one).
 enum Art {
@@ -84,6 +91,11 @@ pub fn player_arts(
             Or<(With<Ork>, With<Animal>, With<crate::boss::Boss>)>,
             Without<crate::dying::Dying>,
         ),
+    >,
+    // Allied town pool (guards + workers) — Bramble Sweep's aura mends these too.
+    mut allies: Query<
+        (&GlobalTransform, &mut crate::villagers::NpcHp),
+        (With<crate::villagers::Townsfolk>, Without<crate::dying::Dying>),
     >,
 ) {
     let Ok((mut hero, mut tf, mut hh)) = hero_q.single_mut() else { return };
@@ -244,6 +256,27 @@ pub fn player_arts(
     }
     if killed_any {
         cues.write(AudioCue::Impact { kill: true });
+    }
+    // Bramble Sweep's field-medic aura: mend the warband around the hero, not just the hero —
+    // so your guards/villagers survive a melee. Flat heal to each wounded ally in range; the
+    // already-full are skipped so the cast doesn't spam green ticks over a healthy line.
+    if matches!(art, Art::Sweep) {
+        for (gt, mut hp) in &mut allies {
+            if hp.hp >= hp.max {
+                continue;
+            }
+            let p = gt.translation();
+            if Vec2::new(p.x, p.z).distance(hero.pos) > SWEEP_ALLY_RADIUS {
+                continue;
+            }
+            hp.hp = (hp.hp + SWEEP_ALLY_HEAL).min(hp.max);
+            floats.0.push(crate::combat_fx::FloatReq {
+                world: Vec3::new(p.x, p.y + 2.0, p.z),
+                text: format!("+{}", SWEEP_ALLY_HEAL as i32),
+                color: Color::srgb(0.5, 1.0, 0.6),
+                scale: 0.9,
+            });
+        }
     }
     // Show the sweep's drained HP as a single green tick over the hero.
     if sweep_heal > 0.0 {

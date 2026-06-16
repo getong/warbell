@@ -193,6 +193,7 @@ impl Plugin for OrkFortressPlugin {
                 tower_fire,
                 step_warp_bolts,
                 approach_watch,
+                fortress_muster,
                 siege_flare,
                 fortress_barks,
                 patrol_respawn,
@@ -2547,6 +2548,38 @@ fn approach_watch(
         }
     }
     *was_close = close;
+}
+
+/// Night muster: when a wave begins, Gnashfang Hold throws its gate **open** and the war-horn
+/// blares — the night's horde marches from HERE (its invaders now arrive from the Hold's southern
+/// direction; see `siege::south_spawn_point`). The gate swings shut again at dawn. Reuses the
+/// cinematic gate machinery: setting [`crate::cinematic::DirectorState::gate_open`] drives
+/// `animate_fortress_gate`, which swings the real leaves (the blocker drop is a trailer concern —
+/// nothing paths the fortress gate at night, so it doesn't matter here). Edge-detected on the
+/// `Prep↔Wave` transition, the same edge `siege_flare` below keys off.
+fn fortress_muster(
+    siege: Option<Res<crate::siege::Siege>>,
+    towers: Query<&WarTower>,
+    mut director: ResMut<crate::cinematic::DirectorState>,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
+    mut was_wave: Local<bool>,
+) {
+    if towers.is_empty() {
+        // Single-biome views (keys 1–5) have no fortress; don't latch state against nothing.
+        return;
+    }
+    let wave = siege.is_some_and(|s| matches!(s.phase, crate::siege::GamePhase::Wave));
+    if wave == *was_wave {
+        return; // only act on the nightfall / dawn edge
+    }
+    *was_wave = wave;
+    director.gate_open = wave; // open at nightfall, shut at dawn (eased by animate_fortress_gate)
+    if wave {
+        // Horn off the gate + the warband's roar from just inside it — the Hold disgorging.
+        let gate3 = Vec3::new(GATE.x, 3.0, GATE.y);
+        cues.write(crate::audio::AudioCue::FortressHorn(gate3));
+        cues.write(crate::audio::AudioCue::OrkRoar(Vec3::new(GATE.x, 1.5, GATE.y + 4.0)));
+    }
 }
 
 /// Night-wave tie-in: every fortress fire (bonfire, torches, the spire's warp brazier)

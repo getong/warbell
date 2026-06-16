@@ -298,6 +298,31 @@ pub fn spawn_point(i: u32, keep: Vec2, max_ring: f32, standable: impl Fn(f32, f3
     best
 }
 
+/// Like [`spawn_point`], but the ray is confined to the **southern arc** — the side of the ring
+/// that faces Gnashfang Hold (world +Z). The night's horde musters from the Hold, so it should
+/// arrive from the Hold's direction rather than teleporting evenly around the keep. `ARC` is a
+/// tunable half-width: wide enough (~80°) that the wave fans across the southern gates instead of
+/// single-filing through one (a narrow funnel would skew the defense), but never crosses to the
+/// north — so every spawn reads as "from the Hold". Direction 0 is due south; the golden ratio
+/// spreads successive spawns deterministically across the arc (same anti-stacking idea as the ring).
+pub fn south_spawn_point(i: u32, keep: Vec2, max_ring: f32, standable: impl Fn(f32, f32) -> bool) -> Vec2 {
+    const ARC: f32 = 1.4; // ~80° each side of due-south; cos(ARC) > 0 ⟹ never north of the keep
+    let frac = (i as f32 * 0.618_034).fract() * 2.0 - 1.0; // golden-ratio spread in [-1, 1]
+    let phi = frac * ARC;
+    // φ = 0 → due south = +Z = (0, 1) in (x, z); rotate the heading by φ within the arc.
+    let dir = Vec2::new(phi.sin(), phi.cos());
+    let mut best = keep + dir * 6.0;
+    let mut r = 8.0;
+    while r <= max_ring {
+        let p = keep + dir * r;
+        if standable(p.x, p.y) {
+            best = p;
+        }
+        r += 2.0;
+    }
+    best
+}
+
 /// Where a keep-marching invader actually paths: a standable point just inside the nearest gate.
 /// The keep origin sits inside the solid keep box, so A* straight to it fails and the invader
 /// wedges at the wall; stepping 4u in from the gate gap lands it in the courtyard, where the
@@ -577,7 +602,8 @@ fn spawn_invader(
     ring_index: u32,
     now: f32,
 ) {
-    let p = spawn_point(ring_index, KEEP_POS, SPAWN_RING, spawn_footing);
+    // Muster from the Hold: invaders arrive from the southern (Hold-facing) arc, not all around.
+    let p = south_spawn_point(ring_index, KEEP_POS, SPAWN_RING, spawn_footing);
     let seed = ring_index.wrapping_mul(0x9e37_79b1) ^ (ring_index + 1);
     let e = armory.spawn(commands, variant, INVADER_FACTION, KEEP_POS, p, seed);
     commands.entity(e).insert((
@@ -1479,6 +1505,23 @@ mod tests {
         let a = spawn_point(0, keep, 30.0, |_, _| true);
         let b = spawn_point(1, keep, 30.0, |_, _| true);
         assert!(a.distance(b) > 1.0, "successive spawns don't stack");
+    }
+
+    #[test]
+    fn south_spawns_stay_on_the_holds_side() {
+        let keep = Vec2::ZERO;
+        // Every spawn lands south of the keep (+Z, toward Gnashfang Hold) and within the ring,
+        // and successive spawns still spread (golden-ratio fan across the arc).
+        let mut prev: Option<Vec2> = None;
+        for i in 0..24 {
+            let p = south_spawn_point(i, keep, 30.0, |_, _| true);
+            assert!(p.y > 0.0, "spawn {i} is south of the keep (Hold-facing): {p:?}");
+            assert!(p.length() <= 31.0, "spawn {i} stays inside the ring");
+            if let Some(q) = prev {
+                assert!(p.distance(q) > 0.5, "successive south spawns don't stack");
+            }
+            prev = Some(p);
+        }
     }
 
     #[test]
