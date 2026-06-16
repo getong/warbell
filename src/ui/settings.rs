@@ -39,6 +39,9 @@ struct DebugGrant;
 /// Debug cheat: unlocks all five warden boons (the active moves + passives) on click.
 #[derive(Component)]
 struct DebugBoons;
+/// First-person view toggle (also bound to the V key in `player::camera`).
+#[derive(Component)]
+struct FpToggle;
 #[derive(Component)]
 struct QualityLabel;
 
@@ -65,7 +68,53 @@ fn setup_settings(mut commands: Commands, fonts: Res<UiFonts>) {
             ..default()
         })
         .with_children(|row| {
-            // Debug cheat: "+1k" text button grants 1000 of every resource for testing.
+            // Debug cheats ("+1k" grants 1000 of every resource, "Arts" unlocks all five warden
+            // boons). Hidden from players by default — only spawn them when `FOREST_CHEATS` is set,
+            // so the testing buttons don't ship in the normal HUD.
+            if std::env::var("FOREST_CHEATS").is_ok() {
+                // "+1k" text button grants 1000 of every resource for testing.
+                row.spawn((
+                    Node {
+                        height: Val::Px(34.0),
+                        padding: UiRect::horizontal(Val::Px(10.0)),
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::Center,
+                        border: border(1.0),
+                        border_radius: radius(R_BTN),
+                        ..default()
+                    },
+                    BackgroundColor(PANEL_HUD),
+                    BorderColor::all(BORDER_SOFT),
+                    Button,
+                    Interaction::default(),
+                    DebugGrant,
+                ))
+                .with_children(|b| {
+                    b.spawn(label(&fonts.bold, "+1k", 13.0, TEXT));
+                });
+                // "Arts" unlocks all five warden boons (active moves + passives) at once.
+                row.spawn((
+                    Node {
+                        height: Val::Px(34.0),
+                        padding: UiRect::horizontal(Val::Px(10.0)),
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::Center,
+                        border: border(1.0),
+                        border_radius: radius(R_BTN),
+                        ..default()
+                    },
+                    BackgroundColor(PANEL_HUD),
+                    BorderColor::all(BORDER_SOFT),
+                    Button,
+                    Interaction::default(),
+                    DebugBoons,
+                ))
+                .with_children(|b| {
+                    b.spawn(label(&fonts.bold, "Arts", 13.0, TEXT));
+                });
+            }
+            // First-person view toggle: a text button ("FP") next to the other view/quality
+            // toggles. Click (or press V) flips first ⇄ third person.
             row.spawn((
                 Node {
                     height: Val::Px(34.0),
@@ -80,30 +129,10 @@ fn setup_settings(mut commands: Commands, fonts: Res<UiFonts>) {
                 BorderColor::all(BORDER_SOFT),
                 Button,
                 Interaction::default(),
-                DebugGrant,
+                FpToggle,
             ))
             .with_children(|b| {
-                b.spawn(label(&fonts.bold, "+1k", 13.0, TEXT));
-            });
-            // Debug cheat: "Arts" unlocks all five warden boons (active moves + passives) at once.
-            row.spawn((
-                Node {
-                    height: Val::Px(34.0),
-                    padding: UiRect::horizontal(Val::Px(10.0)),
-                    align_items: AlignItems::Center,
-                    justify_content: JustifyContent::Center,
-                    border: border(1.0),
-                    border_radius: radius(R_BTN),
-                    ..default()
-                },
-                BackgroundColor(PANEL_HUD),
-                BorderColor::all(BORDER_SOFT),
-                Button,
-                Interaction::default(),
-                DebugBoons,
-            ))
-            .with_children(|b| {
-                b.spawn(label(&fonts.bold, "Arts", 13.0, TEXT));
+                b.spawn(label(&fonts.bold, "FP", 13.0, TEXT));
             });
             // Graphics-quality toggle: a text button ("High"/"Ultra"/"Low") so the choice is
             // explicit and legible without depending on an icon asset. Click or press F10 to
@@ -187,6 +216,7 @@ fn settings_click(
             Option<&QualityToggle>,
             Option<&DebugGrant>,
             Option<&DebugBoons>,
+            Option<&FpToggle>,
         ),
         Changed<Interaction>,
     >,
@@ -194,12 +224,13 @@ fn settings_click(
     mut quality: ResMut<GraphicsQuality>,
     mut bank: ResMut<Bank>,
     mut player: ResMut<PlayerRes>,
+    mut first_person: ResMut<crate::player::FirstPerson>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut notice: ResMut<Notice>,
     time: Res<Time>,
 ) {
     let now = time.elapsed_secs_f64();
-    for (interaction, audio, fs, qual, grant, boons) in &q {
+    for (interaction, audio, fs, qual, grant, boons, fp) in &q {
         if *interaction != Interaction::Pressed {
             continue;
         }
@@ -217,6 +248,13 @@ fn settings_click(
         }
         if boons.is_some() {
             grant_all_boons(&mut player, &mut notice, now);
+        }
+        if fp.is_some() {
+            first_person.active = !first_person.active;
+            notice.push(
+                if first_person.active { "First person" } else { "Third person" },
+                now,
+            );
         }
     }
 }

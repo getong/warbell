@@ -14,7 +14,7 @@ use crate::villagers::Villager;
 use crate::wildlife::Animal;
 use crate::{blockers, steer, worldmap};
 
-use super::{Hero, HeroState, PendingHeroDamage, PlayMode, PlayerRes};
+use super::{FirstPerson, Hero, HeroState, PendingHeroDamage, PlayMode, PlayerRes};
 
 const SPEED: f32 = 3.5;
 const SPRINT_MULT: f32 = 1.75;
@@ -129,6 +129,7 @@ pub fn player_move(
     mut cues: MessageWriter<AudioCue>,
     mut poison_acc: Local<f32>,
     mut was_swamp: Local<bool>,
+    fp: Res<FirstPerson>,
 ) {
     let Ok((mut hero, mut tf)) = hero_q.single_mut() else { return };
     let t = time.elapsed_secs();
@@ -218,8 +219,12 @@ pub fn player_move(
         {
             hero.pos.y = nz;
         }
-        let want = move_dir.x.atan2(move_dir.z);
-        hero.facing = lerp_angle(hero.facing, want, (dt * TURN_RATE).min(1.0));
+        // In first person the *view* owns facing (set in `player_camera` to the look-yaw) so attacks
+        // fire where you aim while strafing — don't fight it by steering toward the move direction.
+        if !fp.active {
+            let want = move_dir.x.atan2(move_dir.z);
+            hero.facing = lerp_angle(hero.facing, want, (dt * TURN_RATE).min(1.0));
+        }
     }
 
     // ── Body-collision vs creatures: shove the hero out of any overlap so he can't clip through

@@ -21,6 +21,9 @@ mod health;
 mod model;
 mod movement;
 
+/// First-person view state, toggled by the HUD eye button ([`crate::ui::settings`]) and the V key.
+pub use camera::FirstPerson;
+
 use bevy::prelude::*;
 
 use crate::inventory::Inventory;
@@ -153,10 +156,12 @@ pub struct PlayerPlugin;
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         // Capture screenshots hold the scene's static overview camera → start in FreeRoam
-        // so the follow-cam never hijacks the shot (the hero still spawns, at rest).
-        let start_mode = if std::env::var("FOREST_SHOT").is_ok()
-            || std::env::var("FOREST_CLIP").is_ok()
-        {
+        // so the follow-cam never hijacks the shot (the hero still spawns, at rest). `FOREST_FP`
+        // forces Play + first-person so the eye-view can be captured (it needs the follow-cam).
+        let fp_boot = std::env::var("FOREST_FP").is_ok();
+        let start_mode = if fp_boot {
+            PlayMode::Play
+        } else if std::env::var("FOREST_SHOT").is_ok() || std::env::var("FOREST_CLIP").is_ok() {
             PlayMode::FreeRoam
         } else {
             PlayMode::Play
@@ -169,6 +174,7 @@ impl Plugin for PlayerPlugin {
             .init_resource::<combat::CombatRng>()
             .init_resource::<combat::HitStop>()
             .insert_resource(camera::OrbitCam::default())
+            .insert_resource(camera::FirstPerson { active: fp_boot, ..default() })
             .add_systems(Startup, combat::setup_combat_fx)
             .add_systems(PostStartup, (spawn_hero, arts::spawn_arts_hud, debug_grant_boons))
             // Fresh run: wipe progression + revive the hero on a new run (NOT on un-pause).
@@ -183,6 +189,7 @@ impl Plugin for PlayerPlugin {
                 Update,
                 (
                     camera::toggle_mode,
+                    camera::toggle_first_person, // V / HUD eye button: third ⇄ first person
                     camera::player_camera,
                     reskin_hero, // rebuild limb meshes when weapon/armor equip changes
                     anim::hero_anim,
