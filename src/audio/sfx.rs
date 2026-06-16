@@ -105,6 +105,9 @@ pub(crate) struct SfxBank {
     /// Warden (biome boss) roars — the deep "ancient thing wakes" bellow, picked at random per
     /// roar. Far bigger + louder than an ork's; played on a warden's aggro + crit wind-up.
     boss_roars: Vec<Handle<AudioSource>>,
+    /// Warden crit-windup charge whine (`ability-cast.ogg`) — a rising magical charge layered over
+    /// the roar when a warden rears back for its killing blow (the audible "block/dodge NOW" cue).
+    boss_windup: Handle<AudioSource>,
     /// Gnashfang Hold's war-horn (`war-horn.ogg` — wood crack, then a deep horn blast).
     war_horn: Handle<AudioSource>,
     /// Warp-bolt release (`warp-cast.ogg`) — shaman staff casts + fortress tower fire.
@@ -152,6 +155,7 @@ pub(crate) fn setup_sfx(asset: Res<AssetServer>, mut commands: Commands) {
             .collect(),
         ork_roars: ["audio/ork-roar.ogg", "audio/wave-start-roar.ogg"].iter().map(|f| asset.load(*f)).collect(),
         boss_roars: ["audio/boss-roar-1.ogg", "audio/boss-roar-2.ogg"].iter().map(|f| asset.load(*f)).collect(),
+        boss_windup: asset.load("audio/ability-cast.ogg"),
         war_horn: asset.load("audio/war-horn.ogg"),
         warp_cast: asset.load("audio/warp-cast.ogg"),
         beast_snarls: ["audio/monster-snarl.ogg", "audio/monster-growl.ogg", "audio/bear-growl.ogg"]
@@ -274,6 +278,11 @@ pub(crate) fn play_cues(
             AudioCue::BossRoar(pos) => {
                 let clip = pick(&bank.boss_roars, &mut seed);
                 spatial_shot(&mut commands, clip, 0.85 * voice, jitter(&mut seed, 0.08) * 0.92, pos);
+            }
+            // The crit-windup charge whine — pitched a touch DOWN (heavier, ominous) and loud so it
+            // cuts through the roar; the player's cue to raise the shield / dodge clear.
+            AudioCue::BossWindup(pos) => {
+                spatial_shot(&mut commands, bank.boss_windup.clone(), 0.8 * sfx, jitter(&mut seed, 0.05) * 0.85, pos);
             }
             // A predator's bite snarl — wide pitch jitter so a flurry of bites never repeats. A
             // heavy beast (bear/croc/golem) gets the deeper roar set, louder + pitched down.

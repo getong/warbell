@@ -24,6 +24,8 @@ pub struct CamGate<'w> {
     modal: Option<Res<'w, State<Modal>>>,
     egui_wants: Res<'w, crate::debug_panel::EguiWantsPointer>,
     build_mode: Res<'w, crate::town::BuildMode>,
+    /// Set while a warden rears back for a killing blow — eases a tension dolly-out (see below).
+    crit_tension: Option<Res<'w, crate::boss::CritTension>>,
 }
 
 const SENS_X: f32 = 0.0035;
@@ -33,6 +35,9 @@ const MAX_PITCH: f32 = 1.45;
 const MIN_DIST: f32 = 3.5;
 const MAX_DIST: f32 = 16.0;
 const ZOOM_SENS: f32 = 0.7;
+/// Extra follow distance pulled back (smoothly) while a warden winds up its killing blow — a slow
+/// dolly-out that builds tension across the telegraph, then eases back in once the blow resolves.
+const CRIT_ZOOM_OUT: f32 = 4.5;
 /// Look-target height above the hero's feet (roughly the helm).
 const EYE_H: f32 = 1.0;
 
@@ -178,6 +183,7 @@ pub fn player_camera(
     mut base_fov: Local<Option<f32>>,
     gate: CamGate,
     mut build_blend: Local<f32>,
+    mut tension_blend: Local<f32>,
 ) {
     if *mode != PlayMode::Play {
         return;
@@ -230,8 +236,14 @@ pub fn player_camera(
         orbit.dist = (orbit.dist - s * ZOOM_SENS).clamp(MIN_DIST, MAX_DIST);
     }
 
+    // Tension dolly: ease a 0→1 blend toward "any warden is winding up a crit", slow enough to read
+    // as a deliberate pull-back across the ~1.2s telegraph (and a smooth ease-in on release).
+    let want_tension = if gate.crit_tension.as_ref().is_some_and(|t| t.0) { 1.0 } else { 0.0 };
+    *tension_blend += (want_tension - *tension_blend) * (1.0 - (-time.delta_secs() * 3.2).exp());
+    let r_tension = (*tension_blend).clamp(0.0, 1.0) * CRIT_ZOOM_OUT;
+
     let follow_target = Vec3::new(hero.pos.x, hero.y + EYE_H, hero.pos.y);
-    let (a, p, r) = (orbit.azimuth, orbit.pitch, orbit.dist);
+    let (a, p, r) = (orbit.azimuth, orbit.pitch, orbit.dist + r_tension);
     let follow_eye =
         follow_target + Vec3::new(a.sin() * p.cos() * r, p.sin() * r, a.cos() * p.cos() * r);
 

@@ -33,28 +33,29 @@ use crate::audio::MusicState;
 
 // ── Tuning (all forest-side; not parity-gated) ────────────────────────────────────────
 /// Warden HP at level 1, ×`HP_GROWTH` per level. Out-stats a bare hero on purpose (mid-game) —
-/// a deliberately long, attrition fight; bumped so wardens aren't melted by a geared hero.
-const BASE_HP: f32 = 2000.0;
-const HP_GROWTH: f32 = 1.16;
+/// a deliberately long, attrition fight; bumped (again) so a geared hero can't melt a warden in
+/// a few swings — it must be a sustained, dangerous duel.
+const BASE_HP: f32 = 3200.0;
+const HP_GROWTH: f32 = 1.18;
 /// Warden melee damage to the hero at level 1, ×`DMG_GROWTH` per level.
-const BASE_MELEE: f32 = 40.0;
-const DMG_GROWTH: f32 = 1.12;
+const BASE_MELEE: f32 = 58.0;
+const DMG_GROWTH: f32 = 1.13;
 /// Signature attack damage = melee × this.
-const SIG_MULT: f32 = 1.4;
+const SIG_MULT: f32 = 1.6;
 
 const BODY_R: f32 = 0.8;
-const SPEED: f32 = 2.05; // slower than the hero (3.5) so it can be kited
+const SPEED: f32 = 2.4; // slower than the hero (3.5) so it can be kited — but closes harder now
 const TURN: f32 = 2.2; // rad/s
 /// Hero must come within this to wake the one-time "something stirs" notice.
 const NOTICE_RANGE: f32 = 28.0;
 /// Within this the warden stops and strikes instead of closing.
 const MELEE_RANGE: f32 = 3.4;
-const MELEE_CD: f32 = 1.5;
+const MELEE_CD: f32 = 1.25;
 const SIG_CD: f32 = 6.5;
 /// **Telegraphed critical** — a warden plants, rears its weapon overhead, and after
 /// [`CRIT_TELEGRAPH`] seconds brings down a KILLING blow. It's lethal if it connects, but the long
 /// windup is the player's cue: raise the shield (or dodge out of [`CRIT_RANGE`]) before it lands.
-const CRIT_CD: f32 = 13.0; // min seconds between a warden's critical attempts
+const CRIT_CD: f32 = 9.5; // min seconds between a warden's critical attempts (more frequent killing blows = more pressure)
 const CRIT_TELEGRAPH: f32 = 1.2; // windup time — the reaction window to block/dodge
 const CRIT_RANGE: f32 = 5.5; // must be within this at impact to be struck (slightly past melee)
 const CRIT_LETHAL: f32 = 100_000.0; // overkill so it one-shots through any resist/armor when unblocked
@@ -181,6 +182,12 @@ pub struct Poisoned {
     pub dps: f32,
 }
 
+/// True while any warden is mid-critical wind-up. The follow-cam ([`crate::player::camera`]) reads
+/// this to ease a slow tension dolly-OUT across the telegraph, snapping back once the blow resolves —
+/// so a "killing blow incoming" reads in the framing, not just the audio/limb tell.
+#[derive(Resource, Default)]
+pub struct CritTension(pub bool);
+
 // ── Reward plumbing ────────────────────────────────────────────────────────────────────
 
 /// Filled by [`reward_on_death`] when a warden falls; consumed by the [`Modal::BossReward`] dialog.
@@ -212,6 +219,7 @@ pub struct BossPlugin;
 impl Plugin for BossPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PendingReward>()
+            .init_resource::<CritTension>()
             .add_systems(PostStartup, spawn_wardens)
             // On a loaded game, remove wardens the saved hero already slew (ungated; once per load).
             .add_systems(Update, despawn_slain_wardens)
@@ -348,6 +356,7 @@ fn boss_brain(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
     mut notice: ResMut<Notice>,
+    mut tension: ResMut<CritTension>,
     mut taught_crit: Local<bool>,
     mut commands: Commands,
     mut q: Query<(&mut Boss, &mut Transform, &Health, Option<&Slowed>), Without<Dying>>,
@@ -355,6 +364,9 @@ fn boss_brain(
     let dt = time.delta_secs().min(0.05);
     let now = time.elapsed_secs();
     let tw = time.elapsed_secs_wrapped();
+    // Recomputed each frame: true if ANY warden is rearing back for a killing blow (drives the
+    // follow-cam tension dolly-out).
+    let mut any_winding = false;
     for (mut b, mut tf, health, slowed) in &mut q {
         b.atk_cd -= dt;
         b.sig_cd -= dt;
@@ -384,6 +396,7 @@ fn boss_brain(
             // ── Winding up a critical: the warden plants and rears its weapon overhead (the limb
             //    pose lives in `boss_limbs`), tracking the hero slowly. On impact the blow falls —
             //    LETHAL if it connects, but blocking/dodging negates it (see `apply_hero_damage`). ──
+            any_winding = true;
             b.moving = false;
             let to = hero.pos - b.pos;
             if to.length_squared() > 1e-4 {
@@ -439,7 +452,11 @@ fn boss_brain(
                 b.crit_cd = CRIT_CD;
                 b.crit_at = now + CRIT_TELEGRAPH;
                 let gy = steer::footing(b.pos.x, b.pos.y).unwrap_or(tf.translation.y);
-                cues.write(crate::audio::AudioCue::BossRoar(Vec3::new(b.pos.x, gy + 1.8, b.pos.y)));
+                let head = Vec3::new(b.pos.x, gy + 1.8, b.pos.y);
+                // Two-layer telegraph: the deep roar (weight) + a rising charge whine (the distinct
+                // "killing blow is charging" cue, escalating across the 1.2s windup).
+                cues.write(crate::audio::AudioCue::BossRoar(head));
+                cues.write(crate::audio::AudioCue::BossWindup(head));
                 if !*taught_crit {
                     *taught_crit = true;
                     notice.push(
@@ -515,6 +532,7 @@ fn boss_brain(
         tf.translation = Vec3::new(b.pos.x, gy + bob, b.pos.y);
         tf.rotation = Quat::from_rotation_y(b.facing);
     }
+    tension.0 = any_winding;
 }
 
 /// One-time "a beast stirs" notice when the hero first nears a living, un-discovered warden.

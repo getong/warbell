@@ -81,6 +81,10 @@ pub enum AudioCue {
     /// A warden (biome boss) roar at a world position — the deep "ancient thing wakes" bellow, far
     /// bigger than an ork's. Fired on aggro + each crit wind-up (`boss::boss_brain`).
     BossRoar(Vec3),
+    /// A warden charging its telegraphed critical (`ability-cast.ogg`) at a world position — a
+    /// rising magical whine layered over the crit-windup roar, so the "killing blow incoming" tell
+    /// is unmistakable by ear (`boss::boss_brain`).
+    BossWindup(Vec3),
     /// A wild predator's snarl as it bites the hero, at a world position. `big` = a heavy beast
     /// (bear/croc/golem) → a deeper, louder roar. Pitch-jittered so a flurry never repeats.
     CreatureBite { at: Vec3, big: bool },
