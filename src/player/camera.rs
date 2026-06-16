@@ -13,7 +13,7 @@ use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use crate::controls::FlyCam;
 use crate::game_state::{AppState, Modal};
 
-use super::{Hero, PlayMode};
+use super::{Hero, HeroLimb, HeroPart, PlayMode};
 
 /// The "is the cursor interactive / where should the camera frame" inputs, bundled to keep
 /// `player_camera` under Bevy's 16-param system cap. Build mode flips the camera up over the town
@@ -43,8 +43,9 @@ const FP_EYE_H: f32 = 1.3;
 /// First-person forward eye offset (world units along the look direction). Eyes sit at the FRONT
 /// of the head, not the body centre — this nudges the viewpoint toward what you're aiming at so a
 /// tree/ork at swing reach (`verbs::SWING_RANGE` = 1.9u) reads as reachable instead of "hug it".
-/// Kept small so the camera doesn't poke through whatever you walk up against.
-const FP_FWD_OFF: f32 = 0.35;
+/// Kept small so the camera stays BEHIND the sword-arm's shoulder (else the viewmodel arm/sword
+/// pushes off-screen) and doesn't poke through whatever you walk up against.
+const FP_FWD_OFF: f32 = 0.2;
 /// First-person look-pitch clamp (radians): how far you can crane up/down. Symmetric, unlike the
 /// third-person `MIN/MAX_PITCH` (which is camera *elevation*, always tilting the view downward).
 const FP_PITCH_LIMIT: f32 = 1.3;
@@ -132,6 +133,31 @@ pub fn toggle_first_person(
     }
 }
 
+/// First-person **viewmodel** visibility. The head would fill the lens, so in FP we hide the
+/// head + torso + legs but KEEP the arms, the shield, and the weapon (nested under the sword arm) —
+/// so a swing shows your sword and a block shows your shield. Restores everything in third person.
+/// Driven off `fp.blend` (the eased toggle), one frame behind the camera — imperceptible.
+pub fn fp_body_visibility(
+    fp: Res<FirstPerson>,
+    hero_q: Query<&Children, With<Hero>>,
+    mut vis_q: Query<(&mut Visibility, Option<&HeroPart>)>,
+) {
+    let fp_on = fp.blend > 0.5;
+    let Ok(children) = hero_q.single() else { return };
+    for &c in children {
+        let Ok((mut vis, part)) = vis_q.get_mut(c) else { continue };
+        // Keep the arms + shield (the weapon inherits the sword arm); drop the torso/head/legs.
+        let keep = matches!(
+            part.map(|p| p.limb),
+            Some(HeroLimb::ArmR | HeroLimb::ArmL | HeroLimb::Shield)
+        );
+        let want = if fp_on && !keep { Visibility::Hidden } else { Visibility::Inherited };
+        if *vis != want {
+            *vis = want;
+        }
+    }
+}
+
 pub fn player_camera(
     mode: Res<PlayMode>,
     buttons: Res<ButtonInput<MouseButton>>,
@@ -141,7 +167,7 @@ pub fn player_camera(
     mut orbit: ResMut<OrbitCam>,
     mut fp: ResMut<FirstPerson>,
     mut cursor_q: Query<&mut CursorOptions, With<PrimaryWindow>>,
-    mut hero_q: Query<(&mut Hero, &mut Visibility)>,
+    mut hero_q: Query<&mut Hero>,
     mut cam_q: Query<(&mut Transform, &mut Projection), (With<Camera3d>, Without<Hero>)>,
     time: Res<Time>,
     feedback: Option<Res<crate::combat_fx::HitFeedback>>,
@@ -152,7 +178,7 @@ pub fn player_camera(
     if *mode != PlayMode::Play {
         return;
     }
-    let Ok((mut hero, mut hero_vis)) = hero_q.single_mut() else { return };
+    let Ok(mut hero) = hero_q.single_mut() else { return };
     let Ok((mut cam_tf, mut cam_proj)) = cam_q.single_mut() else { return };
 
     // Cursor only locks while actually playing with no panel up; a modal/menu frees it so its
@@ -232,12 +258,8 @@ pub fn player_camera(
     if fp.active {
         hero.facing = look_yaw;
     }
-    // Hide the hero body once mostly in FP (else the head fills the screen). Inherited == visible
-    // for this root. Its own shadow vanishes in FP — unnoticeable from the eyes.
-    let want_vis = if fpb > 0.5 { Visibility::Hidden } else { Visibility::Inherited };
-    if *hero_vis != want_vis {
-        *hero_vis = want_vis;
-    }
+    // (Body parts are hidden/shown by `fp_body_visibility` — a first-person viewmodel: arms +
+    // weapon + shield stay, head/torso/legs go, so the head never fills the lens.)
 
     // Build mode eases the camera up over the settlement (centred on the castle/origin) so EVERY plot
     // is visible — it doesn't matter which way the hero was facing. Blend back on exit.

@@ -191,6 +191,7 @@ impl Plugin for PlayerPlugin {
                     camera::toggle_mode,
                     camera::toggle_first_person, // V / HUD eye button: third ⇄ first person
                     camera::player_camera,
+                    camera::fp_body_visibility, // FP viewmodel: keep arms/sword/shield, hide the rest
                     reskin_hero, // rebuild limb meshes when weapon/armor equip changes
                     anim::hero_anim,
                     combat::update_sparks,
