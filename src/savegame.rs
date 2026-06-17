@@ -315,6 +315,7 @@ fn manual_save(
     mut exists: ResMut<SaveExists>,
     mut notice: ResMut<Notice>,
     time: Res<Time>,
+    assault: Res<crate::ork_fortress::AssaultState>,
     ctx: SaveCtx,
 ) {
     if reqs.read().count() == 0 {
@@ -323,6 +324,12 @@ fn manual_save(
     let now = time.elapsed_secs_f64();
     if ctx.siege.phase != GamePhase::Prep {
         notice.push("Can't save during a siege — hold the keep, then save by day.", now);
+        return;
+    }
+    // The assault is transient (a Continue resets the Hold to pristine), so a mid-raid save would
+    // reload to a full garrison anyway — refuse it rather than write a misleading snapshot.
+    if assault.breached {
+        notice.push("Can't save mid-assault — break the Hold or pull back first.", now);
         return;
     }
     if flush_save(&ctx.snapshot(), &mut exists) {

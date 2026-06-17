@@ -103,6 +103,7 @@ Env hooks that stage a scene for a shot (combine with `FOREST_SHOT` **or** `FORE
 | `FOREST_WAVE` / `FOREST_DEFEND=1` | stage a night siege / arm all defenses + walls |
 | `FOREST_MUSTER=1` | rally the whole town into the **war party** at boot (as if pressing `K`) so a shot frames the muster; pair with `FOREST_DEMO=work` (stages a 14-pop town) for a full host (`villagers.rs::stage_muster`) |
 | `FOREST_ORKLINE="x,z"` | park one ork of each variant in an idle line at a world XZ (model close-ups) |
+| `FOREST_BREACH=1` | auto-break the Hold gate on the first sim frame so a shot/clip films the woken garrison + the Warlord boss without a keypress (`ork_fortress::stage_breach`); pair with `FOREST_HERO`/`FOREST_CAM` inside the walls |
 | `FOREST_TREELINE="x,z"` | park one of each `TreeKind` (broadleaf/birch/pine/poplar/autumn/dead/stump) in a 2× row at a world XZ (tree-model close-ups, `trees.rs`) |
 | `FOREST_MENU=1` | shoot the start screen |
 | `FOREST_FP=1` | boot straight into first-person (forces Play so the follow-cam eye-view can be captured; `player/camera.rs`) |
@@ -278,7 +279,9 @@ first-person view (a sub-mode of Play — shows an arms+sword+shield viewmodel, 
 `player/camera.rs::FirstPerson`) · WASD move · LMB attack · RMB block ·
 F1 debug egui tuning panel · F2 perf/state stats overlay · **E** contextual interact — walk up to a thing and a screen prompt names it:
 near the **keep** → War Table (upgrades), near the **merchant stall** → shop, near the **war bell**
-(prep only) → ring in the night, near a **treasure chest** → open it (the unified resolver lives in
+(prep only) → ring in the night, near a **treasure chest** → open it, near the **gate of Gnashfang
+Hold** → break it open (storms the Hold — wakes the garrison + Warlord; the **win condition**, see
+`warlord.rs` + `ork_fortress::breach_gate`) (the unified resolver lives in
 `interaction.rs`; nearest in-range wins, proximity-only/no-facing) · **Tab** (or **I**) Satchel ·
 **Q** eat food · **Y/T** bindable quick-slots (auto-fill resist/power; in the satchel,
 hover an item + Y/T pins it) · **Z/X/C** combat arts (Slam/Dash/Sweep, once unlocked) ·

@@ -236,10 +236,12 @@ pub fn step_wave_director(input: &WaveStepInput) -> WaveStepResult {
             }
         }
         GamePhase::Wave => {
-            let i = input.wave_index as usize;
-            if i >= WAVES.len() {
-                return WaveStepResult { actions, timers };
-            }
+            // Nights loop forever — the game is won by breaking Gnashfang Hold (the Warlord's
+            // death is the only `Victory`; see the 2026-06-17 assault spec), NOT by surviving a
+            // fixed count of nights. Past the WAVES table the index clamps to the last (hardest)
+            // wave, which replays with the ECS-side hero-level HP escalation, while `wave_index`
+            // keeps climbing so the "Night N" counter still rises.
+            let i = (input.wave_index as usize).min(WAVES.len() - 1);
             let def = &WAVES[i];
             let count = effective_count(i, input.mods);
             // Spawn on interval until the wave's quota is met.
@@ -255,11 +257,10 @@ pub fn step_wave_director(input: &WaveStepInput) -> WaveStepResult {
                 timers.spawn_index += 1;
                 timers.next_spawn_at = input.now + def.spawn_interval;
             }
-            // Wave cleared once everything has spawned and nothing is left alive.
+            // Wave cleared once everything has spawned and nothing is left alive → back to Prep
+            // (the next night). Victory is never reached here.
             if input.spawned >= count && input.alive == 0 {
-                let next =
-                    if i >= WAVES.len() - 1 { GamePhase::Victory } else { GamePhase::Prep };
-                actions.push(WaveAction::SetPhase(next));
+                actions.push(WaveAction::SetPhase(GamePhase::Prep));
             }
         }
         GamePhase::Victory | GamePhase::Defeat => {}
@@ -1205,17 +1206,18 @@ fn update_siege_hud(
     if let Ok(mut n) = keep_q.single_mut() {
         n.width = Val::Percent((keep.hp / keep.max * 100.0).clamp(0.0, 100.0));
     }
-    let total = WAVES.len();
+    // Nights loop forever now (the win is breaking the Hold, not surviving a fixed count), so the
+    // objective banner shows the climbing night number with no "/ N" ceiling.
     let (label_s, sub_s) = match siege.phase {
         GamePhase::Prep => {
             let night = (siege.wave_index + 2).max(1);
             let secs = siege.prep_seconds_left.max(0.0) as i64;
-            (format!("PREPARE — NIGHT {night} / {total}"), format!("{}:{:02} until nightfall", secs / 60, secs % 60))
+            (format!("PREPARE — NIGHT {night}"), format!("{}:{:02} until nightfall", secs / 60, secs % 60))
         }
         GamePhase::Wave => {
             let night = (siege.wave_index + 1).max(1);
             let alive = invaders.iter().count();
-            (format!("NIGHT {night} / {total}"), format!("{alive} orks remain"))
+            (format!("NIGHT {night}"), format!("{alive} orks remain"))
         }
         GamePhase::Victory => ("VICTORY".into(), String::new()),
         GamePhase::Defeat => ("THE KEEP HAS FALLEN".into(), String::new()),
@@ -1238,7 +1240,9 @@ fn update_siege_hud(
             col.0 = GOLD_DEEP;
         }
         GamePhase::Wave => {
-            let count = effective_count(siege.wave_index.max(0) as usize, mods_for(siege.difficulty));
+            // Clamp like the director — nights loop past the table, so the index must not run off it.
+            let wi = (siege.wave_index.max(0) as usize).min(WAVES.len() - 1);
+            let count = effective_count(wi, mods_for(siege.difficulty));
             let alive = invaders.iter().count() as u32;
             n.width = Val::Percent((alive as f32 / count as f32 * 100.0).clamp(0.0, 100.0));
             col.0 = RED;
@@ -1434,7 +1438,9 @@ mod tests {
     }
 
     #[test]
-    fn last_wave_clear_is_victory() {
+    fn last_wave_clear_loops_to_prep() {
+        // The game is won by breaking Gnashfang Hold, not by surviving N nights — so clearing the
+        // final wave returns to Prep (the next night) like any other, never Victory.
         let last = WAVES.len() - 1;
         let count = effective_count(last, normal());
         let r = step_wave_director(&WaveStepInput {
@@ -1442,7 +1448,25 @@ mod tests {
             timers: WaveTimers { prep_ends_at: 0.0, next_spawn_at: 0.0, spawn_index: count },
             now: 99.0, skip: false, mods: normal(),
         });
-        assert_eq!(r.actions, vec![WaveAction::SetPhase(GamePhase::Victory)]);
+        assert_eq!(r.actions, vec![WaveAction::SetPhase(GamePhase::Prep)]);
+    }
+
+    #[test]
+    fn nights_past_the_table_replay_the_last_wave() {
+        // A night well beyond the WAVES table still spawns (clamped to the last wave), instead of
+        // returning empty — so the looping endgame keeps throwing the hardest night.
+        let last = WAVES.len() - 1;
+        let beyond = WAVES.len() as i32 + 5;
+        let r = step_wave_director(&WaveStepInput {
+            phase: GamePhase::Wave, wave_index: beyond, spawned: 0, alive: 0,
+            timers: WaveTimers::default(), now: 0.0, skip: false, mods: normal(),
+        });
+        match r.actions.first() {
+            Some(WaveAction::Spawn { hp, variant, .. }) => {
+                assert_eq!(*hp, (base_hp(*variant) * WAVES[last].hp_scale).round());
+            }
+            other => panic!("expected a Spawn from the clamped last wave, got {other:?}"),
+        }
     }
 
     #[test]

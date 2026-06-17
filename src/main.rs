@@ -99,6 +99,7 @@ mod verbs;
 mod vignettes;
 mod villagers;
 mod visual;
+mod warlord;
 mod water;
 mod wildlife;
 mod wind;
@@ -208,6 +209,7 @@ fn main() {
             creature::CreaturePlugin, // registers the shared creature ExtendedMaterial (hero/orks/wildlife)
             chest::ChestPlugin, // scattered loot chests: Wood/Relic tiers + juicy opens + Gnashfang mimics
             boss::BossPlugin, // Biome Wardens: per-biome world bosses + boon rewards + reward dialog
+            warlord::WarlordPlugin, // the Warlord of Gnashfang Hold: the final boss + win condition
             mainmenu::MainMenuPlugin, // title-screen ambiance: orbit cam + dusk + embers/fireflies + credits
             loading::LoadingPlugin, // branded boot veil over the first ~1s blank frame
             trees::TreeDebugPlugin, // FOREST_TREELINE="x,z" parks one of each tree kind for model shots

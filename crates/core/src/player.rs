@@ -59,6 +59,11 @@ pub struct Player {
     /// Passive: Venom (Bog Hag) — hits poison the struck foe (DoT) + small lifesteal.
     #[cfg_attr(feature = "serde", serde(default))]
     pub venom: bool,
+    /// The run's win flag: set when the hero slays the Warlord at Gnashfang Hold (the forest-side
+    /// `warlord` module sets this on the kill, alongside `GamePhase::Victory`). `serde(default)`
+    /// so older saves still load.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub conquered_warlord: bool,
 }
 
 impl Default for Player {
@@ -88,6 +93,7 @@ impl Default for Player {
             has_bramble_sweep: false,
             frostbite: false,
             venom: false,
+            conquered_warlord: false,
         }
     }
 }

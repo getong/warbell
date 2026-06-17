@@ -60,8 +60,13 @@ const APRON_RX: f32 = 58.0;
 const APRON_RZ: f32 = 50.0;
 /// The gate wall line.
 const FRONT_Z: f32 = 80.9 + BLIGHT_DZ;
-/// Gate centre (the war-horn sounds from here; the threshold test measures to it).
-const GATE: Vec2 = Vec2::new(12.0, FRONT_Z);
+/// Gate centre (the war-horn sounds from here; the threshold test + the breach prompt measure to
+/// it). `pub` so `interaction.rs` can anchor the **E — Break the gate** prompt here.
+pub const GATE: Vec2 = Vec2::new(12.0, FRONT_Z);
+
+/// Hero within this of the gate → the **E — Break the gate** prompt shows (`interaction.rs`) and
+/// the [`GateBeacon`] lights up. Tight: you must stand right at the doors.
+pub const BREACH_RANGE: f32 = 6.0;
 
 /// Hero within this of the gate → horn + the towers are in range to start punishing.
 const THRESHOLD_R: f32 = 17.0;
@@ -182,31 +187,79 @@ pub struct OrkFortressPlugin;
 
 impl Plugin for OrkFortressPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup_bolt_assets);
-        // Visual breathing stays live through pauses/panels (like camps + firelight).
-        app.add_systems(Update, (wobble_flames, drift_smoke, denizen_limbs, quality_lod));
-        // Sim carries the freeze gate, per the game_state contract.
-        app.add_systems(
-            Update,
-            (
-                denizen_brain,
-                tower_fire,
-                step_warp_bolts,
-                approach_watch,
-                fortress_muster,
-                siege_flare,
-                fortress_barks,
-                patrol_respawn,
-                blight_rescue,
-            )
-                .run_if(in_state(Modal::None)),
-        );
+        app.init_resource::<AssaultState>()
+            .add_message::<BreachGate>()
+            .add_systems(Startup, setup_bolt_assets)
+            // Visual breathing stays live through pauses/panels (like camps + firelight).
+            .add_systems(Update, (wobble_flames, drift_smoke, denizen_limbs, quality_lod, gate_beacon))
+            // Ungated (once per load): reconcile the fortress to pristine on a Continue/Load.
+            .add_systems(Update, reset_fortress_on_load)
+            // Sim carries the freeze gate, per the game_state contract.
+            .add_systems(
+                Update,
+                (
+                    denizen_brain,
+                    tower_fire,
+                    step_warp_bolts,
+                    approach_watch,
+                    fortress_muster,
+                    siege_flare,
+                    fortress_barks,
+                    patrol_respawn,
+                    blight_rescue,
+                    breach_gate,
+                    garrison_respawn,
+                    stage_breach,
+                )
+                    .run_if(in_state(Modal::None)),
+            );
     }
 }
 
-/// A decorative fortress ork (mesh hierarchy from `Armory::spawn_prop`; no combat).
+/// Screenshot/clip hook: with `FOREST_BREACH=1`, auto-break the gate on the first sim frame so a
+/// capture can film the woken Hold (garrison + Warlord) without a keypress.
+fn stage_breach(
+    mut env: Local<Option<bool>>,
+    assault: Res<AssaultState>,
+    patrols: Option<Res<BlightPatrols>>,
+    mut breach: MessageWriter<BreachGate>,
+) {
+    let want = *env.get_or_insert_with(|| std::env::var("FOREST_BREACH").is_ok());
+    if want && !assault.breached && patrols.is_some() {
+        breach.write(BreachGate);
+    }
+}
+
+/// The state of the assault on Gnashfang Hold: `breached` flips the one time the hero breaks the
+/// gate ([`breach_gate`]), waking the whole garrison + the Warlord. Transient — NOT saved (like the
+/// battlefield); a Continue resets it via [`reset_fortress_on_load`].
+#[derive(Resource, Default)]
+pub struct AssaultState {
+    pub breached: bool,
+}
+
+/// Sent by `interaction.rs` when the hero presses **E** at the gate to break in.
+#[derive(Message)]
+pub struct BreachGate;
+
+/// Tags a real ork spawned as part of the woken Hold garrison (breach conversion + nightly
+/// refill), so [`reset_fortress_on_load`] can sweep them on a Continue.
+#[derive(Component)]
+struct FortressGarrison;
+
+/// The warp-green "you can break this" beacon hung in the gate mouth — shown + pulsing only while
+/// the hero is in breach range and the Hold is unbroken ([`gate_beacon`]).
+#[derive(Component)]
+struct GateBeacon {
+    base: Vec3,
+}
+
+/// A decorative fortress ork (mesh hierarchy from `Armory::spawn_prop`; no combat). On the breach
+/// ([`breach_gate`]) each one is swapped for a real home-leashed [`crate::orks::Ork`] of its
+/// `variant` — the warlord (the one with a `beat`) becomes the [`crate::warlord::Warlord`] boss.
 #[derive(Component)]
 struct Denizen {
+    variant: OrkVariant,
     anchor: Vec2,
     target: Vec2,
     pos: Vec2,
@@ -513,6 +566,26 @@ pub fn build(
             BiomeEntity,
         ));
     }
+    // Breach beacon: a translucent warp-green ward shimmering across the gate mouth (the gate reads
+    // through it), shown + pulsing only while the hero is in range and the Hold is unbroken
+    // (`gate_beacon`) — the "you can break this" cue.
+    let beacon_mat = std_mats.add(StandardMaterial {
+        base_color: Color::srgba(0.42, 0.95, 0.38, 0.40),
+        emissive: crate::palette::srgb(0x6fe06a).to_linear() * 2.2,
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
+    let beacon_pos = at(GATE) + Vec3::new(0.0, 1.7, 0.0);
+    commands.spawn((
+        Mesh3d(meshes.add(bx(2.6, 3.0, 0.1, Vec3::ZERO, lin(0xffffff)))),
+        MeshMaterial3d(beacon_mat),
+        Transform::from_translation(beacon_pos),
+        Visibility::Hidden,
+        bevy::light::NotShadowCaster,
+        GateBeacon { base: beacon_pos },
+        BiomeEntity,
+    ));
 
     // ── Watchtowers (leaning, each its own tilt/yaw) + fire emitters + banners ──
     for (i, t) in TOWERS.iter().enumerate() {
@@ -1016,71 +1089,10 @@ pub fn build(
         crate::blockers::add(wp.x, wp.y, 0.3);
     }
 
-    // ── Population: a milling warband + the pacing warlord (decorative; untargetable) ──
+    // ── Population: a milling warband + the pacing warlord (decorative; untargetable until the
+    //    hero breaks the gate — see `breach_gate`). ──
     let armory = Armory::new(meshes, std_mats, ork_mat.clone());
-    let spawn_denizen = |commands: &mut Commands,
-                         armory: &Armory,
-                         variant: OrkVariant,
-                         p: Vec2,
-                         scale: f32,
-                         beat: Option<[Vec2; 2]>,
-                         lod_cull: bool,
-                         rng: &mut u32| {
-        let facing = rng_range(rng, 0.0, TAU);
-        let pos3 = Vec3::new(p.x, ground_y(p.x, p.y).unwrap_or(0.0), p.y);
-        let e = armory.spawn_prop(commands, variant, Faction::Red, pos3, facing, scale);
-        commands.entity(e).insert((
-            Denizen {
-                anchor: p,
-                target: p,
-                pos: p,
-                facing,
-                speed: if beat.is_some() { 0.9 } else { 1.2 },
-                gait: if beat.is_some() { 5.0 } else { 6.5 },
-                swing: 0.32,
-                bob: 0.05,
-                phase: rng_range(rng, 0.0, TAU),
-                timer: rng_range(rng, 0.5, 4.0),
-                moving: false,
-                rng: next_u32(rng) | 1,
-                beat,
-                beat_i: 0,
-                lod_cull,
-            },
-            BiomeEntity,
-        ));
-    };
-    use OrkVariant::*;
-    let roster: [(OrkVariant, Vec2); 14] = [
-        (Grunt, Vec2::new(5.0, 92.0 + BLIGHT_DZ)),
-        (Grunt, Vec2::new(16.0, 91.0 + BLIGHT_DZ)),
-        (Grunt, Vec2::new(21.0, 97.5 + BLIGHT_DZ)),
-        (Grunt, Vec2::new(3.5, 100.0 + BLIGHT_DZ)),
-        (Grunt, Vec2::new(14.0, 118.0 + BLIGHT_DZ)),
-        (Scout, Vec2::new(24.0, 104.0 + BLIGHT_DZ)),
-        (Scout, Vec2::new(-1.0, 107.5 + BLIGHT_DZ)),
-        (Scout, Vec2::new(7.0, 120.0 + BLIGHT_DZ)),
-        (Berserker, Vec2::new(19.0, 88.0 + BLIGHT_DZ)),
-        (Berserker, Vec2::new(25.0, 111.0 + BLIGHT_DZ)),
-        (Berserker, Vec2::new(2.0, 94.0 + BLIGHT_DZ)),
-        (Shaman, Vec2::new(4.0, 112.0 + BLIGHT_DZ)),
-        (Shaman, Vec2::new(10.0, 113.5 + BLIGHT_DZ)),
-        (Shaman, Vec2::new(20.0, 108.0 + BLIGHT_DZ)),
-    ];
-    for (i, (variant, p)) in roster.into_iter().enumerate() {
-        spawn_denizen(commands, &armory, variant, p, 1.0, None, i % 2 == 1, &mut rng);
-    }
-    // The warlord: an oversized berserker pacing his beat between hall door and bonfire.
-    spawn_denizen(
-        commands,
-        &armory,
-        Berserker,
-        Vec2::new(11.0, 99.5 + BLIGHT_DZ),
-        1.55,
-        Some([Vec2::new(12.0, 100.7 + BLIGHT_DZ), Vec2::new(9.5, 96.6 + BLIGHT_DZ)]),
-        false,
-        &mut rng,
-    );
+    spawn_garrison_denizens(commands, &armory);
 
     // ── The Blight patrols: three REAL warband squads (full `orks.rs` combat brains —
     //    Idle/Patrol/Hunt/Attack, home-leashed) prowling the mire OUTSIDE the walls. The
@@ -1125,6 +1137,81 @@ pub fn build(
     );
 
     info!("ork fortress: Gnashfang Hold built at {:.0},{:.0}", CENTRE.x, CENTRE.y);
+}
+
+// ── The Hold garrison: the decorative population, and how it wakes into real combatants ─────
+
+/// Where the warlord paces (his hall ↔ bonfire beat); becomes the [`crate::warlord::Warlord`]'s
+/// home on the breach.
+const WARLORD_PACE: Vec2 = Vec2::new(11.0, 99.5 + BLIGHT_DZ);
+const WARLORD_BEAT: [Vec2; 2] = [Vec2::new(12.0, 100.7 + BLIGHT_DZ), Vec2::new(9.5, 96.6 + BLIGHT_DZ)];
+
+/// The standing garrison roster: variant + home spot inside the walls. On the breach each becomes a
+/// real home-leashed ork at its spot; [`garrison_respawn`] refills the empty slots every night.
+const GARRISON_ROSTER: [(OrkVariant, Vec2); 14] = [
+    (OrkVariant::Grunt, Vec2::new(5.0, 92.0 + BLIGHT_DZ)),
+    (OrkVariant::Grunt, Vec2::new(16.0, 91.0 + BLIGHT_DZ)),
+    (OrkVariant::Grunt, Vec2::new(21.0, 97.5 + BLIGHT_DZ)),
+    (OrkVariant::Grunt, Vec2::new(3.5, 100.0 + BLIGHT_DZ)),
+    (OrkVariant::Grunt, Vec2::new(14.0, 118.0 + BLIGHT_DZ)),
+    (OrkVariant::Scout, Vec2::new(24.0, 104.0 + BLIGHT_DZ)),
+    (OrkVariant::Scout, Vec2::new(-1.0, 107.5 + BLIGHT_DZ)),
+    (OrkVariant::Scout, Vec2::new(7.0, 120.0 + BLIGHT_DZ)),
+    (OrkVariant::Berserker, Vec2::new(19.0, 88.0 + BLIGHT_DZ)),
+    (OrkVariant::Berserker, Vec2::new(25.0, 111.0 + BLIGHT_DZ)),
+    (OrkVariant::Berserker, Vec2::new(2.0, 94.0 + BLIGHT_DZ)),
+    (OrkVariant::Shaman, Vec2::new(4.0, 112.0 + BLIGHT_DZ)),
+    (OrkVariant::Shaman, Vec2::new(10.0, 113.5 + BLIGHT_DZ)),
+    (OrkVariant::Shaman, Vec2::new(20.0, 108.0 + BLIGHT_DZ)),
+];
+
+/// Spawn the decorative garrison (the milling roster + the pacing warlord) — used at world build
+/// and by [`reset_fortress_on_load`] to restore the pristine Hold on a Continue. Deterministic
+/// (own fixed seed) so the layout is identical every call.
+fn spawn_garrison_denizens(commands: &mut Commands, armory: &Armory) {
+    let mut rng = 0x6f7c_5eedu32;
+    for (i, (variant, p)) in GARRISON_ROSTER.into_iter().enumerate() {
+        spawn_one_denizen(commands, armory, variant, p, 1.0, None, i % 2 == 1, &mut rng);
+    }
+    // The warlord: an oversized berserker pacing his beat between hall door and bonfire.
+    spawn_one_denizen(commands, armory, OrkVariant::Berserker, WARLORD_PACE, 1.55, Some(WARLORD_BEAT), false, &mut rng);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_one_denizen(
+    commands: &mut Commands,
+    armory: &Armory,
+    variant: OrkVariant,
+    p: Vec2,
+    scale: f32,
+    beat: Option<[Vec2; 2]>,
+    lod_cull: bool,
+    rng: &mut u32,
+) {
+    let facing = rng_range(rng, 0.0, TAU);
+    let pos3 = Vec3::new(p.x, ground_y(p.x, p.y).unwrap_or(0.0), p.y);
+    let e = armory.spawn_prop(commands, variant, Faction::Red, pos3, facing, scale);
+    commands.entity(e).insert((
+        Denizen {
+            variant,
+            anchor: p,
+            target: p,
+            pos: p,
+            facing,
+            speed: if beat.is_some() { 0.9 } else { 1.2 },
+            gait: if beat.is_some() { 5.0 } else { 6.5 },
+            swing: 0.32,
+            bob: 0.05,
+            phase: rng_range(rng, 0.0, TAU),
+            timer: rng_range(rng, 0.5, 4.0),
+            moving: false,
+            rng: next_u32(rng) | 1,
+            beat,
+            beat_i: 0,
+            lod_cull,
+        },
+        BiomeEntity,
+    ));
 }
 
 /// Patrol homes + squad make-up (all `Faction::Red`, like the hold). West + east flanks,
@@ -2639,6 +2726,143 @@ fn quality_lod(
     }
     for mut vis in &mut smoke {
         *vis = if low { Visibility::Hidden } else { Visibility::Visible };
+    }
+}
+
+// ── The assault: breach the gate → wake the garrison → nightly refill → reset on load ───────
+
+/// The hero broke the gate (the **E** prompt in `interaction.rs` emitted [`BreachGate`]): wake the
+/// Hold. Swing the leaves open + drop the gate blocker, blare horn + roar, name the breach, then
+/// convert every decorative [`Denizen`] into a real home-leashed [`crate::orks::Ork`] of its
+/// variant — the pacing warlord becomes the [`crate::warlord::Warlord`] boss. Fires once.
+#[allow(clippy::too_many_arguments)]
+fn breach_gate(
+    mut ev: MessageReader<BreachGate>,
+    time: Res<Time>,
+    mut assault: ResMut<AssaultState>,
+    patrols: Option<Res<BlightPatrols>>,
+    player: Res<crate::player::PlayerRes>,
+    mut director: ResMut<crate::cinematic::DirectorState>,
+    mut notice: ResMut<crate::ui::notice::Notice>,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
+    denizens: Query<(Entity, &Denizen)>,
+    mut commands: Commands,
+) {
+    if ev.read().count() == 0 || assault.breached {
+        return;
+    }
+    let Some(patrols) = patrols else { return };
+    assault.breached = true;
+    // Swing the leaves + clear the gate gap so the hero can walk in.
+    director.gate_open = true;
+    crate::blockers::remove_box_near(GATE.x, GATE.y, 0.6);
+    cues.write(crate::audio::AudioCue::FortressHorn(Vec3::new(GATE.x, 3.0, GATE.y)));
+    cues.write(crate::audio::AudioCue::OrkRoar(Vec3::new(GATE.x, 1.5, GATE.y + 4.0)));
+    notice.push("Gnashfang Hold is breached — kill the Warlord!".to_string(), time.elapsed_secs_f64());
+    // Convert the decorative population into real combatants.
+    let armory = &patrols.armory;
+    let hero_level = player.0.level;
+    let mut seed = 0x9e37_79b9u32;
+    for (e, d) in &denizens {
+        commands.entity(e).try_despawn();
+        if d.beat.is_some() {
+            // The pacing warlord → the real boss (turned to face the gate the hero breaches through).
+            let to = GATE - d.pos;
+            let facing = to.x.atan2(to.y);
+            let wl = crate::warlord::spawn(&mut commands, armory, d.pos, facing, hero_level);
+            commands.entity(wl).try_insert(BiomeEntity);
+        } else {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let g = armory.spawn(&mut commands, d.variant, Faction::Red, d.anchor, d.pos, seed);
+            commands.entity(g).try_insert(FortressGarrison);
+        }
+    }
+}
+
+/// Every nightfall the Hold's garrison refills: any roster slot with no living defender gets a
+/// fresh ork while the Warlord lives (the base restocks — the user's "orks respawn every night").
+/// Edge-detected on the Prep→Wave transition, like [`fortress_muster`].
+fn garrison_respawn(
+    siege: Option<Res<crate::siege::Siege>>,
+    assault: Res<AssaultState>,
+    patrols: Option<Res<BlightPatrols>>,
+    warlord: Query<(), (With<crate::warlord::Warlord>, Without<crate::dying::Dying>)>,
+    garrison: Query<&crate::orks::Ork, (With<FortressGarrison>, Without<crate::dying::Dying>)>,
+    mut commands: Commands,
+    mut was_wave: Local<bool>,
+) {
+    let wave = siege.is_some_and(|s| matches!(s.phase, crate::siege::GamePhase::Wave));
+    let edge = wave && !*was_wave;
+    *was_wave = wave;
+    if !edge || !assault.breached || warlord.is_empty() {
+        return;
+    }
+    let Some(patrols) = patrols else { return };
+    let mut seed = 0x1357_9bdfu32;
+    for (variant, home) in GARRISON_ROSTER {
+        if garrison.iter().any(|o| o.home().distance(home) < 2.0) {
+            continue; // slot still held
+        }
+        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        let g = patrols.armory.spawn(&mut commands, variant, Faction::Red, home, home, seed);
+        commands.entity(g).try_insert(FortressGarrison);
+    }
+}
+
+/// On a Continue/Load (`GameLoaded`), reconcile the Hold to pristine: the assault is transient
+/// (never saved — like the swept battlefield), so sweep the live Warlord + woken garrison, clear
+/// [`AssaultState`], re-shut + re-block the gate, and rebuild the decorative denizens. Ungated,
+/// once per load (mirrors `boss::despawn_slain_wardens`).
+fn reset_fortress_on_load(
+    mut ev: MessageReader<crate::savegame::GameLoaded>,
+    mut assault: ResMut<AssaultState>,
+    patrols: Option<Res<BlightPatrols>>,
+    mut director: ResMut<crate::cinematic::DirectorState>,
+    warlords: Query<Entity, With<crate::warlord::Warlord>>,
+    garrison: Query<Entity, With<FortressGarrison>>,
+    denizens: Query<Entity, With<Denizen>>,
+    mut commands: Commands,
+) {
+    if ev.read().count() == 0 {
+        return;
+    }
+    let Some(patrols) = patrols else { return };
+    for e in &warlords {
+        commands.entity(e).try_despawn();
+    }
+    for e in &garrison {
+        commands.entity(e).try_despawn();
+    }
+    for e in &denizens {
+        commands.entity(e).try_despawn();
+    }
+    assault.breached = false;
+    director.gate_open = false;
+    // Guarantee exactly one gate blocker (idempotent whether or not we'd been breached).
+    crate::blockers::remove_box_near(GATE.x, GATE.y, 0.6);
+    crate::blockers::add_obb(GATE.x, GATE.y, 3.2, 0.5, 0.0);
+    spawn_garrison_denizens(&mut commands, &patrols.armory);
+}
+
+/// Show + pulse the breach beacon while the hero is in range of the unbroken gate; hide it once
+/// breached / conquered / out of range. Visual-only (ungated, like the other fortress breathers).
+fn gate_beacon(
+    time: Res<Time>,
+    hero: Res<HeroState>,
+    assault: Res<AssaultState>,
+    player: Option<Res<crate::player::PlayerRes>>,
+    mut q: Query<(&GateBeacon, &mut Transform, &mut Visibility)>,
+) {
+    let conquered = player.is_some_and(|p| p.0.conquered_warlord);
+    let show = hero.alive && !assault.breached && !conquered && hero.pos.distance(GATE) < BREACH_RANGE + 2.5;
+    let t = time.elapsed_secs();
+    for (b, mut tf, mut vis) in &mut q {
+        *vis = if show { Visibility::Visible } else { Visibility::Hidden };
+        if show {
+            let pulse = 1.0 + (t * 3.0).sin() * 0.12;
+            tf.scale = Vec3::new(pulse, pulse, 1.0);
+            tf.translation = b.base + Vec3::Y * (t * 2.0).sin() * 0.08;
+        }
     }
 }
 

@@ -119,7 +119,9 @@ pub(crate) fn update_music(
     let (is_wave, boss) = match siege.as_deref() {
         Some(s) => {
             let wave = s.phase == GamePhase::Wave;
-            (wave, wave && s.wave_index >= 0 && s.wave_index as usize == WAVES.len() - 1)
+            // Final-wave boss music on night 8 AND every looped night beyond it (`>=`, since nights
+            // now repeat the hardest wave forever).
+            (wave, wave && s.wave_index >= 0 && s.wave_index as usize >= WAVES.len() - 1)
         }
         None => (false, false),
     };

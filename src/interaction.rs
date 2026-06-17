@@ -40,6 +40,9 @@ enum InteractKind {
     /// Standing next to an unopened treasure chest — **E** opens it (the resolver emits
     /// `chest::OpenChest`; `chest.rs` does the actual loot + lid swing).
     Chest,
+    /// Standing at the unbroken gate of Gnashfang Hold — **E** breaks it open and wakes the
+    /// garrison + Warlord (`ork_fortress::breach_gate`). The game's win condition.
+    BreachGate,
 }
 impl InteractKind {
     fn prompt(self) -> &'static str {
@@ -49,6 +52,7 @@ impl InteractKind {
             InteractKind::WarBell => "Ring the bell",
             InteractKind::TalkBack => "Talk back",
             InteractKind::Chest => "Open chest",
+            InteractKind::BreachGate => "Break the gate",
         }
     }
     /// The keycap shown on the prompt chip. Every contextual action — chests included — is on **E**.
@@ -128,6 +132,8 @@ fn drive_interaction(
     mut offered: ResMut<crate::audio::director::OfferedReply>,
     mut voices: ResMut<crate::audio::director::VoiceManager>,
     mut chest_io: ChestIo,
+    assault: Res<crate::ork_fortress::AssaultState>,
+    mut breach: MessageWriter<crate::ork_fortress::BreachGate>,
 ) {
     let p = hero.pos;
 
@@ -167,6 +173,13 @@ fn drive_interaction(
     if let Some((_, at, _)) = nearest_chest {
         candidates.push((InteractKind::Chest, at, crate::chest::CHEST_INTERACT_DIST, true));
     }
+    // The gate of Gnashfang Hold — available until it's broken (the win-condition raid).
+    candidates.push((
+        InteractKind::BreachGate,
+        crate::ork_fortress::GATE,
+        crate::ork_fortress::BREACH_RANGE,
+        !assault.breached,
+    ));
 
     // Pick the nearest in-range, available interactable.
     let mut best: Option<(InteractKind, f32)> = None;
@@ -201,6 +214,10 @@ fn drive_interaction(
                 if let Some((e, _, _)) = nearest_chest {
                     chest_io.open.write(crate::chest::OpenChest(e));
                 }
+            }
+            // Break into the Hold — `ork_fortress::breach_gate` wakes the garrison + Warlord.
+            InteractKind::BreachGate => {
+                breach.write(crate::ork_fortress::BreachGate);
             }
         }
     }

@@ -88,7 +88,7 @@ pub fn player_arts(
     mut targets: Query<
         (Entity, &GlobalTransform, &mut Health, Option<&Ork>, Option<&Animal>),
         (
-            Or<(With<Ork>, With<Animal>, With<crate::boss::Boss>)>,
+            Or<(With<Ork>, With<Animal>, With<crate::boss::Boss>, With<crate::warlord::Warlord>)>,
             Without<crate::dying::Dying>,
         ),
     >,

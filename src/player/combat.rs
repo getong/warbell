@@ -365,7 +365,7 @@ pub fn player_attack(
             Option<&mut crate::combat_fx::HitSquash>,
         ),
         (
-            Or<(With<Ork>, With<Animal>, With<crate::boss::Boss>)>,
+            Or<(With<Ork>, With<Animal>, With<crate::boss::Boss>, With<crate::warlord::Warlord>)>,
             Without<crate::dying::Dying>,
         ),
     >,
