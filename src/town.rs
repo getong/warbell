@@ -178,10 +178,11 @@ impl BuildMode {
 
 /// How close to the castle (origin) the hero must be for the **B** Build prompt / build mode. Covers
 /// the courtyard + the outer plot ring (plots sit ≤ ~21 units out).
-const TOWN_BUILD_RADIUS: f32 = 26.0;
+pub const TOWN_BUILD_RADIUS: f32 = 26.0;
 
-/// Is the hero in the town build-zone (near the castle at the origin)?
-fn in_town(pos: Vec2) -> bool {
+/// Is the hero in the town build-zone (near the castle at the origin)? Public so the unified
+/// near-castle hint row (`interaction.rs`) gates the B/K chips on the same zone build mode uses.
+pub fn in_town(pos: Vec2) -> bool {
     pos.length() < TOWN_BUILD_RADIUS
 }
 
@@ -241,7 +242,7 @@ impl Plugin for TownPlugin {
             // Ungated, but self-gated on `Modal::None` inside: the palette + glow rings + the "[B]
             // Build" town prompt must be REAPED/hidden when play is left or a panel opens (a
             // `Modal::None` run-condition would just stop running and strand them over those screens).
-            .add_systems(Update, (sync_build_strip, sync_build_rings, build_prompt))
+            .add_systems(Update, (sync_build_strip, sync_build_rings))
             // The timber pad marks where the NEXT house will rise (visible even outside build mode).
             .add_systems(Update, sync_house_site_pad)
             // Trailer Director (F1 → "Build stronghold"): live, real-time construction timelapse.
@@ -1465,78 +1466,6 @@ fn spawn_build_ring(commands: &mut Commands, mesh: Handle<Mesh>, mat: Handle<Sta
         Visibility::Hidden,
         BuildRing(kind),
     ));
-}
-
-/// The contextual "[B] Build" chip.
-#[derive(Component)]
-struct BuildPromptUi;
-
-/// Show the "[B] Build" chip (styled like the chest/keep prompts) only while the hero is in the town
-/// during Prep and not already building — so building is a near-town action you discover by walking
-/// up to your settlement, not an always-on button. Lazy-spawned hidden; toggled by `Display`.
-fn build_prompt(
-    mode: Res<BuildMode>,
-    hero: Option<Res<HeroState>>,
-    siege: Option<Res<crate::siege::Siege>>,
-    modal: Option<Res<State<Modal>>>,
-    fonts: Res<UiFonts>,
-    mut commands: Commands,
-    mut q: Query<&mut Node, With<BuildPromptUi>>,
-) {
-    let prep = siege.map_or(true, |s| s.phase == crate::siege::GamePhase::Prep);
-    let playing_none = modal.map_or(false, |m| *m.get() == Modal::None);
-    let near = hero.is_some_and(|h| in_town(h.pos));
-    let show = playing_none && prep && near && !mode.active;
-    if let Ok(mut node) = q.single_mut() {
-        node.display = if show { Display::Flex } else { Display::None };
-        return;
-    }
-    // Lazy-spawn the chip (hidden) on first run — a keycap "B" + "Build", like the E prompts.
-    commands
-        .spawn((
-            BuildPromptUi,
-            Node {
-                position_type: PositionType::Absolute,
-                bottom: Val::Px(150.0),
-                left: Val::Px(0.0),
-                right: Val::Px(0.0),
-                display: Display::None,
-                flex_direction: FlexDirection::Row,
-                justify_content: JustifyContent::Center,
-                ..default()
-            },
-            bevy::ui::FocusPolicy::Pass,
-            GlobalZIndex(58),
-        ))
-        .with_children(|root| {
-            root.spawn((
-                Node {
-                    flex_direction: FlexDirection::Row,
-                    align_items: AlignItems::Center,
-                    column_gap: Val::Px(8.0),
-                    padding: UiRect::axes(Val::Px(12.0), Val::Px(7.0)),
-                    border: border(1.0),
-                    border_radius: radius(R_CARD),
-                    ..default()
-                },
-                BackgroundColor(PANEL_HUD),
-                BorderColor::all(rgba(255, 213, 140, 0.5)),
-                shadow_hud(),
-            ))
-            .with_children(|p| {
-                p.spawn((
-                    Node {
-                        padding: UiRect::axes(Val::Px(8.0), Val::Px(3.0)),
-                        border: border(1.0),
-                        border_radius: radius(5.0),
-                        ..default()
-                    },
-                    widgets::keycap_paint(),
-                    children![label(&fonts.extrabold, "B", 12.0, rgba(255, 224, 170, 0.92))],
-                ));
-                p.spawn(label(&fonts.bold, "Build", 14.0, GOLD));
-            });
-        });
 }
 
 /// Keep one construction-site pad standing on the next free dwelling slot inside the walls,

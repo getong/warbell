@@ -75,16 +75,27 @@ struct ChestIo<'w, 's> {
     open: MessageWriter<'w, crate::chest::OpenChest>,
 }
 
+/// The centred hint row. Holds up to three sibling chips — `[B] Build`, the contextual `[E] …`, and
+/// `[K] Follow me` — each toggled independently by [`update_prompt`]; the row shows if any do. Near
+/// the castle all three can appear together; out in the field it collapses to just the `E` chip.
 #[derive(Component)]
 struct PromptRoot;
-/// The bordered chip inside `PromptRoot` — recoloured red when the active interaction is blocked.
+/// The bordered contextual chip (`[E] …`) — recoloured red when the active interaction is blocked.
 #[derive(Component)]
 struct PromptChip;
 #[derive(Component)]
 struct PromptLabel;
-/// The keycap glyph inside the chip — "E" for contextual actions, "F" for chest/world verbs.
+/// The keycap glyph inside the contextual chip — "E" for every contextual action.
 #[derive(Component)]
 struct PromptKey;
+/// The always-"[B] Build" chip (shown near the castle in Prep, when not already building).
+#[derive(Component)]
+struct BuildHintChip;
+/// The "[K] Follow me / Stand down" chip (shown near the castle); its label flips on rally state.
+#[derive(Component)]
+struct MusterHintChip;
+#[derive(Component)]
+struct MusterHintLabel;
 
 pub struct InteractionPlugin;
 
@@ -197,10 +208,37 @@ fn drive_interaction(
 
 /// Default chip border (gold hairline) — `update_prompt` flips to `RED_BORDER` when blocked.
 const PROMPT_BORDER: Color = rgba(255, 213, 140, 0.5);
+/// Keycap glyph foreground (cream on the dark keycap).
+const KEYCAP_FG: Color = rgba(255, 224, 170, 0.92);
+
+/// The bordered chip box — a flex row holding a keycap + a label. Starts hidden; `update_prompt`
+/// toggles each chip's `display`.
+fn chip_node() -> Node {
+    Node {
+        flex_direction: FlexDirection::Row,
+        align_items: AlignItems::Center,
+        column_gap: Val::Px(8.0),
+        padding: UiRect::axes(Val::Px(12.0), Val::Px(7.0)),
+        border: border(1.0),
+        border_radius: radius(R_CARD),
+        display: Display::None,
+        ..default()
+    }
+}
+
+/// The little keycap box around a single glyph.
+fn keycap_node() -> Node {
+    Node {
+        padding: UiRect::axes(Val::Px(8.0), Val::Px(3.0)),
+        border: border(1.0),
+        border_radius: radius(5.0),
+        ..default()
+    }
+}
 
 fn setup_prompt(mut commands: Commands, fonts: Res<UiFonts>) {
-    // A full-width centring band so the chip can grow with its text (the shortfall line can be
-    // long) and stay centred — the chip used to be fixed-width and centred by a margin hack.
+    // A full-width centring band so the chips can grow with their text and stay centred. Holds the
+    // three sibling chips B · E · K (each individually toggled); the row itself shows if any do.
     commands
         .spawn((
             PromptRoot,
@@ -212,61 +250,134 @@ fn setup_prompt(mut commands: Commands, fonts: Res<UiFonts>) {
                 display: Display::None,
                 flex_direction: FlexDirection::Row,
                 justify_content: JustifyContent::Center,
+                column_gap: Val::Px(10.0),
                 ..default()
             },
             bevy::ui::FocusPolicy::Pass,
         ))
         .with_children(|root| {
+            // [B] Build — near the castle in Prep (when not already building).
             root.spawn((
-                PromptChip,
-                Node {
-                    flex_direction: FlexDirection::Row,
-                    align_items: AlignItems::Center,
-                    column_gap: Val::Px(8.0),
-                    padding: UiRect::axes(Val::Px(12.0), Val::Px(7.0)),
-                    border: border(1.0),
-                    border_radius: radius(R_CARD),
-                    ..default()
-                },
+                BuildHintChip,
+                chip_node(),
                 BackgroundColor(PANEL_HUD),
                 BorderColor::all(PROMPT_BORDER),
                 shadow_hud(),
             ))
             .with_children(|p| {
-                // Keycap "E".
-                p.spawn((
-                    Node {
-                        padding: UiRect::axes(Val::Px(8.0), Val::Px(3.0)),
-                        border: border(1.0),
-                        border_radius: radius(5.0),
-                        ..default()
-                    },
-                    widgets::keycap_paint(),
-                ))
-                .with_children(|k| {
-                    k.spawn((label(&fonts.extrabold, "E", 12.0, rgba(255, 224, 170, 0.92)), PromptKey));
-                });
+                p.spawn((keycap_node(), widgets::keycap_paint(), children![label(
+                    &fonts.extrabold,
+                    "B",
+                    12.0,
+                    KEYCAP_FG
+                )]));
+                p.spawn(label(&fonts.bold, "Build", 14.0, GOLD));
+            });
+            // [E] <contextual> — the nearest-wins interactable (Upgrades/Shop/Bell/Open).
+            root.spawn((
+                PromptChip,
+                chip_node(),
+                BackgroundColor(PANEL_HUD),
+                BorderColor::all(PROMPT_BORDER),
+                shadow_hud(),
+            ))
+            .with_children(|p| {
+                p.spawn((keycap_node(), widgets::keycap_paint()))
+                    .with_children(|k| {
+                        k.spawn((label(&fonts.extrabold, "E", 12.0, KEYCAP_FG), PromptKey));
+                    });
                 p.spawn((label(&fonts.bold, "Upgrades", 14.0, GOLD), PromptLabel));
+            });
+            // [K] Follow me / Stand down — near the castle (label flips on rally state).
+            root.spawn((
+                MusterHintChip,
+                chip_node(),
+                BackgroundColor(PANEL_HUD),
+                BorderColor::all(PROMPT_BORDER),
+                shadow_hud(),
+            ))
+            .with_children(|p| {
+                p.spawn((keycap_node(), widgets::keycap_paint(), children![label(
+                    &fonts.extrabold,
+                    "K",
+                    12.0,
+                    KEYCAP_FG
+                )]));
+                p.spawn((label(&fonts.bold, "Follow me", 14.0, GOLD), MusterHintLabel));
             });
         });
 }
 
-/// Show the prompt for the active interactable, but only while actually playing with no panel
-/// open. A *blocked* interaction (can't afford it) recolours the whole chip red and appends the
-/// shortfall ("Raise house — need 4 wood + 2 stone") so the press is never a silent no-op.
+/// Drive the near-castle hint row. The contextual `[E]` chip shows the active interactable (only
+/// while playing with no panel open); a *blocked* interaction recolours it red + appends the
+/// shortfall. The `[B] Build` and `[K] Follow me / Stand down` chips show whenever the hero is near
+/// the castle (the same town zone build mode uses) — B in Prep when not already building, K when the
+/// town has anyone to rally — so the muster key is discoverable instead of invisible. The row itself
+/// shows if any chip does.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn update_prompt(
     active: Res<ActiveInteraction>,
     modal: Option<Res<State<Modal>>>,
-    mut root_q: Query<&mut Node, With<PromptRoot>>,
+    build_mode: Res<crate::town::BuildMode>,
+    siege: Option<Res<Siege>>,
+    hero: Res<HeroState>,
+    rallied_q: Query<(), With<crate::villagers::Rallied>>,
+    townsfolk_q: Query<(), With<crate::villagers::Townsfolk>>,
+    mut root_q: Query<
+        &mut Node,
+        (With<PromptRoot>, Without<PromptChip>, Without<BuildHintChip>, Without<MusterHintChip>),
+    >,
+    mut e_node_q: Query<
+        &mut Node,
+        (With<PromptChip>, Without<PromptRoot>, Without<BuildHintChip>, Without<MusterHintChip>),
+    >,
+    mut b_node_q: Query<
+        &mut Node,
+        (With<BuildHintChip>, Without<PromptRoot>, Without<PromptChip>, Without<MusterHintChip>),
+    >,
+    mut k_node_q: Query<
+        &mut Node,
+        (With<MusterHintChip>, Without<PromptRoot>, Without<PromptChip>, Without<BuildHintChip>),
+    >,
     mut chip_q: Query<(&mut BorderColor, &mut BackgroundColor), With<PromptChip>>,
-    mut label_q: Query<(&mut Text, &mut TextColor), (With<PromptLabel>, Without<PromptKey>)>,
-    mut key_q: Query<&mut Text, (With<PromptKey>, Without<PromptLabel>)>,
+    mut label_q: Query<(&mut Text, &mut TextColor), (With<PromptLabel>, Without<PromptKey>, Without<MusterHintLabel>)>,
+    mut key_q: Query<&mut Text, (With<PromptKey>, Without<PromptLabel>, Without<MusterHintLabel>)>,
+    mut muster_label_q: Query<&mut Text, (With<MusterHintLabel>, Without<PromptKey>, Without<PromptLabel>)>,
 ) {
     let playing = modal.map_or(false, |m| *m.get() == Modal::None);
+    let near = crate::town::in_town(hero.pos);
+    let prep = siege.map_or(true, |s| s.phase == GamePhase::Prep);
+
     let kind = if playing { active.kind } else { None };
-    if let Ok(mut node) = root_q.single_mut() {
-        node.display = if kind.is_some() { Display::Flex } else { Display::None };
+    let b_show = playing && near && prep && !build_mode.active;
+    let any_rallied = !rallied_q.is_empty();
+    // K: anywhere near the castle with townsfolk to lead (the K action itself works game-wide; this
+    // is just the discoverability hint, parked by your settlement where the war party lives).
+    let k_show = playing && near && hero.alive && !townsfolk_q.is_empty();
+
+    let disp = |show: bool| if show { Display::Flex } else { Display::None };
+    if let Ok(mut n) = e_node_q.single_mut() {
+        n.display = disp(kind.is_some());
     }
+    if let Ok(mut n) = b_node_q.single_mut() {
+        n.display = disp(b_show);
+    }
+    if let Ok(mut n) = k_node_q.single_mut() {
+        n.display = disp(k_show);
+    }
+    if let Ok(mut node) = root_q.single_mut() {
+        node.display = disp(kind.is_some() || b_show || k_show);
+    }
+
+    if k_show {
+        if let Ok(mut t) = muster_label_q.single_mut() {
+            let want = if any_rallied { "Stand down" } else { "Follow me" };
+            if t.as_str() != want {
+                **t = want.to_string();
+            }
+        }
+    }
+
     let Some(k) = kind else { return };
     let blocked = active.blocked.as_deref();
 
