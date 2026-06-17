@@ -101,6 +101,7 @@ Env hooks that stage a scene for a shot (combine with `FOREST_SHOT` **or** `FORE
 | `FOREST_HERO="x,z"` | drop the hero at a world XZ (e.g. deep in a biome region) to stage its reactive atmosphere/weather |
 | `FOREST_BIOME` | boot straight into a given biome |
 | `FOREST_WAVE` / `FOREST_DEFEND=1` | stage a night siege / arm all defenses + walls |
+| `FOREST_MUSTER=1` | rally the whole town into the **war party** at boot (as if pressing `K`) so a shot frames the muster; pair with `FOREST_DEMO=work` (stages a 14-pop town) for a full host (`villagers.rs::stage_muster`) |
 | `FOREST_ORKLINE="x,z"` | park one ork of each variant in an idle line at a world XZ (model close-ups) |
 | `FOREST_TREELINE="x,z"` | park one of each `TreeKind` (broadleaf/birch/pine/poplar/autumn/dead/stump) in a 2× row at a world XZ (tree-model close-ups, `trees.rs`) |
 | `FOREST_MENU=1` | shoot the start screen |
@@ -284,6 +285,8 @@ hover an item + Y/T pins it) · **Z/X/C** combat arts (Slam/Dash/Sweep, once unl
 **B** / the HUD **Build** button toggle **build mode** — every buildable plot glows; B cycles the
 building (House → Farm → Lumber → Mine → off), walk onto a glowing spot and **E** raises it, Esc
 exits (lives in `town.rs::build_mode_keys` / `build_place`; keyboard-first because combat locks the
-mouse) · **F** forage / rescue · **R** recruit · **1–5** swap
+mouse) · **F** forage / rescue · **R** recruit · **K** Call the Muster — rally every standing town
+guard to follow + fight beside you (press again to stand them down; `villagers.rs::muster_keys` +
+`rally_follow`) · **1–5** swap
 biome patch · **P/Esc** pause. (`N` is a debug ring-the-bell fallback in `siege::siege_controls`.)
 Fly-cam: Space/Ctrl up·down, Shift sprint, hold Right-Mouse to look.

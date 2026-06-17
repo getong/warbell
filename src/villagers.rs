@@ -153,6 +153,19 @@ pub struct Guard {
     post: Vec2,
 }
 
+/// A guard that has answered the **muster** (the player pressed `K`): it abandons its fixed post and
+/// follows the hero. [`rally_follow`] rewrites its [`Guard::post`] each frame to a reserved slot in a
+/// loose blob around him, so the *existing* [`guard_combat`] follow-the-post + peel-to-fight +
+/// regroup logic makes the war party trail and protect him with no separate movement code. `slot`
+/// (join order) places it via a phyllotaxis spiral so dozens pack evenly without stacking; `home` is
+/// its real post, restored on stand-down. Transient battlefield state — never saved (like timed
+/// `Buffs` / live invaders); a loaded or new run boots unrallied (and `K` re-rallies).
+#[derive(Component, Clone, Copy)]
+pub struct Rallied {
+    slot: usize,
+    home: Vec2,
+}
+
 /// Hit points for any town-pool NPC ([`Townsfolk`] — guard or worker alike). Death is
 /// **permanent**: at 0 HP the body crumples (`dying.rs`) and the town's population drops by one.
 /// Replacements are grown from the food surplus by day (`town::population_system`) — nobody is
@@ -194,6 +207,29 @@ fn arm_as_guard(commands: &mut Commands, e: Entity, post: Vec2) {
         Guard { atk_cd: 0.0, post },
         crate::navgrid::NavPath::default(),
     ));
+}
+
+/// Enlist one town-pool member `e` into the muster (war party) at ring `slot`. A worker downs tools
+/// (sheds [`crate::town::Worker`] + any chop/mine job) and is armed; an existing guard keeps its
+/// post. Either way the member is tagged [`Rallied`] with `home` = the courtyard spot it walks back
+/// to on stand-down (its current post for a guard, its home/standing spot for a freed worker —
+/// mirrors [`rearm_townsfolk`]). Shared by [`muster_keys`] and the `FOREST_MUSTER` staging hook.
+fn rally_one(commands: &mut Commands, e: Entity, guard: Option<&Guard>, v: &Villager, is_worker: bool, slot: usize) {
+    let home = match guard {
+        Some(g) => g.post,
+        None => if v.pos.length() > 26.0 { v.home } else { v.pos },
+    };
+    if is_worker {
+        commands
+            .entity(e)
+            .try_remove::<crate::town::Worker>()
+            .try_remove::<crate::lumberjack::ChopJob>()
+            .try_remove::<crate::miner::MineJob>();
+    }
+    if guard.is_none() {
+        arm_as_guard(commands, e, home);
+    }
+    commands.entity(e).try_insert(Rallied { slot, home });
 }
 
 // NPC combat tuning. Townsfolk take damage ONLY through the [`NpcDamage`] channel (ork blades
@@ -242,6 +278,16 @@ const GUARD_SFX_RADIUS: f32 = 14.0;
 /// Past this distance from its post a guard (a freed captive marching in from a razed camp) routes
 /// home by A* through the gates; nearer than this a revived town-guard just steers in directly.
 const GUARD_PATH_RANGE: f32 = 4.0;
+
+/// Rally formation (the **muster**): the war party packs into a loose blob around the hero via a
+/// phyllotaxis spiral — slot `n` sits at radius `BASE + SPREAD·√n`, angle `n·GOLDEN`. This spaces
+/// any number of guards evenly without stacking and keeps the blob tight (slot 0 ≈2.6u out, slot 30
+/// ≈7.5u). The hero-relative point becomes each [`Rallied`] guard's `post`, so the tested guard AI
+/// follows it.
+const RALLY_BASE_R: f32 = 2.6;
+const RALLY_SPREAD: f32 = 0.9;
+/// Golden angle (rad) — successive rally slots step by this so the blob fills evenly, not in spokes.
+const RALLY_GOLDEN: f32 = 2.399_963_2;
 
 /// One blow landed on a townsperson this frame. `attacker` lets the victim retaliate
 /// ([`FightBack`] for passive folk) — `None` only for source-less damage.
@@ -295,6 +341,9 @@ impl Plugin for VillagersPlugin {
                     npc_damage_apply,
                     npc_fight_back,
                     guard_arms_upkeep,
+                    muster_keys,
+                    stage_muster,
+                    rally_follow.before(guard_combat),
                     guard_combat,
                     rearm_townsfolk,
                     reskin_townsfolk,
@@ -948,6 +997,98 @@ fn guard_arms_upkeep(
             hp.hp += gained;
         }
     }
+}
+
+/// **K** — Call the Muster. Toggles the war party: if anyone is already rallied, stand the whole
+/// party down (restore each to its real post); otherwise the **entire standing town pool** falls in
+/// — workers down tools (production pauses) and existing guards leave their posts, all to follow the
+/// hero. `auto_assign_workers` skips [`Rallied`] guards, so they stay fallen-in until stood down.
+/// Stateless (the toggle reads the live [`Rallied`] set, not a flag), so it self-corrects after a
+/// load and needs no reset path. Play-only via the `Modal::None` gate. The `fresh` (`Without<Rallied>`)
+/// and `rallied` (`With<Rallied>`) queries are archetype-disjoint, so the borrow checker is happy.
+#[allow(clippy::type_complexity)]
+fn muster_keys(
+    keys: Res<ButtonInput<KeyCode>>,
+    hero: Res<crate::player::HeroState>,
+    mut commands: Commands,
+    mut floats: ResMut<crate::combat_fx::FloatQueue>,
+    fresh: Query<
+        (Entity, Option<&Guard>, &Villager, Has<crate::town::Worker>),
+        (With<Townsfolk>, Without<Rallied>, Without<crate::dying::Dying>),
+    >,
+    mut rallied: Query<(Entity, &Rallied, &mut Guard)>,
+) {
+    if !(keys.just_pressed(KeyCode::KeyK) && hero.alive) {
+        return;
+    }
+    let (text, color) = if rallied.is_empty() {
+        // Fall in: the whole pool — guards and (down-tooled) workers alike — joins in slot order.
+        for (slot, (e, guard, v, is_worker)) in fresh.iter().enumerate() {
+            rally_one(&mut commands, e, guard, v, is_worker, slot);
+        }
+        ("To me! Form up!", Color::srgb(0.72, 0.9, 1.0))
+    } else {
+        // Stand down: restore each guard's real post, then drop the marker — guard_combat walks
+        // each back home (the post is no longer hero-tracked) and the day auto-assign re-employs it.
+        for (e, r, mut g) in &mut rallied {
+            g.post = r.home;
+            commands.entity(e).try_remove::<Rallied>();
+        }
+        ("Stand down.", Color::srgb(0.92, 0.85, 0.68))
+    };
+    floats.0.push(crate::combat_fx::FloatReq {
+        world: Vec3::new(hero.pos.x, hero.y + 2.2, hero.pos.y),
+        text: text.into(),
+        color,
+        scale: 1.1,
+    });
+}
+
+/// Keep each [`Rallied`] guard's `post` pinned to its slot in the blob around the hero, so
+/// [`guard_combat`] (which follows the post and peels to fight foes near it) makes the war party
+/// trail and guard him. Runs before `guard_combat` so the post is fresh that frame.
+fn rally_follow(
+    hero: Res<crate::player::HeroState>,
+    mut guards: Query<(&Rallied, &mut Guard), Without<crate::dying::Dying>>,
+) {
+    if !hero.alive {
+        return;
+    }
+    for (r, mut g) in &mut guards {
+        let s = r.slot as f32;
+        let radius = RALLY_BASE_R + RALLY_SPREAD * s.sqrt();
+        let a = s * RALLY_GOLDEN;
+        g.post = hero.pos + Vec2::new(a.cos() * radius, a.sin() * radius);
+    }
+}
+
+/// Screenshot hook: `FOREST_MUSTER=1` rallies the town guard to the hero at boot (same as pressing
+/// `K`), so the capture harness's warmup frames let the war party gather into its blob and a single
+/// shot shows the muster. Pairs with `FOREST_TOWN` to stage a full town first. It re-tags any
+/// not-yet-rallied guard every frame (idempotent — `Without<Rallied>`) rather than firing once, so
+/// it also catches the bodies that `sync_population_bodies` spawns over the following frames. The
+/// env read is cached, so the unset case costs nothing after frame one. Slot index continues from
+/// the count already rallied so late arrivals extend the blob instead of overlapping it.
+#[allow(clippy::type_complexity)]
+fn stage_muster(
+    mut armed: Local<Option<bool>>,
+    mut commands: Commands,
+    already: Query<(), With<Rallied>>,
+    fresh: Query<
+        (Entity, Option<&Guard>, &Villager, Has<crate::town::Worker>),
+        (With<Townsfolk>, Without<Rallied>, Without<crate::dying::Dying>),
+    >,
+) {
+    if !*armed.get_or_insert_with(|| std::env::var("FOREST_MUSTER").is_ok()) || fresh.is_empty() {
+        return;
+    }
+    let base = already.iter().count();
+    let mut n = 0;
+    for (i, (e, guard, v, is_worker)) in fresh.iter().enumerate() {
+        rally_one(&mut commands, e, guard, v, is_worker, base + i);
+        n = i + 1;
+    }
+    info!("FOREST_MUSTER: rallied {n} more ({} total)", base + n);
 }
 
 /// Town-guard AI. During a wave: chase the nearest invader inside the big hunt radius and trade

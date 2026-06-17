@@ -293,7 +293,12 @@ fn auto_assign_workers(
     siege: Option<Res<crate::siege::Siege>>,
     mut commands: Commands,
     workers: Query<(Entity, &Worker)>,
-    idle: Query<(Entity, &Transform), (With<Townsfolk>, With<Guard>, Without<Worker>)>,
+    // Rallied guards are excluded: a guard that has answered the muster (`K`) stays fallen-in and
+    // following the hero, off the labour pool, until the player stands the war party down.
+    idle: Query<
+        (Entity, &Transform),
+        (With<Townsfolk>, With<Guard>, Without<Worker>, Without<crate::villagers::Rallied>),
+    >,
 ) {
     if siege.is_some_and(|s| s.phase == crate::siege::GamePhase::Wave) {
         return; // night: defenders stay on the wall

@@ -19,6 +19,10 @@
 //! Serialization rides `tileworld_core`'s optional `serde` feature (Player/Bag/Town/ResourceState);
 //! `UpgradeState.purchased` is `&'static str`, so the save stores the id strings and
 //! `UpgradeState::restore` re-interns them on load.
+//!
+//! Deliberately **not** saved (transient/derived, like the swept battlefield): timed `Buffs`,
+//! pickup `Toasts`, and the **muster** — a rallied war party (`villagers::Rallied`) is battlefield
+//! state, so a loaded run boots unrallied and `K` re-rallies. (See CLAUDE.md for the full list.)
 
 use std::path::PathBuf;
 
