@@ -2,8 +2,8 @@
 //! reeds + lily pads, hovering fireflies, and mushroom rings. A self-contained
 //! plugin with its OWN deterministic placement (does NOT touch `scatter.rs`).
 //!
-//! CONTRACT (matches `CONTRACT2.md` + the existing mesh modules `trees.rs` /
-//! `props.rs` / `groundcover.rs`):
+//! Mesh contract (matches the existing mesh modules `trees.rs` / `props.rs` /
+//! `groundcover.rs` + the verified-APIs doc §9):
 //! - One `pub struct DecorPlugin` doing all setup in `Startup` (+ one `Update` system
 //!   that bobs the fireflies).
 //! - Every prop mesh is built ONCE, base at y=0 (except fireflies, which hover, and
@@ -112,7 +112,7 @@ fn merged(parts: Vec<Mesh>) -> Mesh {
 
 /// Un-index + recompute per-face normals → crisp flat-shaded low-poly facets.
 /// `duplicate_vertices()` MUST run before `compute_flat_normals()` (the latter panics
-/// on an indexed mesh — see CONTRACT2 §5).
+/// on an indexed mesh — see the verified-APIs doc §9).
 fn flat_shaded(mut m: Mesh) -> Mesh {
     m.duplicate_vertices();
     m.compute_flat_normals();

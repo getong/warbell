@@ -10,7 +10,7 @@
 //! `WaterPlugin` only registers the material; `worldmap` builds the river/lake geometry
 //! with it and bakes the shore field.
 //!
-//! Exposes [`on_river`] / [`river_bank_t`] (per CONTRACT2.md) — the sine-centerline queries
+//! Exposes [`on_river`] / [`river_bank_t`] — the sine-centerline queries
 //! the scatter (and the kept `decor` charm) use to keep props out of the water + dress banks.
 
 use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialPlugin};

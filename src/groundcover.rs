@@ -3,12 +3,12 @@
 //! CONTRACT: each returns ONE small merged, vertex-coloured `Mesh`, base at y=0,
 //! against the shared white vertex-colour material (spawned `NotShadowCaster`). These
 //! are scattered densely. See
-//! `docs/specs/forest-biome-props-ground-cover-exact-bevy-rebuild.md` + `CONTRACT.md`.
+//! `docs/specs/forest-biome-props-ground-cover-exact-bevy-rebuild.md`.
 //!
 //! All visual values (dims / colours / offsets / counts) come from the ground-cover
 //! spec; the Rust mesh API (primitive `.mesh().build()`, `translated_by`/`rotated_by`/
-//! `scaled_by`, `tinted` + `Mesh::merge`) comes from `CONTRACT.md` §"mesh-building
-//! pattern" + the verified-APIs doc §9. Every part is `tinted()` (gets a flat linear
+//! `scaled_by`, `tinted` + `Mesh::merge`) comes from the verified-APIs doc §9
+//! ("Custom Mesh + merging"). Every part is `tinted()` (gets a flat linear
 //! `ATTRIBUTE_COLOR`) before merging so the parts share one attribute set and batch.
 //!
 //! **Merge rule (load-bearing):** `Mesh::merge` only carries indices when BOTH meshes are
@@ -93,7 +93,7 @@ const TWIG_BARK: u32 = 0x6a4f33; // fallen twig bark
 /// How many forest-floor litter variants `build_floor_litter_mesh` produces.
 pub const NUM_LITTER_VARIANTS: u32 = 5;
 
-// ── Mesh helpers (verified 0.18 forms, mirrors CONTRACT §mesh-building) ────────
+// ── Mesh helpers (verified 0.18 forms, mirrors the verified-APIs doc §9) ───────
 
 fn y(v: f32) -> Vec3 {
     Vec3::new(0.0, v, 0.0)

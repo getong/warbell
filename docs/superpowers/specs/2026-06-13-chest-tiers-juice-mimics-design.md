@@ -68,7 +68,7 @@ Distance-gated off the existing `forest_frontier(x, z)` gradient:
 - **Visual tell** (Diablo-style at-a-distance read): a tier-colored **emissive glow child** —
   a short "loot beam" + a faint rim around the lock. Wood = no beam (or a barely-there warm
   fleck); Relic = a clear gold beam. The glow is a **separate emissive child mesh**, so the
-  shared white body `StandardMaterial` keeps auto-batching (CONTRACT.md mesh rule intact).
+  shared white body `StandardMaterial` keeps auto-batching (CLAUDE.md mesh rule intact).
 
 ## 2. The juicy open (every non-mimic chest, instant on F)
 

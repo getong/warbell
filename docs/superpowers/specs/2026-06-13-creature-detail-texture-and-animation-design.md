@@ -24,7 +24,7 @@ Two asks:
   differently, with micro-relief, while staying crisp at gameplay zoom.
 - **Animation** — more liveliness (idle), combat polish, and locomotion quality.
 
-Hard constraints (CLAUDE.md / CONTRACT.md):
+Hard constraints (CLAUDE.md):
 - Colour lives in the mesh `ATTRIBUTE_COLOR`; all actors share ONE material so the
   renderer batches them. Real per-model image textures need UVs + per-model materials →
   break batching → tank FPS in a 100+ ork siege.

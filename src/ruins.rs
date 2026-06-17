@@ -4,7 +4,7 @@
 //! they batch against the scene's shared white material; each model's BASE sits at y=0 and
 //! the placement pass scales/seats it on FLAT ground.
 //!
-//! Build contract (per `CONTRACT.md` + the verified-APIs doc §9): every part is a primitive
+//! Build contract (per the verified-APIs doc §9): every part is a primitive
 //! `tinted` with a flat linear `ATTRIBUTE_COLOR` BEFORE the merge (the scene's one white
 //! `StandardMaterial` reads colour straight off the vertices), merged via `Mesh::merge`, then
 //! `flat_shaded` (`duplicate_vertices` → `compute_flat_normals`) for the crisp low-poly facets

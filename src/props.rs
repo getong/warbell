@@ -3,14 +3,14 @@
 //! CONTRACT: each `build_*` returns ONE merged, vertex-coloured `Mesh`, base at y=0,
 //! against the shared white vertex-colour material. `variant` in `0..NUM_*` selects a
 //! shape so the scatter can vary props. See
-//! `docs/specs/forest-biome-props-ground-cover-exact-bevy-rebuild.md` + `CONTRACT.md`.
+//! `docs/specs/forest-biome-props-ground-cover-exact-bevy-rebuild.md`.
 //!
 //! Both props are built from faceted icospheres (`.mesh().ico(0|1)`) merged into a
 //! single mesh. Rocks are flat-shaded angular boulders (chipped-stone look) in mossy
 //! grey-greens; bushes are rounded shrubs of overlapping squashed balls in layered
 //! greens (dark skirt → mid body → bright crown) so the foliage reads lush and 3D,
 //! never a single flat sphere. Colours come from the TS spec; the Bevy mesh/merge
-//! API comes from the contract + the verified-APIs doc.
+//! API comes from the verified-APIs doc §9.
 
 use bevy::prelude::*;
 
@@ -79,7 +79,7 @@ fn ball_at(r: f32, off: Vec3, squash: f32, c: [f32; 4]) -> Mesh {
 /// per-face normals — the angular "chipped stone" look the TS rocks use
 /// (`IcosahedronGeometry(r, 0)` + `flatShading`), not a smooth round blob.
 /// `duplicate_vertices()` MUST run before `compute_flat_normals()` (the latter panics
-/// on an indexed mesh — contract §"flat-shading helpers").
+/// on an indexed mesh — see the verified-APIs doc §9).
 fn facet_at(r: f32, off: Vec3, squash: f32, c: [f32; 4]) -> Mesh {
     facet_rot(r, off, Vec3::new(1.0, squash, 1.0), Quat::IDENTITY, c)
 }

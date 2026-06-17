@@ -5,13 +5,13 @@
 //! CONTRACT: each `build_*` returns ONE merged, vertex-coloured `Mesh` with its base
 //! at y=0 (trunk bottom on the ground), built from primitive parts via `Mesh::merge`
 //! with every part carrying `ATTRIBUTE_COLOR` (linear). Rendered against the shared
-//! white vertex-colour material in `scatter.rs`. See `CONTRACT.md` for the merge/tint
-//! pattern + correct Bevy 0.18 mesh API.
+//! white vertex-colour material in `scatter.rs`. See the verified-APIs doc §9 for the
+//! merge/tint pattern + correct Bevy 0.18 mesh API.
 //!
 //! Geometry parity notes:
 //! - The TS trunks/branches are tapered `CylinderGeometry(radiusTop, radiusBottom, …)`.
 //!   Bevy's `Cylinder::new(radius, height)` has a SINGLE radius, so each tapered part
-//!   uses the **average** of the TS top/bottom radii (per CONTRACT.md).
+//!   uses the **average** of the TS top/bottom radii.
 //! - Both three.js `CylinderGeometry` and Bevy `Cylinder` are centred on the origin
 //!   (base at local y = −height/2), so translating a part by the TS *center* position
 //!   (e.g. trunk `[0, 0.25, 0]` for a 0.5-tall trunk) lands the base on y=0 exactly.

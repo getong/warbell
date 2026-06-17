@@ -1325,7 +1325,7 @@ fn spawn_stand(
     ));
 }
 
-// ── Prop meshes (vertex-coloured, flat-shaded — the CONTRACT.md recipe) ─────────────
+// ── Prop meshes (vertex-coloured, flat-shaded — the verified-APIs doc §9 recipe) ────
 
 // Lifted a few stops above the camps' palette — the hold sits far from the camera and
 // against open sea, so darker hues collapsed into one black silhouette (first-shot lesson).

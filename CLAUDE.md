@@ -31,10 +31,10 @@ cargo check                     # type-check without the (slow) link
 at single-digit FPS — while our own crates stay at low opt for fast rebuilds. The first build is
 slow; incremental rebuilds of `src/` are fast.
 
-**Multi-agent caveat:** the `CONTRACT*.md` files codify a workflow where several agents each edit
-ONE module in parallel against a *shared* `target/` and must **not** run `cargo build/check/run`
-(a concurrent build corrupts the shared dir; the integrator builds once at the end). That rule is
-**only** for parallel-dispatch sessions. A normal single Claude session should build and verify.
+**Multi-agent caveat:** in a *parallel-dispatch* session (several agents each editing ONE module
+against a *shared* `target/`), agents must **not** run `cargo build/check/run` — a concurrent build
+corrupts the shared dir; the integrator builds once at the end. That rule is **only** for parallel
+dispatch. A normal single Claude session should build and verify.
 
 ### Git / agent workflow rules (non-negotiable)
 
@@ -245,7 +245,8 @@ reads it to drop a beaten warden). `Lives.heirs` mirrors `town.population`, so i
   so we can retune *when/how often* lines play without re-listening to every clip. Keep them in
   sync when a clip is re-recorded; if a clip's text is unknown (older un-transcribed asset), say so
   explicitly (`[older clip — text not transcribed]`) rather than leaving it blank.
-- **Mesh-building contract** (see `CONTRACT.md`, `CONTRACT2.md`): every prop mesh's base sits at
+- **Mesh-building contract** (verified API forms in the doc cited below, §9): every prop mesh's
+  base sits at
   `y = 0`; **colour lives in the mesh `ATTRIBUTE_COLOR`** (linear RGBA via `crate::palette::lin` /
   `lin_scaled`), because all props share one white `StandardMaterial` so the renderer auto-batches
   thousands of instances. Build parts as primitives, `tinted()` each (add COLOR) before
