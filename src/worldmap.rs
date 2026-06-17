@@ -1351,6 +1351,63 @@ fn config_for(b: Biome) -> BiomeConfig {
     }
 }
 
+/// Ground cover for the open frontier, chosen by the active map. The home isle gets the lush
+/// meadow (grass tufts, clover, ferns, flowers, mushrooms — all hard-coded green/floral in
+/// `groundcover.rs`); a reskinned map like Ashlands instead gets **charred ground litter** (grey
+/// pebbles, bark twigs, rust-burnt leaves, pinecones, acorns) so the cinder frontier reads as a
+/// scorched waste, not a flower lawn. (Recolouring every cover mesh per-map would be far more
+/// invasive — the litter family is already neutral/dead-toned, so we just scatter that instead.)
+fn frontier_cover() -> Vec<PropClass> {
+    if active_id() != 0 {
+        return vec![
+            PropClass {
+                variants: (0..gc::NUM_LITTER_VARIANTS).map(|v| (gc::build_floor_litter_mesh(v), 1.0)).collect(),
+                chance: 0.26,
+                scale: (0.7, 1.35),
+                tree: false,
+                block_radius: 0.0,
+            },
+        ];
+    }
+    vec![
+        PropClass {
+            variants: (0..gc::NUM_GRASS_VARIANTS).map(|v| (gc::build_grass_tuft_mesh(v), 1.0)).collect(),
+            chance: 0.32,
+            scale: (0.6, 1.25),
+            tree: false,
+            block_radius: 0.0,
+        },
+        PropClass {
+            variants: (0..gc::NUM_CLOVER_VARIANTS).map(|v| (gc::build_clover_mesh(v), 1.0)).collect(),
+            chance: 0.30,
+            scale: (0.7, 1.2),
+            tree: false,
+            block_radius: 0.0,
+        },
+        PropClass {
+            variants: (0..gc::NUM_FERN_VARIANTS).map(|v| (gc::build_fern_mesh(v), 1.0)).collect(),
+            chance: 0.10,
+            scale: (0.5, 0.95),
+            tree: false,
+            block_radius: 0.0,
+        },
+        PropClass {
+            variants: (0..gc::NUM_FLOWER_VARIANTS).map(|v| (gc::build_flower_mesh(v), 1.0)).collect(),
+            chance: 0.16,
+            scale: (0.8, 1.4),
+            tree: false,
+            block_radius: 0.0,
+        },
+        PropClass {
+            variants: (0..2).map(|v| (gc::build_mushroom_mesh(v), 1.0)).collect(),
+            chance: 0.05,
+            scale: (0.6, 1.0),
+            tree: false,
+            block_radius: 0.0,
+        },
+    ]
+}
+
 /// A cover-only pseudo-config for the open grass frontier (no trees/rocks).
 fn grass_config() -> BiomeConfig {
     BiomeConfig {
@@ -1367,43 +1424,7 @@ fn grass_config() -> BiomeConfig {
         seed: 7777,
         tree_min_dist: 2.0,
         classes: vec![],
-        cover: vec![
-            PropClass {
-                variants: (0..gc::NUM_GRASS_VARIANTS).map(|v| (gc::build_grass_tuft_mesh(v), 1.0)).collect(),
-                chance: 0.32,
-                scale: (0.6, 1.25),
-                tree: false,
-                block_radius: 0.0,
-            },
-            PropClass {
-                variants: (0..gc::NUM_CLOVER_VARIANTS).map(|v| (gc::build_clover_mesh(v), 1.0)).collect(),
-                chance: 0.30,
-                scale: (0.7, 1.2),
-                tree: false,
-                block_radius: 0.0,
-            },
-            PropClass {
-                variants: (0..gc::NUM_FERN_VARIANTS).map(|v| (gc::build_fern_mesh(v), 1.0)).collect(),
-                chance: 0.10,
-                scale: (0.5, 0.95),
-                tree: false,
-                block_radius: 0.0,
-            },
-            PropClass {
-                variants: (0..gc::NUM_FLOWER_VARIANTS).map(|v| (gc::build_flower_mesh(v), 1.0)).collect(),
-                chance: 0.16,
-                scale: (0.8, 1.4),
-                tree: false,
-                block_radius: 0.0,
-            },
-            PropClass {
-                variants: (0..2).map(|v| (gc::build_mushroom_mesh(v), 1.0)).collect(),
-                chance: 0.05,
-                scale: (0.6, 1.0),
-                tree: false,
-                block_radius: 0.0,
-            },
-        ],
+        cover: frontier_cover(),
         cover_per_tile: 2,
         river: false,
         river_color: 0x2f8fd6,
