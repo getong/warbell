@@ -329,6 +329,14 @@ impl Plugin for VillagersPlugin {
             .add_systems(Update, villager_limbs) // limb anim keeps running while frozen
             // Ungated so they fire on the day↔night edge even if the world is frozen (panel open):
             .add_systems(Update, (townsfolk_curfew, muster_townsfolk))
+            // Ungated: disband a leftover war party on any load (fires off `GameLoaded`). Ordered
+            // after rally_follow and before guard_combat for the SAME reason muster_keys is — its
+            // post-restore is a direct write but the `Rallied` drop is deferred, so rally_follow must
+            // run first (and have its clobber overwritten) or the disbanded guards strand off-post.
+            .add_systems(
+                Update,
+                disband_on_load.after(rally_follow).before(guard_combat),
+            )
             .add_systems(OnExit(crate::game_state::AppState::StartScreen), reset_rescues)
             .add_systems(OnExit(crate::game_state::AppState::GameOver), reset_rescues)
             .add_systems(
@@ -341,9 +349,15 @@ impl Plugin for VillagersPlugin {
                     npc_damage_apply,
                     npc_fight_back,
                     guard_arms_upkeep,
-                    muster_keys,
+                    // Order is load-bearing: rally_follow → muster_keys → guard_combat. rally_follow
+                    // writes each rallied guard's hero-relative post; muster_keys' stand-down then
+                    // overwrites it with the real home post — and MUST win, because dropping the
+                    // `Rallied` marker is a *deferred* command that only flushes next frame, so if
+                    // muster_keys ran first rally_follow would re-clobber the restored post and the
+                    // disbanded guards would strand at a stale midfield point instead of going home.
+                    rally_follow.before(muster_keys),
+                    muster_keys.before(guard_combat),
                     stage_muster,
-                    rally_follow.before(guard_combat),
                     guard_combat,
                     rearm_townsfolk,
                     reskin_townsfolk,
@@ -1042,6 +1056,26 @@ fn muster_keys(
         color,
         scale: 1.1,
     });
+}
+
+/// On every Continue/Load (`GameLoaded`), disband any war party the dead run left rallied: drop the
+/// [`Rallied`] marker and restore each guard's real `home` post. Townsfolk bodies are persistent
+/// across an in-process load (only resources reset), so without this a save loaded mid-muster would
+/// boot already-rallied with a stale home — and `auto_assign_workers` (which skips `Rallied`) would
+/// then refuse to employ those guards, stalling town production until the player toggled `K` twice.
+/// Fires once per load on EVERY Continue path, mirroring [`crate::inventory`]'s transient-buff sweep.
+fn disband_on_load(
+    mut ev: MessageReader<crate::savegame::GameLoaded>,
+    mut commands: Commands,
+    mut rallied: Query<(Entity, &Rallied, &mut Guard)>,
+) {
+    if ev.read().last().is_none() {
+        return;
+    }
+    for (e, r, mut g) in &mut rallied {
+        g.post = r.home;
+        commands.entity(e).try_remove::<Rallied>();
+    }
 }
 
 /// Keep each [`Rallied`] guard's `post` pinned to its slot in the blob around the hero, so
