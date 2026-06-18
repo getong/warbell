@@ -1742,7 +1742,7 @@ fn window_glow(
 ) {
     let Some(mats) = mats else { return };
     let night = crate::scene::night_of(clock.t);
-    if let Some(m) = materials.get_mut(&mats.0.get(M::Window)) {
+    if let Some(mut m) = materials.get_mut(&mats.0.get(M::Window)) {
         m.emissive = srgb(WINDOW_GLOW).to_linear() * (0.35 + 4.4 * night);
     }
 }

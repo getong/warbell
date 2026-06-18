@@ -5,15 +5,18 @@
 
 use bevy::anti_alias::smaa::{Smaa, SmaaPreset};
 use bevy::asset::RenderAssetUsages;
-use bevy::camera::Exposure;
+use bevy::camera::{Exposure, Hdr};
 use bevy::core_pipeline::prepass::{DepthPrepass, NormalPrepass};
 use bevy::core_pipeline::tonemapping::Tonemapping;
+// `Atmosphere`/`ScatteringMedium` moved from `bevy_pbr` to `bevy_light` in Bevy 0.19.
+// (`ScatteringMedium` is only re-exported from the `atmosphere` submodule, not the light root.)
+use bevy::light::atmosphere::ScatteringMedium;
 use bevy::light::{
-    CascadeShadowConfigBuilder, DirectionalLightShadowMap, FogVolume, ShadowFilteringMethod,
-    SunDisk, VolumetricFog,
+    Atmosphere, CascadeShadowConfigBuilder, DirectionalLightShadowMap, FogVolume,
+    ShadowFilteringMethod, SunDisk, VolumetricFog,
 };
 use bevy::pbr::{
-    Atmosphere, DistanceFog, FogFalloff, ScatteringMedium, ScreenSpaceAmbientOcclusion,
+    AtmosphereSettings, DistanceFog, FogFalloff, ScreenSpaceAmbientOcclusion,
     ScreenSpaceAmbientOcclusionQualityLevel,
 };
 use bevy::post_process::bloom::Bloom;
@@ -21,7 +24,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{
     Extent3d, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension,
 };
-use bevy::render::view::{ColorGrading, Hdr};
+use bevy::render::view::ColorGrading;
 
 use crate::biome::{AtmoSample, BiomeAmbiences};
 use crate::game_state::{AppState, Modal};
@@ -331,7 +334,7 @@ fn advance_sky(
         // night key light. On Ultra (4096 atlas, cascades out to 190) that doubling is the
         // fill-rate spike that tanks weaker GPUs the instant night falls (the war-bell snap to
         // nightfall). Hand the night shadows to the moon alone. Mirrors the moon's `night > 0.05`.
-        light.shadows_enabled = day > 0.05;
+        light.shadow_maps_enabled = day > 0.05;
         // Warm at the horizon → warm gold overhead (never neutral-white: the warm key light
         // is what gives the daytime scene its colour depth), then cooled toward moonlit blue
         // as the sun drops below the horizon (so the "moon" doesn't cast an orange glow).
@@ -362,7 +365,7 @@ fn advance_sky(
     for (mut light, mut tf) in &mut moon_q {
         *tf = Transform::from_translation(moon_dir * 120.0).looking_at(Vec3::ZERO, Vec3::Y);
         light.illuminance = 3800.0 * night;
-        light.shadows_enabled = night > 0.05;
+        light.shadow_maps_enabled = night > 0.05;
     }
 
     // Ambient: night floor trimmed to ≈240 (was 270) — the moonlight key above is now the
@@ -460,6 +463,13 @@ fn setup_camera(
     let env = images.add(gradient_env_cubemap());
     let medium = media.add(ScatteringMedium::default());
 
+    // Bevy 0.19: the procedural `Atmosphere` is now its OWN entity (not a camera component) —
+    // its `on_add` hook positions it at the planet centre via the required `GlobalTransform`.
+    // Each camera that should render the sky opts in with `AtmosphereSettings` (below). In 0.18
+    // the `Atmosphere` rode the camera directly; keeping it there now silently renders no sky
+    // (the extraction only considers cameras that carry `AtmosphereSettings`).
+    commands.spawn(Atmosphere::earth(medium));
+
     // Low, immersive starting pose among the trees; fly controls take over from here.
     // `FOREST_CAM="x,y,z,tx,ty,tz"` overrides it (handy for framing diagnostics).
     // Default pose = an elevated overview of the whole island; `FOREST_CAM` overrides.
@@ -521,7 +531,8 @@ fn setup_camera(
     // glow, using the DirectionalLight as the sun. Plus a saturation grade to richen
     // the AgX look back toward the TS palette.
     .insert((
-        Atmosphere::earthlike(medium),
+        // Opts this camera into rendering the procedural `Atmosphere` entity (spawned above).
+        AtmosphereSettings::default(),
         grading,
         // Volumetric sun shafts (god rays) — the modern, integrated replacement for the TS
         // screen-space `GodRays` pass. Lit by the sun's `VolumetricLight` inside the `FogVolume`
@@ -597,7 +608,7 @@ fn setup_sun(mut commands: Commands) {
         DirectionalLight {
             color: Color::srgb(1.0, 0.93, 0.78), // warm #ffe6b3-ish
             illuminance: 10_500.0,
-            shadows_enabled: true,
+            shadow_maps_enabled: true,
             ..default()
         },
         // NB: no `VolumetricLight` here. The sun's half of the god-rays effect (the camera's
@@ -634,7 +645,7 @@ fn setup_sun(mut commands: Commands) {
         DirectionalLight {
             color: Color::srgb(0.55, 0.66, 1.0), // cool moonlit blue (matches the night sun tint)
             illuminance: 0.0,
-            shadows_enabled: false,
+            shadow_maps_enabled: false,
             ..default()
         },
         CascadeShadowConfigBuilder {
@@ -737,4 +748,50 @@ fn f32_to_f16_le(value: f32) -> [u8; 2] {
         sign | ((exp as u16) << 10) | ((mantissa >> 13) as u16)
     };
     half.to_le_bytes()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::asset::AssetPlugin;
+
+    /// Regression guard for the Bevy 0.19 atmosphere migration. In 0.18 the procedural sky was a
+    /// camera component (`Atmosphere` on the `Camera3d`). In 0.19 the renderer only draws the sky
+    /// for cameras that carry `AtmosphereSettings`, and reads `Atmosphere` from a SEPARATE entity
+    /// — so the old wiring compiles but renders nothing (a silent black/flat sky). This runs the
+    /// real `setup_camera` headlessly (no GPU) and asserts the new split, so a future refactor
+    /// can't quietly put `Atmosphere` back on the camera and lose the sky.
+    #[test]
+    fn atmosphere_lives_on_its_own_entity_and_camera_opts_in() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Image>()
+            .init_asset::<ScatteringMedium>()
+            .add_systems(Startup, setup_camera);
+        app.update();
+        let world = app.world_mut();
+
+        // Exactly one `Atmosphere`, and it is a dedicated entity — NOT the camera.
+        let atmo: Vec<Entity> = world
+            .query_filtered::<Entity, With<Atmosphere>>()
+            .iter(world)
+            .collect();
+        assert_eq!(atmo.len(), 1, "expected exactly one standalone Atmosphere entity");
+
+        // The camera opts into rendering the sky via `AtmosphereSettings`.
+        let cam: Vec<Entity> = world
+            .query_filtered::<Entity, (With<Camera3d>, With<AtmosphereSettings>)>()
+            .iter(world)
+            .collect();
+        assert_eq!(cam.len(), 1, "the Camera3d must carry AtmosphereSettings");
+
+        // And the two must be different entities — the camera must NOT hold `Atmosphere`
+        // (the 0.18 wiring that now renders no sky).
+        assert_ne!(atmo[0], cam[0], "Atmosphere must not ride the camera entity");
+        let cam_with_atmo = world
+            .query_filtered::<Entity, (With<Camera3d>, With<Atmosphere>)>()
+            .iter(world)
+            .count();
+        assert_eq!(cam_with_atmo, 0, "Atmosphere must be off the camera in Bevy 0.19");
+    }
 }

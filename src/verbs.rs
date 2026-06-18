@@ -706,7 +706,7 @@ pub fn populate_ore(
                         intensity: ORE_GLOW_BASE,
                         range: 7.0,
                         radius: 0.2,
-                        shadows_enabled: false,
+                        shadow_maps_enabled: false,
                         ..default()
                     },
                     Transform::from_xyz(0.0, 0.9, 0.0),

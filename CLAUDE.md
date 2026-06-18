@@ -4,7 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-**"Warbell"** (renamed from "D: Tileworld", June 2026) — a **Bevy 0.18** game. This started as a static forest-scene viewer and
+**"Warbell"** (renamed from "D: Tileworld", June 2026) — a **Bevy 0.19** game (migrated from 0.18.1;
+pinned to `0.19.0-rc.3` until 0.19 stable ships — see `Cargo.toml`). This started as a static forest-scene viewer and
 has grown into a full playable game: a knight defends a central castle against night-wave
 ork sieges, with combat, economy, an upgrade tree, inventory, villagers, succession, and five
 biomes on one enlarged island. (It began life as a port of an old TypeScript/three.js game;
@@ -22,9 +23,14 @@ source of truth. Do not look for or cite "the old game".)
 
 ```bash
 cargo run                       # build + open the game window
-cargo test                      # runs the crates/core unit tests (~268; the parity validation spec)
+cargo test                      # runs ALL tests: crates/core (~300; the parity validation spec) + the
+                                #   front-end crate's ~86 (incl. the headless ECS guards, e.g. atmosphere wiring)
 cargo test -p tileworld_core <name>   # a single test by substring
 cargo check                     # type-check without the (slow) link
+./scripts/smoke_test.sh         # headless BOOT smoke test — runs the real app (menu/day/siege) under
+                                #   Xvfb+llvmpipe via FOREST_SHOT; fails on any runtime panic. The guard
+                                #   for "compiles but a system is silently broken". Needs the headless
+                                #   stack (visual-debug-cloud skill); ~3–5 min/state.
 ```
 
 `bevy` deps compile at `opt-level = 3` even in dev (see `Cargo.toml`) — otherwise the scene runs
@@ -69,6 +75,10 @@ audio feature, libudev for gamepad enumeration.) After installing, `cargo check`
 first build still recompiles all of `bevy` at `opt-level = 3`, ~2–3 min). On developer machines
 (macOS / Windows) none of this applies. To make web sessions build without the manual step, put
 the `apt-get` line in a **SessionStart hook** (see the `session-start-hook` skill).
+
+**Toolchain floor:** Bevy 0.19 requires **rustc ≥ 1.95**. A fresh cloud container may ship an
+older stable (e.g. 1.94) and then the build fails with `rustc 1.94.x is not supported … requires
+rustc 1.95.0`. Fix once per container: `rustup update stable`.
 
 ### Screenshot harness (how to verify visuals — the Bevy window can't be captured externally)
 

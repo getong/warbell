@@ -7,27 +7,23 @@
 //! with one extra binding: the prepass NORMAL texture (`ViewPrepassTextures::normal_view`).
 //! Runs BEFORE the depth-blur so distant outlines soften with the DoF.
 
+// Bevy 0.19: render passes are systems in the `Core3d` schedule (no more `ViewNode`/graph nodes).
 use bevy::{
     core_pipeline::{
-        core_3d::graph::{Core3d, Node3d},
-        prepass::ViewPrepassTextures,
+        prepass::ViewPrepassTextures, tonemapping::tonemapping, Core3d, Core3dSystems,
         FullscreenShader,
     },
-    ecs::query::QueryItem,
     prelude::*,
     render::{
         extract_component::{
             ComponentUniforms, DynamicUniformIndex, ExtractComponent, ExtractComponentPlugin,
             UniformComponentPlugin,
         },
-        render_graph::{
-            NodeRunError, RenderGraphContext, RenderGraphExt, RenderLabel, ViewNode, ViewNodeRunner,
-        },
         render_resource::{
             binding_types::{sampler, texture_2d, texture_depth_2d, uniform_buffer},
             *,
         },
-        renderer::{RenderContext, RenderDevice},
+        renderer::{RenderContext, RenderDevice, ViewQuery},
         view::ViewTarget,
         RenderApp, RenderStartup,
     },
@@ -108,90 +104,81 @@ impl Plugin for OutlinePlugin {
             return;
         };
         render_app.add_systems(RenderStartup, init_pipeline);
-        render_app
-            .add_render_graph_node::<ViewNodeRunner<OutlineNode>>(Core3d, OutlineLabel)
-            // Tonemapping → Outline → DoF: outline must write its darkened edges BEFORE the
-            // DoF pass reads the screen, so out-of-focus outlines blur with everything else
-            // (otherwise the order is undefined and a crisp outline can land on blurred pixels).
-            // DofPlugin owns the DoF → EndMainPassPostProcessing edge.
-            .add_render_graph_edges(
-                Core3d,
-                (Node3d::Tonemapping, OutlineLabel, crate::dof::DofLabel),
-            );
+        // Tonemapping → Outline → DoF: outline must write its darkened edges BEFORE the DoF pass
+        // reads the screen, so out-of-focus outlines blur with everything else. In Bevy 0.19 the
+        // graph edges become system ordering: run in `PostProcess` after `tonemapping` and
+        // `.before(crate::dof::dof_pass)` (which itself runs before upscaling).
+        render_app.add_systems(
+            Core3d,
+            outline_pass
+                .in_set(Core3dSystems::PostProcess)
+                .after(tonemapping)
+                .before(crate::dof::dof_pass),
+        );
     }
 }
 
-#[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
-struct OutlineLabel;
+/// The toon-outline post pass — a system in the `Core3d` render schedule. `ViewQuery` resolves
+/// the current camera and auto-skips any view lacking an `Outline` component.
+pub(crate) fn outline_pass(
+    view: ViewQuery<(
+        &ViewTarget,
+        &ViewPrepassTextures,
+        &Outline,
+        &DynamicUniformIndex<Outline>,
+    )>,
+    pipeline_res: Res<OutlinePipeline>,
+    pipeline_cache: Res<PipelineCache>,
+    uniforms: Res<ComponentUniforms<Outline>>,
+    mut ctx: RenderContext,
+) {
+    let (view_target, prepass, _settings, settings_index) = view.into_inner();
+    let Some(pipeline) = pipeline_cache.get_render_pipeline(pipeline_res.pipeline_id) else {
+        return;
+    };
+    let Some(settings_binding) = uniforms.uniforms().binding() else {
+        return;
+    };
+    // Needs BOTH prepass textures; skip (pass-through) if either is missing this frame.
+    let (Some(depth_view), Some(normal_view)) = (prepass.depth_view(), prepass.normal_view())
+    else {
+        return;
+    };
 
-#[derive(Default)]
-struct OutlineNode;
-
-impl ViewNode for OutlineNode {
-    type ViewQuery = (
-        &'static ViewTarget,
-        &'static ViewPrepassTextures,
-        &'static Outline,
-        &'static DynamicUniformIndex<Outline>,
+    let post_process = view_target.post_process_write();
+    let bind_group = ctx.render_device().create_bind_group(
+        "outline_bind_group",
+        &pipeline_cache.get_bind_group_layout(&pipeline_res.layout),
+        &BindGroupEntries::sequential((
+            post_process.source,
+            &pipeline_res.sampler,
+            depth_view,
+            normal_view,
+            settings_binding.clone(),
+        )),
     );
 
-    fn run(
-        &self,
-        _graph: &mut RenderGraphContext,
-        render_context: &mut RenderContext,
-        (view_target, prepass, _settings, settings_index): QueryItem<Self::ViewQuery>,
-        world: &World,
-    ) -> Result<(), NodeRunError> {
-        let pipeline_res = world.resource::<OutlinePipeline>();
-        let pipeline_cache = world.resource::<PipelineCache>();
-        let Some(pipeline) = pipeline_cache.get_render_pipeline(pipeline_res.pipeline_id) else {
-            return Ok(());
-        };
-        let uniforms = world.resource::<ComponentUniforms<Outline>>();
-        let Some(settings_binding) = uniforms.uniforms().binding() else {
-            return Ok(());
-        };
-        // Needs BOTH prepass textures; skip (pass-through) if either is missing this frame.
-        let (Some(depth_view), Some(normal_view)) = (prepass.depth_view(), prepass.normal_view())
-        else {
-            return Ok(());
-        };
+    let mut render_pass = ctx.begin_tracked_render_pass(RenderPassDescriptor {
+        label: Some("outline_pass"),
+        color_attachments: &[Some(RenderPassColorAttachment {
+            view: post_process.destination,
+            depth_slice: None,
+            resolve_target: None,
+            ops: Operations::default(),
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
 
-        let post_process = view_target.post_process_write();
-        let bind_group = render_context.render_device().create_bind_group(
-            "outline_bind_group",
-            &pipeline_cache.get_bind_group_layout(&pipeline_res.layout),
-            &BindGroupEntries::sequential((
-                post_process.source,
-                &pipeline_res.sampler,
-                depth_view,
-                normal_view,
-                settings_binding.clone(),
-            )),
-        );
-
-        let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
-            label: Some("outline_pass"),
-            color_attachments: &[Some(RenderPassColorAttachment {
-                view: post_process.destination,
-                depth_slice: None,
-                resolve_target: None,
-                ops: Operations::default(),
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
-
-        render_pass.set_render_pipeline(pipeline);
-        render_pass.set_bind_group(0, &bind_group, &[settings_index.index()]);
-        render_pass.draw(0..3, 0..1);
-        Ok(())
-    }
+    render_pass.set_render_pipeline(pipeline);
+    render_pass.set_bind_group(0, &bind_group, &[settings_index.index()]);
+    render_pass.draw(0..3, 0..1);
 }
 
 #[derive(Resource)]
-struct OutlinePipeline {
+pub(crate) struct OutlinePipeline {
     layout: BindGroupLayoutDescriptor,
     sampler: Sampler,
     pipeline_id: CachedRenderPipelineId,

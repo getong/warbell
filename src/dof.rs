@@ -4,27 +4,25 @@
 //! and blurs by a circle-of-confusion around a focal plane (driven onto the player by
 //! `scene::drive_dof_focus`). Same RenderStartup/ViewNode pattern as the other post passes.
 
+// Bevy 0.19 replaced the render-graph (`ViewNode` + graph nodes/edges) with the render *schedule*:
+// a post pass is now a plain system added to the `Core3d` schedule, ordered by `Core3dSystems`
+// sets, taking the current view via `ViewQuery` and recording into a `RenderContext` SystemParam.
 use bevy::{
     core_pipeline::{
-        core_3d::graph::{Core3d, Node3d},
-        prepass::ViewPrepassTextures,
+        prepass::ViewPrepassTextures, tonemapping::tonemapping, Core3d, Core3dSystems,
         FullscreenShader,
     },
-    ecs::query::QueryItem,
     prelude::*,
     render::{
         extract_component::{
             ComponentUniforms, DynamicUniformIndex, ExtractComponent, ExtractComponentPlugin,
             UniformComponentPlugin,
         },
-        render_graph::{
-            NodeRunError, RenderGraphContext, RenderGraphExt, RenderLabel, ViewNode, ViewNodeRunner,
-        },
         render_resource::{
             binding_types::{sampler, texture_2d, texture_depth_2d, uniform_buffer},
             *,
         },
-        renderer::{RenderContext, RenderDevice},
+        renderer::{RenderContext, RenderDevice, ViewQuery},
         view::ViewTarget,
         RenderApp, RenderStartup,
     },
@@ -71,83 +69,75 @@ impl Plugin for DofPlugin {
             return;
         };
         render_app.add_systems(RenderStartup, init_pipeline);
-        render_app
-            .add_render_graph_node::<ViewNodeRunner<DofNode>>(Core3d, DofLabel)
-            .add_render_graph_edges(
-                Core3d,
-                (Node3d::Tonemapping, DofLabel, Node3d::EndMainPassPostProcessing),
-            );
+        // Was a render-graph node `Tonemapping → Dof → EndMainPassPostProcessing`. In Bevy 0.19
+        // it's a system in the `PostProcess` set, after `tonemapping`; the outline pass orders
+        // itself `.before(dof_pass)` so its darkened edges are written before the DoF reads them.
+        render_app.add_systems(
+            Core3d,
+            dof_pass.in_set(Core3dSystems::PostProcess).after(tonemapping),
+        );
     }
 }
 
-#[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
-pub struct DofLabel;
+/// The CoC bokeh DoF post pass, now a system in the `Core3d` render schedule. `ViewQuery`
+/// resolves the camera currently being rendered and auto-skips (via SystemParam validation) for
+/// any view that lacks a `Dof` component — e.g. a UI/capture camera — so no manual guard needed.
+pub(crate) fn dof_pass(
+    view: ViewQuery<(
+        &ViewTarget,
+        &ViewPrepassTextures,
+        &Dof,
+        &DynamicUniformIndex<Dof>,
+    )>,
+    pipeline_res: Res<DofPipeline>,
+    pipeline_cache: Res<PipelineCache>,
+    uniforms: Res<ComponentUniforms<Dof>>,
+    mut ctx: RenderContext,
+) {
+    let (view_target, prepass, _settings, settings_index) = view.into_inner();
+    let Some(pipeline) = pipeline_cache.get_render_pipeline(pipeline_res.pipeline_id) else {
+        return;
+    };
+    let Some(settings_binding) = uniforms.uniforms().binding() else {
+        return;
+    };
+    let Some(depth_view) = prepass.depth_view() else {
+        return;
+    };
 
-#[derive(Default)]
-struct DofNode;
-
-impl ViewNode for DofNode {
-    type ViewQuery = (
-        &'static ViewTarget,
-        &'static ViewPrepassTextures,
-        &'static Dof,
-        &'static DynamicUniformIndex<Dof>,
+    let post_process = view_target.post_process_write();
+    let bind_group = ctx.render_device().create_bind_group(
+        "dof_bind_group",
+        &pipeline_cache.get_bind_group_layout(&pipeline_res.layout),
+        &BindGroupEntries::sequential((
+            post_process.source,
+            &pipeline_res.sampler,
+            depth_view,
+            settings_binding.clone(),
+        )),
     );
 
-    fn run(
-        &self,
-        _graph: &mut RenderGraphContext,
-        render_context: &mut RenderContext,
-        (view_target, prepass, _settings, settings_index): QueryItem<Self::ViewQuery>,
-        world: &World,
-    ) -> Result<(), NodeRunError> {
-        let pipeline_res = world.resource::<DofPipeline>();
-        let pipeline_cache = world.resource::<PipelineCache>();
-        let Some(pipeline) = pipeline_cache.get_render_pipeline(pipeline_res.pipeline_id) else {
-            return Ok(());
-        };
-        let uniforms = world.resource::<ComponentUniforms<Dof>>();
-        let Some(settings_binding) = uniforms.uniforms().binding() else {
-            return Ok(());
-        };
-        let Some(depth_view) = prepass.depth_view() else {
-            return Ok(());
-        };
+    let mut render_pass = ctx.begin_tracked_render_pass(RenderPassDescriptor {
+        label: Some("dof_pass"),
+        color_attachments: &[Some(RenderPassColorAttachment {
+            view: post_process.destination,
+            depth_slice: None,
+            resolve_target: None,
+            ops: Operations::default(),
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
 
-        let post_process = view_target.post_process_write();
-        let bind_group = render_context.render_device().create_bind_group(
-            "dof_bind_group",
-            &pipeline_cache.get_bind_group_layout(&pipeline_res.layout),
-            &BindGroupEntries::sequential((
-                post_process.source,
-                &pipeline_res.sampler,
-                depth_view,
-                settings_binding.clone(),
-            )),
-        );
-
-        let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
-            label: Some("dof_pass"),
-            color_attachments: &[Some(RenderPassColorAttachment {
-                view: post_process.destination,
-                depth_slice: None,
-                resolve_target: None,
-                ops: Operations::default(),
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
-
-        render_pass.set_render_pipeline(pipeline);
-        render_pass.set_bind_group(0, &bind_group, &[settings_index.index()]);
-        render_pass.draw(0..3, 0..1);
-        Ok(())
-    }
+    render_pass.set_render_pipeline(pipeline);
+    render_pass.set_bind_group(0, &bind_group, &[settings_index.index()]);
+    render_pass.draw(0..3, 0..1);
 }
 
 #[derive(Resource)]
-struct DofPipeline {
+pub(crate) struct DofPipeline {
     layout: BindGroupLayoutDescriptor,
     sampler: Sampler,
     pipeline_id: CachedRenderPipelineId,

@@ -209,7 +209,7 @@ fn fade_ripples(
         let t = (r.life / r.life0).clamp(0.0, 1.0); // 1 → 0
         let grow = 1.0 - t;
         tf.scale = Vec3::splat(r.scale0 + (r.scale1 - r.scale0) * grow);
-        if let Some(m) = materials.get_mut(&r.mat) {
+        if let Some(mut m) = materials.get_mut(&r.mat) {
             let c = m.base_color;
             m.base_color = c.with_alpha(r.alpha0 * t);
         }

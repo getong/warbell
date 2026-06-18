@@ -585,7 +585,7 @@ fn spawn_torch(commands: &mut Commands, meshes: &mut Assets<Mesh>, assets: &Scen
     // Post + a warm point light + a small emissive flame.
     spawn_prop_mesh(commands, meshes, assets, torch_post_mesh(), pos, 0.0, 1.0);
     commands.spawn((
-        PointLight { color: Color::srgb(1.0, 0.6, 0.25), intensity: 18_000.0, range: 9.0, shadows_enabled: false, ..default() },
+        PointLight { color: Color::srgb(1.0, 0.6, 0.25), intensity: 18_000.0, range: 9.0, shadow_maps_enabled: false, ..default() },
         Transform::from_translation(pos + Vec3::new(0.0, 1.3, 0.0)),
         SceneProp,
     ));

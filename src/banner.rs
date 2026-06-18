@@ -185,8 +185,9 @@ fn flutter_flags(
 ) {
     let t = time.elapsed_secs_wrapped();
     for (flag, mesh3d) in &q {
-        if let Some(mesh) = meshes.get_mut(&mesh3d.0) {
-            write_wave(flag, t, mesh);
+        if let Some(mut mesh) = meshes.get_mut(&mesh3d.0) {
+            // Bevy 0.19: `get_mut` yields an `AssetMut` guard; deref to `&mut Mesh`.
+            write_wave(flag, t, &mut mesh);
         }
     }
 }

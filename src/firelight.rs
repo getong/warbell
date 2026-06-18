@@ -39,7 +39,7 @@ pub fn campfire_light(phase: f32) -> (PointLight, FireLight) {
             intensity: BASE,
             range: 16.0,
             radius: 0.3,
-            shadows_enabled: false, // many fires on the map — keep them cheap
+            shadow_maps_enabled: false, // many fires on the map — keep them cheap
             ..default()
         },
         FireLight { phase, base: BASE },
@@ -55,7 +55,7 @@ pub fn torch_light(phase: f32) -> (PointLight, FireLight) {
             intensity: BASE,
             range: 8.0,
             radius: 0.12,
-            shadows_enabled: false,
+            shadow_maps_enabled: false,
             ..default()
         },
         FireLight { phase, base: BASE },

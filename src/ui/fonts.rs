@@ -33,7 +33,9 @@ impl UiFonts {
 pub fn label(font: &Handle<Font>, s: impl Into<String>, size: f32, color: Color) -> impl Bundle {
     (
         Text::new(s),
-        TextFont { font: font.clone(), font_size: size, ..default() },
+        // Bevy 0.19 (Parley): `font` is now a `FontSource` (Handle→FontSource via `into`) and
+        // `font_size` a `FontSize` (f32→`FontSize::Px` via `into`).
+        TextFont { font: font.clone().into(), font_size: size.into(), ..default() },
         TextColor(color),
     )
 }
