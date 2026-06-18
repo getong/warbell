@@ -298,6 +298,11 @@ fn spawn_credits(commands: &mut Commands, fonts: &UiFonts) {
             .with_children(|c| {
                 c.spawn((
                     label(&fonts.display, "WARBELL", 40.0, rgb(244, 228, 188)),
+                    // Bevy 0.19 (Parley) richer text: tracking on the Cinzel display caps for an
+                    // engraved, monumental feel. (Letter-spacing is the one richer-text knob that
+                    // works with our STATIC font files — the variable weight/width axes are no-ops
+                    // unless we re-source the fonts as variable.)
+                    bevy::text::LetterSpacing::Px(8.0),
                     Node { margin: UiRect::bottom(Val::Px(2.0)), ..default() },
                 ));
                 c.spawn(label(&fonts.semibold, "A knight's last stand.", 14.0, TEXT_DIM));
@@ -317,7 +322,7 @@ fn spawn_credits(commands: &mut Commands, fonts: &UiFonts) {
                     label(&fonts.semibold, "BUILT WITH", 11.0, KICKER),
                     Node { margin: UiRect::top(Val::Px(8.0)), ..default() },
                 ));
-                c.spawn(label(&fonts.bold, "Bevy 0.18  ·  Rust", 16.0, TEXT));
+                c.spawn(label(&fonts.bold, "Bevy 0.19  ·  Rust", 16.0, TEXT));
                 c.spawn((
                     label(&fonts.regular, "Thanks for playing — now go hold the keep.", 13.0, TEXT_DIM),
                     Node { margin: UiRect::top(Val::Px(10.0)), ..default() },

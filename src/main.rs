@@ -76,6 +76,7 @@ mod projectile;
 mod props;
 mod quality;
 mod quest;
+mod render_recovery;
 mod roads;
 mod ruins;
 mod savegame;
@@ -215,6 +216,7 @@ fn main() {
             trees::TreeDebugPlugin, // FOREST_TREELINE="x,z" parks one of each tree kind for model shots
             hints::HintsPlugin, // bottom-right affordance toasts: spend/equip nudges (Prep-only)
             quest::QuestPlugin, // tutorial quest chain: right-center tracker + J explainer card
+            render_recovery::RenderRecoveryPlugin, // recover the renderer on GPU device-loss (vs quit)
         ))
         .run();
 }
