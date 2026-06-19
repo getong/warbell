@@ -35,7 +35,8 @@ cargo build
 ## 2. Taking a shot
 
 ```bash
-FOREST_SHOT=/tmp/shot.png FOREST_TIME=0.25 \
+BEVY_ASSET_ROOT=$PWD \
+  FOREST_SHOT=/tmp/shot.png FOREST_TIME=0.25 \
   timeout 570 xvfb-run -a -s "-screen 0 1280x720x24" \
   ./target/debug/tileworld_bevy_forest >/dev/null 2>&1
 ```
@@ -43,11 +44,19 @@ FOREST_SHOT=/tmp/shot.png FOREST_TIME=0.25 \
 Then **view the PNG with the Read tool** to actually inspect it.
 
 Notes:
+- **ALWAYS set `BEVY_ASSET_ROOT=$PWD` (repo root).** Running the binary directly,
+  Bevy resolves its asset root from the *executable's* dir (`target/debug/assets/`), NOT the
+  CWD — so `assets/` 404s **even when you `cd` to the repo root**. When it 404s, the
+  disk-loaded WGSL shaders fail silently: meshes using custom materials (the **ground**
+  shader and every creature/**hero** mesh, which use `creature.wgsl`) **don't render at all**,
+  while props on the built-in `StandardMaterial` still show. Symptom: flat untextured ground +
+  an invisible hero, with `Path not found: .../target/debug/assets/...` errors in the log. This
+  is the #1 way to waste a 5-min shot. Verify a run is clean with
+  `grep -c "Path not found" log` → must be `0`.
 - Expect **~3–5 minutes per shot** on llvmpipe (the `software rendering ... very slow`
   warning and the X11 `XSETTINGS` warning are normal). Wrap in `timeout 570` so a hang
   can't eat the Bash tool's 10-minute ceiling.
 - Run shots **sequentially**, not in parallel — llvmpipe saturates all cores.
-- Run from the repo root so `assets/` resolves (or set `BEVY_ASSET_ROOT`).
 - The HUD renders over the scene (the harness boots straight into Playing); ignore it.
 - Sim time during a capture is short (frame `dt` is clamped), but wandering NPCs still
   drift a little — frame staged shots with some margin.
