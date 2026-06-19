@@ -43,6 +43,7 @@ use bevy::prelude::*;
 use bevy::render::renderer::RenderAdapterInfo;
 
 use crate::scene::Sun;
+use crate::terrain::TerrainMaterial;
 
 /// The active preset. `High` matches the scene's authored defaults.
 #[derive(Resource, Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -225,6 +226,13 @@ struct PresetVals {
     /// (each is its own GPU pass in the F2 profiler). `None` keeps the authored count. Only honoured
     /// on the rebuild path (alongside `cascade_far`).
     cascades_count: Option<usize>,
+    /// Ground-shader relief (`terrain.wgsl` `params2`): normal-perturbation strength, the
+    /// quality lane (0/1/2 — gates the finer bump octave + grass sheen on Ultra), and the
+    /// macro albedo-variety strength. Pushed into every `TerrainMaterial` so the ground relief
+    /// follows the live preset toggle.
+    ground_bump: f32,
+    ground_quality: f32,
+    ground_variety: f32,
 }
 
 fn preset(quality: GraphicsQuality) -> PresetVals {
@@ -248,6 +256,9 @@ fn preset(quality: GraphicsQuality) -> PresetVals {
             bloom_on: true,
             dof_on: true,
             cascades_count: Some(3),
+            ground_bump: 1.0,
+            ground_quality: 1.0,
+            ground_variety: 1.0,
         },
         GraphicsQuality::Ultra => PresetVals {
             god_rays: true,
@@ -270,6 +281,10 @@ fn preset(quality: GraphicsQuality) -> PresetVals {
             bloom_on: true,
             dof_on: true,
             cascades_count: None,
+            // Ultra: stronger relief + the finer bump octave & grass sheen (quality lane 2).
+            ground_bump: 1.3,
+            ground_quality: 2.0,
+            ground_variety: 1.0,
         },
         // Low: tuned for integrated GPUs. Key savings vs High:
         //   • SSAO removed (None): ~4.3 ms saved — the depth-buffer walk happens regardless of
@@ -304,6 +319,13 @@ fn preset(quality: GraphicsQuality) -> PresetVals {
             bloom_on: false,
             dof_on: false,
             cascades_count: Some(2),
+            // Low (iGPU): NO bump — `bump 0` trips the shader's uniform early-out, so the 4
+            // height taps per ground fragment are skipped entirely (consistent with Low also
+            // dropping SSAO/bloom/DoF). The cheap anti-grid colour fixes (de-tile, isotropic
+            // detail, organic mottle) still apply, so the ground stays clean, just unlit-relief.
+            ground_bump: 0.0,
+            ground_quality: 0.0,
+            ground_variety: 0.7,
         },
     }
 }
@@ -321,6 +343,7 @@ fn apply_quality(
     mut cascades: Query<&mut CascadeShadowConfig>,
     mut smaa: Query<&mut Smaa>,
     mut shadowmap: ResMut<DirectionalLightShadowMap>,
+    mut terrain_mats: ResMut<Assets<TerrainMaterial>>,
 ) {
     // Snapshot the authored render values the first time we run (before any preset is applied,
     // so the live components still hold the scene defaults — even when FOREST_QUALITY starts the
@@ -445,5 +468,12 @@ fn apply_quality(
     // Guard the write so an unchanged size doesn't trigger a needless shadow-atlas rebuild.
     if shadowmap.size != p.shadow_size {
         shadowmap.size = p.shadow_size;
+    }
+
+    // Ground relief: push the preset's bump / quality / variety into every TerrainMaterial's
+    // `params2`. Only a handful of materials (grass / swamp / blight / lava), and only on a
+    // preset change — so the ground reacts to the live toggle without a per-frame cost.
+    for (_, m) in terrain_mats.iter_mut() {
+        m.extension.params.params2 = Vec4::new(p.ground_bump, p.ground_quality, p.ground_variety, 0.0);
     }
 }

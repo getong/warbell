@@ -364,6 +364,50 @@ fn noise_b(x: f32, z: f32) -> f32 {
     (x * 0.21 - 3.1 + p).sin() * (z * 0.19 + 0.7 + p).cos() + ((x + z) * 0.07 + 5.2 + p).sin() * 0.4
 }
 
+// ── Organic mottle for the GROUND COLOUR (visual only; gameplay/gen still use noise_a/b) ──
+// `noise_a`/`noise_b` are axis-separable sine products — `sin(x·a)·cos(z·b)` plus an
+// `sin((x+z)·c)` term — which form a regular standing-wave LATTICE: rectangular cells from
+// the sin·cos terms, diagonal bands from the (x+z) terms. Baked into the per-vertex meadow
+// colour, that lattice read as a grid of "tiles" / diagonal stripes across open ground. This
+// hash value-noise (quintic interpolation, domain-rotated octaves) gives the same broad green
+// patchiness with NO repeating structure.
+fn vhash(ix: i32, iz: i32) -> f32 {
+    // lowbias32-style integer hash → well-distributed, no axis correlation.
+    let mut h = (ix as u32).wrapping_mul(0x9E37_79B1).wrapping_add((iz as u32).wrapping_mul(0x85EB_CA77));
+    h ^= h >> 16;
+    h = h.wrapping_mul(0x7FEB_352D);
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x846C_A68B);
+    h ^= h >> 16;
+    (h & 0x00FF_FFFF) as f32 / 0x00FF_FFFF as f32
+}
+fn vnoise(x: f32, z: f32) -> f32 {
+    let ix = x.floor() as i32;
+    let iz = z.floor() as i32;
+    let fx = x - ix as f32;
+    let fz = z - iz as f32;
+    let ux = fx * fx * fx * (fx * (fx * 6.0 - 15.0) + 10.0); // quintic (C2) → no cell-edge grid
+    let uz = fz * fz * fz * (fz * (fz * 6.0 - 15.0) + 10.0);
+    let a = vhash(ix, iz);
+    let b = vhash(ix + 1, iz);
+    let c = vhash(ix, iz + 1);
+    let d = vhash(ix + 1, iz + 1);
+    let ab = a + (b - a) * ux;
+    let cd = c + (d - c) * ux;
+    ab + (cd - ab) * uz
+}
+/// Signed organic mottle (~`[-1.5, 1.5]`, matching `noise_a`'s range so the existing
+/// `ground_color` `smoothstep` thresholds still apply) at the spatial frequency the old
+/// `noise_a(x*scale)` produced. Two domain-rotated octaves so nothing lines up on the world
+/// axes. `seed` decorrelates calls; `noise_phase` keeps reskinned maps distinct like `noise_a`.
+fn omottle(x: f32, z: f32, scale: f32, seed: f32) -> f32 {
+    let f = 0.021 * scale; // ≈ the effective per-unit frequency of `noise_a(x*scale)`
+    let s = seed + active_map().noise_phase;
+    let o1 = vnoise((0.857 * x - 0.515 * z) * f + s, (0.515 * x + 0.857 * z) * f + s * 1.3); // ~31°
+    let o2 = vnoise((0.602 * x - 0.799 * z) * f * 2.1 + s * 0.7, (0.799 * x + 0.602 * z) * f * 2.1 + s); // ~53°
+    ((o1 * 0.65 + o2 * 0.35) - 0.5) * 3.0
+}
+
 fn is_land_shape(x: f32, z: f32) -> bool {
     let dx = (x - CX).abs() / ISLAND_RX;
     let dz = (z - CZ).abs() / ISLAND_RZ;
@@ -897,16 +941,16 @@ fn biome_col_at(b: TB, x: f32, z: f32) -> [f32; 3] {
 
 /// Smooth blended ground colour at tile-space (x,z): grass base, each biome blob mixed in
 /// over a soft `BLEND` band at its edge, plus a sandy coast fade.
-fn ground_color(x: f32, z: f32) -> [f32; 4] {
+pub(crate) fn ground_color(x: f32, z: f32) -> [f32; 4] {
     let p = &active_map().palette;
     let mut col = lin3(p.grass);
     // Meadow macro-patches on the grass base (before the biome-region blends, so biome
     // interiors keep their own colour): two noise octaves mottle the green between a
     // darker lush tone and a drier warm one. Open grass stops being one flat neon sheet —
     // the patchiness is what makes the ground read as a living meadow at camera distance.
-    let p1 = noise_a(x * 4.0 + 31.0, z * 4.0 - 17.0); // ~12-world-tile patches
-    let p2 = noise_b(x * 9.0 - 11.0, z * 9.0 + 23.0); // ~4-tile speckle
-    let p3 = noise_a(x * 1.6 - 71.0, z * 1.6 + 59.0); // ~30-tile golden sweeps
+    let p1 = omottle(x, z, 4.0, 31.0); // ~12-world-tile patches
+    let p2 = omottle(x, z, 9.0, 53.0); // ~4-tile speckle
+    let p3 = omottle(x, z, 1.6, 71.0); // ~30-tile golden sweeps
     col = mix3(col, lin3(p.grass_dark), smoothstep(0.1, 1.3, p1) * 0.55);
     col = mix3(col, lin3(p.grass_dry), smoothstep(0.25, 1.4, p2) * 0.40);
     col = mix3(col, lin3(p.grass_gold), smoothstep(0.55, 1.5, p3) * 0.45);
@@ -931,10 +975,10 @@ fn ground_color(x: f32, z: f32) -> [f32; 4] {
     // Universal mottle — value jitter + a slow warm/cool hue wander over the *blended*
     // colour, so biome interiors (forest, sand, snow…) get texture too, not just the open
     // grass. Multiplicative and small: it breaks the flat fill without recolouring a biome.
-    let m1 = noise_a(x * 2.2 - 53.0, z * 2.2 + 41.0); // ~20-tile broad drift
-    let m2 = noise_b(x * 14.0 + 7.0, z * 14.0 - 29.0); // ~3-tile speckle
+    let m1 = omottle(x, z, 2.2, 17.0); // ~20-tile broad drift
+    let m2 = omottle(x, z, 14.0, 91.0); // ~3-tile speckle
     let v = 1.0 + 0.10 * m1 + 0.06 * m2;
-    let warm = 0.05 * noise_a(x * 1.4 + 91.0, z * 1.4 - 77.0); // +red/−blue ↔ −red/+blue
+    let warm = 0.05 * omottle(x, z, 1.4, 23.0); // +red/−blue ↔ −red/+blue
     col = [
         (col[0] * v * (1.0 + warm)).clamp(0.0, 1.0),
         (col[1] * v).clamp(0.0, 1.0),

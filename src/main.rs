@@ -54,6 +54,7 @@ mod footstep_fx;
 mod game_state;
 mod grade;
 mod groundcover;
+mod groundtest; // FOREST_GROUNDTEST=1: floating flat grass plane to isolate the terrain shader
 mod hints;
 mod hud;
 mod interaction;
@@ -215,6 +216,7 @@ fn main() {
             trees::TreeDebugPlugin, // FOREST_TREELINE="x,z" parks one of each tree kind for model shots
             hints::HintsPlugin, // bottom-right affordance toasts: spend/equip nudges (Prep-only)
             quest::QuestPlugin, // tutorial quest chain: right-center tracker + J explainer card
+            groundtest::GroundTestPlugin, // debug: FOREST_GROUNDTEST=1 floating ground-shader test plane
         ))
         .run();
 }

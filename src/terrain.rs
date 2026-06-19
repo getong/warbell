@@ -28,7 +28,13 @@ pub type TerrainMaterial = ExtendedMaterial<StandardMaterial, ForestExtension>;
 
 #[derive(Clone, Copy, ShaderType, Debug)]
 pub struct ForestParams {
+    /// x=detailScale, y=detailStrength, z=variation, w=meanLuminance
     pub params: Vec4,
+    /// x=bump_strength (normal-perturbation amount), y=quality (0=Low, 1=High, 2=Ultra),
+    /// z=macro_variety (worn-dirt/moss patch strength), w=reserved. Set per-preset by
+    /// `quality::apply_quality` (startup + every Settings toggle), so the ground relief
+    /// reacts live to the graphics preset. `make_material` seeds the High defaults.
+    pub params2: Vec4,
 }
 
 #[derive(Asset, AsBindGroup, Clone, TypePath, Debug)]
@@ -75,6 +81,9 @@ pub fn make_material(
         extension: ForestExtension {
             params: ForestParams {
                 params: Vec4::new(detail.scale, detail.strength, detail.variation, mean.max(0.01)),
+                // High-preset defaults; apply_quality overrides on the first Update frame
+                // (after the Startup world build) and on every preset toggle.
+                params2: Vec4::new(1.0, 1.0, 1.0, 0.0),
             },
             detail: detail_h,
         },
@@ -139,15 +148,18 @@ pub(crate) fn detail_image(d: &GroundDetail) -> (Image, f32) {
             let mid = value_noise(u, v, 18, 18, seed + 11.0);
             let mid2 = value_noise(u, v, 37, 37, seed + 71.0); // clump break-up
             let grain = value_noise(u, v, 96, 96, seed + 23.0);
-            let streak = value_noise(u, v, 64, 7, seed + 37.0); // vertical blades
-            let mut t = macro_ * 0.18 + patch * 0.40 + mid * 0.22 + mid2 * 0.10 + grain * 0.10;
-            if streak > 0.0 {
-                t += (streak - 0.5) * d.streak;
-            }
-            // A second, coarser streak set at an offset phase so the blade pattern
-            // doesn't read as one repeating comb.
-            let streak2 = value_noise(u, v, 23, 5, seed + 91.0);
-            t += (streak2 - 0.5) * d.streak * 0.4;
+            // ISOTROPIC by design. The old recipe added strong vertical "blade" streaks
+            // (64×7 / 23×5 anisotropic lattices) — those read as directional DIAGONAL bands
+            // across the ground once the shader de-tiles the texture by warping its UVs, and
+            // the effect was worse in the higher-`streak` biomes (swamp/blight). The blade
+            // character belongs to the 3D ground-cover tufts, not the floor texture, so the
+            // texture is now pure non-directional grain. Weighted toward the HIGHER-frequency
+            // octaves (mid/mid2/grain) and away from the broad macro/patch blobs: broad
+            // low-freq content read as a trackable repeating MACRO pattern when tiled, whereas
+            // fine grain repeats invisibly. Sums to 1.0 (mean-neutral). `d.streak` is now
+            // unused by the bake (kept on the config struct for the spec's sake).
+            let _ = d.streak;
+            let t = macro_ * 0.10 + patch * 0.24 + mid * 0.26 + mid2 * 0.14 + grain * 0.26;
             let t = t.clamp(0.0, 1.0);
             let col = if t < 0.5 {
                 let s = t * 2.0;
