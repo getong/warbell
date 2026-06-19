@@ -41,7 +41,6 @@ pub enum Joint {
     Hips,
     Torso,
     Head,
-    Plume,
     ShoulderL,
     ShoulderR,
     ElbowL,
@@ -59,7 +58,7 @@ pub struct HeroPart {
 }
 
 /// A body **mesh leaf** (child of a joint). `fp_keep` meshes — the arms, shield and sword — stay
-/// visible in first-person; the rest (head/plume/torso/hips/legs) are hidden by [`camera`].
+/// visible in first-person; the rest (head/torso/hips/legs) are hidden by [`camera`].
 #[derive(Component)]
 pub struct HeroMesh {
     pub fp_keep: bool,
@@ -216,6 +215,7 @@ impl Plugin for PlayerPlugin {
                     camera::player_camera,
                     camera::fp_body_visibility, // FP viewmodel: keep arms/sword/shield, hide the rest
                     reskin_hero, // rebuild limb meshes when weapon/armor equip changes
+                    animtest, // debug: FOREST_ANIMTEST=walk|block stages an animation for a capture
                     anim::hero_anim,
                     combat::update_sparks,
                     combat::update_fx_fades,
@@ -256,6 +256,23 @@ fn debug_grant_boons(mut player: ResMut<PlayerRes>) {
     p.has_bramble_sweep = true;
     p.frostbite = true;
     p.venom = true;
+}
+
+/// Debug/screenshot hook: `FOREST_ANIMTEST=walk|block` forces the hero into that animation each
+/// frame so a capture can frame it — FreeRoam captures never run `player_move`/`player_block`, so
+/// the rig would otherwise sit idle. No-op unless the env var is set.
+fn animtest(time: Res<Time>, mut hero_q: Query<(&mut Hero, &mut HeroHealth)>) {
+    let Ok(mode) = std::env::var("FOREST_ANIMTEST") else { return };
+    let Ok((mut hero, mut hh)) = hero_q.single_mut() else { return };
+    match mode.as_str() {
+        "walk" => {
+            hero.moving = true;
+            hero.moving_amt = 1.0;
+            hero.walk_phase += time.delta_secs() * 7.0; // = movement::STEP_FREQ
+        }
+        "block" => hh.blocking = true,
+        _ => {}
+    }
 }
 
 fn spawn_hero(
@@ -360,7 +377,7 @@ fn spawn_joint(
     joint
 }
 
-/// Spawn the full articulated knight (hips → torso → neck → head + plume; shoulder → elbow → hand
+/// Spawn the full articulated knight (hips → torso → neck → head; shoulder → elbow → hand
 /// + weapon/shield; hip → knee → foot) as children of the hero `root`, all sharing the hero
 /// material. Shared by [`spawn_hero`] and [`reskin_hero`] so an equip swap rebuilds the same tree.
 fn spawn_hero_meshes(
@@ -383,11 +400,10 @@ fn spawn_hero_meshes(
     let hips = spawn_joint(commands, rig, Some(Hips), p(Vec3::new(0.0, 0.95, 0.0)), mat, body(meshes.add(m.hips)));
     let torso = spawn_joint(commands, hips, Some(Torso), p(Vec3::new(0.0, 0.15, 0.0)), mat, body(meshes.add(m.torso)));
     let neck = spawn_joint(commands, torso, None, p(Vec3::new(0.0, 0.35, 0.0)), mat, body(meshes.add(m.neck)));
-    let head = spawn_joint(commands, neck, Some(Head), p(Vec3::new(0.0, 0.08, 0.0)), mat, body(meshes.add(m.head)));
-    spawn_joint(commands, head, Some(Plume), p(Vec3::new(0.0, 0.14, -0.08)), mat, body(meshes.add(m.plume)));
+    spawn_joint(commands, neck, Some(Head), p(Vec3::new(0.0, 0.08, 0.0)), mat, body(meshes.add(m.head)));
 
     // Left arm + lion-emblem heater shield (its own pivot on the forearm).
-    let sh_l = spawn_joint(commands, torso, Some(ShoulderL), p(Vec3::new(-0.44, 0.27, 0.0)), mat, arm(meshes.add(m.shoulder_l)));
+    let sh_l = spawn_joint(commands, torso, Some(ShoulderL), p(Vec3::new(-0.35, 0.25, 0.0)), mat, arm(meshes.add(m.shoulder_l)));
     let el_l = spawn_joint(commands, sh_l, Some(ElbowL), p(Vec3::new(0.0, -0.28, 0.0)), mat, arm(meshes.add(m.elbow_l)));
     let hand_l = spawn_joint(commands, el_l, None, p(Vec3::new(0.0, -0.25, 0.0)), mat, None);
     let shield = spawn_joint(
@@ -401,16 +417,16 @@ fn spawn_hero_meshes(
     spawn_joint(commands, shield, None, p(Vec3::new(0.0, -0.03, 0.033)), mat, arm(meshes.add(m.lion)));
 
     // Right arm + held weapon.
-    let sh_r = spawn_joint(commands, torso, Some(ShoulderR), p(Vec3::new(0.44, 0.27, 0.0)), mat, arm(meshes.add(m.shoulder_r)));
+    let sh_r = spawn_joint(commands, torso, Some(ShoulderR), p(Vec3::new(0.35, 0.25, 0.0)), mat, arm(meshes.add(m.shoulder_r)));
     let el_r = spawn_joint(commands, sh_r, Some(ElbowR), p(Vec3::new(0.0, -0.28, 0.0)), mat, arm(meshes.add(m.elbow_r)));
     let hand_r = spawn_joint(commands, el_r, None, p(Vec3::new(0.0, -0.25, 0.0)), mat, None);
     spawn_joint(commands, hand_r, None, m.weapon_xf, mat, Some(Leaf { mesh: meshes.add(m.weapon), fp_keep: true, weapon: true }));
 
     // Legs.
-    let hip_l = spawn_joint(commands, hips, Some(HipL), p(Vec3::new(-0.19, -0.05, 0.0)), mat, body(meshes.add(m.hip_l)));
+    let hip_l = spawn_joint(commands, hips, Some(HipL), p(Vec3::new(-0.16, -0.05, 0.0)), mat, body(meshes.add(m.hip_l)));
     let knee_l = spawn_joint(commands, hip_l, Some(KneeL), p(Vec3::new(0.0, -0.38, 0.0)), mat, body(meshes.add(m.knee_l)));
     spawn_joint(commands, knee_l, None, p(Vec3::new(0.0, -0.38, 0.0)), mat, body(meshes.add(m.foot_l)));
-    let hip_r = spawn_joint(commands, hips, Some(HipR), p(Vec3::new(0.19, -0.05, 0.0)), mat, body(meshes.add(m.hip_r)));
+    let hip_r = spawn_joint(commands, hips, Some(HipR), p(Vec3::new(0.16, -0.05, 0.0)), mat, body(meshes.add(m.hip_r)));
     let knee_r = spawn_joint(commands, hip_r, Some(KneeR), p(Vec3::new(0.0, -0.38, 0.0)), mat, body(meshes.add(m.knee_r)));
     spawn_joint(commands, knee_r, None, p(Vec3::new(0.0, -0.38, 0.0)), mat, body(meshes.add(m.foot_r)));
 }

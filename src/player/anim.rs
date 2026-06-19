@@ -10,12 +10,13 @@ use bevy::prelude::*;
 use super::combat::ATTACK_DURATION;
 use super::{Hero, HeroHealth, HeroPart, Joint};
 
-/// Shield rest rotation under the left hand (matches its spawn pose); block swings it up to brace.
+/// Shield rest rotation under the left hand (matches its spawn pose); block swings it up to brace
+/// across the front, face toward the threat.
 fn shield_rest() -> Quat {
     Quat::from_euler(EulerRot::XYZ, 0.2, -0.6, 0.15)
 }
 fn shield_block() -> Quat {
-    Quat::from_euler(EulerRot::XYZ, 0.15, -0.15, 0.35)
+    Quat::from_euler(EulerRot::XYZ, 0.0, 0.55, 0.1)
 }
 
 fn e3(x: f32, y: f32, z: f32) -> Quat {
@@ -107,7 +108,8 @@ pub fn hero_anim(
                         }
                     }
                     _ if hh.blocking => {
-                        let target = if elbow { Quat::from_rotation_x(-1.3) } else { e3(-1.2, 0.4, -0.4) };
+                        // Raise the shield arm up and across so the shield covers the chest/face.
+                        let target = if elbow { Quat::from_rotation_x(-1.6) } else { e3(-1.45, 0.25, -0.15) };
                         tf.rotation.slerp(target, damp)
                     }
                     _ => base_r,
@@ -150,7 +152,6 @@ fn idle_pose(j: Joint, t: f32) -> (Option<Vec3>, Quat) {
         Joint::Hips => (Some(Vec3::new(0.0, 0.95 + breath * 0.015, 0.0)), Quat::from_rotation_y(sway * 0.03)),
         Joint::Torso => (None, e3(breath * 0.01, -sway * 0.02, 0.0)),
         Joint::Head => (None, e3(-breath * 0.015, 0.0, sway * 0.01)),
-        Joint::Plume => (None, e3(0.0, (t * 1.5).cos() * 0.06, breath * 0.05)),
         Joint::ShoulderL => (None, e3(breath * 0.05 + 0.1, 0.0, -0.15 + cos11 * 0.02)),
         Joint::ElbowL => (None, Quat::from_rotation_x(-0.5 - breath * 0.03)),
         Joint::ShoulderR => (None, e3(breath * 0.05 + 0.12, 0.0, 0.15 - cos11 * 0.02)),
@@ -170,7 +171,6 @@ fn walk_pose(j: Joint, wp: f32) -> (Option<Vec3>, Quat) {
         ),
         Joint::Torso => (None, e3(0.05 + (wp * 2.0).sin() * 0.02, torso_y, 0.0)),
         Joint::Head => (None, e3(-0.02 - (wp * 2.0).sin() * 0.01, -torso_y * 1.1, 0.0)),
-        Joint::Plume => (None, e3(0.1 + (wp * 2.0).sin() * 0.15, 0.0, wp.cos() * 0.08)),
         Joint::HipL => (None, Quat::from_rotation_x(stride * 0.5)),
         Joint::KneeL => (None, Quat::from_rotation_x(if stride < 0.0 { -stride * 0.8 } else { -stride * 0.15 })),
         Joint::HipR => (None, Quat::from_rotation_x(-stride * 0.5)),
