@@ -126,6 +126,13 @@ impl Player {
     }
 
     pub fn heal(&mut self, n: f64) {
+        // A downed hero cannot be healed back onto his feet — only `respawn_at` (the heir rising)
+        // revives him. Without this, any heal that lands during the death down-window (food on Q,
+        // the shrine, venom-DoT lifesteal, sweep self-heal) bumps `hp` above 0, flips `is_alive()`
+        // true while `dead_since` is still set, and the corpse springs up swinging while laid flat.
+        if self.dead_since.is_some() {
+            return;
+        }
         self.hp = (self.hp + n).min(self.max_hp);
     }
 
@@ -255,6 +262,19 @@ mod tests {
         p.damage(40.0, 1.0, 1.0, 1.0);
         p.heal(1000.0);
         assert_eq!(p.hp, p.max_hp);
+    }
+
+    #[test]
+    fn heal_cannot_revive_a_downed_hero() {
+        // A heal landing during the death down-window must NOT raise hp / clear death — else
+        // `is_alive()` flips true while `dead_since` is set and the corpse fights while laid flat.
+        let mut p = Player::new();
+        p.damage(999.0, 5.0, 1.0, 1.0);
+        assert!(!p.is_alive());
+        p.heal(500.0);
+        assert_eq!(p.hp, 0.0);
+        assert_eq!(p.dead_since, Some(5.0));
+        assert!(!p.is_alive());
     }
 
     #[test]
