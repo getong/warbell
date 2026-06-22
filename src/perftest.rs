@@ -69,6 +69,28 @@ impl Plugin for PerftestPlugin {
         if std::env::var("FOREST_PERFFREEZE").is_ok() {
             app.add_systems(Update, perf_freeze);
         }
+        // FOREST_NOTREES=1: despawn every swaying tree (the scatter spawns them chunked over many
+        // frames, so this runs every frame to catch them as they appear) — measures the frame-time
+        // ceiling of merging trees out of the per-entity render path before building the chunk-merge.
+        if std::env::var("FOREST_NOTREES").is_ok() {
+            app.add_systems(Update, perf_despawn_trees);
+        }
+    }
+}
+
+fn perf_despawn_trees(
+    mut commands: Commands,
+    trees: Query<Entity, With<crate::wind::Sway>>,
+    mut total: Local<u32>,
+) {
+    let mut n = 0u32;
+    for e in &trees {
+        commands.entity(e).try_despawn();
+        n += 1;
+    }
+    if n > 0 {
+        *total += n;
+        info!("PERFTEST FOREST_NOTREES: despawned {n} trees (total {})", *total);
     }
 }
 
