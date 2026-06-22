@@ -36,6 +36,7 @@ mod castle;
 mod castle_decor;
 mod chest;
 mod combat_fx;
+mod compass;
 mod controls;
 mod creature;
 mod creature_anim;
@@ -231,6 +232,7 @@ fn main() {
             hints::HintsPlugin, // bottom-right affordance toasts: spend/equip nudges (Prep-only)
             quest::QuestPlugin, // tutorial quest chain: right-center tracker + J explainer card
             groundtest::GroundTestPlugin, // debug: FOREST_GROUNDTEST=1 floating ground-shader test plane
+            compass::CompassPlugin, // top-centre strip compass: heading + keep/Gnashfang landmark pips
         ))
         .run();
 }

@@ -21,7 +21,7 @@ use crate::player::{Health, HeroState, PendingHeroDamage};
 use crate::projectile::{BoltSpawn, BoltSpawns};
 use crate::steer;
 use crate::ui::anim::{anim, AnimKind};
-use crate::ui::fonts::{label, UiFonts};
+use crate::ui::fonts::{label, UiFonts, FONT_CAPTION, FONT_LABEL};
 use crate::ui::theme::*;
 use crate::ui::widgets::{self, border};
 use crate::worldmap::ground_at_world;
@@ -1123,15 +1123,16 @@ struct PhaseFill;
 struct PhaseText;
 #[derive(Component)]
 struct SubText;
+/// The thin keep-HP sliver — toggled visible only while a wave is live.
 #[derive(Component)]
-struct HeirText;
+struct KeepHpWrap;
 
 fn setup_siege_hud(mut commands: Commands, fonts: Res<UiFonts>) {
     // Full-width wrapper centres the banner card horizontally.
     commands
         .spawn(Node {
             position_type: PositionType::Absolute,
-            top: Val::Px(16.0),
+            top: Val::Px(48.0), // sits just below the top-centre strip compass
             left: Val::Px(0.0),
             width: Val::Percent(100.0),
             flex_direction: FlexDirection::Row,
@@ -1143,9 +1144,8 @@ fn setup_siege_hud(mut commands: Commands, fonts: Res<UiFonts>) {
                 Node {
                     flex_direction: FlexDirection::Column,
                     align_items: AlignItems::Center,
-                    row_gap: Val::Px(5.0),
-                    min_width: Val::Px(260.0),
-                    padding: UiRect::axes(Val::Px(16.0), Val::Px(8.0)),
+                    row_gap: Val::Px(4.0),
+                    padding: UiRect::axes(Val::Px(14.0), Val::Px(6.0)),
                     border: border(1.0),
                     border_radius: radius(R_CARD),
                     ..default()
@@ -1156,12 +1156,17 @@ fn setup_siege_hud(mut commands: Commands, fonts: Res<UiFonts>) {
                 anim(AnimKind::SlideDown, 0.0, 0.36),
             ))
             .with_children(|card| {
-                card.spawn((label(&fonts.display, "PREPARE", 14.0, GOLD), PhaseText));
-                card.spawn((label(&fonts.semibold, "", 12.0, TEXT_DIM), SubText));
-                // Phase progress bar (prep day drains / wave horde remaining).
+                // One line: a small phase tag + the single number that matters this phase
+                // (day → clock to nightfall, night → orks left). Colour cues the phase.
+                card.spawn(Node { flex_direction: FlexDirection::Row, align_items: AlignItems::Center, column_gap: Val::Px(9.0), ..default() })
+                    .with_children(|row| {
+                        row.spawn((label(&fonts.semibold, "NIGHT 1", FONT_CAPTION, GREY), PhaseText));
+                        row.spawn((label(&fonts.display, "", FONT_LABEL, GOLD), SubText));
+                    });
+                // Hairline progress: prep day drains gold to zero / night = horde remaining (red).
                 card.spawn((
-                    Node { width: Val::Px(180.0), height: Val::Px(6.0), border_radius: radius(3.0), overflow: Overflow::clip(), ..default() },
-                    BackgroundColor(rgba(0, 0, 0, 0.45)),
+                    Node { width: Val::Px(150.0), height: Val::Px(3.0), border_radius: radius(2.0), overflow: Overflow::clip(), ..default() },
+                    BackgroundColor(rgba(0, 0, 0, 0.4)),
                 ))
                 .with_children(|t| {
                     t.spawn((
@@ -1170,24 +1175,26 @@ fn setup_siege_hud(mut commands: Commands, fonts: Res<UiFonts>) {
                         PhaseFill,
                     ));
                 });
-                // Keep HP row.
-                card.spawn(Node { flex_direction: FlexDirection::Row, align_items: AlignItems::Center, column_gap: Val::Px(6.0), ..default() })
-                    .with_children(|row| {
-                        row.spawn(label(&fonts.semibold, "KEEP", 10.0, GREY));
-                        row.spawn((
-                            Node { width: Val::Px(160.0), height: Val::Px(8.0), border: border(1.0), border_radius: radius(4.0), overflow: Overflow::clip(), ..default() },
-                            BackgroundColor(rgba(0, 0, 0, 0.45)),
-                            BorderColor::all(rgba(255, 255, 255, 0.25)),
-                        ))
-                        .with_children(|t| {
-                            t.spawn((
-                                Node { width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
-                                widgets::vgrad(rgb(111, 208, 255), rgb(42, 143, 214)),
-                                KeepHpFill,
-                            ));
-                        });
-                    });
-                card.spawn((label(&fonts.bold, "", 11.0, rgb(159, 211, 160)), HeirText));
+                // Keep-HP sliver — hidden by default, surfaced only once the assault is live.
+                card.spawn((
+                    Node {
+                        width: Val::Px(150.0),
+                        height: Val::Px(4.0),
+                        border_radius: radius(2.0),
+                        overflow: Overflow::clip(),
+                        display: Display::None,
+                        ..default()
+                    },
+                    BackgroundColor(rgba(0, 0, 0, 0.4)),
+                    KeepHpWrap,
+                ))
+                .with_children(|t| {
+                    t.spawn((
+                        Node { width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
+                        widgets::vgrad(rgb(111, 208, 255), rgb(42, 143, 214)),
+                        KeepHpFill,
+                    ));
+                });
             });
         });
 }
@@ -1196,41 +1203,45 @@ fn setup_siege_hud(mut commands: Commands, fonts: Res<UiFonts>) {
 fn update_siege_hud(
     siege: Res<Siege>,
     keep: Res<KeepHp>,
-    lives: Res<crate::succession::Lives>,
     invaders: Query<&WaveInvader, Without<crate::dying::Dying>>,
-    mut keep_q: Query<&mut Node, (With<KeepHpFill>, Without<PhaseFill>)>,
-    mut phase_q: Query<(&mut Node, &mut BackgroundColor), (With<PhaseFill>, Without<KeepHpFill>)>,
-    mut ptext: Query<&mut Text, (With<PhaseText>, Without<SubText>, Without<HeirText>)>,
-    mut stext: Query<&mut Text, (With<SubText>, Without<HeirText>)>,
-    mut htext: Query<&mut Text, With<HeirText>>,
+    mut keep_q: Query<&mut Node, (With<KeepHpFill>, Without<PhaseFill>, Without<KeepHpWrap>)>,
+    mut keepwrap_q: Query<&mut Node, (With<KeepHpWrap>, Without<PhaseFill>, Without<KeepHpFill>)>,
+    mut phase_q: Query<(&mut Node, &mut BackgroundColor), (With<PhaseFill>, Without<KeepHpFill>, Without<KeepHpWrap>)>,
+    mut ptext: Query<&mut Text, (With<PhaseText>, Without<SubText>)>,
+    mut stext: Query<(&mut Text, &mut TextColor), (With<SubText>, Without<PhaseText>)>,
 ) {
+    let in_wave = matches!(siege.phase, GamePhase::Wave);
     if let Ok(mut n) = keep_q.single_mut() {
         n.width = Val::Percent((keep.hp / keep.max * 100.0).clamp(0.0, 100.0));
     }
+    // The keep sliver only matters while the assault is live — hidden the rest of the time.
+    if let Ok(mut n) = keepwrap_q.single_mut() {
+        n.display = if in_wave { Display::Flex } else { Display::None };
+    }
     // Nights loop forever now (the win is breaking the Hold, not surviving a fixed count), so the
-    // objective banner shows the climbing night number with no "/ N" ceiling.
-    let (label_s, sub_s) = match siege.phase {
+    // banner shows the climbing night number with no "/ N" ceiling. One number per phase: the
+    // clock to nightfall by day, the orks-left tally by night; colour carries the phase mood.
+    let (tag, value, value_col) = match siege.phase {
         GamePhase::Prep => {
             let night = (siege.wave_index + 2).max(1);
             let secs = siege.prep_seconds_left.max(0.0) as i64;
-            (format!("PREPARE — NIGHT {night}"), format!("{}:{:02} until nightfall", secs / 60, secs % 60))
+            (format!("NIGHT {night}"), format!("{}:{:02}", secs / 60, secs % 60), GOLD)
         }
         GamePhase::Wave => {
             let night = (siege.wave_index + 1).max(1);
             let alive = invaders.iter().count();
-            (format!("NIGHT {night}"), format!("{alive} orks remain"))
+            (format!("NIGHT {night}"), format!("{alive} orks"), rgb(255, 158, 120))
         }
-        GamePhase::Victory => ("VICTORY".into(), String::new()),
-        GamePhase::Defeat => ("THE KEEP HAS FALLEN".into(), String::new()),
+        // End states put the whole message in the big slot; the small tag goes quiet.
+        GamePhase::Victory => (String::new(), "VICTORY".into(), rgb(120, 224, 120)),
+        GamePhase::Defeat => (String::new(), "THE KEEP HAS FALLEN".into(), rgb(214, 90, 90)),
     };
     if let Ok(mut t) = ptext.single_mut() {
-        **t = label_s;
+        **t = tag;
     }
-    if let Ok(mut t) = stext.single_mut() {
-        **t = sub_s;
-    }
-    if let Ok(mut t) = htext.single_mut() {
-        **t = format!("{} heir{} in reserve", lives.heirs, if lives.heirs == 1 { "" } else { "s" });
+    if let Ok((mut t, mut c)) = stext.single_mut() {
+        **t = value;
+        c.0 = value_col;
     }
 
     let Ok((mut n, mut col)) = phase_q.single_mut() else { return };

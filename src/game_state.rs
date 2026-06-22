@@ -20,7 +20,7 @@ use bevy::window::{PrimaryWindow, WindowMode};
 
 use crate::quality::GraphicsQuality;
 use crate::ui::anim::{anim, anim_btn, AnimKind};
-use crate::ui::fonts::{label, UiFonts};
+use crate::ui::fonts::{label, UiFonts, FONT_BODY, FONT_CAPTION, FONT_DISPLAY, FONT_LABEL};
 use crate::ui::notice::Notice;
 use crate::ui::settings::AudioSettings;
 use crate::ui::theme::*;
@@ -497,6 +497,10 @@ struct PauseAudioLabel;
 struct PauseGfxLabel;
 #[derive(Component)]
 struct PauseFsLabel;
+#[derive(Component)]
+struct PauseFpBtn;
+#[derive(Component)]
+struct PauseFpLabel;
 /// The "Play again" / "New Game" button on the game-over screen (a fresh run).
 #[derive(Component)]
 struct AgainButton;
@@ -886,6 +890,9 @@ fn audio_label(muted: bool) -> String {
 fn fs_label(fullscreen: bool) -> String {
     format!("Fullscreen: {}", if fullscreen { "On" } else { "Off" })
 }
+fn fp_label(first_person: bool) -> String {
+    format!("View: {}", if first_person { "First person" } else { "Third person" })
+}
 
 /// A full-width pause-menu button (primary-blue paint), with `text` and an optional extra bundle
 /// on its label (a `PauseXLabel` marker for the live-syncing settings rows; `()` otherwise).
@@ -912,7 +919,7 @@ fn pause_btn<M: Component, L: Bundle>(
         anim_btn(AnimKind::PopIn, delay, 0.28),
     ))
     .with_children(|b| {
-        b.spawn((label(font, text, 16.0, INK), label_extra));
+        b.spawn((label(font, text, FONT_LABEL, INK), label_extra));
     });
 }
 
@@ -923,11 +930,13 @@ fn spawn_pause_screen(
     siege: Res<crate::siege::Siege>,
     audio: Res<AudioSettings>,
     quality: Res<GraphicsQuality>,
+    first_person: Res<crate::player::FirstPerson>,
     windows: Query<&Window, With<PrimaryWindow>>,
 ) {
     let has_save = save.0;
     // Manual save is a day-only action (a mid-siege snapshot would resume in the wrong place).
     let can_save = matches!(siege.phase, crate::siege::GamePhase::Prep);
+    let fp_txt = fp_label(first_person.active);
     let audio_txt = audio_label(audio.muted);
     let gfx_txt = format!("Graphics: {}", quality.label());
     let fs_on = windows.single().map(|w| !matches!(w.mode, WindowMode::Windowed)).unwrap_or(false);
@@ -949,7 +958,7 @@ fn spawn_pause_screen(
         ))
         .with_children(|c| {
             c.spawn((
-                label(&fonts.display, "PAUSED", 34.0, GOLD),
+                label(&fonts.display, "PAUSED", FONT_DISPLAY, GOLD),
                 Node { margin: UiRect::bottom(Val::Px(4.0)), ..default() },
             ));
 
@@ -957,11 +966,12 @@ fn spawn_pause_screen(
 
             // ── Settings (toggle in place; labels live-sync via pause_settings_sync) ──
             c.spawn((
-                label(&fonts.semibold, "SETTINGS", 11.0, KICKER),
+                label(&fonts.semibold, "SETTINGS", FONT_CAPTION, KICKER),
                 Node { margin: UiRect::top(Val::Px(8.0)), ..default() },
             ));
-            pause_btn(c, &fonts.bold, &audio_txt, PauseAudioBtn, PauseAudioLabel, 0.06);
-            pause_btn(c, &fonts.bold, &gfx_txt, PauseGfxBtn, PauseGfxLabel, 0.08);
+            pause_btn(c, &fonts.bold, &fp_txt, PauseFpBtn, PauseFpLabel, 0.06);
+            pause_btn(c, &fonts.bold, &audio_txt, PauseAudioBtn, PauseAudioLabel, 0.07);
+            pause_btn(c, &fonts.bold, &gfx_txt, PauseGfxBtn, PauseGfxLabel, 0.085);
             pause_btn(c, &fonts.bold, &fs_txt, PauseFsBtn, PauseFsLabel, 0.10);
 
             // ── Run controls ──
@@ -1005,7 +1015,7 @@ fn spawn_pause_screen(
             pause_btn(c, &fonts.extrabold, "MAIN MENU", PauseMenuBtn, (), 0.16);
 
             c.spawn((
-                label(&fonts.regular, "Esc to resume", 13.0, GREY),
+                label(&fonts.regular, "Esc to resume", FONT_BODY, GREY),
                 Node { margin: UiRect::top(Val::Px(6.0)), ..default() },
             ));
         });
@@ -1026,6 +1036,7 @@ fn pause_click(
             Option<&PauseAudioBtn>,
             Option<&PauseGfxBtn>,
             Option<&PauseFsBtn>,
+            Option<&PauseFpBtn>,
             Option<&PauseSaveBtn>,
             Option<&PauseMenuBtn>,
         ),
@@ -1036,6 +1047,7 @@ fn pause_click(
     siege: Option<Res<crate::siege::Siege>>,
     mut audio: ResMut<AudioSettings>,
     mut quality: ResMut<GraphicsQuality>,
+    mut first_person: ResMut<crate::player::FirstPerson>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut notice: ResMut<Notice>,
     time: Res<Time>,
@@ -1050,7 +1062,7 @@ fn pause_click(
     }
     let now = time.elapsed_secs_f64();
     let cur_diff = current_difficulty(siege.as_deref());
-    for (interaction, resume, load, restart_b, audio_b, gfx_b, fs_b, save_b, menu_b) in &q {
+    for (interaction, resume, load, restart_b, audio_b, gfx_b, fs_b, fp_b, save_b, menu_b) in &q {
         if *interaction != Interaction::Pressed {
             continue;
         }
@@ -1085,6 +1097,10 @@ fn pause_click(
         if fs_b.is_some() {
             crate::ui::settings::toggle_fullscreen(&mut windows, &mut notice, now);
         }
+        if fp_b.is_some() {
+            first_person.active = !first_person.active;
+            notice.push(if first_person.active { "First person" } else { "Third person" }, now);
+        }
     }
 }
 
@@ -1094,10 +1110,12 @@ fn pause_click(
 fn pause_settings_sync(
     audio: Res<AudioSettings>,
     quality: Res<GraphicsQuality>,
+    first_person: Res<crate::player::FirstPerson>,
     windows: Query<&Window, With<PrimaryWindow>>,
-    mut audio_l: Query<&mut Text, (With<PauseAudioLabel>, Without<PauseGfxLabel>, Without<PauseFsLabel>)>,
-    mut gfx_l: Query<&mut Text, (With<PauseGfxLabel>, Without<PauseAudioLabel>, Without<PauseFsLabel>)>,
-    mut fs_l: Query<&mut Text, (With<PauseFsLabel>, Without<PauseAudioLabel>, Without<PauseGfxLabel>)>,
+    mut audio_l: Query<&mut Text, (With<PauseAudioLabel>, Without<PauseGfxLabel>, Without<PauseFsLabel>, Without<PauseFpLabel>)>,
+    mut gfx_l: Query<&mut Text, (With<PauseGfxLabel>, Without<PauseAudioLabel>, Without<PauseFsLabel>, Without<PauseFpLabel>)>,
+    mut fs_l: Query<&mut Text, (With<PauseFsLabel>, Without<PauseAudioLabel>, Without<PauseGfxLabel>, Without<PauseFpLabel>)>,
+    mut fp_l: Query<&mut Text, (With<PauseFpLabel>, Without<PauseAudioLabel>, Without<PauseGfxLabel>, Without<PauseFsLabel>)>,
 ) {
     if let Ok(mut t) = audio_l.single_mut() {
         **t = audio_label(audio.muted);
@@ -1108,6 +1126,9 @@ fn pause_settings_sync(
     if let Ok(mut t) = fs_l.single_mut() {
         let on = windows.single().map(|w| !matches!(w.mode, WindowMode::Windowed)).unwrap_or(false);
         **t = fs_label(on);
+    }
+    if let Ok(mut t) = fp_l.single_mut() {
+        **t = fp_label(first_person.active);
     }
 }
 

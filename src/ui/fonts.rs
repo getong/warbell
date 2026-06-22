@@ -29,6 +29,17 @@ impl UiFonts {
     }
 }
 
+/// **HUD type scale.** Prefer these named sizes over ad-hoc numbers so text stays consistent across
+/// the HUD (Inter for body/numerals via `regular`/`semibold`/`bold`; Cinzel `display` for the big
+/// medieval headers). Roughly: caption = pips / compass letters / fine print; body = counters and
+/// secondary text; label = buttons, menu rows, prompts; display = the large Cinzel titles (PAUSED,
+/// screen banners). New HUD text should reach for one of these; the remaining ad-hoc sizes across
+/// the older HUD files are a follow-up sweep.
+pub const FONT_CAPTION: f32 = 11.0;
+pub const FONT_BODY: f32 = 13.0;
+pub const FONT_LABEL: f32 = 16.0;
+pub const FONT_DISPLAY: f32 = 34.0;
+
 /// A text bundle in a chosen face/size/colour. `font` is one of the `UiFonts` handles, cloned.
 pub fn label(font: &Handle<Font>, s: impl Into<String>, size: f32, color: Color) -> impl Bundle {
     (
