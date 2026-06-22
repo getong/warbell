@@ -1123,57 +1123,92 @@ fn siege_controls(keys: Res<ButtonInput<KeyCode>>, mut siege: ResMut<Siege>) {
 struct ObjectiveIcons {
     sun: Handle<Image>,
     axe: Handle<Image>,
+    shield: Handle<Image>,
 }
 #[derive(Component)]
 struct ObjIcon;
 #[derive(Component)]
 struct SubText;
+/// The wave-only keep-HP line (shield icon + percent); its row shows only during an assault.
+#[derive(Component)]
+struct KeepRow;
+#[derive(Component)]
+struct KeepIcon;
+#[derive(Component)]
+struct KeepText;
 
 fn setup_siege_hud(mut commands: Commands, fonts: Res<UiFonts>, assets: Res<AssetServer>) {
     let icons = ObjectiveIcons {
         sun: assets.load("icons/gameicons/sym_sun.png"),
         axe: assets.load("icons/gameicons/axe.png"),
+        shield: assets.load("icons/gameicons/buff_resist.png"),
     };
-    let mut icon = ImageNode::new(icons.sun.clone());
-    icon.color = GOLD;
+    let mut obj_icon = ImageNode::new(icons.sun.clone());
+    obj_icon.color = GOLD;
+    let mut keep_icon = ImageNode::new(icons.shield.clone());
+    keep_icon.color = rgb(120, 200, 255);
     commands.insert_resource(icons);
 
-    // No panel, no border, no progress bars — just the icon + number, pinned top-right. A soft text
-    // shadow keeps the number legible over a bright sky without any background chrome.
+    // No panel, no border, no progress bars — just icon + number, pinned top-right, right-aligned.
+    // A soft text shadow keeps it legible over a bright sky without any background chrome. The
+    // keep-HP line below is a second row that only appears once a wave is live.
     commands
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
                 top: Val::Px(14.0),
                 right: Val::Px(16.0),
-                flex_direction: FlexDirection::Row,
-                align_items: AlignItems::Center,
-                column_gap: Val::Px(7.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::FlexEnd,
+                row_gap: Val::Px(2.0),
                 ..default()
             },
             anim(AnimKind::SlideDown, 0.0, 0.36),
         ))
-        .with_children(|row| {
-            row.spawn((Node { width: Val::Px(26.0), height: Val::Px(26.0), ..default() }, icon, ObjIcon));
-            row.spawn((
-                // Deliberately bigger than a HUD label (was FONT_LABEL=16) — this is the one number
-                // that matters at a glance and sat too small/faint in the corner over a bright sky.
-                label(&fonts.display, "", 26.0, GOLD),
-                // Strong, near-opaque drop shadow = a dark edge that keeps the bright text legible
-                // over a sky with no background panel behind it.
-                TextShadow { offset: Vec2::new(0.0, 2.0), color: rgba(0, 0, 0, 0.95) },
-                SubText,
-            ));
+        .with_children(|col| {
+            // Objective row: the one number that matters this phase.
+            col.spawn(Node { flex_direction: FlexDirection::Row, align_items: AlignItems::Center, column_gap: Val::Px(7.0), ..default() })
+                .with_children(|row| {
+                    row.spawn((Node { width: Val::Px(26.0), height: Val::Px(26.0), ..default() }, obj_icon, ObjIcon));
+                    row.spawn((
+                        label(&fonts.display, "", 26.0, GOLD),
+                        TextShadow { offset: Vec2::new(0.0, 2.0), color: rgba(0, 0, 0, 0.95) },
+                        SubText,
+                    ));
+                });
+            // Keep-HP row: shield + percent, shown only during a wave (toggled in update_siege_hud).
+            col.spawn((
+                Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(5.0),
+                    display: Display::None,
+                    ..default()
+                },
+                KeepRow,
+            ))
+            .with_children(|row| {
+                row.spawn((Node { width: Val::Px(15.0), height: Val::Px(15.0), ..default() }, keep_icon, KeepIcon));
+                row.spawn((
+                    label(&fonts.semibold, "", 16.0, rgb(120, 200, 255)),
+                    TextShadow { offset: Vec2::new(0.0, 2.0), color: rgba(0, 0, 0, 0.95) },
+                    KeepText,
+                ));
+            });
         });
 }
 
 fn update_siege_hud(
     siege: Res<Siege>,
     icons: Res<ObjectiveIcons>,
+    keep: Res<KeepHp>,
     invaders: Query<&WaveInvader, Without<crate::dying::Dying>>,
     time: Res<Time>,
-    mut icon_q: Query<&mut ImageNode, With<ObjIcon>>,
-    mut stext: Query<(&mut Text, &mut TextColor), With<SubText>>,
+    mut obj_icon_q: Query<&mut ImageNode, (With<ObjIcon>, Without<KeepIcon>)>,
+    mut keep_icon_q: Query<&mut ImageNode, (With<KeepIcon>, Without<ObjIcon>)>,
+    mut obj_text_q: Query<(&mut Text, &mut TextColor), (With<SubText>, Without<KeepText>)>,
+    mut keep_text_q: Query<(&mut Text, &mut TextColor), (With<KeepText>, Without<SubText>)>,
+    mut keep_row_q: Query<&mut Node, With<KeepRow>>,
 ) {
     // One icon + one number per phase; colour carries the phase mood. Nights loop forever, so no
     // "/ N" ceiling — the clock counts the day down, the orks-left tally counts the horde down.
@@ -1198,15 +1233,34 @@ fn update_siege_hud(
         let lerp = |a: f32, b: f32| (a + (b - a) * p) as u8;
         col = rgb(lerp(255.0, 255.0), lerp(238.0, 64.0), lerp(196.0, 40.0));
     }
-    if let Ok(mut img) = icon_q.single_mut() {
+    if let Ok(mut img) = obj_icon_q.single_mut() {
         if img.image != icon {
             img.image = icon;
         }
         img.color = col;
     }
-    if let Ok((mut t, mut c)) = stext.single_mut() {
+    if let Ok((mut t, mut c)) = obj_text_q.single_mut() {
         **t = value;
         c.0 = col;
+    }
+
+    // Keep-HP line — only while a wave is live. Blue when healthy, reddening as the keep crumbles.
+    let in_wave = matches!(siege.phase, GamePhase::Wave);
+    if let Ok(mut n) = keep_row_q.single_mut() {
+        n.display = if in_wave { Display::Flex } else { Display::None };
+    }
+    if in_wave {
+        let frac = (keep.hp / keep.max).clamp(0.0, 1.0);
+        let pct = (frac * 100.0).round() as i32;
+        let lerp = |lo: f32, hi: f32| (lo + (hi - lo) * frac) as u8;
+        let kcol = rgb(lerp(255.0, 120.0), lerp(80.0, 200.0), lerp(64.0, 255.0));
+        if let Ok(mut img) = keep_icon_q.single_mut() {
+            img.color = kcol;
+        }
+        if let Ok((mut t, mut c)) = keep_text_q.single_mut() {
+            **t = format!("{pct}%");
+            c.0 = kcol;
+        }
     }
 }
 
