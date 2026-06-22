@@ -708,7 +708,7 @@ pub fn build(
             intensity: 42_000.0,
             range: 18.0,
             radius: 0.25,
-            shadows_enabled: false,
+            shadow_maps_enabled: false,
             ..default()
         },
         FireLight { phase: 2.4, base: 42_000.0 },
@@ -743,7 +743,7 @@ pub fn build(
             intensity: 95_000.0,
             range: 24.0,
             radius: 0.45,
-            shadows_enabled: false,
+            shadow_maps_enabled: false,
             ..default()
         },
         FireLight { phase: 0.7, base: 95_000.0 },
@@ -799,7 +799,7 @@ pub fn build(
             intensity: 18_000.0,
             range: 9.0,
             radius: 0.15,
-            shadows_enabled: false,
+            shadow_maps_enabled: false,
             ..default()
         },
         FireLight { phase: 4.1, base: 18_000.0 },
@@ -2528,7 +2528,7 @@ fn tower_fire(
                 intensity: 9_000.0,
                 range: 7.0,
                 radius: 0.1,
-                shadows_enabled: false,
+                shadow_maps_enabled: false,
                 ..default()
             },
             bevy::light::NotShadowCaster,

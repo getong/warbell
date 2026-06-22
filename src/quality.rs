@@ -37,7 +37,7 @@ use bevy::core_pipeline::prepass::{DepthPrepass, NormalPrepass};
 use bevy::light::{
     CascadeShadowConfig, DirectionalLightShadowMap, FogVolume, VolumetricFog, VolumetricLight,
 };
-use bevy::pbr::{ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel};
+use bevy::pbr::{ContactShadows, ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel};
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::render::renderer::RenderAdapterInfo;
@@ -454,11 +454,17 @@ fn apply_quality(
         // Depth prepass: needed ONLY by DoF, SSAO, or the outline. When all three are off (Low),
         // strip it — that's the ~3 ms `early prepass` in the F2 profiler. (SSAO `#[require]`s it,
         // so when SSAO is on it'd be re-added regardless; we manage it explicitly for the Low case.)
+        // DepthPrepass and ContactShadows share one gate: contact shadows (0.19) are a screen-space
+        // pass that READS the prepass depth, so they must ride the exact same on/off — present on
+        // High/Ultra, stripped together on Low (where depth is dropped entirely). Kept in one block
+        // so the two can never desync. (The sun carries `contact_shadows_enabled` unconditionally —
+        // it's only paid for on cameras that have the `ContactShadows` component.)
         let needs_depth = p.dof_on || p.ao.is_some() || p.outline;
         if needs_depth {
-            e.insert(DepthPrepass);
+            e.insert((DepthPrepass, ContactShadows::default()));
         } else {
             e.remove::<DepthPrepass>();
+            e.remove::<ContactShadows>();
         }
     }
 

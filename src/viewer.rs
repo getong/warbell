@@ -200,15 +200,15 @@ fn setup(
 
     // Three-point-ish lighting: a shadowed key, a soft fill from the opposite side, a back rim.
     commands.spawn((
-        DirectionalLight { illuminance: 10_000.0, shadows_enabled: true, ..default() },
+        DirectionalLight { illuminance: 10_000.0, shadow_maps_enabled: true, ..default() },
         Transform::from_xyz(4.0, 7.0, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
     commands.spawn((
-        DirectionalLight { illuminance: 3_500.0, shadows_enabled: false, ..default() },
+        DirectionalLight { illuminance: 3_500.0, shadow_maps_enabled: false, ..default() },
         Transform::from_xyz(-5.0, 4.0, 3.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
     commands.spawn((
-        DirectionalLight { illuminance: 2_500.0, shadows_enabled: false, ..default() },
+        DirectionalLight { illuminance: 2_500.0, shadow_maps_enabled: false, ..default() },
         Transform::from_xyz(0.0, 3.0, -6.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 
@@ -303,7 +303,7 @@ fn spawn_model(
                 scale: Vec3::ONE,
             };
             commands.entity(root).insert(crate::biped::BipedDrive::default());
-            crate::biped::spawn_biped(commands, root, mat, h, 1.06, 1.0, 0.1, 0.2, -0.06, Some(shield_xf));
+            crate::biped::spawn_biped(commands, root, mat, h, 1.06, 1.0, 0.15, 0.3, -0.06, Some(shield_xf));
         }
         // The studio quadruped animals on the shared quad skeleton (Phase 4). `FOREST_VIEW=
         // animal:wolf|dog|horse|deer|camel|bear|polar` picks the species (default wolf). Rest/idle

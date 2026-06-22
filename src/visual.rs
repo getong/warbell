@@ -229,7 +229,7 @@ fn apply_visual_settings(
 
     // Pollen glow.
     if let Some(pm) = pollen_mat {
-        if let Some(m) = mats.get_mut(&pm.0) {
+        if let Some(mut m) = mats.get_mut(&pm.0) {
             m.emissive = LinearRgba::from(POLLEN_TINT) * settings.pollen_glow;
         }
     }
@@ -249,7 +249,7 @@ fn apply_visual_settings(
         })
         .collect();
     for id in ids {
-        if let Some(m) = mats.get_mut(id) {
+        if let Some(mut m) = mats.get_mut(id) {
             m.perceptual_roughness = settings.prop_roughness;
             m.reflectance = settings.prop_reflectance;
         }

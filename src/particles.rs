@@ -132,7 +132,7 @@ fn update_weather(
 
     // Drive the shared material's alpha from the fade ramp (one material → one write).
     if let Some(handle) = weather.mat.clone() {
-        if let Some(m) = materials.get_mut(&handle) {
+        if let Some(mut m) = materials.get_mut(&handle) {
             m.base_color = m.base_color.with_alpha(weather.full_alpha * weather.fade);
         }
     }

@@ -102,7 +102,7 @@ fn spawn_floats(
             Text::new(r.text),
             // Rounded to a whole-pixel bucket (drive_floats animates within the same integer set):
             // a per-size glyph atlas is permanent in Bevy, so only integer sizes are ever minted.
-            TextFont { font: fonts.extrabold.clone(), font_size: (FLOAT_FONT * r.scale).round(), ..default() },
+            TextFont { font: fonts.extrabold.clone().into(), font_size: (FLOAT_FONT * r.scale).round().into(), ..default() },
             TextColor(r.color),
             // A crisp dark drop shadow so numbers pop against the bright scene (fades in drive_floats).
             TextShadow { offset: Vec2::new(0.0, 2.5), color: Color::srgba(0.0, 0.0, 0.0, FLOAT_SHADOW_A) },
@@ -143,7 +143,7 @@ fn drive_floats(
         // one atlas per integer px (≈30 total, reused for the app's life); the 1px pop steps are
         // imperceptible. (Position below uses the same rounded `font` so centring stays exact.)
         let font = (FLOAT_FONT * f.scale * pop).round();
-        tf.font_size = font;
+        tf.font_size = font.into(); // 0.19: TextFont::font_size is now FontSize (From<f32> = px)
         let fade = 1.0 - k * k;
         tc.0 = f.color.with_alpha(fade);
         shadow.color = Color::srgba(0.0, 0.0, 0.0, FLOAT_SHADOW_A * fade);
@@ -443,14 +443,14 @@ fn hurt_flash(
     for (e, hf, skin) in &q {
         let remain = hf.until - now;
         if remain <= 0.0 {
-            if let Some(m) = mats.get_mut(&skin.0) {
+            if let Some(mut m) = mats.get_mut(&skin.0) {
                 m.base.emissive = LinearRgba::BLACK;
             }
             commands.entity(e).remove::<HurtFlash>();
             continue;
         }
         let k = (remain / HURT_FLASH_DUR).clamp(0.0, 1.0);
-        if let Some(m) = mats.get_mut(&skin.0) {
+        if let Some(mut m) = mats.get_mut(&skin.0) {
             // A subtle whiten, not a strobe — kept low so rapid hits don't blow out the model
             // (and so the squash/recoil pose stays readable through the flash).
             let v = k * HURT_FLASH_PEAK;

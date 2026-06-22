@@ -5,15 +5,18 @@
 
 use bevy::anti_alias::smaa::{Smaa, SmaaPreset};
 use bevy::asset::RenderAssetUsages;
-use bevy::camera::Exposure;
+use bevy::camera::{Exposure, Hdr};
 use bevy::core_pipeline::prepass::{DepthPrepass, NormalPrepass};
 use bevy::core_pipeline::tonemapping::Tonemapping;
+// 0.19: `Atmosphere` + `ScatteringMedium` moved bevy::pbr → bevy::light, and the procedural sky is
+// now a standalone entity (not a camera component) opted into per-camera by `AtmosphereSettings`.
+use bevy::light::atmosphere::ScatteringMedium; // only re-exported from the submodule, not the root
 use bevy::light::{
-    CascadeShadowConfigBuilder, DirectionalLightShadowMap, FogVolume, ShadowFilteringMethod,
-    SunDisk, VolumetricFog,
+    Atmosphere, CascadeShadowConfigBuilder, DirectionalLightShadowMap, FogVolume,
+    ShadowFilteringMethod, SunDisk, VolumetricFog,
 };
 use bevy::pbr::{
-    Atmosphere, DistanceFog, FogFalloff, ScatteringMedium, ScreenSpaceAmbientOcclusion,
+    AtmosphereSettings, ContactShadows, DistanceFog, FogFalloff, ScreenSpaceAmbientOcclusion,
     ScreenSpaceAmbientOcclusionQualityLevel,
 };
 use bevy::post_process::bloom::Bloom;
@@ -21,7 +24,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{
     Extent3d, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension,
 };
-use bevy::render::view::{ColorGrading, Hdr};
+use bevy::render::view::ColorGrading;
 
 use crate::biome::{AtmoSample, BiomeAmbiences};
 use crate::game_state::{AppState, Modal};
@@ -366,7 +369,7 @@ fn advance_sky(
         // night key light. On Ultra (4096 atlas, cascades out to 190) that doubling is the
         // fill-rate spike that tanks weaker GPUs the instant night falls (the war-bell snap to
         // nightfall). Hand the night shadows to the moon alone. Mirrors the moon's `night > 0.05`.
-        light.shadows_enabled = day > 0.05;
+        light.shadow_maps_enabled = day > 0.05;
         // Warm at the horizon → warm gold overhead (never neutral-white: the warm key light
         // is what gives the daytime scene its colour depth), then cooled toward moonlit blue
         // as the sun drops below the horizon (so the "moon" doesn't cast an orange glow).
@@ -397,7 +400,7 @@ fn advance_sky(
     for (mut light, mut tf) in &mut moon_q {
         *tf = Transform::from_translation(moon_dir * 120.0).looking_at(Vec3::ZERO, Vec3::Y);
         light.illuminance = 3800.0 * night;
-        light.shadows_enabled = night > 0.05;
+        light.shadow_maps_enabled = night > 0.05;
     }
 
     // Ambient: night floor trimmed to ≈240 (was 270) — the moonlight key above is now the
@@ -537,8 +540,15 @@ fn setup_camera(
             quality_level: ScreenSpaceAmbientOcclusionQualityLevel::Medium,
             ..default()
         },
-        DepthPrepass,
-        NormalPrepass,
+        // Prepass + contact shadows grouped into a nested bundle so the camera spawn tuple stays
+        // within Bevy's 15-element tuple-`Bundle` arity limit (ContactShadows would be the 16th).
+        (
+            DepthPrepass,
+            NormalPrepass,
+            // 0.19 contact shadows (screen-space; requires the depth prepass above). High/Ultra
+            // carry it; `quality::apply_quality` strips it on Low alongside the depth prepass.
+            ContactShadows::default(),
+        ),
         Bloom { intensity: 0.30, ..Bloom::NATURAL },
         // Custom CoC **bokeh** depth-of-field (Bevy's built-in no-ops here): a focal plane
         // auto-focused on the player by `drive_dof_focus`, fore/background melting into
@@ -552,11 +562,12 @@ fn setup_camera(
         },
         GeneratedEnvironmentMapLight { environment_map: env, intensity: IBL_INTENSITY, ..default() },
     ))
-    // Procedural sky (0.18 headline feature) — real blue sky + sun disk + horizon
-    // glow, using the DirectionalLight as the sun. Plus a saturation grade to richen
-    // the AgX look back toward the TS palette.
+    // Procedural sky — real blue sky + sun disk + horizon glow, using the DirectionalLight as the
+    // sun. `AtmosphereSettings` is the per-camera opt-in (0.19): the sky itself is the standalone
+    // `Atmosphere` entity spawned below. Plus a saturation grade to richen the AgX look toward the
+    // TS palette.
     .insert((
-        Atmosphere::earthlike(medium),
+        AtmosphereSettings::default(),
         grading,
         // Volumetric sun shafts (god rays) — the modern, integrated replacement for the TS
         // screen-space `GodRays` pass. Lit by the sun's `VolumetricLight` inside the `FogVolume`
@@ -572,6 +583,12 @@ fn setup_camera(
         // world units; scaled by the global `SpatialScale` set in `main.rs`.
         SpatialListener::new(4.0),
     ));
+
+    // 0.19: the procedural sky is its own entity (was a camera component). Its `on_add` hook parks
+    // it at -Y·inner_radius so the planet sits under the world; the camera opts in via
+    // `AtmosphereSettings` above. The sun (DirectionalLight) drives the gradient + sun disk, so
+    // moving it through the day still slides the sky — no per-frame Atmosphere mutation needed.
+    commands.spawn(Atmosphere::earth(medium));
 }
 
 /// Parse `FOREST_CAM="x,y,z,tx,ty,tz"` into a camera transform, if set.
@@ -632,7 +649,12 @@ fn setup_sun(mut commands: Commands) {
         DirectionalLight {
             color: Color::srgb(1.0, 0.93, 0.78), // warm #ffe6b3-ish
             illuminance: 10_500.0,
-            shadows_enabled: true,
+            shadow_maps_enabled: true,
+            // 0.19 contact shadows: screen-space contact darkening where props/trees/orks meet the
+            // ground, filling in the small-scale detail the cascade shadow maps miss. Only renders
+            // for cameras carrying `ContactShadows` (added on High/Ultra in `quality.rs`), so this
+            // flag is free on Low. Needs the depth prepass (present whenever ContactShadows is).
+            contact_shadows_enabled: true,
             ..default()
         },
         // NB: no `VolumetricLight` here. The sun's half of the god-rays effect (the camera's
@@ -669,7 +691,7 @@ fn setup_sun(mut commands: Commands) {
         DirectionalLight {
             color: Color::srgb(0.55, 0.66, 1.0), // cool moonlit blue (matches the night sun tint)
             illuminance: 0.0,
-            shadows_enabled: false,
+            shadow_maps_enabled: false,
             ..default()
         },
         CascadeShadowConfigBuilder {

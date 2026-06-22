@@ -21,7 +21,7 @@ use crate::player::{Health, HeroState, PendingHeroDamage};
 use crate::projectile::{BoltSpawn, BoltSpawns};
 use crate::steer;
 use crate::ui::anim::{anim, AnimKind};
-use crate::ui::fonts::{label, UiFonts, FONT_LABEL};
+use crate::ui::fonts::{label, UiFonts};
 use crate::ui::theme::*;
 use crate::worldmap::ground_at_world;
 
@@ -1152,9 +1152,11 @@ fn setup_siege_hud(mut commands: Commands, fonts: Res<UiFonts>, assets: Res<Asse
             anim(AnimKind::SlideDown, 0.0, 0.36),
         ))
         .with_children(|row| {
-            row.spawn((Node { width: Val::Px(18.0), height: Val::Px(18.0), ..default() }, icon, ObjIcon));
+            row.spawn((Node { width: Val::Px(26.0), height: Val::Px(26.0), ..default() }, icon, ObjIcon));
             row.spawn((
-                label(&fonts.display, "", FONT_LABEL, GOLD),
+                // Deliberately bigger than a HUD label (was FONT_LABEL=16) — this is the one number
+                // that matters at a glance and sat too small/faint in the corner over a bright sky.
+                label(&fonts.display, "", 26.0, GOLD),
                 // Strong, near-opaque drop shadow = a dark edge that keeps the bright text legible
                 // over a sky with no background panel behind it.
                 TextShadow { offset: Vec2::new(0.0, 2.0), color: rgba(0, 0, 0, 0.95) },

@@ -237,7 +237,7 @@ fn fade_blood(
         let f = ((age - BLOOD_HOLD) / BLOOD_FADE).min(1.0); // 0 → 1 across the fade window
         if f >= 1.0 {
             commands.entity(e).try_despawn();
-        } else if let Some(m) = materials.get_mut(&b.mat) {
+        } else if let Some(mut m) = materials.get_mut(&b.mat) {
             m.base_color = m.base_color.with_alpha(1.0 - f); // multiplies the mesh's vertex alpha
         }
     }

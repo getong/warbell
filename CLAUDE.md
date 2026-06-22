@@ -4,7 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-**"Warbell"** (renamed from "D: Tileworld", June 2026) — a **Bevy 0.18** game. This started as a static forest-scene viewer and
+**"Warbell"** (renamed from "D: Tileworld", June 2026) — a **Bevy 0.19** game (upgraded from 0.18 in
+June 2026). This started as a static forest-scene viewer and
 has grown into a full playable game: a knight defends a central castle against night-wave
 ork sieges, with combat, economy, an upgrade tree, inventory, villagers, succession, and five
 biomes on one enlarged island. (It began life as a port of an old TypeScript/three.js game;
@@ -73,7 +74,7 @@ the `apt-get` line in a **SessionStart hook** (see the `session-start-hook` skil
 ### Screenshot harness (how to verify visuals — the Bevy window can't be captured externally)
 
 ```powershell
-$env:FOREST_SHOT="shot.png"; cargo run      # renders ~90 frames so lighting/IBL settle, saves PNG, exits
+$env:FOREST_SHOT="shot.png"; cargo run      # warms up (≥120 frames AND ≥6s so cold pipelines/IBL settle), saves PNG, exits
 ```
 
 For **GIFs / video** (itch.io promo, motion bugs) use the clip mode instead — it saves a numbered
@@ -254,9 +255,10 @@ reads it to drop a beaten warden). `Lives.heirs` mirrors `town.population`, so i
   thousands of instances. Build parts as primitives, `tinted()` each (add COLOR) before
   `Mesh::merge`, and `duplicate_vertices()` + `compute_flat_normals()` for the crisp low-poly facet
   look (duplicate FIRST — `compute_flat_normals` panics on an indexed mesh). The verified Bevy
-  0.18.1 API forms are in `docs/specs/bevy-0-18-1-polished-static-3d-scene-verified-apis.md`; the
-  per-slice spec docs sometimes **guess wrong** about the Bevy API — trust the verified doc + real
-  Bevy source under `C:\Users\skibi\.cargo\registry\src\index.crates.io-*\bevy_*-0.18.1\src`.
+  0.18.1 API forms are in `docs/specs/bevy-0-18-1-polished-static-3d-scene-verified-apis.md` (the
+  mesh-building API is unchanged in 0.19, so it still applies); the per-slice spec docs sometimes
+  **guess wrong** about the Bevy API — trust the verified doc + the real Bevy source, now under
+  `C:\Users\skibi\.cargo\registry\src\index.crates.io-*\bevy_*-0.19.0\src`.
 - **Determinism**: scatter/placement uses `mulberry32` (core `rng.rs`) seeded per-tile, so the
   world is reproducible. "Feels the same" parity, not byte-exact RNG/map.
 - **Forest's divergences are canonical, not bugs**: `siege.rs`'s wave director is richer than
@@ -272,24 +274,3 @@ reads it to drop a beaten warden). `Lives.heirs` mirrors `town.population`, so i
 - `docs/superpowers/specs/*-design.md` — per-feature design docs (audio, hero, combat feedback,
   shaman spells, biome variety).
 
-## Controls (gameplay)
-
-` (backquote) toggle free-roam fly-cam ↔ follow-cam · **V** / the HUD **FP** button toggle
-first-person view (a sub-mode of Play — shows an arms+sword+shield viewmodel, hides head/torso/legs;
-`player/camera.rs::FirstPerson`) · WASD move · LMB attack · RMB block ·
-F1 debug egui tuning panel · F2 perf/state stats overlay · **E** contextual interact — walk up to a thing and a screen prompt names it:
-near the **keep** → War Table (upgrades), near the **merchant stall** → shop, near the **war bell**
-(prep only) → ring in the night, near a **treasure chest** → open it, near the **gate of Gnashfang
-Hold** → break it open (storms the Hold — wakes the garrison + Warlord; the **win condition**, see
-`warlord.rs` + `ork_fortress::breach_gate`) (the unified resolver lives in
-`interaction.rs`; nearest in-range wins, proximity-only/no-facing) · **Tab** (or **I**) Satchel ·
-**Q** eat food · **Y/T** bindable quick-slots (auto-fill resist/power; in the satchel,
-hover an item + Y/T pins it) · **Z/X/C** combat arts (Slam/Dash/Sweep, once unlocked) ·
-**B** / the HUD **Build** button toggle **build mode** — every buildable plot glows; B cycles the
-building (House → Farm → Lumber → Mine → off), walk onto a glowing spot and **E** raises it, Esc
-exits (lives in `town.rs::build_mode_keys` / `build_place`; keyboard-first because combat locks the
-mouse) · **F** forage / rescue · **R** recruit · **K** Call the Muster — rally every standing town
-guard to follow + fight beside you (press again to stand them down; `villagers.rs::muster_keys` +
-`rally_follow`) · **1–5** swap
-biome patch · **P/Esc** pause. (`N` is a debug ring-the-bell fallback in `siege::siege_controls`.)
-Fly-cam: Space/Ctrl up·down, Shift sprint, hold Right-Mouse to look.

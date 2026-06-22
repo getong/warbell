@@ -552,7 +552,7 @@ fn spawn_branch(
                     children![
                         (
                             label(&fonts.semibold, l.node.name, 9.5, INK),
-                            bevy::text::TextLayout::new_with_justify(bevy::text::Justify::Center),
+                            bevy::text::TextLayout::justify(bevy::text::Justify::Center),
                         ),
                         (
                             label(&fonts.bold, cost_text(l.node), 10.0, rgb(154, 110, 22)),

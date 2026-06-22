@@ -44,7 +44,9 @@ pub const FONT_DISPLAY: f32 = 34.0;
 pub fn label(font: &Handle<Font>, s: impl Into<String>, size: f32, color: Color) -> impl Bundle {
     (
         Text::new(s),
-        TextFont { font: font.clone(), font_size: size, ..default() },
+        // 0.19: `font` is a `FontSource` (From<Handle<Font>>) and `font_size` a `FontSize`
+        // (From<f32>) — `.into()` keeps the same handle / pixel size.
+        TextFont { font: font.clone().into(), font_size: size.into(), ..default() },
         TextColor(color),
     )
 }

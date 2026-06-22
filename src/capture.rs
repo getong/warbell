@@ -25,7 +25,10 @@ pub struct CapturePlugin;
 struct ShotPath(String);
 
 #[derive(Resource, Default)]
-struct ShotClock(u32);
+struct ShotClock {
+    frame: u32,
+    shot: bool,
+}
 
 impl Plugin for CapturePlugin {
     fn build(&self, app: &mut App) {
@@ -56,15 +59,36 @@ fn hide_hud(mut nodes: Query<&mut Visibility, With<Node>>) {
 
 fn drive_shot(
     mut clock: ResMut<ShotClock>,
+    // `Time<Real>` (true wall-clock), NOT the default `Res<Time>` (virtual): a hit-stop slowmo or a
+    // debug pause scales/freezes virtual time, which must not stall the warm-up gate below.
+    time: Res<Time<Real>>,
     path: Res<ShotPath>,
     mut commands: Commands,
     mut exit: MessageWriter<AppExit>,
 ) {
-    clock.0 += 1;
-    if clock.0 == 90 {
+    clock.frame += 1;
+    // Take the shot once the scene has actually WARMED: ≥120 rendered frames AND ≥6 s wall-clock.
+    // The wall-clock floor is load-bearing on a COLD run — the first frame stalls several seconds
+    // compiling every render pipeline (and the IBL / atmosphere LUTs take a few frames to settle),
+    // and a bare frame count elapses while the GPU is still warming, so the grab races an unfinished
+    // scene and captures BLACK. (On a warm run 6 s ≈ a few hundred frames; the extra latency is
+    // fine for a verification shot.) Spawn the screenshot exactly once. We exit on file-existence
+    // below, so FIRST ensure the parent dir exists AND delete any stale PNG already at this path —
+    // otherwise a leftover from a prior run trips the exit guard on this very frame (before the
+    // async readback lands) and the harness exits leaving the OLD image in place.
+    if !clock.shot && clock.frame >= 120 && time.elapsed_secs() >= 6.0 {
+        if let Some(parent) = std::path::Path::new(&path.0).parent().filter(|p| !p.as_os_str().is_empty()) {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::remove_file(&path.0);
         commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path.0.clone()));
+        clock.shot = true;
     }
-    if clock.0 > 120 {
+    // The shot is an async GPU readback: `save_to_disk` (and the PNG write) only fire once the
+    // `ScreenshotCaptured` observer lands, a few frames AFTER the request. So once requested, keep
+    // rendering until the (freshly-written) file exists on disk, or a hard safety cap, THEN exit —
+    // a fixed-frame exit would race the readback and write no PNG.
+    if clock.shot && (std::path::Path::new(&path.0).exists() || clock.frame > 2000) {
         exit.write(AppExit::Success);
     }
 }

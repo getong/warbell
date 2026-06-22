@@ -9,8 +9,8 @@ edition = "2024"
 [dependencies]
 # `wav` enables rodio's WAV decoder for the procedurally-baked SFX stings (`audio/synth.rs`);
 # without it the in-memory WAV `AudioSource`s panic on play with `UnrecognizedFormat`.
-bevy = { version = "0.18.1", features = ["wav"] }
-bevy_egui = "0.39.1" # live debug-tuning panel (egui), targets bevy 0.18
+bevy = { version = "0.19", features = ["wav"] }
+bevy_egui = "0.40" # live debug-tuning panel (egui), targets bevy 0.19
 # Pure, deterministic game logic vendored from the ditched port (zero deps, edition 2024).
 # Source of the parity-tested stores: pathfinding, waves, upgrades, inventory, animals, etc.
 # `serde` feature on so the save system can persist Player/Bag/Town/ResourceState (savegame.rs).
@@ -18,9 +18,10 @@ tileworld_core = { path = "crates/core", features = ["serde"] }
 # Save/continue: JSON snapshot of a run, written at each dawn (`src/savegame.rs`).
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# Same wgpu version bevy 0.18.1 depends on — used in quality.rs to inspect
-# RenderAdapterInfo::device_type for the hardware-aware startup preset.
-wgpu = { version = "27.0.1", default-features = false }
+# Same wgpu major bevy 0.19 depends on (29.x) — used in quality.rs to inspect
+# RenderAdapterInfo::device_type for the hardware-aware startup preset. Kept at the bare major so
+# cargo unifies it with bevy's own wgpu (same compiled crate → DeviceType types match).
+wgpu = { version = "29", default-features = false }
 
 # Windows-only: embed the app icon + version metadata (ProductName/Company/version) into the
 # .exe resource section via build.rs. This is what Explorer, the taskbar, the winit window, and

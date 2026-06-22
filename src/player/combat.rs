@@ -307,7 +307,7 @@ pub fn update_fx_fades(
             }
             _ => {}
         }
-        if let Some(m) = mats.get_mut(&f.mat) {
+        if let Some(mut m) = mats.get_mut(&f.mat) {
             m.base_color = m.base_color.with_alpha(f.a0 * (1.0 - k));
         }
     }

@@ -185,8 +185,9 @@ fn flutter_flags(
 ) {
     let t = time.elapsed_secs_wrapped();
     for (flag, mesh3d) in &q {
-        if let Some(mesh) = meshes.get_mut(&mesh3d.0) {
-            write_wave(flag, t, mesh);
+        if let Some(mut mesh) = meshes.get_mut(&mesh3d.0) {
+            // 0.19: Assets::get_mut returns AssetMut<Mesh>; deref to &mut Mesh for write_wave.
+            write_wave(flag, t, &mut mesh);
         }
     }
 }

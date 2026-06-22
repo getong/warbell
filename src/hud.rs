@@ -251,30 +251,30 @@ fn setup_stat_bar(mut done: Local<bool>, atlas: Res<IconAtlas>, fonts: Res<UiFon
             let g = atlas.get_tintable("stat:gold");
             row.spawn(cell(5.0)).with_children(|c| {
                 if let Some(e) = g { c.spawn(widgets::icon_tinted(e, 17.0, GOLD)); }
-                c.spawn((label(&fonts.extrabold, "30", 14.0, GOLD), GoldText));
+                c.spawn((label(&fonts.bold, "30", 14.0, GOLD), GoldText));
             });
             let s = atlas.get_tintable("stat:stone");
             row.spawn(cell(5.0)).with_children(|c| {
                 if let Some(e) = s { c.spawn(widgets::icon_tinted(e, 17.0, STONE)); }
-                c.spawn((label(&fonts.extrabold, "0", 14.0, STONE), StoneText));
+                c.spawn((label(&fonts.bold, "0", 14.0, STONE), StoneText));
             });
             let w = atlas.get_tintable("stat:wood");
             row.spawn(cell(5.0)).with_children(|c| {
                 if let Some(e) = w { c.spawn(widgets::icon_tinted(e, 17.0, rgb(190, 150, 100))); }
-                c.spawn((label(&fonts.extrabold, "0", 14.0, rgb(190, 150, 100)), WoodText));
+                c.spawn((label(&fonts.bold, "0", 14.0, rgb(190, 150, 100)), WoodText));
             });
             let p = atlas.get_tintable("stat:pop");
             row.spawn(cell(5.0)).with_children(|c| {
                 if let Some(e) = p { c.spawn((widgets::icon_tinted(e, 17.0, rgb(235, 224, 180)), PopIcon)); }
-                c.spawn((label(&fonts.extrabold, "4/4", 14.0, rgb(235, 224, 180)), PopText));
+                c.spawn((label(&fonts.bold, "4/4", 14.0, rgb(235, 224, 180)), PopText));
                 // Progress of the settle/starve meter toward the next ±1 peasant: green +% when a
                 // settler is incoming, red -% when one is starving away (colour set in update).
-                c.spawn((label(&fonts.extrabold, "", 12.0, rgb(150, 156, 164)), PopGrowthText));
+                c.spawn((label(&fonts.bold, "", 12.0, rgb(150, 156, 164)), PopGrowthText));
             });
             let f = atlas.get_tintable("stat:food");
             row.spawn(cell(5.0)).with_children(|c| {
                 if let Some(e) = f { c.spawn(widgets::icon_tinted(e, 17.0, food_grey)); }
-                c.spawn((label(&fonts.extrabold, "0", 14.0, food_grey), FoodText));
+                c.spawn((label(&fonts.bold, "0", 14.0, food_grey), FoodText));
             });
         });
 }
@@ -361,7 +361,7 @@ fn setup_inv_hud(mut commands: Commands, fonts: Res<UiFonts>) {
                             },
                             widgets::keycap_paint(),
                             children![label(
-                                &fonts.extrabold,
+                                &fonts.bold,
                                 kind.key().to_string(),
                                 9.5,
                                 rgba(255, 224, 170, 0.92)
@@ -376,7 +376,7 @@ fn setup_inv_hud(mut commands: Commands, fonts: Res<UiFonts>) {
                         // Count (bottom-right).
                         slot.spawn((
                             Node { position_type: PositionType::Absolute, right: Val::Px(3.0), bottom: Val::Px(1.0), ..default() },
-                            label(&fonts.extrabold, "", 13.0, Color::WHITE),
+                            label(&fonts.bold, "", 13.0, Color::WHITE),
                             TextShadow { offset: Vec2::ZERO, color: rgba(0, 0, 0, 0.9) },
                             QuickSlotCount(kind),
                         ));
@@ -519,7 +519,7 @@ fn update_inv_hud(
                     if let Some(e) = atlas.get_tintable(&tt.item_id) {
                         row.spawn(widgets::icon_tinted(e, 26.0, crate::inventory::item_tint(&tt.item_id)));
                     }
-                    row.spawn(label(&fonts.extrabold, format!("+{} {}", tt.count, name), 14.0, rgb(242, 244, 250)));
+                    row.spawn(label(&fonts.bold, format!("+{} {}", tt.count, name), 14.0, rgb(242, 244, 250)));
                 });
             }
         });
