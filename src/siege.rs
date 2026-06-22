@@ -1155,7 +1155,9 @@ fn setup_siege_hud(mut commands: Commands, fonts: Res<UiFonts>, assets: Res<Asse
             row.spawn((Node { width: Val::Px(18.0), height: Val::Px(18.0), ..default() }, icon, ObjIcon));
             row.spawn((
                 label(&fonts.display, "", FONT_LABEL, GOLD),
-                TextShadow { offset: Vec2::new(0.0, 2.0), color: rgba(0, 0, 0, 0.75) },
+                // Strong, near-opaque drop shadow = a dark edge that keeps the bright text legible
+                // over a sky with no background panel behind it.
+                TextShadow { offset: Vec2::new(0.0, 2.0), color: rgba(0, 0, 0, 0.95) },
                 SubText,
             ));
         });
@@ -1165,23 +1167,33 @@ fn update_siege_hud(
     siege: Res<Siege>,
     icons: Res<ObjectiveIcons>,
     invaders: Query<&WaveInvader, Without<crate::dying::Dying>>,
+    time: Res<Time>,
     mut icon_q: Query<&mut ImageNode, With<ObjIcon>>,
     mut stext: Query<(&mut Text, &mut TextColor), With<SubText>>,
 ) {
     // One icon + one number per phase; colour carries the phase mood. Nights loop forever, so no
-    // "/ N" ceiling — the clock counts the day down, the tally counts the horde down.
-    let (icon, value, col) = match siege.phase {
+    // "/ N" ceiling — the clock counts the day down, the orks-left tally counts the horde down.
+    // Base colours are bright (the strong shadow gives the contrast).
+    let (icon, value, mut col, imminent) = match siege.phase {
         GamePhase::Prep => {
-            let secs = siege.prep_seconds_left.max(0.0) as i64;
-            (icons.sun.clone(), format!("{}:{:02}", secs / 60, secs % 60), GOLD)
+            let left = siege.prep_seconds_left.max(0.0);
+            let secs = left as i64;
+            (icons.sun.clone(), format!("{}:{:02}", secs / 60, secs % 60), rgb(255, 238, 196), left <= 10.0)
         }
         GamePhase::Wave => {
             let alive = invaders.iter().count();
-            (icons.axe.clone(), format!("{alive}"), rgb(255, 158, 120))
+            (icons.axe.clone(), format!("{alive}"), rgb(255, 176, 138), false)
         }
-        GamePhase::Victory => (icons.sun.clone(), "VICTORY".into(), rgb(120, 224, 120)),
-        GamePhase::Defeat => (icons.axe.clone(), "FALLEN".into(), rgb(214, 90, 90)),
+        GamePhase::Victory => (icons.sun.clone(), "VICTORY".into(), rgb(150, 240, 150), false),
+        GamePhase::Defeat => (icons.axe.clone(), "FALLEN".into(), rgb(255, 96, 80), false),
     };
+    // Night imminent (last 10s of the day): pulse the readout toward alarm-red, ~2 Hz, so the player
+    // looks up before the assault lands.
+    if imminent {
+        let p = (time.elapsed_secs() * std::f32::consts::TAU * 2.0).sin() * 0.5 + 0.5;
+        let lerp = |a: f32, b: f32| (a + (b - a) * p) as u8;
+        col = rgb(lerp(255.0, 255.0), lerp(238.0, 64.0), lerp(196.0, 40.0));
+    }
     if let Ok(mut img) = icon_q.single_mut() {
         if img.image != icon {
             img.image = icon;
