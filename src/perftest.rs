@@ -216,6 +216,34 @@ fn perf_tick(world: &mut World) {
     for (n, sig) in rows.iter().take(12) {
         info!("   arch {n:>6}  {}", sig.chars().take(180).collect::<String>());
     }
+
+    // ── GPU pass breakdown (where the frame time actually goes) ─────────────────────────
+    // Reads RenderDiagnosticsPlugin's per-pass `render/<pass>/elapsed_gpu` (needs TIMESTAMP_QUERY;
+    // falls back to nothing on backends without it). If Σ passes ≈ frame_ms → GPU-bound (cut/cheapen
+    // passes); if Σ ≪ frame_ms → CPU-bound (systems/extraction/entity count).
+    let mut passes: Vec<(String, f64)> = {
+        let d = world.resource::<DiagnosticsStore>();
+        d.iter()
+            .filter_map(|diag| {
+                let p = diag.path().as_str();
+                let name = p.strip_prefix("render/")?.strip_suffix("/elapsed_gpu")?;
+                if diag.measurement().is_none_or(|m| m.time.elapsed().as_millis() > 500) {
+                    return None; // skip stale passes (a node that only ran during warmup)
+                }
+                let ms = diag.smoothed().filter(|m| *m > 0.0)?;
+                Some((name.trim_end_matches('/').replace('/', "·"), ms))
+            })
+            .collect()
+    };
+    passes.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    let gpu_total: f64 = passes.iter().map(|p| p.1).sum();
+    let top = passes
+        .iter()
+        .take(12)
+        .map(|(n, ms)| format!("{n}={ms:.2}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    info!("  GPU Σ={gpu_total:.2}ms  {top}");
 }
 
 /// `tileworld_bevy_forest::combat_fx::FloatText` -> `FloatText` (last path segment, sans generics).

@@ -97,6 +97,13 @@ impl Default for OrbitCam {
 
 /// Camera-glide ease rate (1/s) for the follow anchor — subtle (flows behind him, not laggy).
 const GLIDE_RATE: f32 = 13.0;
+/// Separate, much slower ease rate (1/s) for the anchor's **vertical** component. Terrain is
+/// terraced (`worldmap::GROUND_STEP` = 0.5), so `hero.y` snaps a half-unit at every tile edge the
+/// hero walks up/down. Easing Y at the full `GLIDE_RATE` tracks those snaps near-1:1 and the camera
+/// lurches behind him; a slow vertical glide averages the steps into a smooth float. XZ stays at
+/// `GLIDE_RATE` so the horizontal follow is still snappy. Only used while grounded — a real jump/fall
+/// keeps the fast rate so the camera doesn't lag a genuine vertical move (see `player_camera`).
+const VERT_GLIDE_RATE: f32 = 4.0;
 /// Sprint "speed feel": how far the camera dollies back (world units) + how much the FOV widens
 /// (degrees) at full run, eased by `hero.run_amt`.
 const SPRINT_DOLLY: f32 = 0.38;
@@ -268,8 +275,15 @@ pub fn player_camera(
     if orbit.anchor.distance(raw_anchor) > 5.0 {
         orbit.anchor = raw_anchor;
     } else {
-        let na = orbit.anchor + (raw_anchor - orbit.anchor) * (1.0 - (-time.delta_secs() * GLIDE_RATE).exp());
-        orbit.anchor = na;
+        // Decouple vertical from horizontal: XZ glides fast, Y glides slow so terraced ground steps
+        // (`hero.y` snaps 0.5u per tile edge) float by instead of jerking the camera. Airborne, Y
+        // tracks at the full rate so a real jump/fall isn't laggy. See `VERT_GLIDE_RATE`.
+        let kxz = 1.0 - (-time.delta_secs() * GLIDE_RATE).exp();
+        let y_rate = if hero.on_ground { VERT_GLIDE_RATE } else { GLIDE_RATE };
+        let ky = 1.0 - (-time.delta_secs() * y_rate).exp();
+        orbit.anchor.x += (raw_anchor.x - orbit.anchor.x) * kxz;
+        orbit.anchor.z += (raw_anchor.z - orbit.anchor.z) * kxz;
+        orbit.anchor.y += (raw_anchor.y - orbit.anchor.y) * ky;
     }
     let follow_target = orbit.anchor + orbit.lead;
     // Speed feel: sprinting dollies the camera back a touch (eased by `run_amt`).

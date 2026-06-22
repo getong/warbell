@@ -234,7 +234,7 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
         ])
     };
     let hip = || {
-        let mut p = vec![frustum(0.095, 0.08, 0.38, v(0.0, -0.2, 0.0), trouser, Surf::Cloth)]; // thigh
+        let mut p = vec![frustum(0.115, 0.097, 0.38, v(0.0, -0.2, 0.0), trouser, Surf::Cloth)]; // thigh
         if unemployed || farmer {
             p.push(bxr(0.075, 0.08, 0.025, v(0.0, -0.2, 0.08), rx(0.1), PATCH, Surf::Cloth)); // knee patch
         }
@@ -242,7 +242,7 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
     };
     let knee = || {
         group(vec![
-            frustum(0.075, 0.085, 0.40, v(0.0, -0.21, 0.0), trouser, Surf::Cloth), // shin (runs down to the ankle)
+            frustum(0.09, 0.095, 0.40, v(0.0, -0.21, 0.0), trouser, Surf::Cloth), // shin (runs down to the ankle)
             frustum(0.092, 0.1, 0.16, v(0.0, -0.35, 0.0), LEATHER, Surf::Cloth), // boot top wrapping the ankle
         ])
     };

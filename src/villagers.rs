@@ -2378,7 +2378,7 @@ fn build_biped_body(
     // Kids get an oversized head on a downscaled body (chibi proportions) so they read as children,
     // not just small adults.
     let head_scale = if kid { 1.55 } else { 1.06 };
-    crate::biped::spawn_biped(commands, root, mat, h, head_scale, 1.0, 0.1, 0.2, VIL_RIG_OFF, Some(pouch_xf()));
+    crate::biped::spawn_biped(commands, root, mat, h, head_scale, 1.0, 0.15, 0.3, VIL_RIG_OFF, Some(pouch_xf()));
 }
 
 /// Spawn a villager's body (torso + limbs + head) as children of `root`, each tagged
