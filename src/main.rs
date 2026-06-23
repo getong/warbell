@@ -142,6 +142,16 @@ fn main() {
     if std::env::var("FOREST_NOVSYNC").is_ok() {
         window.present_mode = bevy::window::PresentMode::AutoNoVsync;
     }
+    // FOREST_RES="WxH": force a render resolution. Used to make a fast discrete GPU artificially
+    // FRAGMENT-bound (like a weak iGPU) so per-fragment optimizations can be A/B-measured locally
+    // (the main_opaque pass cost then scales with on-screen pixels, as it does on the iGPU).
+    if let Ok(s) = std::env::var("FOREST_RES") {
+        let p: Vec<u32> = s.split('x').filter_map(|v| v.trim().parse().ok()).collect();
+        if p.len() == 2 {
+            window.resolution =
+                bevy::window::WindowResolution::new(p[0], p[1]).with_scale_factor_override(1.0);
+        }
+    }
     App::new()
         .add_plugins(
             DefaultPlugins

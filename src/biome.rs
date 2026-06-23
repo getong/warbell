@@ -640,6 +640,14 @@ fn scatter_cull_enabled() -> bool {
     *ON.get_or_init(|| std::env::var("FOREST_NOCULL").is_err())
 }
 
+/// `FOREST_NOGRASS=1`: don't spawn the ground-cover chunk meshes — a profiling toggle to isolate how
+/// much of the (fragment-bound) opaque pass is grass overdraw vs the terrain shader vs everything else.
+fn no_grass() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("FOREST_NOGRASS").is_ok())
+}
+
 fn spawn_chunks(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -659,7 +667,7 @@ fn spawn_chunks(
     };
     for (key, bucket) in chunks {
         let center = chunk_center(key);
-        if let Some(mesh) = merge_props(bucket.cover) {
+        if let Some(mesh) = merge_props(bucket.cover).filter(|_| !no_grass()) {
             commands.spawn((
                 Mesh3d(meshes.add(mesh)),
                 MeshMaterial3d(mat.clone()),

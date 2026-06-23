@@ -36,32 +36,41 @@ use bevy::anti_alias::smaa::{Smaa, SmaaPreset};
 use bevy::camera::MainPassResolutionOverride;
 use bevy::core_pipeline::prepass::{DepthPrepass, NormalPrepass};
 use bevy::light::{
-    CascadeShadowConfig, DirectionalLightShadowMap, FogVolume, VolumetricFog, VolumetricLight,
+    CascadeShadowConfig, DirectionalLight, DirectionalLightShadowMap, FogVolume, VolumetricFog,
+    VolumetricLight,
 };
 use bevy::pbr::{ContactShadows, ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel};
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::render::renderer::RenderAdapterInfo;
+use serde::{Deserialize, Serialize};
 
 use crate::scene::Sun;
 use crate::terrain::TerrainMaterial;
 
-/// The active preset. `High` matches the scene's authored defaults.
-#[derive(Resource, Clone, Copy, PartialEq, Eq, Debug, Default)]
+/// Which **preset chip** is lit in the Settings page. `High`/`Ultra`/`Low` are the canonical tunes;
+/// `Custom` means the player has hand-tweaked at least one individual control, so no named preset
+/// matches the live [`GraphicsSettings`]. `High` matches the scene's authored defaults.
+#[derive(Resource, Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 pub enum GraphicsQuality {
     High,
     #[default]
     Ultra,
     Low,
+    /// Player-tuned mix — the live [`GraphicsSettings`] don't equal any named preset.
+    Custom,
 }
 
 impl GraphicsQuality {
-    /// Cycle order for the Settings button / F10.
+    /// Cycle order for the quick toggle / F10. Only steps through the *named* presets — `Custom`
+    /// is reachable by tweaking an individual control, not by cycling — so from `Custom` it snaps
+    /// back to `High`.
     pub fn next(self) -> Self {
         match self {
             GraphicsQuality::High => GraphicsQuality::Ultra,
             GraphicsQuality::Ultra => GraphicsQuality::Low,
             GraphicsQuality::Low => GraphicsQuality::High,
+            GraphicsQuality::Custom => GraphicsQuality::High,
         }
     }
     pub fn label(self) -> &'static str {
@@ -69,6 +78,7 @@ impl GraphicsQuality {
             GraphicsQuality::High => "High",
             GraphicsQuality::Ultra => "Ultra",
             GraphicsQuality::Low => "Low",
+            GraphicsQuality::Custom => "Custom",
         }
     }
 
@@ -83,6 +93,162 @@ impl GraphicsQuality {
     }
 }
 
+// ── Individual graphics settings — the per-control model behind the Settings page ──────────────
+//
+// Each field is one player-facing control. The named presets are just canned fills of this struct
+// (`preset_settings`), and `apply_quality` translates these high-level choices into the actual
+// render components/uniforms (SSAO, SMAA, shadow atlas, volumetric pass, terrain `params2`, …).
+// Tweaking any one control flips the active preset to `Custom`; nothing here is render-API-typed,
+// so the whole struct serialises cleanly to the on-disk graphics config.
+
+/// Shadow fidelity: atlas size + cascade count + far reach, or fully off (biggest weak-GPU win).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub enum ShadowLevel {
+    Off,
+    Low,
+    Medium,
+    High,
+}
+
+/// Anti-aliasing (SMAA preset), or off.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub enum AaLevel {
+    Off,
+    Low,
+    High,
+    Ultra,
+}
+
+/// Screen-space ambient occlusion quality, or off (off strips the whole depth-walk pass).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub enum AoLevel {
+    Off,
+    Medium,
+    Ultra,
+}
+
+/// Procedural ground-shader detail lane (`terrain.wgsl` `params2`): relief bump + the fine
+/// noise/imprint octaves. `Low` is the cheap path (skips the expensive per-fragment layers).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub enum TerrainDetail {
+    Low,
+    High,
+    Ultra,
+}
+
+impl ShadowLevel {
+    /// `(atlas_size, cascade_count, cascade_far)` for the on path; `None` when shadows are off.
+    fn params(self) -> Option<(usize, usize, f32)> {
+        match self {
+            ShadowLevel::Off => None,
+            ShadowLevel::Low => Some((1024, 2, 100.0)),
+            ShadowLevel::Medium => Some((2048, 3, 150.0)),
+            ShadowLevel::High => Some((4096, 4, 190.0)),
+        }
+    }
+}
+
+impl AaLevel {
+    /// `Some(preset)` keeps the SMAA component; `None` removes it.
+    fn smaa(self) -> Option<SmaaPreset> {
+        match self {
+            AaLevel::Off => None,
+            AaLevel::Low => Some(SmaaPreset::Low),
+            AaLevel::High => Some(SmaaPreset::High),
+            AaLevel::Ultra => Some(SmaaPreset::Ultra),
+        }
+    }
+}
+
+impl AoLevel {
+    fn level(self) -> Option<ScreenSpaceAmbientOcclusionQualityLevel> {
+        use ScreenSpaceAmbientOcclusionQualityLevel as Q;
+        match self {
+            AoLevel::Off => None,
+            AoLevel::Medium => Some(Q::Medium),
+            AoLevel::Ultra => Some(Q::Ultra),
+        }
+    }
+}
+
+impl TerrainDetail {
+    /// `(ground_bump, ground_quality_lane, ground_variety)` pushed to `TerrainMaterial::params2`.
+    fn params(self) -> (f32, f32, f32) {
+        match self {
+            TerrainDetail::Low => (0.0, 0.0, 0.7),
+            TerrainDetail::High => (1.0, 1.0, 1.0),
+            TerrainDetail::Ultra => (1.3, 2.0, 1.0),
+        }
+    }
+}
+
+/// The full per-control graphics state. The Settings page binds each field to one widget; the
+/// presets are canned fills; [`apply_quality`] reads it and reconfigures the renderer.
+#[derive(Resource, Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct GraphicsSettings {
+    pub shadows: ShadowLevel,
+    pub antialias: AaLevel,
+    pub ssao: AoLevel,
+    pub terrain: TerrainDetail,
+    pub bloom: bool,
+    pub depth_of_field: bool,
+    pub outline: bool,
+    pub god_rays: bool,
+    /// Internal-3D render resolution as a fraction of the window (0.30–1.0). 1.0 = native. The
+    /// dominant fragment-cost lever on weak GPUs (cost ≈ scale²); UI/post stay full-res.
+    pub render_scale: f32,
+}
+
+impl Default for GraphicsSettings {
+    fn default() -> Self {
+        preset_settings(GraphicsQuality::Ultra)
+    }
+}
+
+/// Canonical per-preset fill of [`GraphicsSettings`]. `Custom` has no canonical fill (it *is* the
+/// live struct), so it falls back to `High` if ever asked.
+pub fn preset_settings(quality: GraphicsQuality) -> GraphicsSettings {
+    match quality {
+        GraphicsQuality::High => GraphicsSettings {
+            shadows: ShadowLevel::Medium, // 2048 / 3 cascades / 150 reach (authored look)
+            antialias: AaLevel::High,
+            ssao: AoLevel::Medium,
+            terrain: TerrainDetail::High,
+            bloom: true,
+            depth_of_field: true,
+            outline: true,
+            god_rays: false,
+            render_scale: 1.0,
+        },
+        GraphicsQuality::Ultra => GraphicsSettings {
+            shadows: ShadowLevel::High, // 4096 / 4 cascades / 190 reach
+            antialias: AaLevel::Ultra,
+            ssao: AoLevel::Ultra,
+            terrain: TerrainDetail::Ultra,
+            bloom: true,
+            depth_of_field: true,
+            outline: true,
+            god_rays: true,
+            render_scale: 1.0,
+        },
+        // Low: tuned for integrated GPUs — SSAO/bloom/DoF/outline off (each strips a whole pass),
+        // 2 small shadow cascades, the cheap terrain lane, and a 0.6 render-scale (the big
+        // fragment-cost cut on the fragment-bound iGPU this preset targets).
+        GraphicsQuality::Low => GraphicsSettings {
+            shadows: ShadowLevel::Low, // 1024 / 2 cascades / 100 reach
+            antialias: AaLevel::Low,
+            ssao: AoLevel::Off,
+            terrain: TerrainDetail::Low,
+            bloom: false,
+            depth_of_field: false,
+            outline: false,
+            god_rays: false,
+            render_scale: 0.6,
+        },
+        GraphicsQuality::Custom => preset_settings(GraphicsQuality::High),
+    }
+}
+
 /// The render values captured at startup, so non-default presets restore them exactly instead of
 /// hardcoding the scene's authored numbers here.
 #[derive(Resource, Default)]
@@ -93,8 +259,8 @@ struct RenderDefaults {
     cascades: Option<CascadeShadowConfig>,
 }
 
-/// Marker: the startup quality was set by `FOREST_QUALITY` env override and must not be
-/// overwritten by the hardware-detection system.
+/// Marker: the startup quality was chosen by `FOREST_QUALITY` env override **or** a saved graphics
+/// config, so the hardware-detection system must not overwrite it.
 #[derive(Resource)]
 struct QualityLockedByEnv;
 
@@ -102,25 +268,54 @@ pub struct QualityPlugin;
 
 impl Plugin for QualityPlugin {
     fn build(&self, app: &mut App) {
-        // If the env var is set, lock in that preset and mark it so the adapter-detection
-        // startup system skips overwriting it.
-        if let Some(q) = GraphicsQuality::from_env() {
-            app.insert_resource(q).insert_resource(QualityLockedByEnv);
-        } else {
-            app.insert_resource(GraphicsQuality::default());
+        let env_q = GraphicsQuality::from_env();
+        let cfg = load_config();
+
+        // Quality precedence: env override > saved config > Default. Hardware-detect downgrades to
+        // Low only when NEITHER env nor a saved config already chose.
+        let quality = env_q.or_else(|| cfg.as_ref().map(|c| c.quality)).unwrap_or_default();
+        app.insert_resource(quality);
+        if env_q.is_some() || cfg.is_some() {
+            app.insert_resource(QualityLockedByEnv);
         }
+
+        // Per-control settings: an env override fully defines the look (preset fill); otherwise the
+        // saved config wins, else the preset's canonical fill. Window settings come from the config.
+        let settings = if env_q.is_some() {
+            preset_settings(quality)
+        } else {
+            cfg.as_ref().map(|c| c.settings.clone()).unwrap_or_else(|| preset_settings(quality))
+        };
+        let mut window = cfg.as_ref().map(|c| c.window.clone()).unwrap_or_default();
+        // FOREST_NOVSYNC (uncapped perf testing, set in main.rs) must win — else `apply_window_settings`
+        // would re-vsync the window on frame 1.
+        if std::env::var("FOREST_NOVSYNC").is_ok() {
+            window.vsync = false;
+        }
+        app.insert_resource(settings).insert_resource(window);
 
         app.init_resource::<RenderDefaults>()
             // Hardware-aware default: runs at Startup, after the render plugin's `finish()` has
             // inserted RenderAdapterInfo into the main world. Overwrites the default only when no
-            // env override was given and the adapter is a weak device type.
+            // env override / saved config locked the preset and the adapter is a weak device type.
             .add_systems(Startup, detect_adapter_quality)
-            // Applies once at startup (the resource counts as "changed" when added) and again on
-            // every Settings toggle — never per-frame.
-            .add_systems(Update, apply_quality.run_if(resource_changed::<GraphicsQuality>))
-            // Render-scale follows the preset AND the window size; self-gates internally, so it stays
-            // ungated (it must catch window resizes, not just preset toggles).
-            .add_systems(Update, apply_render_scale);
+            .add_systems(
+                Update,
+                (
+                    // A named-preset change fills the per-control settings…
+                    fill_settings_from_preset.run_if(resource_changed::<GraphicsQuality>),
+                    // …and any settings change (preset fill OR a single-control tweak) reconfigures
+                    // the renderer. Ordered after the fill so a preset click applies the same frame.
+                    apply_quality
+                        .run_if(resource_changed::<GraphicsSettings>)
+                        .after(fill_settings_from_preset),
+                ),
+            )
+            // Render-scale follows the settings AND the window size; self-gates internally, so it
+            // stays ungated (it must catch window resizes, not just setting toggles).
+            .add_systems(Update, apply_render_scale)
+            // Window mode / vsync / resolution → primary window. Self-gated.
+            .add_systems(Update, apply_window_settings);
     }
 }
 
@@ -190,162 +385,36 @@ fn ultra_fog() -> FogVolume {
     }
 }
 
-/// Everything one preset sets. `None` = restore the startup snapshot (the authored look).
-struct PresetVals {
-    god_rays: bool,
-    /// Volumetric raymarch steps (only applied when `god_rays`).
-    steps: u32,
-    /// `Some(level)` inserts / updates the SSAO component on the camera;
-    /// `None` removes it entirely (Low preset — even the lowest SSAO quality still walks the
-    /// full-res depth buffer; iGPUs measure ~4.3 ms just for that pass).
-    ao: Option<ScreenSpaceAmbientOcclusionQualityLevel>,
-    smaa: SmaaPreset,
-    shadow_size: usize,
-    /// God-ray `FogVolume` override; `None` restores the authored volume.
-    fog: Option<FogVolume>,
-    /// Bloom intensity override; `None` restores the authored value.
-    bloom: Option<f32>,
-    /// Cascade shadow far-distance override; `None` restores the authored config.
-    cascade_far: Option<f32>,
-    /// Whether the camera carries the prepass NORMAL texture. Only two passes consume normals:
-    /// SSAO (depth+normal) and the toon outline (depth+normal). When BOTH are off (Low), the
-    /// normal prepass is dead weight, so we strip `NormalPrepass`. **Depth is NOT optional**: the
-    /// bokeh DoF (`dof.rs`) and the outline (when on) both read prepass depth, and DoF is active
-    /// on every preset — so `DepthPrepass` always stays.
-    normal_prepass: bool,
-    /// Whether the toon outline post pass runs. `false` removes the `Outline` component from the
-    /// camera so `OutlineNode`'s ViewQuery no longer matches the view (the pass is skipped). Low
-    /// drops it: it's a subtle 0.15-strength cosmetic, and dropping it is what frees the normal
-    /// prepass above (outline is the only non-SSAO normal consumer).
-    outline: bool,
-    /// Whether the bloom pass runs. Low removes the `Bloom` component entirely — the down/upsample
-    /// mip chain is a fixed ~1.5 ms cost on an iGPU regardless of intensity, so intensity 0 would
-    /// NOT save it; only dropping the component skips the passes.
-    bloom_on: bool,
-    /// Whether the bokeh DoF runs. Low removes the `Dof` component (its ViewQuery stops matching,
-    /// so the pass is skipped) AND — since nothing else then needs prepass depth (SSAO + outline
-    /// are already off on Low) — lets [`apply_quality`] strip `DepthPrepass` too (~3 ms).
-    dof_on: bool,
-    /// Override the shadow cascade COUNT. Fewer cascades = fewer per-cascade shadow re-draw passes
-    /// (each is its own GPU pass in the F2 profiler). `None` keeps the authored count. Only honoured
-    /// on the rebuild path (alongside `cascade_far`).
-    cascades_count: Option<usize>,
-    /// Ground-shader relief (`terrain.wgsl` `params2`): normal-perturbation strength, the
-    /// quality lane (0/1/2 — gates the finer bump octave + grass sheen on Ultra), and the
-    /// macro albedo-variety strength. Pushed into every `TerrainMaterial` so the ground relief
-    /// follows the live preset toggle.
-    ground_bump: f32,
-    ground_quality: f32,
-    ground_variety: f32,
-}
-
-fn preset(quality: GraphicsQuality) -> PresetVals {
-    use ScreenSpaceAmbientOcclusionQualityLevel as Q;
-    match quality {
-        GraphicsQuality::High => PresetVals {
-            god_rays: false,
-            steps: 32,
-            ao: Some(Q::Medium),
-            smaa: SmaaPreset::High,
-            shadow_size: 2048,
-            fog: None,
-            bloom: None,
-            // 3 cascades (not the authored 4) at the SAME 150 reach: the 4th split mostly covers
-            // 100–150 tiles, where the linear fog (full by ≈190) already washes shadows out — so
-            // it's a near-invisible shadow pass we can drop. Keeps near/mid texel density (first
-            // bound stays 12). Routing through the builder requires a non-None cascade_far.
-            cascade_far: Some(150.0),
-            normal_prepass: true, // SSAO consumes normals
-            outline: true,
-            bloom_on: true,
-            dof_on: true,
-            cascades_count: Some(3),
-            ground_bump: 1.0,
-            ground_quality: 1.0,
-            ground_variety: 1.0,
-        },
-        GraphicsQuality::Ultra => PresetVals {
-            god_rays: true,
-            // 64 steps: the showcase's 48 still shows faint banding on long horizon rays; Ultra
-            // is the "I have the GPU" preset, so buy the smooth march.
-            steps: 64,
-            ao: Some(Q::Ultra),
-            smaa: SmaaPreset::Ultra,
-            shadow_size: 4096,
-            fog: Some(ultra_fog()),
-            // 0.30 authored → 0.42: lifts the sun-disk halo and the shaft glow without tipping
-            // emissives (torches, magma) into smear.
-            bloom: Some(0.42),
-            // Authored 150 → 190: the linear fog fully wins by ~190 tiles, so this carries tree
-            // shadows all the way to the fog line — the far ground stops going flat. Only worth
-            // it with the 4096 atlas (at 2048 the stretched cascades visibly pixelate).
-            cascade_far: Some(190.0),
-            normal_prepass: true, // SSAO + outline both consume normals
-            outline: true,
-            bloom_on: true,
-            dof_on: true,
-            cascades_count: None,
-            // Ultra: stronger relief + the finer bump octave & grass sheen (quality lane 2).
-            ground_bump: 1.3,
-            ground_quality: 2.0,
-            ground_variety: 1.0,
-        },
-        // Low: tuned for integrated GPUs. Key savings vs High:
-        //   • SSAO removed (None): ~4.3 ms saved — the depth-buffer walk happens regardless of
-        //     the quality level, so even Q::Low still hurts on an iGPU.
-        //   • cascade_far 100 (vs 150 authored): shadows stop where the fog is already opaque,
-        //     cutting the farthest cascade's redraw. Saves ~2-3 ms of the ~6-7 ms cascade total.
-        //   • 1024 shadow atlas, SMAA Low.
-        //   • Toon outline OFF + `NormalPrepass` stripped: the only two normal-prepass consumers
-        //     are SSAO (already off) and the outline; with both gone the normal prepass is pure
-        //     waste, so we drop the component. The outline is a subtle 0.15-strength cosmetic and
-        //     isn't worth the normal write + fullscreen edge pass on an iGPU.
-        //   • Bloom OFF: the mip down/upsample chain is a fixed ~1.5 ms on an iGPU.
-        //   • DoF OFF + `DepthPrepass` stripped: with SSAO, outline AND DoF all off, NOTHING
-        //     consumes prepass depth anymore, so the whole early depth prepass (~3 ms) goes too.
-        //   • 2 shadow cascades (vs authored 4): halves the per-cascade shadow re-draw passes —
-        //     each cascade is its own GPU pass. 2 still covers near + mid where shadows read.
-        // Net vs the old Low: ~no-bloom (1.5) + no-prepass/DoF (~3) + 2 fewer cascade passes (~3),
-        // plus the freed VRAM (prepass depth texture + bloom mips + 2 shadow maps) eases the
-        // integrated-GPU memory pressure that was forcing it to thrash.
-        // Manual cycling Low → High/Ultra re-inserts SSAO + outline + normal prepass + bloom + DoF.
-        GraphicsQuality::Low => PresetVals {
-            god_rays: false,
-            steps: 32,
-            ao: None,
-            smaa: SmaaPreset::Low,
-            shadow_size: 1024,
-            fog: None,
-            bloom: None,
-            cascade_far: Some(100.0),
-            normal_prepass: false,
-            outline: false,
-            bloom_on: false,
-            dof_on: false,
-            cascades_count: Some(2),
-            // Low (iGPU): NO bump — `bump 0` trips the shader's uniform early-out, so the 4
-            // height taps per ground fragment are skipped entirely (consistent with Low also
-            // dropping SSAO/bloom/DoF). The cheap anti-grid colour fixes (de-tile, isotropic
-            // detail, organic mottle) still apply, so the ground stays clean, just unlit-relief.
-            ground_bump: 0.0,
-            ground_quality: 0.0,
-            ground_variety: 0.7,
-        },
+/// When the active **named** preset changes (chip click / F10 / hardware default / config load),
+/// overwrite the live [`GraphicsSettings`] with that preset's canned fill. `Custom` is skipped — it
+/// *is* the player's hand-tuned struct, so overwriting would undo their tweak. Runs on a
+/// `GraphicsQuality` change; `apply_quality` (gated on a `GraphicsSettings` change) then reacts.
+fn fill_settings_from_preset(quality: Res<GraphicsQuality>, mut settings: ResMut<GraphicsSettings>) {
+    if *quality == GraphicsQuality::Custom {
+        return;
+    }
+    let want = preset_settings(*quality);
+    if *settings != want {
+        *settings = want;
     }
 }
 
+/// Reconfigure the whole renderer from the live [`GraphicsSettings`]. Runs whenever the settings
+/// resource changes (a preset fill OR a single-control tweak), never per-frame. Translates the
+/// high-level per-control choices into the actual components/uniforms, inserting/removing whole
+/// passes so an "off" setting truly skips its GPU cost (not just runs it at zero strength).
 #[allow(clippy::too_many_arguments)]
 fn apply_quality(
-    quality: Res<GraphicsQuality>,
+    settings: Res<GraphicsSettings>,
     mut defaults: ResMut<RenderDefaults>,
     mut commands: Commands,
     sun: Query<Entity, With<Sun>>,
+    mut sun_light: Query<&mut DirectionalLight, With<Sun>>,
     cam: Query<Entity, With<Camera3d>>,
     mut cam_fog: Query<&mut VolumetricFog>,
     mut fog_vol: Query<&mut FogVolume>,
     bloom: Query<&Bloom>,
     mut cascades: Query<&mut CascadeShadowConfig>,
-    mut smaa: Query<&mut Smaa>,
     mut shadowmap: ResMut<DirectionalLightShadowMap>,
     mut terrain_mats: ResMut<Assets<TerrainMaterial>>,
 ) {
@@ -359,54 +428,80 @@ fn apply_quality(
         defaults.captured = true;
     }
 
-    let p = preset(*quality);
+    let s = &*settings;
+    let god = s.god_rays;
 
     // Volumetric pass on/off via the sun's VolumetricLight (the only reliable runtime switch).
     if let Ok(sun) = sun.single() {
-        if p.god_rays {
+        if god {
             commands.entity(sun).insert(VolumetricLight);
         } else {
             commands.entity(sun).remove::<VolumetricLight>();
         }
     }
-    if p.god_rays {
+    if god {
+        // 64-step march — the smooth horizon rays the Ultra/god-rays look wants.
         for mut f in cam_fog.iter_mut() {
-            f.step_count = p.steps;
+            f.step_count = 64;
         }
     }
 
-    // FogVolume / Bloom / cascades: presets that override them get their tune; everything else
-    // restores the captured authored values.
+    // FogVolume: the visible-shaft tune when god-rays are on, else the authored (imperceptible) volume.
+    let fog = if god { Some(ultra_fog()) } else { None };
     for mut fv in fog_vol.iter_mut() {
-        *fv = p.fog.clone().unwrap_or_else(|| defaults.fog_volume.clone().unwrap_or_default());
+        *fv = fog.clone().unwrap_or_else(|| defaults.fog_volume.clone().unwrap_or_default());
     }
-    for mut c in cascades.iter_mut() {
-        let Some(auth) = defaults.cascades.as_ref() else { continue };
-        *c = match p.cascade_far {
-            // Re-derive the split layout from the authored config with only the far bound moved:
-            // the first cascade keeps its authored reach (near-shadow texel density unchanged),
-            // the in-between splits re-space exponentially toward the new horizon.
-            Some(far) => bevy::light::CascadeShadowConfigBuilder {
-                num_cascades: p.cascades_count.unwrap_or(auth.bounds.len()),
+
+    // Shadows: `Off` disables the sun's shadow casting entirely (the biggest weak-GPU win — no
+    // cascade passes at all); otherwise size + cascade count + reach come from the level. Toggling
+    // `DirectionalLight::shadows_enabled` is the runtime switch; the cascade/atlas config is only
+    // re-derived when shadows are on.
+    let shadow = s.shadows.params();
+    if let Ok(mut dl) = sun_light.single_mut() {
+        let want = shadow.is_some();
+        if dl.shadow_maps_enabled != want {
+            dl.shadow_maps_enabled = want;
+        }
+    }
+    if let Some((size, count, far)) = shadow {
+        for mut c in cascades.iter_mut() {
+            let Some(auth) = defaults.cascades.as_ref() else { continue };
+            // Re-derive the split layout from the authored config with only the count + far bound
+            // moved: the first cascade keeps its authored near reach (texel density unchanged), the
+            // in-between splits re-space exponentially toward the new horizon.
+            *c = bevy::light::CascadeShadowConfigBuilder {
+                num_cascades: count,
                 minimum_distance: auth.minimum_distance,
                 maximum_distance: far,
                 first_cascade_far_bound: auth.bounds.first().copied().unwrap_or(12.0),
                 overlap_proportion: auth.overlap_proportion,
             }
-            .build(),
-            None => auth.clone(),
-        };
+            .build();
+        }
+        // Guard the write so an unchanged size doesn't trigger a needless shadow-atlas rebuild.
+        if shadowmap.size != size {
+            shadowmap.size = size;
+        }
     }
 
-    // Per-camera component toggles (SSAO / outline / normal prepass). We act on every camera
-    // carrying Camera3d so flycam + follow-cam are both covered (scene.rs only spawns one camera,
-    // but this is robust to future additions).
+    // Derived per-camera pass needs. The normal prepass exists only to feed SSAO + the outline; the
+    // depth prepass feeds those plus the bokeh DoF (and contact shadows read it). When a consumer is
+    // off we strip the prepass it fed, so the whole pass is skipped, not just run unused.
+    let ao = s.ssao.level();
+    let smaa = s.antialias.smaa();
+    let normal_prepass = ao.is_some() || s.outline;
+    let needs_depth = s.depth_of_field || ao.is_some() || s.outline;
+    // Keep the Ultra (god-rays) bloom lift; otherwise the authored intensity.
+    let bloom_intensity = if god { 0.42 } else { defaults.bloom_intensity };
+
+    // Per-camera component toggles. We act on every camera carrying Camera3d so flycam + follow-cam
+    // are both covered (scene.rs only spawns one camera, but this is robust to future additions).
     for cam_e in cam.iter() {
         let mut e = commands.entity(cam_e);
 
-        // SSAO: Low removes the component entirely (saves the full depth-buffer walk cost on
-        // iGPUs); High/Ultra insert it with the preset's quality level.
-        match p.ao {
+        // SSAO: `Off` removes the component entirely (saves the full depth-buffer walk cost on
+        // iGPUs); otherwise insert it at the chosen quality level.
+        match ao {
             Some(level) => {
                 e.insert(ScreenSpaceAmbientOcclusion { quality_level: level, ..default() });
             }
@@ -416,54 +511,50 @@ fn apply_quality(
         }
 
         // Toon outline: removing the `Outline` component makes `OutlineNode`'s ViewQuery stop
-        // matching this view, so the fullscreen edge pass is skipped (Low). Re-inserting restores
-        // it. (The per-frame `fade_outline_toward_sun` system only mutates existing `Outline`s, so
-        // dropping the component just parks it until the preset puts it back.)
-        if p.outline {
+        // matching this view, so the fullscreen edge pass is skipped.
+        if s.outline {
             e.insert(crate::outline::default_outline());
         } else {
             e.remove::<crate::outline::Outline>();
         }
 
-        // Normal prepass: the only consumers are SSAO and the outline. When both are off (Low) the
-        // normal prepass is dead weight, so drop `NormalPrepass`. DEPTH is never dropped — the
-        // bokeh DoF reads prepass depth on every preset. `NormalPrepass` is `#[require]`d by SSAO,
-        // so when SSAO is present it would be re-added anyway; we manage it explicitly so the Low
-        // (no-SSAO, no-outline) case actually strips it.
-        if p.normal_prepass {
+        // Normal prepass: dead weight when nothing consumes it (SSAO + outline both off), so drop it.
+        if normal_prepass {
             e.insert(NormalPrepass);
         } else {
             e.remove::<NormalPrepass>();
         }
 
-        // Bloom: Low removes the component so the mip down/upsample chain is skipped entirely
-        // (a fixed iGPU cost regardless of intensity); High/Ultra (re)insert it at their intensity.
-        if p.bloom_on {
-            e.insert(Bloom {
-                intensity: p.bloom.unwrap_or(defaults.bloom_intensity),
-                ..Bloom::NATURAL
-            });
+        // Bloom: removing the component skips the mip down/upsample chain entirely (a fixed iGPU
+        // cost regardless of intensity).
+        if s.bloom {
+            e.insert(Bloom { intensity: bloom_intensity, ..Bloom::NATURAL });
         } else {
             e.remove::<Bloom>();
         }
 
-        // Bokeh DoF: Low removes the `Dof` component (DofNode's ViewQuery stops matching → pass
-        // skipped); High/Ultra restore it.
-        if p.dof_on {
+        // Bokeh DoF: removing the `Dof` component stops DofNode's ViewQuery matching → pass skipped.
+        if s.depth_of_field {
             e.insert(crate::dof::default_dof());
         } else {
             e.remove::<crate::dof::Dof>();
         }
 
-        // Depth prepass: needed ONLY by DoF, SSAO, or the outline. When all three are off (Low),
-        // strip it — that's the ~3 ms `early prepass` in the F2 profiler. (SSAO `#[require]`s it,
-        // so when SSAO is on it'd be re-added regardless; we manage it explicitly for the Low case.)
-        // DepthPrepass and ContactShadows share one gate: contact shadows (0.19) are a screen-space
-        // pass that READS the prepass depth, so they must ride the exact same on/off — present on
-        // High/Ultra, stripped together on Low (where depth is dropped entirely). Kept in one block
-        // so the two can never desync. (The sun carries `contact_shadows_enabled` unconditionally —
-        // it's only paid for on cameras that have the `ContactShadows` component.)
-        let needs_depth = p.dof_on || p.ao.is_some() || p.outline;
+        // SMAA: `Off` removes the component so the resolve pass is skipped; otherwise (re)insert at
+        // the chosen preset. Managed per-camera (rather than mutating an always-present component) so
+        // "off" is a real pass removal.
+        match smaa {
+            Some(preset) => {
+                e.insert(Smaa { preset });
+            }
+            None => {
+                e.remove::<Smaa>();
+            }
+        }
+
+        // Depth prepass + contact shadows ride one gate: contact shadows (0.19) read the prepass
+        // depth, so they must share the exact on/off as the prepass. Stripped together when nothing
+        // (DoF/SSAO/outline) needs depth — that's the ~3 ms `early prepass` in the F2 profiler.
         if needs_depth {
             e.insert((DepthPrepass, ContactShadows::default()));
         } else {
@@ -472,51 +563,43 @@ fn apply_quality(
         }
     }
 
-    for mut s in smaa.iter_mut() {
-        s.preset = p.smaa;
-    }
-    // Guard the write so an unchanged size doesn't trigger a needless shadow-atlas rebuild.
-    if shadowmap.size != p.shadow_size {
-        shadowmap.size = p.shadow_size;
-    }
-
-    // Ground relief: push the preset's bump / quality / variety into every TerrainMaterial's
-    // `params2`. Only a handful of materials (grass / swamp / blight / lava), and only on a
-    // preset change — so the ground reacts to the live toggle without a per-frame cost.
+    // Ground relief: push the terrain-detail level's bump / quality-lane / variety into every
+    // `TerrainMaterial`'s `params2`. FOREST_GROUNDLOD=N force-overrides the quality lane on ANY
+    // setting (an A/B knob to isolate the terrain-shader cost).
+    let (bump, ground_q, variety) = s.terrain.params();
+    let q_override = std::env::var("FOREST_GROUNDLOD").ok().and_then(|v| v.trim().parse::<f32>().ok());
     for (_, m) in terrain_mats.iter_mut() {
-        m.extension.params.params2 = Vec4::new(p.ground_bump, p.ground_quality, p.ground_variety, 0.0);
+        let q = q_override.unwrap_or(ground_q);
+        m.extension.params.params2 = Vec4::new(bump, q, variety, 0.0);
     }
 }
 
-/// Per-preset render-scale factor. On a weak GPU the main 3D pass (rasterising the whole scene) IS
-/// the frame — a Radeon 840M iGPU spends ~30 ms in `main_opaque_pass_3d` alone at native res. So on
-/// Low (the iGPU default) we render the 3D at a fraction of the window resolution. `FOREST_RENDERSCALE`
-/// overrides it for A/B tuning on the target machine.
-fn render_scale_for(quality: GraphicsQuality) -> f32 {
+/// The effective render-scale: the `FOREST_RENDERSCALE` env override wins (A/B tuning on the target
+/// machine), else the player's [`GraphicsSettings::render_scale`]. On a weak GPU the main 3D pass
+/// (rasterising the whole scene) IS the frame — a Radeon 840M iGPU spends ~30 ms in
+/// `main_opaque_pass_3d` alone at native res — so dropping below 1.0 is the dominant fragment lever.
+fn render_scale_for(settings: &GraphicsSettings) -> f32 {
     if let Some(v) =
         std::env::var("FOREST_RENDERSCALE").ok().and_then(|s| s.trim().parse::<f32>().ok())
     {
         return v.clamp(0.3, 1.0);
     }
-    match quality {
-        GraphicsQuality::Low => 0.6,
-        _ => 1.0,
-    }
+    settings.render_scale.clamp(0.3, 1.0)
 }
 
-/// Drive Bevy's [`MainPassResolutionOverride`] from the window size × the preset's render-scale: the
+/// Drive Bevy's [`MainPassResolutionOverride`] from the window size × the render-scale: the
 /// opaque/transparent/prepass render at the lower resolution (Bevy upscales the result; the cheap
 /// post passes — SMAA/tonemapping/UI — stay full-res), cutting the dominant fragment cost by ~scale²
-/// on fragment-bound GPUs. Self-gating via `Local` so it only touches the camera when the preset or
+/// on fragment-bound GPUs. Self-gating via `Local` so it only touches the camera when the scale or
 /// window size actually changes (re-inserting every frame would mark the camera `Changed`).
 fn apply_render_scale(
-    quality: Res<GraphicsQuality>,
+    settings: Res<GraphicsSettings>,
     windows: Query<&Window>,
     cam: Query<Entity, With<Camera3d>>,
     mut commands: Commands,
     mut last: Local<Option<UVec2>>,
 ) {
-    let scale = render_scale_for(*quality);
+    let scale = render_scale_for(&settings);
     let Ok(win) = windows.single() else {
         return;
     };
@@ -539,5 +622,123 @@ fn apply_render_scale(
                 commands.entity(cam_e).remove::<MainPassResolutionOverride>();
             }
         }
+    }
+}
+
+// ── Window settings (display mode / vsync / resolution) + on-disk graphics config ──────────────
+//
+// These sit alongside the render-pipeline `GraphicsSettings` but act on the OS Window rather than
+// the render graph, so they get their own resource + apply system. All persist with the rest of the
+// graphics config so the player's choices survive a relaunch.
+
+/// Player window preferences. `resolution: None` = follow the desktop/native size (no override).
+#[derive(Resource, Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct WindowSettings {
+    pub fullscreen: bool,
+    pub vsync: bool,
+    /// Explicit window resolution `[w, h]` in physical pixels, or `None` for native (no override).
+    pub resolution: Option<[u32; 2]>,
+}
+
+impl Default for WindowSettings {
+    fn default() -> Self {
+        Self { fullscreen: false, vsync: true, resolution: None }
+    }
+}
+
+/// Push [`WindowSettings`] onto the primary window: display mode, present mode (vsync) and an
+/// optional explicit resolution. Self-gated on a settings change so it doesn't fight a manual window
+/// resize every frame.
+fn apply_window_settings(
+    settings: Res<WindowSettings>,
+    mut windows: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
+    mut last: Local<Option<WindowSettings>>,
+) {
+    if last.as_ref() == Some(&*settings) {
+        return;
+    }
+    *last = Some(settings.clone());
+    let Ok(mut win) = windows.single_mut() else { return };
+
+    let want_mode = if settings.fullscreen {
+        bevy::window::WindowMode::BorderlessFullscreen(bevy::window::MonitorSelection::Current)
+    } else {
+        bevy::window::WindowMode::Windowed
+    };
+    if win.mode != want_mode {
+        win.mode = want_mode;
+    }
+
+    let want_present = if settings.vsync {
+        bevy::window::PresentMode::AutoVsync
+    } else {
+        bevy::window::PresentMode::AutoNoVsync
+    };
+    if win.present_mode != want_present {
+        win.present_mode = want_present;
+    }
+
+    // An explicit resolution only applies in windowed mode (borderless fullscreen tracks the desktop).
+    if let Some([w, h]) = settings.resolution {
+        if !settings.fullscreen
+            && (win.resolution.physical_width() != w || win.resolution.physical_height() != h)
+        {
+            win.resolution.set_physical_resolution(w, h);
+        }
+    }
+}
+
+/// Everything the Settings page persists, so the player's choices survive a relaunch.
+#[derive(Serialize, Deserialize)]
+struct GraphicsConfig {
+    quality: GraphicsQuality,
+    settings: GraphicsSettings,
+    #[serde(default)]
+    window: WindowSettings,
+}
+
+/// `graphics.json` next to the save file (same OS data-dir resolution as `savegame::save_path`).
+fn config_path() -> std::path::PathBuf {
+    use std::path::PathBuf;
+    let dir = if let Ok(appdata) = std::env::var("APPDATA") {
+        Some(PathBuf::from(appdata).join("tileworld"))
+    } else if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
+        Some(PathBuf::from(xdg).join("tileworld"))
+    } else if let Ok(home) = std::env::var("HOME") {
+        Some(PathBuf::from(home).join(".local/share/tileworld"))
+    } else {
+        None
+    };
+    match dir {
+        Some(d) => d.join("graphics.json"),
+        None => PathBuf::from("tileworld-graphics.json"),
+    }
+}
+
+/// Load the saved graphics config (None = missing / unreadable / unparseable — just use defaults).
+fn load_config() -> Option<GraphicsConfig> {
+    let text = std::fs::read_to_string(config_path()).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+/// Persist the current graphics choices. Best-effort: a write failure is logged, never fatal. Call
+/// at natural commit points (settings-page close, preset click) rather than on every slider tick.
+pub fn save_graphics_config(
+    quality: &GraphicsQuality,
+    settings: &GraphicsSettings,
+    window: &WindowSettings,
+) {
+    let cfg = GraphicsConfig { quality: *quality, settings: settings.clone(), window: window.clone() };
+    let path = config_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match serde_json::to_string_pretty(&cfg) {
+        Ok(text) => {
+            if let Err(e) = std::fs::write(&path, text) {
+                warn!("failed to write graphics config {path:?}: {e}");
+            }
+        }
+        Err(e) => warn!("failed to serialise graphics config: {e}"),
     }
 }

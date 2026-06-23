@@ -128,9 +128,16 @@ fn fragment(
     // (1) fine value mottle (three octaves), amplitude softened a touch from the original.
     //     Each octave on its own rotated lattice (≈19°/47°/73°) so the value-noise cells
     //     don't line up into the axis-aligned brightness grid that read as square "tiles".
-    let ter_m = ter_noise_rot(wp * 0.5, 0.946, 0.326) * 0.55
-              + ter_noise_rot(wp * 1.7, 0.682, 0.731) * 0.30
-              + ter_noise_rot(wp * 5.5, 0.292, 0.956) * 0.15;
+    // Coarse mottle (one cheap low-freq octave) always; the two FINER octaves only on High/Ultra.
+    // `params2.y` (ground quality lane: Low 0 / High 1 / Ultra 2) is a UNIFORM, so this branch is
+    // coherent across the whole draw — on Low the GPU genuinely skips the two extra noise evals.
+    // The fine octaves are high-freq grain that's sub-perceptible on the weak GPUs Low targets, but
+    // they (and the detail tap below) are the bulk of the per-fragment ground cost there.
+    var ter_m = ter_noise_rot(wp * 0.5, 0.946, 0.326) * 0.55;
+    if forest.params2.y >= 1.0 {
+        ter_m += ter_noise_rot(wp * 1.7, 0.682, 0.731) * 0.30
+               + ter_noise_rot(wp * 5.5, 0.292, 0.956) * 0.15;
+    }
     rgb *= 0.85 + ter_m * 0.30;
 
     // (2) large-scale analytic hue + value drift — the soft cloudy patches (cure for
@@ -141,23 +148,30 @@ fn fragment(
     rgb += (ter_big - 0.5) * variation * vec3<f32>(0.22, 0.14, -0.14) * green;
     rgb *= 1.0 + (ter_hue - 0.5) * variation * 0.40;
 
-    // (3) soft grass detail imprint on up-facing fragments, normalised by mean luminance.
-    //     Off-grass the imprint collapses to its luminance so snow keeps the blade-scale
-    //     value texture without picking up the green cast.
-    let top_face = step(0.5, in.world_normal.y);
-    let det = sample_detail(wp, detail_scale) / max(mean, 0.01);
-    let det_l = dot(det, vec3<f32>(0.2126, 0.7152, 0.0722));
-    let det_c = mix(vec3<f32>(det_l), det, green);
-    rgb *= mix(vec3<f32>(1.0), det_c, detail_strength * top_face);
+    // (3)+(4) only on High/Ultra — same coherent `params2.y` lane as the fine mottle above.
+    // (3) is a TEXTURE tap + a domain-warp noise pair (the single most expensive ground op) and
+    // (4) is two more low-freq noise evals; both are skipped wholesale on Low, where the weak GPU
+    // this preset targets can't afford them and the subtle imprint/scuff variety reads as flat
+    // green anyway. The base colour + coarse mottle + drift keep the ground from looking bald.
+    if forest.params2.y >= 1.0 {
+        // (3) soft grass detail imprint on up-facing fragments, normalised by mean luminance.
+        //     Off-grass the imprint collapses to its luminance so snow keeps the blade-scale
+        //     value texture without picking up the green cast.
+        let top_face = step(0.5, in.world_normal.y);
+        let det = sample_detail(wp, detail_scale) / max(mean, 0.01);
+        let det_l = dot(det, vec3<f32>(0.2126, 0.7152, 0.0722));
+        let det_c = mix(vec3<f32>(det_l), det, green);
+        rgb *= mix(vec3<f32>(1.0), det_c, detail_strength * top_face);
 
-    // (4) macro albedo-variety: broad worn-dirt scuffs + damp moss hollows so the field
-    //     stops reading as one flat green. Very low-freq blobs, green-gated, strength from
-    //     the preset (`macro_variety`). Value/hue stays subtle — this is variety, not camo.
-    let variety = forest.params2.z;
-    let worn = smoothstep(0.60, 0.88, ter_noise(wp * 0.020 + vec2<f32>(5.0, 9.0)));
-    rgb = mix(rgb, rgb * vec3<f32>(0.82, 0.74, 0.55), worn * 0.30 * green * variety);
-    let moss = smoothstep(0.62, 0.92, ter_noise(wp * 0.040 + vec2<f32>(19.0, 2.0)));
-    rgb = mix(rgb, rgb * vec3<f32>(0.72, 0.92, 0.62), moss * 0.22 * green * variety);
+        // (4) macro albedo-variety: broad worn-dirt scuffs + damp moss hollows so the field
+        //     stops reading as one flat green. Very low-freq blobs, green-gated, strength from
+        //     the preset (`macro_variety`). Value/hue stays subtle — this is variety, not camo.
+        let variety = forest.params2.z;
+        let worn = smoothstep(0.60, 0.88, ter_noise(wp * 0.020 + vec2<f32>(5.0, 9.0)));
+        rgb = mix(rgb, rgb * vec3<f32>(0.82, 0.74, 0.55), worn * 0.30 * green * variety);
+        let moss = smoothstep(0.62, 0.92, ter_noise(wp * 0.040 + vec2<f32>(19.0, 2.0)));
+        rgb = mix(rgb, rgb * vec3<f32>(0.72, 0.92, 0.62), moss * 0.22 * green * variety);
+    }
 
     pbr_input.material.base_color = vec4<f32>(max(rgb, vec3<f32>(0.0)), pbr_input.material.base_color.a);
 

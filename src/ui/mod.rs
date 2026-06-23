@@ -10,6 +10,7 @@ use bevy::prelude::*;
 pub mod anim;
 pub mod focus;
 pub mod fonts;
+pub mod graphics_menu;
 pub mod icons;
 pub mod notice;
 pub mod settings;
@@ -36,6 +37,9 @@ impl Plugin for UiKitPlugin {
             texture::UiTexturePlugin,
             focus::FocusPlugin,
             focus::TooltipPlugin,
+            graphics_menu::GraphicsMenuPlugin, // full graphics Settings page (native 0.19 widgets)
         ));
+        // NB: the Slider/Checkbox widget plugins are added automatically by `DefaultPlugins` when the
+        // `bevy_ui_widgets` feature is on — adding them again here panics ("already added").
     }
 }

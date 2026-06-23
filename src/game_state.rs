@@ -265,9 +265,14 @@ fn pause_toggle(
     mut next_app: ResMut<NextState<AppState>>,
     mut next_modal: ResMut<NextState<Modal>>,
     confirm: Res<ConfirmWipe>,
+    gfx_menu: Res<crate::ui::graphics_menu::GraphicsMenuOpen>,
     mut build_mode: ResMut<crate::town::BuildMode>,
 ) {
     if !keys.just_pressed(KeyCode::Escape) {
+        return;
+    }
+    // While the graphics Settings page is open, Esc closes IT (its own handler), not the pause.
+    if gfx_menu.0 {
         return;
     }
     // While the overwrite dialog is up, Esc belongs to it (cancel), not the pause toggle.
@@ -359,7 +364,12 @@ fn start_screen_input(
     siege: Option<Res<crate::siege::Siege>>,
     mut fresh: ResMut<FreshRunPending>,
     active_map: Res<crate::worldmap::ActiveMap>,
+    gfx_menu: Res<crate::ui::graphics_menu::GraphicsMenuOpen>,
 ) {
+    // While the graphics Settings page is open over the title, it owns the keyboard (Esc closes it).
+    if gfx_menu.0 {
+        return;
+    }
     // While the overwrite dialog is up, it owns the keyboard (see `confirm_input`).
     if confirm.0.is_some() {
         return;
@@ -461,6 +471,9 @@ struct StartContinueButton;
 /// when [`RunInProgress`] (i.e. the menu was reached mid-run via a Main Menu button).
 #[derive(Component)]
 struct StartResumeButton;
+/// The "Settings" button on the start screen — opens the graphics Settings page.
+#[derive(Component)]
+struct StartSettingsButton;
 /// The "Credits" button on the start screen — opens the credits overlay ([`mainmenu::CreditsOpen`]).
 #[derive(Component)]
 struct CreditsButton;
@@ -803,6 +816,35 @@ fn spawn_start_screen(
                     b.spawn(label(&fonts.bold, "HOW TO PLAY", 14.0, GOLD));
                     b.spawn(label(&fonts.semibold, "H", 11.0, KICKER));
                 });
+                // Settings — secondary, opens the full graphics Settings page.
+                m.spawn((
+                    Node {
+                        padding: UiRect::axes(Val::Px(24.0), Val::Px(9.0)),
+                        border: widgets::border(1.0),
+                        border_radius: radius(R_BTN),
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(8.0),
+                        ..default()
+                    },
+                    Button,
+                    Interaction::default(),
+                    BackgroundColor(BTN_BG),
+                    BorderColor::all(GOLD_HAIRLINE),
+                    crate::ui::anim::Hoverable {
+                        rest_bg: BTN_BG,
+                        hover_bg: BTN_BG_HOVER,
+                        rest_border: GOLD_HAIRLINE,
+                        hover_border: GOLD_NOTCH,
+                        lift: 2.0,
+                    },
+                    UiTransform::IDENTITY,
+                    StartSettingsButton,
+                    anim_btn(AnimKind::Rise, 0.39, 0.7),
+                ))
+                .with_children(|b| {
+                    b.spawn(label(&fonts.bold, "SETTINGS", 14.0, GOLD));
+                });
                 // Credits — secondary, opens the credits overlay (mainmenu::CreditsOpen).
                 m.spawn((
                     Node {
@@ -1078,7 +1120,7 @@ fn pause_click(
     mut fresh: ResMut<FreshRunPending>,
     siege: Option<Res<crate::siege::Siege>>,
     mut audio: ResMut<AudioSettings>,
-    mut quality: ResMut<GraphicsQuality>,
+    mut gfx_menu: ResMut<crate::ui::graphics_menu::GraphicsMenuOpen>,
     mut first_person: ResMut<crate::player::FirstPerson>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut notice: ResMut<Notice>,
@@ -1124,7 +1166,7 @@ fn pause_click(
             crate::ui::settings::toggle_mute(&mut audio, &mut notice, now);
         }
         if gfx_b.is_some() {
-            crate::ui::settings::toggle_quality(&mut quality, &mut notice, now);
+            gfx_menu.0 = true; // open the full graphics Settings page (over the pause screen)
         }
         if fs_b.is_some() {
             crate::ui::settings::toggle_fullscreen(&mut windows, &mut notice, now);
@@ -1269,6 +1311,7 @@ fn start_click(
             Option<&SegButton>,
             Option<&MapSeg>,
             Option<&QuitButton>,
+            Option<&StartSettingsButton>,
         ),
         Changed<Interaction>,
     >,
@@ -1281,6 +1324,7 @@ fn start_click(
     mut fresh: ResMut<FreshRunPending>,
     mut credits: ResMut<crate::mainmenu::CreditsOpen>,
     mut active_map: ResMut<crate::worldmap::ActiveMap>,
+    mut gfx_menu: ResMut<crate::ui::graphics_menu::GraphicsMenuOpen>,
     mut exit: MessageWriter<AppExit>,
 ) {
     if confirm.0.is_some() {
@@ -1288,12 +1332,15 @@ fn start_click(
     }
     let mut siege = siege;
     let cur_diff = current_difficulty(siege.as_deref());
-    for (interaction, play, cont, resume, cred, seg, mapseg, quit) in &q {
+    for (interaction, play, cont, resume, cred, seg, mapseg, quit, settings_b) in &q {
         if *interaction != Interaction::Pressed {
             continue;
         }
         if quit.is_some() {
             exit.write(AppExit::Success);
+        }
+        if settings_b.is_some() {
+            gfx_menu.0 = true; // open the graphics Settings page over the start screen
         }
         // Pick a map segment first, so a New Game in the same click batch sees the new choice.
         if let Some(ms) = mapseg {
