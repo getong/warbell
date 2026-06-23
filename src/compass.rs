@@ -42,11 +42,11 @@ const PIP_TOP: f32 = 20.0;
 // what's actually near. Each kind has a small pool of pre-spawned nodes refilled every frame
 // from the nearest N targets; spare pool nodes hide.
 /// Orks (camp warbands + night-wave invaders) show as red dots within this range (world units).
-const ORK_RANGE: f32 = 46.0;
+const ORK_RANGE: f32 = 30.0;
 /// Bosses (biome wardens + the Warlord) show as a danger mark — only once you're this close.
-const BOSS_RANGE: f32 = 78.0;
+const BOSS_RANGE: f32 = 48.0;
 /// Unopened loot chests show as a gold coin within this range.
-const CHEST_RANGE: f32 = 50.0;
+const CHEST_RANGE: f32 = 32.0;
 /// Pool sizes (max blips drawn per kind — the nearest ones win; the rest are silently dropped).
 const ORK_POOL: usize = 14;
 const BOSS_POOL: usize = 5;
