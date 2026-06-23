@@ -37,3 +37,5 @@
 # .npy the turnaround-extraction step writes (tools/ holds the scripts; the proportions are
 # already baked into the Rust model builders, so these are dev-only derived artifacts).
 /model_proportions/
+# Profiling captures (trace_chrome writes multi-GB JSON; parsed by tools/trace_summary.py)
+trace-*.json

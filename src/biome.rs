@@ -337,9 +337,21 @@ impl Plugin for BiomePlugin {
             .add_systems(Startup, init_active_map_from_env)
             .add_systems(
                 Update,
-                (drive_build, apply_world_atmosphere.run_if(resource_changed::<WorldReady>)),
+                (
+                    // Only run while a build is pending/in-progress. Once the world is finished,
+                    // leaving it scheduled every frame is a no-op that still holds `ResMut` on SIX
+                    // asset stores, serialising it against every render-extraction/spawn system that
+                    // touches them — ≈1.4 ms/frame of pure scheduling drag (measured via trace_chrome).
+                    drive_build.run_if(build_active),
+                    apply_world_atmosphere.run_if(resource_changed::<WorldReady>),
+                ),
             );
     }
+}
+
+/// `drive_build`'s run-condition: true only while a build is queued or running.
+fn build_active(pending: Res<PendingBuild>, job: Res<BuildJob>) -> bool {
+    pending.0 || job.building
 }
 
 /// Atmosphere tuple: (sky, fog_density, sun_color, sun_illuminance, ambient_color,
@@ -838,10 +850,7 @@ pub fn scatter_region(
                         // Distance-cull far trees: past ~180u the fog (FOG_FULL ≈190) has them
                         // nearly opaque and shadows already stop at the cascade max (≈150), so a far
                         // tree is pure rasterizer cost. ABRUPT (empty band) so it stays a hard GPU
-                        // cull — `is_abrupt()` true means Bevy skips the dithered-crossfade `discard`
-                        // shader entirely (verified in bevy_camera `entity_has_crossfading_…`), and
-                        // VisibilityRange leaves auto-batching intact (separate `no_automatic_batching`
-                        // flag). Gated by `FOREST_NOCULL` so the win can be A/B-measured (see helper).
+                        // cull. Gated by `FOREST_NOCULL` so the win can be A/B-measured (see helper).
                         if scatter_cull_enabled() {
                             tree.insert(bevy::camera::visibility::VisibilityRange {
                                 start_margin: 0.0..0.0,

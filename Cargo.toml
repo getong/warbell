@@ -23,6 +23,13 @@ serde_json = "1"
 # cargo unifies it with bevy's own wgpu (same compiled crate → DeviceType types match).
 wgpu = { version = "29", default-features = false }
 
+# Profiling build: turns on Bevy's per-system tracing spans, written to a chrome-trace JSON on exit
+# (`trace-<ts>.json`). `cargo run --features profiling` then `tools/trace_summary.py <file>` gives an
+# EXACT CPU-time-per-system breakdown (pairs with the GPU per-pass timings the F2/PERF logs already
+# show). Off in normal builds — the tracing has real overhead.
+[features]
+profiling = ["bevy/trace_chrome"]
+
 # Windows-only: embed the app icon + version metadata (ProductName/Company/version) into the
 # .exe resource section via build.rs. This is what Explorer, the taskbar, the winit window, and
 # the installer all read — no runtime icon-loading code needed (winit picks up the exe's icon).
