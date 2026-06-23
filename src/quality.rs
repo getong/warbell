@@ -5,15 +5,13 @@
 //! cycling is always available at runtime and is the only way to change the preset once the
 //! game is running.
 //!
-//! - **High**: the hand-tuned default look. The volumetric god-ray pass is **off** — at the
-//!   scene's subtle fog settings the shafts are imperceptible yet still the frame's biggest GPU
-//!   cost (~13 ms, per the F2 profiler), so neither High nor Low pays for it.
-//! - **Ultra**: the demo / "prettiest possible" preset. Everything High has, plus: the volumetric
-//!   pass ON with a fog tune that makes the sun shafts clearly visible *without* killing the
-//!   bokeh DoF, SSAO + SMAA at their max levels, a 4096 shadow atlas, shadows pushed out to the
-//!   fog line, and a bloom lift. GPU cost is the volumetric pass + bigger shadow atlas — a
-//!   deliberate "I have the GPU for it" choice. (There used to be a separate "God Rays" showcase
-//!   preset; it blacked out the Atmosphere sky — see [`ultra_fog`] — and Ultra replaces it.)
+//! - **High**: the hand-tuned default look. Carries the screen-space god-rays pass (`godrays.rs`) —
+//!   cheap and reliable, so the *everyday* scene gets the light shafts, not just the showcase.
+//! - **Ultra**: the demo / "prettiest possible" preset. Everything High has, plus SSAO + SMAA at
+//!   their max levels, a 4096 shadow atlas, shadows pushed out to the fog line, and a bloom lift.
+//!   (The old volumetric god-ray pass — `VolumetricLight` + `FogVolume` — was retired: it was
+//!   imperceptible at our fog yet the frame's biggest cost (~13 ms) and blacked out the Atmosphere
+//!   sky. The screen-space pass in `godrays.rs` replaces it on both High and Ultra.)
 //! - **Low**: tuned for integrated GPUs (measured: ~4.3 ms SSAO + ~6-7 ms across 4 shadow
 //!   cascades at 19 FPS on a typical iGPU). SSAO is **removed** entirely (the component is
 //!   stripped from the camera — even the lowest-quality SSAO pass still walks the full-res depth
@@ -22,11 +20,9 @@
 //!   SMAA Low and 1024 shadow atlas. Stays fully playable and legible; cycling to High/Ultra
 //!   re-inserts SSAO at the preset's quality level.
 //!
-//! The reliable on/off for the volumetric pass is the **sun's `VolumetricLight`** (Bevy's retained
-//! render world only tears the pass down when no `VolumetricLight` exists — its extractor never
-//! removes a stale `VolumetricFog` from a view), so that's what we toggle. The DoF blur, bloom,
-//! cascade config and the `FogVolume` tuning are snapshotted once at startup so other presets
-//! restore them exactly.
+//! God-rays toggle on/off by inserting/removing the camera's `godrays::GodRays` component (same
+//! mechanism as the DoF/outline post passes). The DoF blur, bloom intensity and cascade config are
+//! snapshotted once at startup so other presets restore them exactly.
 //!
 //! `FOREST_QUALITY=ultra|high|low` picks the startup preset (screenshot harness / demo
 //! recording — same idea as the other `FOREST_*` staging hooks). The env var wins over the
@@ -35,10 +31,7 @@
 use bevy::anti_alias::smaa::{Smaa, SmaaPreset};
 use bevy::camera::MainPassResolutionOverride;
 use bevy::core_pipeline::prepass::{DepthPrepass, NormalPrepass};
-use bevy::light::{
-    CascadeShadowConfig, DirectionalLight, DirectionalLightShadowMap, FogVolume, VolumetricFog,
-    VolumetricLight,
-};
+use bevy::light::{CascadeShadowConfig, DirectionalLight, DirectionalLightShadowMap};
 use bevy::pbr::{ContactShadows, ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel};
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
@@ -225,7 +218,7 @@ pub fn preset_settings(quality: GraphicsQuality) -> GraphicsSettings {
             bloom: true,
             depth_of_field: true,
             outline: true,
-            god_rays: false,
+            god_rays: true, // screen-space light shafts (godrays.rs) — cheap, so High carries them too
             render_scale: 1.0,
         },
         GraphicsQuality::Ultra => GraphicsSettings {
@@ -262,7 +255,6 @@ pub fn preset_settings(quality: GraphicsQuality) -> GraphicsSettings {
 #[derive(Resource, Default)]
 struct RenderDefaults {
     captured: bool,
-    fog_volume: Option<FogVolume>,
     bloom_intensity: f32,
     cascades: Option<CascadeShadowConfig>,
 }
@@ -388,39 +380,6 @@ fn detect_adapter_quality(
     }
 }
 
-/// Ultra's shaft tune: visible sun shafts **without the black-sky veil**. The trap (which the
-/// old "God Rays" showcase preset fell into, and why "god rays never worked"): sky pixels have no
-/// depth, so the volumetric march runs far longer through the fog box than for geometry — any
-/// appreciable extinction (density × (absorption + scattering)) multiplies the Atmosphere sky
-/// toward black while the ground stays bright. Ultra keeps extinction near the authored
-/// (imperceptible) level and buys shaft visibility through `light_intensity` + forward asymmetry
-/// instead.
-fn ultra_fog() -> FogVolume {
-    // FOREST_ULTRAFOG="density,absorption,scattering,asymmetry,light_intensity" — live tuning
-    // knob for the shot harness (no rebuild churn while hunting the sky/shaft balance).
-    if let Ok(s) = std::env::var("FOREST_ULTRAFOG") {
-        let v: Vec<f32> = s.split(',').filter_map(|p| p.trim().parse().ok()).collect();
-        if v.len() == 5 {
-            return FogVolume {
-                density_factor: v[0],
-                absorption: v[1],
-                scattering: v[2],
-                scattering_asymmetry: v[3],
-                light_intensity: v[4],
-                ..default()
-            };
-        }
-    }
-    FogVolume {
-        density_factor: 0.008,
-        absorption: 0.004,
-        scattering: 0.5,
-        scattering_asymmetry: 0.85,
-        light_intensity: 5.5,
-        ..default()
-    }
-}
-
 /// When the active **named** preset changes (chip click / F10 / hardware default / config load),
 /// overwrite the live [`GraphicsSettings`] with that preset's canned fill. `Custom` is skipped — it
 /// *is* the player's hand-tuned struct, so overwriting would undo their tweak. Runs on a
@@ -444,11 +403,8 @@ fn apply_quality(
     settings: Res<GraphicsSettings>,
     mut defaults: ResMut<RenderDefaults>,
     mut commands: Commands,
-    sun: Query<Entity, With<Sun>>,
     mut sun_light: Query<&mut DirectionalLight, With<Sun>>,
     cam: Query<Entity, With<Camera3d>>,
-    mut cam_fog: Query<&mut VolumetricFog>,
-    mut fog_vol: Query<&mut FogVolume>,
     bloom: Query<&Bloom>,
     mut cascades: Query<&mut CascadeShadowConfig>,
     mut shadowmap: ResMut<DirectionalLightShadowMap>,
@@ -458,35 +414,13 @@ fn apply_quality(
     // so the live components still hold the scene defaults — even when FOREST_QUALITY starts the
     // game on a non-default preset, this runs first within the same apply).
     if !defaults.captured {
-        defaults.fog_volume = fog_vol.iter().next().map(|f| f.clone());
         defaults.bloom_intensity = bloom.iter().next().map(|b| b.intensity).unwrap_or(0.30);
         defaults.cascades = cascades.iter().next().map(|c| c.clone());
         defaults.captured = true;
     }
 
     let s = &*settings;
-    let god = s.god_rays;
-
-    // Volumetric pass on/off via the sun's VolumetricLight (the only reliable runtime switch).
-    if let Ok(sun) = sun.single() {
-        if god {
-            commands.entity(sun).insert(VolumetricLight);
-        } else {
-            commands.entity(sun).remove::<VolumetricLight>();
-        }
-    }
-    if god {
-        // 64-step march — the smooth horizon rays the Ultra/god-rays look wants.
-        for mut f in cam_fog.iter_mut() {
-            f.step_count = 64;
-        }
-    }
-
-    // FogVolume: the visible-shaft tune when god-rays are on, else the authored (imperceptible) volume.
-    let fog = if god { Some(ultra_fog()) } else { None };
-    for mut fv in fog_vol.iter_mut() {
-        *fv = fog.clone().unwrap_or_else(|| defaults.fog_volume.clone().unwrap_or_default());
-    }
+    let god = s.god_rays; // screen-space god-rays toggled as a camera component in the per-camera loop below
 
     // Shadows: `Off` disables the sun's shadow casting entirely (the biggest weak-GPU win — no
     // cascade passes at all); otherwise size + cascade count + reach come from the level. Toggling
@@ -553,6 +487,15 @@ fn apply_quality(
             e.insert(crate::outline::default_outline());
         } else {
             e.remove::<crate::outline::Outline>();
+        }
+
+        // Screen-space god rays: same component-toggle mechanism — removing `GodRays` makes the
+        // pass's ViewQuery stop matching, so the fullscreen scatter pass is skipped (High/Ultra on,
+        // Low off). The driver (`godrays::drive_godrays`) gates it further to daylight + sun-in-frame.
+        if god {
+            e.insert(crate::godrays::default_godrays());
+        } else {
+            e.remove::<crate::godrays::GodRays>();
         }
 
         // Normal prepass: dead weight when nothing consumes it (SSAO + outline both off), so drop it.

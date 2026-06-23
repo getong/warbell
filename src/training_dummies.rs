@@ -72,8 +72,8 @@ fn dummy_mesh() -> Mesh {
     ])
 }
 
-/// Plant a few dummies in the courtyard near the keep. Called from `worldmap::build` (combined
-/// map only), so the castle's ground height is already available.
+/// Plant the lone practice pell in the courtyard near the keep. Called from `worldmap::build`
+/// (combined map only), so the castle's ground height is already available.
 pub fn populate(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -81,8 +81,9 @@ pub fn populate(
 ) {
     let mesh = meshes.add(dummy_mesh());
     let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.95, ..default() });
-    // Two rows flanking the keep's southern courtyard (the muster yard), out of the gate lanes.
-    const SPOTS: [(f32, f32); 4] = [(-4.5, 6.0), (-2.0, 7.5), (2.0, 7.5), (4.5, 6.0)];
+    // A single practice pell off to one side of the keep's southern courtyard (the muster yard),
+    // clear of the gate lanes — one is enough to learn the swing without cluttering the bailey.
+    const SPOTS: [(f32, f32); 1] = [(-4.5, 6.0)];
     for (i, (x, z)) in SPOTS.into_iter().enumerate() {
         let y = crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
         // A little yaw variety so the row isn't mechanical.

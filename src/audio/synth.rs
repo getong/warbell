@@ -20,10 +20,15 @@ pub enum Sting {
     ShopBuy,
     CampRescue,
     LowHp,
+    /// Distant lightning thunder — a low rolling rumble + crack (`storm.rs`, night siege).
+    Thunder,
+    /// Warden crit-windup dread — a rising drone + accelerating heartbeat that crescendos into
+    /// the killing blow (~1.2 s, the telegraph length). Layered over the `BossWindup` cue.
+    BossTension,
 }
 
 impl Sting {
-    pub const ALL: [Sting; 7] = [
+    pub const ALL: [Sting; 9] = [
         Sting::OreShatter,
         Sting::ChestOpen,
         Sting::LevelUp,
@@ -31,6 +36,8 @@ impl Sting {
         Sting::ShopBuy,
         Sting::CampRescue,
         Sting::LowHp,
+        Sting::Thunder,
+        Sting::BossTension,
     ];
     /// Per-sting output gain (mirrors the old game's category levels).
     pub fn volume(self) -> f32 {
@@ -42,6 +49,8 @@ impl Sting {
             Sting::ShopBuy => 0.40,
             Sting::CampRescue => 0.50,
             Sting::LowHp => 0.45,
+            Sting::Thunder => 0.55,
+            Sting::BossTension => 0.5,
         }
     }
 }
@@ -236,6 +245,26 @@ fn synth(s: Sting) -> Vec<f32> {
         Sting::LowHp => {
             y.tone(Wave::Square, 330.0, 0.0, 0.10, 0.12, Some(220.0));
             y.tone(Wave::Square, 330.0, 0.16, 0.10, 0.12, Some(220.0));
+        }
+        Sting::Thunder => {
+            // A rolling low rumble (band-passed noise sweeping down) with a sharper crack on top,
+            // then a long decaying tail — distant lightning, not an overhead strike.
+            y.noise(0.0, 1.4, 0.55, Filter::Low, 220.0, 60.0);
+            y.noise(0.02, 0.18, 0.40, Filter::Band, 900.0, 300.0); // the initial crack
+            y.tone(Wave::Sine, 48.0, 0.0, 1.2, 0.20, Some(34.0)); // sub-bass body
+        }
+        Sting::BossTension => {
+            // Rising dread drone: overlapping sine tones climbing 70 → ~178 Hz, each swelling
+            // louder so the bed crescendos into the crit-fire at ~1.2 s (the telegraph length).
+            for i in 0..7u32 {
+                let f = 70.0 + i as f32 * 18.0;
+                let pk = 0.05 + i as f32 * 0.013;
+                y.tone(Wave::Sine, f, i as f32 * 0.16, 0.34, pk, Some(f * 1.06));
+            }
+            // Heartbeat thuds, ACCELERATING as the blow nears (slow → fast → the crest).
+            for &(t0, pk) in &[(0.0_f32, 0.10_f32), (0.5, 0.12), (0.85, 0.15), (1.08, 0.19)] {
+                y.tone(Wave::Sine, 60.0, t0, 0.12, pk, Some(42.0));
+            }
         }
         // (The old synth WarHorn sting is gone — the fortress horn is a real recording now,
         //  `assets/audio/war-horn.ogg`, loaded by `sfx::SfxBank`.)

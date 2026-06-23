@@ -283,6 +283,11 @@ pub(crate) fn play_cues(
             // cuts through the roar; the player's cue to raise the shield / dodge clear.
             AudioCue::BossWindup(pos) => {
                 spatial_shot(&mut commands, bank.boss_windup.clone(), 0.8 * sfx, jitter(&mut seed, 0.05) * 0.85, pos);
+                // Layer the rising dread ramp under the charge whine — a synth crescendo that
+                // crests as the crit lands (~1.2 s). Spatial so distance attenuates it.
+                if let Some(h) = stings.handle(Sting::BossTension) {
+                    spatial_shot(&mut commands, h, Sting::BossTension.volume() * sfx, 1.0, pos);
+                }
             }
             // A predator's bite snarl — wide pitch jitter so a flurry of bites never repeats. A
             // heavy beast (bear/croc/golem) gets the deeper roar set, louder + pitched down.
@@ -296,6 +301,15 @@ pub(crate) fn play_cues(
                     (&bank.beast_snarls, 0.5, jitter(&mut seed, 0.16))
                 };
                 spatial_shot(&mut commands, pick(set, &mut seed), vol * voice, pitch, at);
+            }
+            // A predator just locked on (idle/graze → hunt): a low stalk-growl, the "you've been
+            // seen" tell ~2 s before the charge. Reuses the snarl pool pitched well DOWN so it
+            // reads as a warning, not a bite. Throttled with the roars so a pack flip doesn't pile.
+            AudioCue::CreatureAggro(at) => {
+                if !throttle.allow(T_ROAR, now) {
+                    continue;
+                }
+                spatial_shot(&mut commands, pick(&bank.beast_snarls, &mut seed), 0.55 * voice, jitter(&mut seed, 0.08) * 0.72, at);
             }
             // A town-guard's blow lands on an invader — a quick spatial swing+flesh thud, kept
             // well under the hero's own hit (≈⅓) so nearby militia skirmishes are heard as
@@ -343,6 +357,13 @@ pub(crate) fn play_cues(
             // A warp bolt leaving a shaman staff / fortress tower — short magical release.
             AudioCue::WarpCast(pos) => {
                 spatial_shot(&mut commands, bank.warp_cast.clone(), 0.55 * sfx, jitter(&mut seed, 0.12), pos);
+            }
+            // Distant siege thunder — the synth rumble, head-locked (it's the whole sky, not a
+            // point), wide-ish pitch jitter so repeated rolls vary.
+            AudioCue::Thunder => {
+                if let Some(h) = stings.handle(Sting::Thunder) {
+                    one_shot(&mut commands, h, Sting::Thunder.volume() * sfx, jitter(&mut seed, 0.12));
+                }
             }
             // Hero-mouth cues (grunts / jump / hurt / death / lines) are handled by `voice.rs`.
             _ => {}

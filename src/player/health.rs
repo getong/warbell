@@ -1,17 +1,16 @@
 //! Hero vitals — drains the orks' [`PendingHeroDamage`] into HP (negated entirely while
-//! blocking, at a stamina cost),
-//! and on death respawns the hero at a castle gate after a short beat. Ported from the
-//! damage + "respawn" path of `playerStore.ts` (the TS succession system is out of scope).
+//! blocking, at a stamina cost). Death (HP → 0) arms `core::Player::dead_since`; the *succession
+//! beat* that follows — slow-mo, camera swing, and the heir possessing the nearest townsperson —
+//! lives in [`crate::succession::drive_succession`]. This module just takes the hit + crumples.
 
 use bevy::prelude::*;
 
 use crate::audio::AudioCue;
 
-use super::{Hero, HeroHealth, PendingHeroDamage, PlayerRes, HERO_SCALE};
+use super::{Hero, HeroHealth, PendingHeroDamage, PlayerRes};
 
 const BLOCK_HIT_STAMINA: f32 = 18.0; // stamina spent absorbing one blocked hit
 const CRIT_BLOCK_STAMINA: f32 = 55.0; // a parried warden CRITICAL nearly drains the guard bar
-const RESPAWN_DELAY: f64 = 1.6; // s down before the hero rises again (succession lands in P5)
 /// Seconds the hero takes to keel over once slain (the death "crumple", like the orks').
 const DEATH_FALL_SECS: f32 = 0.55;
 
@@ -22,25 +21,17 @@ pub fn apply_hero_damage(
     mut player: ResMut<PlayerRes>,
     buffs: Res<crate::inventory::Buffs>,
     inv: Res<crate::inventory::Inventory>,
-    mut lives: ResMut<crate::succession::Lives>,
-    mut town: ResMut<crate::town::TownRes>,
-    mut hero_q: Query<(&mut Hero, &mut Transform, &mut HeroHealth)>,
-    villagers: Query<
-        (Entity, &Transform),
-        (With<crate::villagers::Townsfolk>, Without<crate::dying::Dying>, Without<Hero>),
-    >,
-    mut commands: Commands,
+    mut hero_q: Query<(&Hero, &mut HeroHealth)>,
     mut cues: MessageWriter<AudioCue>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
     mut feedback: ResMut<crate::combat_fx::HitFeedback>,
-    mut fell: MessageWriter<crate::succession_fx::HeirFell>,
 ) {
     // A warden critical landed this frame (lethal unless blocked/dodged). Read + clear it here so
     // it's consumed exactly once, alongside the same pending-damage drain it rode in on.
     let is_crit = crit.0;
     crit.0 = false;
 
-    let Ok((mut hero, mut tf, mut hh)) = hero_q.single_mut() else {
+    let Ok((hero, mut hh)) = hero_q.single_mut() else {
         pending.0 = 0.0;
         return;
     };
@@ -106,52 +97,10 @@ pub fn apply_hero_damage(
     }
     pending.0 = 0.0;
 
-    // ── Death → the blade passes to an heir, who rises at the north gate after a beat ──
-    if let Some(t0) = p.dead_since {
-        if now - t0 >= RESPAWN_DELAY {
-            // The bloodline IS the town headcount (an heir = a townsperson; `Lives.heirs` just
-            // mirrors `town.population`). Nobody left to take up the blade → the line ends.
-            if town.0.population == 0 {
-                lives.defeat = true;
-                return;
-            }
-            // The next heir takes up the blade: one townsperson leaves the pool to become the
-            // hero. The headcount is the source of truth — decrement it, and despawn the nearest
-            // townsfolk body below so `sync_population_bodies` doesn't reap a second one.
-            town.0.population -= 1;
-            let mut nearest: Option<(Entity, f32)> = None;
-            for (e, vtf) in &villagers {
-                let d = Vec2::new(vtf.translation.x, vtf.translation.z).distance(hero.pos);
-                if nearest.is_none_or(|(_, bd)| d < bd) {
-                    nearest = Some((e, d));
-                }
-            }
-            if let Some((e, _)) = nearest {
-                commands.entity(e).try_despawn();
-            }
-            let gate = crate::castle::gate_centers()[0];
-            let pos = Vec2::new(gate.x, gate.y - 3.0);
-            let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
-            // Mark the fall: a grave where the hero lies + a soul wisp to the rising heir.
-            fell.write(crate::succession_fx::HeirFell {
-                grave_at: Vec3::new(hero.pos.x, hero.y, hero.pos.y),
-                rise_at: Vec3::new(pos.x, y, pos.y),
-            });
-            hero.pos = pos;
-            hero.y = y;
-            hero.facing = 0.0;
-            hero.vel_y = 0.0;
-            hero.on_ground = true;
-            hero.attacking = false;
-            tf.translation = Vec3::new(pos.x, y, pos.y);
-            tf.rotation = Quat::from_rotation_y(0.0);
-            tf.scale = Vec3::splat(HERO_SCALE);
-            p.respawn_at(pos.x as f64, y as f64, pos.y as f64); // full HP, clears dead_since
-            hh.stamina = hh.stamina_max;
-            hh.block_locked = false;
-            hh.blocking = false;
-        }
-    }
+    // Death itself (HP → 0, `dead_since` armed by `core::Player::damage`) is now handed off to the
+    // succession beat (`succession::drive_succession`): it slows the world, swings the camera to the
+    // nearest townsperson, and either possesses them (full-HP rise on their spot) or — town empty —
+    // declares Defeat. This system's sole remaining job is taking the hit.
 }
 
 /// Hero death "crumple": once slain (`dead_since` set), keel over backward and sink — the same

@@ -447,7 +447,7 @@ fn apply_attack(p: &mut P, c: &QuadConfig, t: f32) {
                     p.tail_rx += lerpf(0.0, 0.2, pr);
                 }
                 1 => {
-                    p.root_z = lerpf(-0.1, 0.2, pr);
+                    p.root_z = lerpf(-0.1, 0.12, pr);
                     p.root_y = lerpf(c.root_y - 0.05, c.root_y + 0.03, pr);
                     p.spine_rx = lerpf(-0.1, 0.2, pr);
                     p.neck_rx = lerpf(a - 0.2, a + 0.4, pr);
@@ -456,7 +456,7 @@ fn apply_attack(p: &mut P, c: &QuadConfig, t: f32) {
                     p.fr_sh_x -= lerpf(0.0, 0.4, pr);
                 }
                 _ => {
-                    p.root_z = lerpf(0.2, 0.0, pr);
+                    p.root_z = lerpf(0.12, 0.0, pr);
                     p.root_y = lerpf(c.root_y + 0.03, c.root_y, pr);
                     p.spine_rx = lerpf(0.2, 0.0, pr);
                     p.neck_rx = lerpf(a + 0.4, a, pr);
@@ -499,14 +499,14 @@ fn apply_attack(p: &mut P, c: &QuadConfig, t: f32) {
                     p.neck_rx -= lerpf(0.0, 0.15, pr);
                 }
                 1 => {
-                    p.root_z = lerpf(-0.15, 0.35, pr);
+                    p.root_z = lerpf(-0.15, 0.2, pr);
                     p.root_y = lerpf(c.root_y - 0.08, c.root_y, pr);
                     p.neck_rx = lerpf(a - 0.15, a + 0.1, pr);
                     p.head_rx = lerpf(-a + 0.15, -a - 0.1, pr);
                     apply_gait(p, c, t * 2.0, 1.0, c.run_amp * 0.6);
                 }
                 _ => {
-                    p.root_z = lerpf(0.35, 0.0, pr);
+                    p.root_z = lerpf(0.2, 0.0, pr);
                     p.neck_rx = lerpf(a + 0.1, a, pr);
                     p.head_rx = lerpf(-a - 0.1, -a, pr);
                 }

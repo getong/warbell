@@ -507,6 +507,39 @@ fn build_stump() -> Mesh {
     merged(parts)
 }
 
+/// Per-instance trunk/foliage collision radius (UNIT scale) for a scattered tree, derived from
+/// its own mesh silhouette so the blocker matches the KIND: a wide low-canopy broadleaf or a
+/// skirted pine stops you near its leaves (you sink in only a little), while a slim poplar or an
+/// airy birch lets you walk right up to the trunk. Sampled over a LOW height band (below an airy
+/// crown) so a tall tree's high canopy — which you walk *under* — never inflates the footprint.
+/// Computed once at scene build; the registered blocker stays a single circle, so there is no
+/// per-frame cost (collision queries are unchanged).
+pub fn silhouette_block_radius(mesh: &Mesh) -> f32 {
+    // Knee-to-waist band of the unit-space mesh: catches a low dense canopy / wide conifer skirt
+    // and the trunk, but sits below the high airy crowns (birch ~0.98, poplar tip) you walk under.
+    const LO: f32 = 0.05;
+    const HI: f32 = 0.60;
+    let Some(pos) = mesh.attribute(Mesh::ATTRIBUTE_POSITION).and_then(|p| p.as_float3()) else {
+        return 0.20; // no positions → fall back to the old flat trunk radius
+    };
+    let mut radii: Vec<f32> = pos
+        .iter()
+        .filter(|p| p[1] >= LO && p[1] <= HI)
+        .map(|p| (p[0] * p[0] + p[2] * p[2]).sqrt())
+        .collect();
+    if radii.is_empty() {
+        return 0.20;
+    }
+    radii.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    // 85th-percentile reach — tracks the bulk of the low silhouette while a few stray twig /
+    // branch / fallen-limb / root-flare verts can't blow the footprint up.
+    let p = radii[((radii.len() - 1) * 85 / 100).min(radii.len() - 1)];
+    // Pull in a touch (the hero may sink slightly into leaves — "a bit, but minimally") and clamp:
+    // never below a slim-trunk bump, never past the blockers neighbour-scan bound (≤1.0, leaving
+    // headroom for the per-instance scale-up).
+    (p * 0.85).clamp(0.13, 0.85)
+}
+
 /// Debug screenshot hook: `FOREST_TREELINE="x,z"` parks one of every `TreeKind` in a row at
 /// the given world XZ for model close-ups (mirrors `FOREST_ORKLINE`). Spawned at 2× against
 /// the same white vertex-colour material the scatter uses.
@@ -553,5 +586,41 @@ fn spawn_treeline(
             MeshMaterial3d(mat.clone()),
             Transform::from_translation(Vec3::new(x, y, z)).with_scale(Vec3::splat(2.0)),
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn radius(k: TreeKind) -> f32 {
+        silhouette_block_radius(&build_tree_mesh(k))
+    }
+
+    /// The whole point of the per-kind footprint: a wide low crown / conifer skirt blocks wider
+    /// (you sink only a little into a big tree) than a slim columnar poplar or an airy birch
+    /// (you can reach their trunk). Guards against a regression back to one flat radius for all.
+    #[test]
+    fn block_radius_tracks_silhouette_per_kind() {
+        let broadleaf = radius(TreeKind::Broadleaf);
+        let autumn = radius(TreeKind::Autumn);
+        let pine = radius(TreeKind::Pine);
+        let poplar = radius(TreeKind::Poplar);
+        let birch = radius(TreeKind::Birch);
+        eprintln!(
+            "tree block radii — broadleaf {broadleaf:.3} autumn {autumn:.3} pine {pine:.3} \
+             poplar {poplar:.3} birch {birch:.3}"
+        );
+
+        // Every kind stays within the registrable single-circle bound.
+        for v in [broadleaf, autumn, pine, poplar, birch] {
+            assert!((0.13..=0.85).contains(&v), "radius {v} out of range");
+        }
+        // Big round/skirted crowns dwarf the slim silhouettes.
+        assert!(broadleaf > poplar + 0.05, "broadleaf {broadleaf} ≯ poplar {poplar}");
+        assert!(broadleaf > birch + 0.05, "broadleaf {broadleaf} ≯ birch {birch}");
+        assert!(pine > birch + 0.04, "pine {pine} ≯ birch {birch}");
+        // The airy birch reads as its slim pale trunk down low — a small bump.
+        assert!(birch <= 0.24, "birch {birch} should stay a slim-trunk bump");
     }
 }

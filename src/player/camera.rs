@@ -26,6 +26,8 @@ pub struct CamGate<'w> {
     build_mode: Res<'w, crate::town::BuildMode>,
     /// Set while a warden rears back for a killing blow — eases a tension dolly-out (see below).
     crit_tension: Option<Res<'w, crate::boss::CritTension>>,
+    /// The succession beat — when active, the camera is pulled to frame the peasant being possessed.
+    succ: Res<'w, crate::succession::Succession>,
 }
 
 const SENS_X: f32 = 0.0035;
@@ -327,8 +329,20 @@ pub fn player_camera(
     let want = if gate.build_mode.active { 1.0 } else { 0.0 };
     *build_blend += (want - *build_blend) * (1.0 - (-time.delta_secs() * 7.0).exp());
     let blend = (*build_blend).clamp(0.0, 1.0);
-    let base_eye = follow_eye.lerp(fp_eye, fpb);
-    let base_look = follow_target.lerp(fp_look, fpb);
+    let mut base_eye = follow_eye.lerp(fp_eye, fpb);
+    let mut base_look = follow_target.lerp(fp_look, fpb);
+    // Succession cinematic: pull the camera to orbit the peasant being possessed (reusing the
+    // current azimuth/pitch, pulled back a touch, so it reads as a deliberate move, not a cut).
+    // Eased in/out by `cam_blend`; because the risen hero ends up AT `steal_pos`, blending back out
+    // hands control smoothly to the normal follow.
+    if gate.succ.active && gate.succ.cam_blend > 0.001 {
+        let ct = Vec3::new(gate.succ.steal_pos.x, gate.succ.steal_pos.y + EYE_H, gate.succ.steal_pos.z);
+        let (ca, cp, cr) = (orbit.azimuth, (orbit.pitch + 0.18).min(MAX_PITCH), orbit.dist + 1.8);
+        let ce = ct + Vec3::new(ca.sin() * cp.cos() * cr, cp.sin() * cr, ca.cos() * cp.cos() * cr);
+        let k = gate.succ.cam_blend.clamp(0.0, 1.0);
+        base_eye = base_eye.lerp(ce, k);
+        base_look = base_look.lerp(ct, k);
+    }
     let eye = base_eye.lerp(BUILD_CAM_EYE, blend);
     let look = base_look.lerp(BUILD_CAM_LOOK, blend);
     cam_tf.translation = eye;
@@ -343,7 +357,16 @@ pub fn player_camera(
         let s = crate::combat_fx::SHAKE_MAX * fb.trauma * fb.trauma * damp;
         if s > 0.0 {
             let t = time.elapsed_secs();
-            let jitter = Vec3::new((t * 47.0).sin(), (t * 59.0).sin(), (t * 41.0).sin());
+            let chaos = Vec3::new((t * 47.0).sin(), (t * 59.0).sin(), (t * 41.0).sin());
+            // Directional bias: a hit site sets `shake_dir` (world XZ) so the camera kicks ALONG
+            // it — a swing's `-fwd` reads as recoil. Mix mostly the directed push with some chaos
+            // so it still feels organic, not a clean slide. Zero dir → the old unbiased shake.
+            let jitter = if fb.shake_dir.length_squared() > 1e-5 {
+                let push = Vec3::new(fb.shake_dir.x, 0.0, fb.shake_dir.y) * (t * 53.0).sin();
+                push * 0.7 + chaos * 0.5
+            } else {
+                chaos
+            };
             cam_tf.translation += jitter * s;
         }
     }

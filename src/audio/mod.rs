@@ -128,6 +128,13 @@ pub enum AudioCue {
     /// A green warp bolt leaves a shaman's staff or a fortress watchtower (sampled
     /// `warp-cast.ogg` — a sharp magical release; spatial at the muzzle).
     WarpCast(Vec3),
+    /// A distant thunder rumble during a night siege — fired (after a short flash→sound delay) by
+    /// `storm.rs` when the storm strobes the battlefield. Synth-baked low rumble; non-spatial.
+    Thunder,
+    /// A wild predator just locked onto a target (idle/graze → hunt) — a low stalk-growl at a
+    /// world position, the ~2 s "you've been seen" tell before the charge. Reuses the beast-snarl
+    /// pool pitched DOWN so it reads as a warning, not a bite. Throttled like the other beasts.
+    CreatureAggro(Vec3),
 }
 
 /// Per-run gates for the "once" event voice lines (the old game's `spoken` key-set). Reset on
@@ -291,6 +298,8 @@ impl Plugin for GameAudioPlugin {
                     ambience::attach_campfire_audio,
                     ambience::attach_war_drum_audio,
                     ambience::war_drums,
+                    // Faint kid-play chatter near the play patch; silent on the menu / at night.
+                    ambience::kids_chatter.run_if(in_state(crate::game_state::AppState::Playing)),
                     footsteps::hero_footsteps,
                     music::update_music,
                     sfx::play_cues,

@@ -50,13 +50,19 @@ pub struct HitStop {
     pub remaining: f32,
 }
 
-const HITSTOP_KILL: f32 = 0.09;
-const HITSTOP_HIT: f32 = 0.05;
+// Hit-stop + shake are TIERED by blow weight so a light poke, a crit, and a kill each FEEL
+// distinct (they were all one weight before). Kill > crit > light, in both freeze length and
+// camera trauma. The light hit is lighter than the old single value; the kill a touch shorter so
+// the new crit tier sits cleanly between them.
+const HITSTOP_KILL: f32 = 0.10;
+const HITSTOP_CRIT: f32 = 0.07;
+const HITSTOP_HIT: f32 = 0.04;
 /// During hit-stop the sim runs at this fraction of real time rather than a dead freeze — a brief
 /// slow-mo dip that still sells the "punch" without the full-stop stutter that read as micro-lag.
 const HITSTOP_SLOWMO: f32 = 0.15;
-const SHAKE_KILL: f32 = 0.55;
-const SHAKE_HIT: f32 = 0.30;
+const SHAKE_KILL: f32 = 0.46;
+const SHAKE_CRIT: f32 = 0.32;
+const SHAKE_HIT: f32 = 0.20;
 const KNOCKBACK: f32 = 6.0;
 const KNOCKBACK_CRIT: f32 = 9.0;
 
@@ -619,13 +625,23 @@ pub fn player_attack(
         hit_any = true;
     }
 
-    // Juice: a connecting blow shakes the screen, punches the FOV + briefly freezes the sim
-    // (heavier on a kill).
+    // Juice: a connecting blow shakes the screen, punches the FOV + briefly freezes the sim,
+    // TIERED by weight — kill > crit > light. The shake is also biased to RECOIL: `shake_dir`
+    // = `-fwd` kicks the camera back along the swing (a directed jolt, not pure chaos). `crit`
+    // is the swing-wide roll (one per swing, line ~419), so any connecting hit on a crit swing
+    // gets the crit tier; a bonked townsperson (hit_any, never crit/kill) takes the light tier.
     if killed_any {
+        juice.feedback.shake_dir = -fwd;
         juice.feedback.trauma = (juice.feedback.trauma + SHAKE_KILL).min(1.0);
         crate::combat_fx::add_fov_kick(&mut juice.feedback, crate::combat_fx::FOV_KICK_KILL);
         juice.hitstop.remaining = juice.hitstop.remaining.max(HITSTOP_KILL);
+    } else if hit_any && crit {
+        juice.feedback.shake_dir = -fwd;
+        juice.feedback.trauma = (juice.feedback.trauma + SHAKE_CRIT).min(1.0);
+        crate::combat_fx::add_fov_kick(&mut juice.feedback, crate::combat_fx::FOV_KICK_CRIT);
+        juice.hitstop.remaining = juice.hitstop.remaining.max(HITSTOP_CRIT);
     } else if hit_any {
+        juice.feedback.shake_dir = -fwd;
         juice.feedback.trauma = (juice.feedback.trauma + SHAKE_HIT).min(1.0);
         crate::combat_fx::add_fov_kick(&mut juice.feedback, crate::combat_fx::FOV_KICK_HIT);
         juice.hitstop.remaining = juice.hitstop.remaining.max(HITSTOP_HIT);

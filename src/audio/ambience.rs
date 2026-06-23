@@ -76,6 +76,54 @@ pub(crate) struct WarDrums {
 #[derive(Component)]
 pub(crate) struct WarDrumAudio;
 
+/// Kids' play-chatter PEAK level, as a fraction of a villager voice line. They should sit clearly
+/// *below* real dialogue — background colour, not lines the player is meant to parse. Expressed
+/// relative to (and so tracking) the villager voice gain rather than the ambience bus.
+const KIDS_VS_VILLAGER: f32 = 2.0 / 3.0;
+/// Hero-distance bands (world units) for the chatter swell. Beyond `FAR` it's silent; it swells to
+/// full toward `MID`, then DUCKS back inside `HUSH` — the children go quiet when the knight walks
+/// right up to them (the "hush as you approach" beat), leaving only a shy murmur (`HUSH_FLOOR`).
+const KIDS_FAR: f32 = 24.0;
+const KIDS_MID: f32 = 9.0;
+const KIDS_HUSH: f32 = 4.5;
+const KIDS_HUSH_FLOOR: f32 = 0.12;
+/// Chatter fade rate (per second) — a gentle swell/duck, no abrupt cut.
+const KIDS_FADE: f32 = 1.2;
+/// Intermittent envelope: the kids don't jabber non-stop — a short burst (≈one line/snippet) then a
+/// long silent gap, so you only catch a bit of play *every so often*. `(min, max)` seconds.
+const KIDS_BURST: (f32, f32) = (3.0, 6.0);
+const KIDS_GAP: (f32, f32) = (16.0, 32.0);
+/// Quiet beat after the hero arrives (a kid is back in earshot) before the first line pipes up.
+const KIDS_ARRIVE_BEAT: f32 = 1.5;
+
+/// The kids' play-chatter loop + its envelope state.
+#[derive(Component)]
+pub(crate) struct KidsChatter {
+    /// Current (lerped) volume level.
+    level: f32,
+    /// True while in a "talking" burst; false during the silent gap between bursts.
+    talking: bool,
+    /// `elapsed_secs` at which the current burst/gap ends and the envelope flips.
+    until: f32,
+    /// xorshift state for the per-burst/gap jitter.
+    rng: u32,
+}
+
+/// Distance → chatter gain: 0 past `KIDS_FAR`, ramps to 1 by `KIDS_MID`, then ducks to
+/// `KIDS_HUSH_FLOOR` by `KIDS_HUSH` (and stays there closer in).
+fn kids_swell(d: f32) -> f32 {
+    if d >= KIDS_FAR {
+        0.0
+    } else if d >= KIDS_MID {
+        ((KIDS_FAR - d) / (KIDS_FAR - KIDS_MID)).clamp(0.0, 1.0)
+    } else if d >= KIDS_HUSH {
+        let t = (d - KIDS_HUSH) / (KIDS_MID - KIDS_HUSH);
+        KIDS_HUSH_FLOOR + t * (1.0 - KIDS_HUSH_FLOOR)
+    } else {
+        KIDS_HUSH_FLOOR
+    }
+}
+
 /// Spawn the always-on (initially silent) ambience loops once at startup. Not tagged
 /// `BiomeEntity`, so they survive biome switches; only their volume changes.
 pub(crate) fn setup_ambience(asset: Res<AssetServer>, mut commands: Commands) {
@@ -99,6 +147,18 @@ pub(crate) fn setup_ambience(asset: Res<AssetServer>, mut commands: Commands) {
             Ambience { kind, level: 0.0 },
         ));
     }
+    // The kids' play-chatter loop — non-spatial (volume fully controlled by `kids_chatter`),
+    // silent until the hero nears a visibly-playing child.
+    commands.spawn((
+        AudioPlayer(asset.load::<AudioSource>("audio/kids-play.ogg")),
+        PlaybackSettings {
+            mode: PlaybackMode::Loop,
+            volume: Volume::Linear(0.0),
+            spatial: false,
+            ..default()
+        },
+        KidsChatter { level: 0.0, talking: false, until: 0.0, rng: 0x1234_5678 },
+    ));
 }
 
 /// Attach a spatial looping campfire sink to each camp flame that lacks one. Camps are part of
@@ -238,5 +298,49 @@ pub(crate) fn biome_ambience(
         let target = if on { cfg.ambience_vol * mult } else { 0.0 };
         amb.level += (target - amb.level) * k;
         sink.set_volume(Volume::Linear(amb.level));
+    }
+}
+
+/// Ride the kids' play-chatter loop: swell it as the hero nears the nearest *visibly-playing*
+/// child, duck it when he's right on top of them, and fall silent when no kid is visible — which
+/// the night curfew gives for free (kids run home and hide, so the loop simply goes quiet at dusk).
+pub(crate) fn kids_chatter(
+    time: Res<Time>,
+    cfg: Res<AudioConfig>,
+    hero: Query<&crate::player::Hero>,
+    kids: Query<(&GlobalTransform, &Visibility), With<crate::villagers::Kid>>,
+    mut q: Query<(&mut KidsChatter, &mut AudioSink)>,
+) {
+    // Distance to the nearest visible kid (None → no kid out → silent).
+    let nearest = hero.single().ok().map(|h| h.pos).and_then(|hp| {
+        kids.iter()
+            .filter(|(_, v)| **v != Visibility::Hidden)
+            .map(|(t, _)| {
+                let p = t.translation();
+                Vec2::new(p.x, p.z).distance(hp)
+            })
+            .min_by(f32::total_cmp)
+    });
+    // Peak = 2/3 of a villager voice line (voice_vol × villager gain), ridden by the swell curve.
+    let villager_gain = crate::audio::lines::speaker_voice(crate::audio::lines::Speaker::Villager).gain;
+    let peak = cfg.voice_vol * villager_gain * KIDS_VS_VILLAGER;
+    let now = time.elapsed_secs();
+    let near = nearest.is_some_and(|d| d < KIDS_FAR);
+    let k = (time.delta_secs() * KIDS_FADE).min(1.0);
+    for (mut c, mut sink) in &mut q {
+        // Intermittent envelope: only run the burst/gap clock while a kid is in earshot; when none
+        // is, hold silent and re-arm a short beat so a line pipes up shortly after the hero walks up.
+        if !near {
+            c.talking = false;
+            c.until = now + KIDS_ARRIVE_BEAT;
+        } else if now >= c.until {
+            c.talking = !c.talking;
+            let (lo, hi) = if c.talking { KIDS_BURST } else { KIDS_GAP };
+            c.until = now + lo + crate::audio::frand(&mut c.rng) * (hi - lo);
+        }
+        let env = if c.talking { 1.0 } else { 0.0 };
+        let target = env * nearest.map_or(0.0, |d| peak * kids_swell(d));
+        c.level += (target - c.level) * k;
+        sink.set_volume(Volume::Linear(c.level));
     }
 }

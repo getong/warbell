@@ -24,6 +24,13 @@ serde_json = "1"
 # RenderAdapterInfo::device_type for the hardware-aware startup preset. Kept at the bare major so
 # cargo unifies it with bevy's own wgpu (same compiled crate → DeviceType types match).
 wgpu = { version = "29", default-features = false }
+# Runtime window icon (taskbar / title-bar / Alt-Tab): winit's window class ships hIcon=0, so it
+# does NOT adopt the exe's embedded icon for the live window — we set it ourselves in
+# `src/window_icon.rs`. `winit` (pinned to bevy_winit's 0.30 so the WinitWindow types unify) gives
+# the `Icon` type; `image` decodes the branding PNG (png-only to keep it lean — already in the tree
+# transitively via bevy, so cargo unifies it at no extra compile cost).
+winit = "0.30"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 # Profiling build: turns on Bevy's per-system tracing spans, written to a chrome-trace JSON on exit
 # (`trace-<ts>.json`). `cargo run --features profiling` then `tools/trace_summary.py <file>` gives an
@@ -33,8 +40,9 @@ wgpu = { version = "29", default-features = false }
 profiling = ["bevy/trace_chrome"]
 
 # Windows-only: embed the app icon + version metadata (ProductName/Company/version) into the
-# .exe resource section via build.rs. This is what Explorer, the taskbar, the winit window, and
-# the installer all read — no runtime icon-loading code needed (winit picks up the exe's icon).
+# .exe resource section via build.rs. This brands the .exe FILE icon (Explorer / installer /
+# Add-Remove-Programs). The *running window's* icon (taskbar / title-bar) is a separate thing winit
+# does NOT take from the exe — that's set at runtime in `src/window_icon.rs`.
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
 

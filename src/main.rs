@@ -54,6 +54,7 @@ mod tree_ui;
 mod firelight;
 mod footstep_fx;
 mod game_state;
+mod godrays;
 mod grade;
 mod groundcover;
 mod groundtest; // FOREST_GROUNDTEST=1: floating flat grass plane to isolate the terrain shader
@@ -92,8 +93,10 @@ mod separation;
 mod shutters;
 mod siege;
 mod steer;
+mod storm;
 mod subtitles;
 mod succession;
+mod succession_alert;
 mod succession_fx;
 mod terrain;
 mod town;
@@ -111,6 +114,7 @@ mod warlord;
 mod water;
 mod wildlife;
 mod wind;
+mod window_icon;
 mod worldmap;
 
 use bevy::audio::{AudioPlugin, SpatialScale};
@@ -251,5 +255,18 @@ fn main() {
             compass::CompassPlugin, // top-centre strip compass: heading + keep/Gnashfang landmark pips
             perftest::PerftestPlugin, // FOREST_PERFTEST=<secs>: headless leak instrumentation (off otherwise)
         ))
+        // Screen-space god-rays post pass (light scattering toward the sun). Toggled per-preset via
+        // quality.rs (`god_rays`); same custom-post-pass family as dof/outline. Standalone call
+        // because the tuples above are at the `Plugins` arity-15 cap.
+        .add_plugins(godrays::GodRaysPlugin)
+        // Last-of-the-line alert (heir-count stinger + persistent banner). Standalone: the tuples
+        // above are at the `Plugins` arity-15 cap.
+        .add_plugins(succession_alert::SuccessionAlertPlugin)
+        // Brand the running window (taskbar / title-bar / Alt-Tab). winit doesn't take the icon from
+        // the exe's embedded resource (that's only the FILE icon), so we set it at runtime.
+        .add_plugins(window_icon::WindowIconPlugin)
+        // Night-siege lightning flashes + delayed thunder (active only during a Wave). Standalone:
+        // the tuples above are at the `Plugins` arity-15 cap.
+        .add_plugins(storm::StormPlugin)
         .run();
 }

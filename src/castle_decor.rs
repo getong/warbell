@@ -151,9 +151,14 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
     // `foot` = local collision half-extents `(hw, hd)` for the set piece, rotated by `yaw`; a
     // non-positive extent registers no collision (decorative-only). `sync_decor` puts the box in
     // once the piece is shown. Attached to the FIRST part only so the merged piece gets one box.
+    // Very small props (thin posts/poles — lanterns, the guild banner) carry NO collision: a
+    // 0.14-wide post snags the hero for no reason. Only props with a real footprint block; below
+    // this half-extent a piece is decorative-only and you slip right past it.
+    const MIN_SOLID: f32 = 0.2;
     let mut set = |parts: Vec<(Mesh, M)>, pos: Vec3, yaw: f32, gate: DecorGate, foot: Vec2| {
         let vis = if matches!(gate, DecorGate::Always) { Visibility::Inherited } else { Visibility::Hidden };
-        let solid = (foot.x > 0.0 && foot.y > 0.0).then_some(DecorSolid { hw: foot.x, hd: foot.y, yaw });
+        let solid =
+            (foot.x >= MIN_SOLID && foot.y >= MIN_SOLID).then_some(DecorSolid { hw: foot.x, hd: foot.y, yaw });
         for (i, (m, slot)) in parts.into_iter().enumerate() {
             let mut e = commands.spawn((
                 Mesh3d(meshes.add(bake(m, pos, yaw, Vec3::ONE))),
@@ -180,11 +185,9 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
     set(trough_parts(), Vec3::new(3.6, 0.0, 4.7), 0.25, DecorGate::Always, Vec2::new(0.6, 0.3));
     set(market_parts(), Vec3::new(5.3, 0.0, -2.9), 0.7, DecorGate::Always, Vec2::new(0.9, 0.7));
     set(bench_parts(), Vec3::new(-5.9, 0.0, -1.4), HALF_PI, DecorGate::Always, Vec2::new(0.62, 0.2));
-    set(bench_parts(), Vec3::new(2.6, 0.0, 9.6), 2.8, DecorGate::Always, Vec2::new(0.62, 0.2));
+    // A few lantern posts along the main lanes (thinned down — the bailey was getting busy).
     for (lx, lz, lyaw) in [
         (2.0, -6.6, 0.0),
-        (-2.0, -9.6, std::f32::consts::PI),
-        (2.1, 10.4, std::f32::consts::PI),
         (-9.2, 2.0, -HALF_PI),
         (9.2, -2.0, HALF_PI),
     ] {

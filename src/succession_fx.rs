@@ -1,32 +1,37 @@
-//! **Succession visuals** — graves + the soul wisp, ported from the old game's
-//! `successionStore.ts` / `Grave.tsx` / `SoulWisp.tsx`. When the blade passes (an heir falls
-//! and the next rises at the gate, in `player::health`), this drops a headstone where the hero
-//! died and flies a glowing spirit from the body to the rising heir over [`SOUL_DUR`]. Graves
-//! accumulate across a run (a quiet tally of the fallen) and are cleared on a fresh run.
+//! **Succession visuals** — the soul wisp + the rise flash. When the blade passes (the succession
+//! beat in `succession::drive_succession`), [`HeirFell`] flies a glowing spirit from the fallen
+//! body into the townsperson being possessed over [`SOUL_DUR`], and [`HeirRose`] pops a bright
+//! flash where the new hero stands up. (No grave is planted — the player asked for none.)
 
-use bevy::mesh::MeshBuilder;
 use bevy::prelude::*;
 
-use crate::biome::BiomeEntity;
 use crate::game_state::AppState;
-use crate::palette::lin;
 
-/// Spirit travel time, body → heir (TS `SUCCESSION_DURATION`).
-const SOUL_DUR: f32 = 1.7;
+/// Spirit travel time, body → heir. Short: the whole succession beat runs in slow-motion, so this
+/// is in *virtual* seconds and the wisp covers its arc within the slowed window (lands ~as the
+/// rise flash pops). Tune alongside `succession`'s `TRANSFORM_T` / `SLOW_SPEED`.
+const SOUL_DUR: f32 = 0.5;
 /// Apex height of the wisp's arc (world units).
 const SOUL_ARC: f32 = 1.6;
+/// Rise-flash lifetime (virtual secs) — a quick grow-and-fade burst at the possession point.
+const FLASH_DUR: f32 = 0.42;
 
-/// Emitted by `player::health` when an heir falls and the next takes up the line.
+/// Emitted by `succession::drive_succession` when the hero falls: launches the soul wisp from the
+/// corpse toward the townsperson about to be possessed.
 #[derive(Message, Clone, Copy)]
 pub struct HeirFell {
-    /// Where the fallen hero lies (grave goes here).
+    /// Where the fallen hero lies (the wisp launches here).
     pub grave_at: Vec3,
     /// Where the next heir rises (the wisp flies here).
     pub rise_at: Vec3,
 }
 
-#[derive(Component)]
-struct Grave;
+/// Emitted by `succession::drive_succession` at the transform instant: pops a flash of light where
+/// the peasant stands up as the new hero.
+#[derive(Message, Clone, Copy)]
+pub struct HeirRose {
+    pub at: Vec3,
+}
 
 #[derive(Component)]
 struct SoulWisp {
@@ -36,11 +41,17 @@ struct SoulWisp {
     born: f32,
 }
 
+/// The possession flash. Owns a per-instance material so its emissive/alpha can fade independently
+/// (deaths are rare, so the one-off allocation is fine).
+#[derive(Component)]
+struct RiseFlash {
+    born: f32,
+    mat: Handle<StandardMaterial>,
+}
+
 /// Shared baked handles so the spawn path needs only `Commands` + this resource.
 #[derive(Resource)]
 struct FxAssets {
-    grave_mesh: Handle<Mesh>,
-    grave_mat: Handle<StandardMaterial>,
     wisp_mesh: Handle<Mesh>,
     wisp_mat: Handle<StandardMaterial>,
 }
@@ -50,54 +61,22 @@ pub struct SuccessionFxPlugin;
 impl Plugin for SuccessionFxPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<HeirFell>()
+            .add_message::<HeirRose>()
             .add_systems(Startup, setup_fx_assets)
-            .add_systems(Update, (spawn_succession_fx, drive_souls))
-            .add_systems(OnExit(AppState::StartScreen), clear_graves)
-            .add_systems(OnExit(AppState::GameOver), clear_graves);
+            .add_systems(Update, (spawn_succession_fx, drive_souls, spawn_rise_fx, drive_rise_flash))
+            .add_systems(OnExit(AppState::StartScreen), clear_wisps)
+            .add_systems(OnExit(AppState::GameOver), clear_wisps);
         // (Pause-menu Restart resets in-process via StartScreen → Playing — see
         // game_state::drive_fresh_run — so this OnExit(StartScreen) clear covers it.)
     }
 }
 
-// ── tiny local mesh helpers ────────────────────────────────────────────────────────
-fn tinted(mut m: Mesh, c: u32) -> Mesh {
-    let n = m.count_vertices();
-    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![lin(c); n]);
-    m
-}
-fn bx(w: f32, h: f32, d: f32, off: Vec3, c: u32) -> Mesh {
-    tinted(Cuboid::new(w, h, d).mesh().build().translated_by(off), c)
-}
-
-fn grave_mesh() -> Mesh {
-    const DIRT: u32 = 0x6b4f37;
-    const MOSS: u32 = 0x6f7d3c;
-    const STONE: u32 = 0x8d8c86;
-    const DARK: u32 = 0x54534f;
-    let mut m = bx(0.9, 0.16, 0.6, Vec3::new(0.0, 0.08, 0.05), DIRT); // mound
-    for part in [
-        bx(0.72, 0.05, 0.3, Vec3::new(0.0, 0.18, 0.12), MOSS), // moss on the mound
-        bx(0.5, 0.55, 0.12, Vec3::new(0.0, 0.4, -0.2), STONE), // headstone slab
-        bx(0.07, 0.28, 0.02, Vec3::new(0.0, 0.42, -0.27), DARK), // engraved cross (vertical)
-        bx(0.22, 0.07, 0.02, Vec3::new(0.0, 0.48, -0.27), DARK), // cross (horizontal)
-    ] {
-        m.merge(&part).expect("grave parts share attributes");
-    }
-    m.duplicate_vertices();
-    m.compute_flat_normals();
-    m
-}
 
 fn setup_fx_assets(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let grave_mat = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        perceptual_roughness: 0.95,
-        ..default()
-    });
     // Warm, unlit, brightly-emissive spirit — reads as a glowing wisp (bloom catches it).
     let wisp_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(1.0, 0.85, 0.55),
@@ -106,14 +85,12 @@ fn setup_fx_assets(
         ..default()
     });
     commands.insert_resource(FxAssets {
-        grave_mesh: meshes.add(grave_mesh()),
-        grave_mat,
         wisp_mesh: meshes.add(Sphere::new(0.2).mesh().ico(3).unwrap()),
         wisp_mat,
     });
 }
 
-/// On each fallen heir: plant a grave at the body + launch a soul wisp toward the rising heir.
+/// On each fallen heir: launch a soul wisp from the body toward the rising heir.
 fn spawn_succession_fx(
     time: Res<Time>,
     mut fell: MessageReader<HeirFell>,
@@ -123,15 +100,6 @@ fn spawn_succession_fx(
     let Some(assets) = assets else { return };
     let now = time.elapsed_secs();
     for ev in fell.read() {
-        // Grave faces the keep (origin): yaw toward the world centre so the headstone reads.
-        let yaw = (-ev.grave_at.x).atan2(-ev.grave_at.z);
-        commands.spawn((
-            Mesh3d(assets.grave_mesh.clone()),
-            MeshMaterial3d(assets.grave_mat.clone()),
-            Transform::from_translation(ev.grave_at).with_rotation(Quat::from_rotation_y(yaw)),
-            Grave,
-            BiomeEntity,
-        ));
         commands.spawn((
             Mesh3d(assets.wisp_mesh.clone()),
             MeshMaterial3d(assets.wisp_mat.clone()),
@@ -159,11 +127,60 @@ fn drive_souls(time: Res<Time>, mut commands: Commands, mut q: Query<(Entity, &S
     }
 }
 
-fn clear_graves(mut commands: Commands, graves: Query<Entity, With<Grave>>, wisps: Query<Entity, With<SoulWisp>>) {
-    for e in &graves {
-        commands.entity(e).try_despawn();
+/// On the rise: pop a bright flash at the possession point — the peasant becomes the knight.
+fn spawn_rise_fx(
+    time: Res<Time>,
+    mut rose: MessageReader<HeirRose>,
+    assets: Option<Res<FxAssets>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut commands: Commands,
+) {
+    let Some(assets) = assets else { return };
+    let now = time.elapsed_secs();
+    for ev in rose.read() {
+        // Fresh material per flash so it can fade its own emissive/alpha (see `RiseFlash`).
+        let mat = materials.add(StandardMaterial {
+            base_color: Color::srgb(1.0, 0.96, 0.82),
+            emissive: LinearRgba::rgb(7.0, 6.0, 3.6),
+            unlit: true,
+            alpha_mode: AlphaMode::Blend,
+            ..default()
+        });
+        commands.spawn((
+            Mesh3d(assets.wisp_mesh.clone()),
+            MeshMaterial3d(mat.clone()),
+            Transform::from_translation(ev.at + Vec3::Y * 0.9).with_scale(Vec3::splat(0.3)),
+            RiseFlash { born: now, mat },
+        ));
     }
-    for e in &wisps {
+}
+
+/// Grow the flash outward and fade it (emissive + alpha) over [`FLASH_DUR`]; despawn on finish.
+fn drive_rise_flash(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut q: Query<(Entity, &RiseFlash, &mut Transform)>,
+) {
+    let now = time.elapsed_secs();
+    for (e, flash, mut tf) in &mut q {
+        let t = ((now - flash.born) / FLASH_DUR).clamp(0.0, 1.0);
+        if t >= 1.0 {
+            commands.entity(e).try_despawn();
+            continue;
+        }
+        tf.scale = Vec3::splat(0.3 + t * 2.8); // burst outward
+        if let Some(mut m) = materials.get_mut(&flash.mat) {
+            let a = (1.0 - t) * (1.0 - t); // ease-out fade
+            m.base_color = m.base_color.with_alpha(a);
+            let g = 7.0 * a;
+            m.emissive = LinearRgba::rgb(g, g * 0.85, g * 0.5);
+        }
+    }
+}
+
+fn clear_wisps(mut commands: Commands, fx: Query<Entity, Or<(With<SoulWisp>, With<RiseFlash>)>>) {
+    for e in &fx {
         commands.entity(e).try_despawn();
     }
 }

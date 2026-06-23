@@ -12,8 +12,8 @@ use bevy::core_pipeline::tonemapping::Tonemapping;
 // now a standalone entity (not a camera component) opted into per-camera by `AtmosphereSettings`.
 use bevy::light::atmosphere::ScatteringMedium; // only re-exported from the submodule, not the root
 use bevy::light::{
-    Atmosphere, CascadeShadowConfigBuilder, DirectionalLightShadowMap, FogVolume,
-    ShadowFilteringMethod, SunDisk, VolumetricFog,
+    Atmosphere, CascadeShadowConfigBuilder, DirectionalLightShadowMap, ShadowFilteringMethod,
+    SunDisk,
 };
 use bevy::pbr::{
     AtmosphereSettings, ContactShadows, DistanceFog, FogFalloff, ScreenSpaceAmbientOcclusion,
@@ -194,10 +194,12 @@ const T_NIGHT: f32 = 0.75; // midnight — only the FOREST_WAVE screenshot boot 
 const T_NOON: f32 = 0.25; // end-screen daylight
 const DAY_LERP_RATE: f32 = 0.7; // quick-ease speed (≈ a couple-second dusk/dawn) for edge transitions
 const NIGHT_DRIFT_RATE: f32 = 0.003; // slow clock creep through the wave (~100s nightfall→cap)
-// Ease-in on prep progress (>1): daylight holds high for most of the countdown, then the sun
-// plunges through dusk→dark only in the final ~7s — so darkness COMPLETES right as the wave
-// starts (T_NIGHTFALL is the full-dark t), with no dim-daytime tail and no "dark, then wait".
-const PREP_SUN_EASE: f32 = 3.5;
+// Ease-in on prep progress (>1): a GENTLE bias toward daylight, low enough that the sun visibly
+// tracks the countdown instead of loitering then crashing. It climbs dawn→noon over the first
+// half, then descends noon→dusk→dark over the second — one steady sun arc you can time the wave
+// by. Darkness still COMPLETES exactly at prog→1 (T_NIGHTFALL is the full-dark t), so there's no
+// "dark, then wait" tail; the final stretch is a visible sunset, not a sudden plunge.
+const PREP_SUN_EASE: f32 = 1.5;
 
 fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
     let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
@@ -257,6 +259,7 @@ fn track_biome_atmo(
             cur.sun_illuminance += (target.sun_illuminance - cur.sun_illuminance) * k;
             cur.ambient_brightness += (target.ambient_brightness - cur.ambient_brightness) * k;
             cur.fog_density += (target.fog_density - cur.fog_density) * k;
+            cur.bloom_scale += (target.bloom_scale - cur.bloom_scale) * k;
         }
     }
 }
@@ -278,7 +281,9 @@ fn advance_sky(
     // `EnvironmentMapLight`, which survives that, not `GeneratedEnvironmentMapLight`, which is removed.
     mut env_q: Query<&mut EnvironmentMapLight>,
     mut grade_q: Query<&mut ColorGrading>,
+    mut bloom_q: Query<&mut Bloom>,
     biome: Option<Res<SmoothBiomeAtmo>>,
+    settings: Option<Res<crate::quality::GraphicsSettings>>,
 ) {
     let dt = time.delta_secs();
     if keys.just_pressed(KeyCode::KeyP) {
@@ -299,9 +304,9 @@ fn advance_sky(
         match siege.as_deref() {
             Some(s) => match s.phase {
                 // Prep is one continuous sunrise→nightfall descent used as a countdown: the
-                // sun reaches full dark exactly as the timer (prog→1) expires. The ease-in
-                // (`PREP_SUN_EASE`) keeps the day bright for most of the countdown, then drops
-                // fast through dusk at the very end — no long dim-daylight tail.
+                // sun reaches full dark exactly as the timer (prog→1) expires. The gentle ease-in
+                // (`PREP_SUN_EASE`) tracks the countdown closely — the sun climbs to noon by
+                // mid-day then descends through afternoon→dusk, so the sky's arc reads the time.
                 GamePhase::Prep => {
                     let prog = crate::siege::prep_progress(
                         s.prep_seconds_left,
@@ -446,6 +451,21 @@ fn advance_sky(
         g.global.exposure = -night * night_stops;
     }
 
+    // Bloom: the camera's halo/glow, driven per-region + per-time so emissive things (fire,
+    // torches, the sun disk, the Blight's embers) read hot. Base 0.30 (the spawn default) ×
+    // the eased biome `bloom_scale` × a golden-hour swell (everything bright haloes at dusk) ×
+    // a gentle night lift (so torch/fire bloom hotter against the dark). Capped so a Blight dusk
+    // can't blow out into a white smear.
+    let bloom_scale = tint.map(|t| t.bloom_scale).unwrap_or(1.0);
+    // Base follows the active graphics preset (god-rays presets carry a +lift, matching
+    // `quality::apply_quality`) — otherwise this per-frame drive would silently stomp that preset
+    // bloom every frame and the Ultra/High lift would never show.
+    let bloom_base = settings.map(|s| if s.god_rays { 0.42 } else { 0.30 }).unwrap_or(0.30);
+    let bloom = (bloom_base * bloom_scale * (1.0 + horizon * 0.5) * (1.0 + night * 0.25)).min(0.70);
+    for mut b in &mut bloom_q {
+        b.intensity = bloom;
+    }
+
     // Fog: night navy → day warm-cream haze, warmed orange at sunrise/sunset. The night navy
     // is lifted off near-black so the world isn't swallowed by black fog after dark.
     let mut fog_col = lerp_col(Color::srgb(0.06, 0.08, 0.15), FOG_DAY, day);
@@ -569,12 +589,10 @@ fn setup_camera(
     .insert((
         AtmosphereSettings::default(),
         grading,
-        // Volumetric sun shafts (god rays) — the modern, integrated replacement for the TS
-        // screen-space `GodRays` pass. Lit by the sun's `VolumetricLight` inside the `FogVolume`
-        // spawned in `setup_sun`. `jitter = 0` since we run SMAA, not TAA (jitter needs temporal
-        // resolve); `ambient_intensity = 0` so only the sun's shafts add brightness — a high
-        // value washed distant geometry into a bright white sky-haze. Tunable live in F1 → Fog.
-        VolumetricFog { ambient_intensity: 0.0, jitter: 0.0, step_count: 32, ..default() },
+        // God rays are the screen-space scatter pass in `godrays.rs` (a PostProcess ping-pong pass
+        // alongside outline/dof) — NOT Bevy's volumetric fog, which was retired (imperceptible at
+        // our fog, ~13 ms, and blacked out the Atmosphere sky). The `GodRays` component is added
+        // per-preset by `quality.rs`, so it isn't part of this base camera bundle.
         ShadowFilteringMethod::Gaussian,
         // Toon edge-outline (runs before the blur): crisp object silhouettes. Tunable in F1.
         crate::outline::default_outline(),
@@ -657,12 +675,7 @@ fn setup_sun(mut commands: Commands) {
             contact_shadows_enabled: true,
             ..default()
         },
-        // NB: no `VolumetricLight` here. The sun's half of the god-rays effect (the camera's
-        // `VolumetricFog` is the other half) is the *only* runtime switch for the volumetric pass
-        // — Bevy tears the pass down when no `VolumetricLight` exists. The Ultra graphics preset
-        // (`quality.rs`) inserts it on demand; spawning it here would run the pass for the first
-        // frame or two before `apply_quality` removes it, seeding a stale ~20 ms reading that the
-        // F2 GPU-passes table then shows forever. Default presets (High/Low) never pay for it.
+        // God rays are screen-space now (`godrays.rs`), so the sun needs no `VolumetricLight`.
         // Visible solar disk in the Atmosphere sky. Default is `SunDisk::EARTH` —
         // physically-accurate 0.0093 rad (≈0.5°), a barely-visible dot. The stylized look
         // wants a big warm ball: ~6× earth size, overexposed so Bloom halos it into a glow.
@@ -702,20 +715,6 @@ fn setup_sun(mut commands: Commands) {
         }
         .build(),
         Transform::from_xyz(-16.0, 40.0, -10.0).looking_at(Vec3::ZERO, Vec3::Y),
-    ));
-
-    // A single big fog box enclosing the island + the air above it; the sun's shafts only
-    // render inside this volume. Low `density_factor` keeps it subtle (gentle haze + shafts,
-    // not pea-soup); raised toward the canopy height so beams read between the trees. The
-    // Ultra graphics preset (src/quality.rs) overrides these for clearly-visible shafts.
-    commands.spawn((
-        FogVolume {
-            density_factor: 0.012, // very thin — just enough to catch shafts, not murk the view
-            absorption: 0.05,      // low: don't darken what's seen through the volume
-            scattering: 0.5,
-            ..default()
-        },
-        Transform::from_xyz(0.0, 18.0, 0.0).with_scale(Vec3::new(320.0, 50.0, 320.0)),
     ));
 }
 

@@ -416,8 +416,8 @@ fn overhead_chop(phase: &Phase, p: f32) -> Pose {
             po.hip_r = Jp::r(rx(lerp(0.0, -0.25, p)));
         }
         Phase::Strike => {
-            po.hips = Jp { t: Some(Vec3::new(0.0, 0.99 + (p * PI).sin() * 0.05, lerp(-0.1, 0.32, p))), r: e3(lerp(0.06, 0.14, p), lerp(-0.25, 0.15, p), 0.0) };
-            po.torso = Jp::r(e3(lerp(-0.18, 0.42, p), lerp(-0.15, 0.1, p), 0.0));
+            po.hips = Jp { t: Some(Vec3::new(0.0, 0.99 + (p * PI).sin() * 0.05, lerp(-0.1, 0.2, p))), r: e3(lerp(0.06, 0.14, p), lerp(-0.25, 0.15, p), 0.0) };
+            po.torso = Jp::r(e3(lerp(-0.18, 0.26, p), lerp(-0.15, 0.1, p), 0.0));
             po.head = Jp::r(e3(lerp(0.0, 0.08, p), lerp(0.2, -0.05, p), 0.0));
             po.sh_r = Jp::r(e3(lerp(0.35, -1.25, p), lerp(-0.55, 0.2, p), lerp(0.45, -0.15, p)));
             po.el_r = Jp::r(rx(lerp(-1.75, -0.35, p)));
@@ -430,8 +430,8 @@ fn overhead_chop(phase: &Phase, p: f32) -> Pose {
             po.knee_r = Jp::r(rx(lerp(0.0, 0.3, p)));
         }
         Phase::Recovery => {
-            po.hips = Jp { t: Some(Vec3::new(0.0, lerp(0.99, 1.05, p), lerp(0.32, 0.0, p))), r: e3(lerp(0.14, 0.0, p), lerp(0.15, 0.0, p), 0.0) };
-            po.torso = Jp::r(e3(lerp(0.42, 0.0, p), lerp(0.1, 0.0, p), 0.0));
+            po.hips = Jp { t: Some(Vec3::new(0.0, lerp(0.99, 1.05, p), lerp(0.2, 0.0, p))), r: e3(lerp(0.14, 0.0, p), lerp(0.15, 0.0, p), 0.0) };
+            po.torso = Jp::r(e3(lerp(0.26, 0.0, p), lerp(0.1, 0.0, p), 0.0));
             po.head = Jp::r(e3(lerp(0.08, 0.0, p), lerp(-0.05, 0.0, p), 0.0));
             po.sh_r = Jp::r(e3(lerp(-1.25, 0.12, p), lerp(0.2, 0.0, p), lerp(-0.15, 0.15, p)));
             po.el_r = Jp::r(rx(lerp(-0.35, -0.4, p)));
@@ -463,8 +463,8 @@ fn horizontal_slash(phase: &Phase, p: f32) -> Pose {
             po.shield = Jp { t: Some(Vec3::new(0.0, 0.0, lerp(0.14, 0.18, p))), r: e3(lerp(0.15, 0.35, p), lerp(-0.45, -0.2, p), lerp(0.1, 0.15, p)) };
         }
         Phase::Strike => {
-            po.hips = Jp { t: Some(Vec3::new(0.0, 1.0 + (p * PI).sin() * 0.03, lerp(-0.06, 0.28, p))), r: e3(0.0, lerp(-0.45, 0.55, p), 0.0) };
-            po.torso = Jp::r(e3(lerp(0.05, 0.18, p), lerp(-0.35, 0.55, p), lerp(0.0, 0.08, p)));
+            po.hips = Jp { t: Some(Vec3::new(0.0, 1.0 + (p * PI).sin() * 0.03, lerp(-0.06, 0.2, p))), r: e3(0.0, lerp(-0.45, 0.55, p), 0.0) };
+            po.torso = Jp::r(e3(lerp(0.05, 0.12, p), lerp(-0.35, 0.55, p), lerp(0.0, 0.08, p)));
             po.head = Jp::r(e3(0.0, lerp(-0.3, 0.15, p), 0.0));
             po.sh_r = Jp::r(e3(lerp(-0.15, -1.4, p), lerp(-0.65, 0.0, p), lerp(0.55, -0.4, p)));
             po.el_r = Jp::r(rx(lerp(-1.35, -0.25, p)));
@@ -477,8 +477,8 @@ fn horizontal_slash(phase: &Phase, p: f32) -> Pose {
             po.knee_r = Jp::r(rx(lerp(0.0, 0.2, p)));
         }
         Phase::Recovery => {
-            po.hips = Jp { t: Some(Vec3::new(0.0, lerp(1.0, 1.05, p), lerp(0.28, 0.0, p))), r: e3(0.0, lerp(0.55, 0.0, p), 0.0) };
-            po.torso = Jp::r(e3(lerp(0.18, 0.0, p), lerp(0.55, 0.0, p), lerp(0.08, 0.0, p)));
+            po.hips = Jp { t: Some(Vec3::new(0.0, lerp(1.0, 1.05, p), lerp(0.2, 0.0, p))), r: e3(0.0, lerp(0.55, 0.0, p), 0.0) };
+            po.torso = Jp::r(e3(lerp(0.12, 0.0, p), lerp(0.55, 0.0, p), lerp(0.08, 0.0, p)));
             po.head = Jp::r(e3(0.0, lerp(0.15, 0.0, p), 0.0));
             po.sh_r = Jp::r(e3(lerp(-1.4, 0.12, p), lerp(0.0, 0.0, p), lerp(-0.4, 0.15, p)));
             po.el_r = Jp::r(rx(lerp(-0.25, -0.4, p)));
@@ -514,8 +514,8 @@ fn forward_thrust(phase: &Phase, p: f32) -> Pose {
             po.knee_r = Jp::r(rx(lerp(0.0, 0.4, p)));
         }
         Phase::Strike => {
-            po.hips = Jp { t: Some(Vec3::new(0.0, 0.97, lerp(-0.05, 0.42, p))), r: e3(lerp(0.08, 0.12, p), lerp(-0.15, 0.05, p), 0.0) };
-            po.torso = Jp::r(e3(lerp(0.1, 0.28, p), lerp(-0.1, 0.05, p), 0.0));
+            po.hips = Jp { t: Some(Vec3::new(0.0, 0.97, lerp(-0.05, 0.3, p))), r: e3(lerp(0.08, 0.12, p), lerp(-0.15, 0.05, p), 0.0) };
+            po.torso = Jp::r(e3(lerp(0.1, 0.2, p), lerp(-0.1, 0.05, p), 0.0));
             po.head = Jp::r(e3(lerp(0.0, 0.05, p), lerp(0.1, -0.05, p), 0.0));
             po.sh_r = Jp::r(e3(lerp(-0.35, -1.55, p), lerp(-0.25, 0.05, p), lerp(0.3, 0.05, p)));
             po.el_r = Jp::r(rx(lerp(-1.45, -0.1, p)));
@@ -528,8 +528,8 @@ fn forward_thrust(phase: &Phase, p: f32) -> Pose {
             po.knee_r = Jp::r(rx(lerp(0.4, 0.1, p)));
         }
         Phase::Recovery => {
-            po.hips = Jp { t: Some(Vec3::new(0.0, lerp(0.97, 1.05, p), lerp(0.42, 0.0, p))), r: e3(lerp(0.12, 0.0, p), lerp(0.05, 0.0, p), 0.0) };
-            po.torso = Jp::r(e3(lerp(0.28, 0.0, p), lerp(0.05, 0.0, p), 0.0));
+            po.hips = Jp { t: Some(Vec3::new(0.0, lerp(0.97, 1.05, p), lerp(0.3, 0.0, p))), r: e3(lerp(0.12, 0.0, p), lerp(0.05, 0.0, p), 0.0) };
+            po.torso = Jp::r(e3(lerp(0.2, 0.0, p), lerp(0.05, 0.0, p), 0.0));
             po.head = Jp::r(e3(lerp(0.05, 0.0, p), lerp(-0.05, 0.0, p), 0.0));
             po.sh_r = Jp::r(e3(lerp(-1.55, 0.12, p), lerp(0.05, 0.0, p), lerp(0.05, 0.15, p)));
             po.el_r = Jp::r(rx(lerp(-0.1, -0.4, p)));

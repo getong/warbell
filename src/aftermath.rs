@@ -30,6 +30,13 @@ const DROP_CHANCE: f32 = 0.45;
 const BLOOD_HOLD: f32 = 12.0;
 const BLOOD_FADE: f32 = 18.0;
 
+/// Positive `StandardMaterial::depth_bias` for flat ground decals (blood stains, scorches) so they
+/// render in front of whatever flat surface they're stamped on instead of z-fighting it. The
+/// courtyard cobble is an opaque slab at y≈0.04 and a decal landing at the same height ties in the
+/// depth buffer → flicker. The bias breaks the tie toward the decal without lifting the geometry
+/// (which would make discs float/clip on sloped biome ground).
+const GROUND_DECAL_DEPTH_BIAS: f32 = 50.0;
+
 const TAU: f32 = std::f32::consts::TAU;
 const FRAC_PI_2: f32 = std::f32::consts::FRAC_PI_2;
 
@@ -112,6 +119,10 @@ fn setup_assets(
         base_color: Color::WHITE,
         perceptual_roughness: 1.0,
         alpha_mode: AlphaMode::Blend,
+        // Ground decals lie ~coplanar with the cobble courtyard slab (a flat opaque sheet at
+        // y≈0.04). Without a depth bias the two surfaces tie in the depth buffer and flicker.
+        // A positive bias renders the decal consistently in front of whatever it's stamped on.
+        depth_bias: GROUND_DECAL_DEPTH_BIAS,
         ..default()
     });
     commands.insert_resource(MarkAssets {
@@ -156,6 +167,7 @@ fn mark_ork_falls(
             base_color: Color::WHITE,
             perceptual_roughness: 1.0,
             alpha_mode: AlphaMode::Blend,
+            depth_bias: GROUND_DECAL_DEPTH_BIAS, // win the depth tie vs. the courtyard cobble
             ..default()
         });
         let e = spawn_mark(&mut commands, &mut log, assets.stain.clone(), stain_mat.clone(), stain_tf);

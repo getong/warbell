@@ -51,7 +51,7 @@ const LEASH: f32 = 16.0;
 /// (block with RMB or dodge out of [`CRIT_RANGE`] to negate it — the same contract as the wardens).
 const CRIT_CD: f32 = 8.5;
 const CRIT_TELEGRAPH: f32 = 1.2;
-const CRIT_RANGE: f32 = 5.5;
+const CRIT_RANGE: f32 = 4.2; // just past MELEE_RANGE (3.4) — dodge clear of melee to escape it (was 5.5: a kill radius far past melee, so "far away" still ate the blow)
 const CRIT_LETHAL: f32 = 100_000.0;
 /// Oversized berserker — reads as a boss from across the courtyard.
 const WARLORD_SCALE: f32 = 1.8;

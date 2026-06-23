@@ -266,7 +266,11 @@ pub fn player_move(
         shove_out_of(&mut hero, o.pos, o.body_r, cur_y);
     }
     for a in &bodies.animals {
-        shove_out_of(&mut hero, a.pos, a.body_r, cur_y);
+        // Hunting predators reserve a head-reach margin in front of the torso so the jaws they
+        // snap forward on a bite land on the hero's front, not inside his chest (the strike-lunge
+        // render is held to the same line). Grazers add nothing — you bump them at the skin.
+        let r = a.body_r + crate::wildlife::head_reach(a.species, a.body_r);
+        shove_out_of(&mut hero, a.pos, r, cur_y);
     }
     // Townsfolk are solid too — you bump them, you don't walk through them.
     for v in &bodies.villagers {

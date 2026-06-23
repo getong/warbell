@@ -113,8 +113,7 @@ pub fn in_blight_world(wx: f32, wz: f32) -> bool {
 /// Captured into [`crate::biome::BiomeAmbiences::blight`] at world build; surfaced by
 /// `sample_world` whenever the hero stands on the Blight landmass.
 pub fn blight_ambience() -> BiomeAmbience {
-    BiomeAmbience {
-        atmo: AtmoSample::from_raw(
+    let mut atmo = AtmoSample::from_raw(
             // sky: sooty blood-red → tints the daytime fog horizon. This is the colour the fog
             // fades distant geometry TO, so the near-black 0x5a2418 turned the mire into a black
             // void in broad daylight (player: zero visibility). Lifted to a brighter rust so it
@@ -132,9 +131,10 @@ pub fn blight_ambience() -> BiomeAmbience {
             // fog: was the thickest on the map (0.036 → black wall ~59 tiles). 0.024 pushes the wall
             // out to ≈70–166 tiles so you can see across the mire; still the haziest biome.
             0.024,
-        ),
-        particle: ParticleKind::Ash,
-    }
+    );
+    // Hot-ember bloom: the burning fortress + torch-lit mire glow harder than anywhere else.
+    atmo.bloom_scale = 1.55;
+    BiomeAmbience { atmo, particle: ParticleKind::Ash }
 }
 
 /// BASE-space twin of [`blight_edge_world`] for `worldmap::ground_color`'s blend band

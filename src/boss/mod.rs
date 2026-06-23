@@ -57,7 +57,7 @@ const SIG_CD: f32 = 6.5;
 /// windup is the player's cue: raise the shield (or dodge out of [`CRIT_RANGE`]) before it lands.
 const CRIT_CD: f32 = 9.5; // min seconds between a warden's critical attempts (more frequent killing blows = more pressure)
 const CRIT_TELEGRAPH: f32 = 1.2; // windup time — the reaction window to block/dodge
-const CRIT_RANGE: f32 = 5.5; // must be within this at impact to be struck (slightly past melee)
+const CRIT_RANGE: f32 = 4.2; // must be within this at impact to be struck — just past MELEE_RANGE (3.4) so a lunge connects, but stepping/dodging clear of melee escapes it (was 5.5: a 360° kill radius far past melee, so backing out of reach still ate the blow)
 const CRIT_LETHAL: f32 = 100_000.0; // overkill so it one-shots through any resist/armor when unblocked
 /// Radius of a Shock signature (stomp / root-snare / poison burst).
 const SIG_SHOCK_RADIUS: f32 = 6.5;
@@ -376,11 +376,14 @@ fn boss_brain(
         // the turn to hostile (not every subsequent hit).
         if !b.hostile && health.hp < b.last_hp - 0.01 {
             b.hostile = true;
-            // Reaction beat: seed the melee + critical cooldowns so the warden ROARS and rears
-            // before it can swing — otherwise it counter-hits the very frame you wake it (with
-            // `atk_cd`/`crit_cd` already at 0), an instant un-blockable blow that on a leveled
-            // warden chunks ~80% of the hero's HP before the player can react.
+            // Reaction beat: seed ALL THREE attack cooldowns so the warden ROARS and rears before
+            // it can hit you — otherwise it counter-hits the very frame you wake it (the cooldowns
+            // tick down the whole time it roams passive, so by the time you reach it they're all at
+            // 0). Miss any and that attack lands instantly, un-blockable: a leveled melee/crit
+            // chunks ~80% of the hero's HP, and the signature (melee×1.6, the biggest single hit)
+            // detonates on the wake frame — all before the player can react.
             b.atk_cd = MELEE_CD;
+            b.sig_cd = b.sig_cd.max(SIG_CD * 0.5);
             b.crit_cd = b.crit_cd.max(CRIT_CD * 0.5);
             let gy = steer::footing(b.pos.x, b.pos.y).unwrap_or(tf.translation.y);
             cues.write(crate::audio::AudioCue::BossRoar(Vec3::new(b.pos.x, gy + 1.8, b.pos.y)));

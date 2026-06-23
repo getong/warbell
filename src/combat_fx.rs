@@ -40,7 +40,7 @@ const HP_BAR_H: f32 = 0.085;
 /// NPCs were enlarged by `castle::WORLD_BUMP`, so their bars are spawned at this × that bump (see
 /// `ensure_hp_bars`); animals (left at their original scale) use this value as-is. Because the rig
 /// base sits at y=0 and scales about it, the head height scales linearly — so the bar tracks it.
-const HP_BAR_Y: f32 = 1.9;
+const HP_BAR_Y: f32 = 1.55;
 /// Lower float for town NPCs — the townsfolk rig is shorter than an ork's. Also ×`WORLD_BUMP` at
 /// spawn (the townsfolk were enlarged with everything else).
 const HP_BAR_Y_NPC: f32 = 1.2;
@@ -530,6 +530,12 @@ pub struct HitFeedback {
     /// Additive camera-FOV punch in DEGREES; eased back to 0 by [`drive_hit_flash`]. The old
     /// game's `fxStore` fovKick — a quick widen on a kill / hard landing for impact.
     pub fov_kick: f32,
+    /// World-space XZ direction the next shake should bias ALONG (e.g. `-fwd` for a swing recoil
+    /// — the camera kicks back the way the hero faced). Set at a hit site alongside `trauma`;
+    /// `player::camera` reads it to steer the jitter. Zero (the default) = unbiased chaos shake.
+    /// Decayed in lockstep with `trauma` (see [`drive_hit_flash`]) and zeroed once the shake stops,
+    /// so an undirected trauma source (chest open, taking a hit) can't inherit a stale swing axis.
+    pub shake_dir: Vec2,
 }
 
 /// FOV-punch decay (deg/s) + cap, and the per-event punch magnitudes (old `fovTunables`,
@@ -537,6 +543,8 @@ pub struct HitFeedback {
 const FOV_KICK_DECAY: f32 = 26.0;
 const FOV_KICK_MAX: f32 = 7.0;
 pub const FOV_KICK_KILL: f32 = 1.6;
+/// A crit lands between a normal hit and a kill — a clear extra punch so a critical *reads* as one.
+pub const FOV_KICK_CRIT: f32 = 1.0;
 pub const FOV_KICK_HIT: f32 = 0.5;
 pub const FOV_KICK_LAND: f32 = 1.4;
 
@@ -554,6 +562,12 @@ fn drive_hit_flash(time: Res<Time>, mut fb: ResMut<HitFeedback>) {
     fb.flash = (fb.flash - dt * 1.6).max(0.0);
     fb.trauma = (fb.trauma - dt * SHAKE_DECAY).max(0.0);
     fb.fov_kick = (fb.fov_kick - dt * FOV_KICK_DECAY).max(0.0);
+    // Bleed the shake bias down with `trauma` and clear it once the shake stops, so a later
+    // undirected trauma (chest open, taking a hit) can't reuse the previous swing's axis.
+    fb.shake_dir *= (1.0 - dt * SHAKE_DECAY).max(0.0);
+    if fb.trauma <= 0.0 {
+        fb.shake_dir = Vec2::ZERO;
+    }
 }
 
 // ── Plugin ──────────────────────────────────────────────────────────────────

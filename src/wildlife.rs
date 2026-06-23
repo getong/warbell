@@ -278,6 +278,12 @@ fn animal_brain(
                 }
             }
             if let Some((tp, prey, npc)) = tgt {
+                // Entering the hunt (idle/graze → hunt): a low stalk-growl, the audible "you've
+                // been seen" tell before the charge. Only on the transition edge so a sustained
+                // chase doesn't re-bark every frame (and the SFX side throttles pile-ups too).
+                if !matches!(a.mode, Mode::Hunt) {
+                    cues.write(crate::audio::AudioCue::CreatureAggro(Vec3::new(a.pos.x, 1.0, a.pos.y)));
+                }
                 a.mode = Mode::Hunt;
                 a.target = tp;
                 a.hunt_prey = prey;
@@ -443,15 +449,24 @@ fn animal_brain(
         // Ground-follow + heading + a small bob while moving. A quick forward lunge over the
         // strike beat sells the bite's weight — visual only (`pos` is untouched, so collision and
         // gameplay are unaffected).
-        let gy = footing(a.pos.x, a.pos.y).unwrap_or(tf.translation.y);
+        // A 0.5 terrace step is *legal* to stand on (≤ MAX_STEP), so an animal validly parks at a
+        // terrace edge — but a long, low body drawn at the CENTRE footing then sinks into the higher
+        // step beside it. Ground off the highest footing under the body footprint instead, capped so
+        // the downhill legs only float a little (a cheap stand-in for per-leg ground IK).
+        let gy = body_ground_y(a.pos, a.body_r, tf.translation.y);
         let bob = if a.moving { (tw * a.gait + a.phase).sin().abs() * a.bob } else { 0.0 };
         let lunge = strike_p(a.atk_anim, now, arch_dur(strike_arch(a.species)))
-            .map_or(0.0, |p| (p * std::f32::consts::PI).sin() * 0.4);
+            .map_or(0.0, |p| (p * std::f32::consts::PI).sin() * 0.22);
         let fwd = Vec2::new(a.facing.sin(), a.facing.cos());
         let mut lp = a.pos + fwd * lunge;
-        // Don't let the lunge slide the body into the knight (the shove only pushes him off `pos`).
+        // Hold the rendered body back from the knight by the body skin PLUS the predator's head
+        // reach, so the head/jaws snapping forward over the bite land on his front instead of the
+        // torso/body sliding (and the head poking) into him. The hero is shoved out to this same
+        // line (`player::movement`), so a pressed-in hero can't force the overlap either. Grazers
+        // add no reach → the old skin-touch clamp.
         if hero.alive {
-            lp = crate::orks::lunge_clear_of_hero(lp, hero.pos, a.body_r + crate::orks::HERO_R);
+            let keep = a.body_r + crate::orks::HERO_R + head_reach(a.species, a.body_r);
+            lp = crate::orks::lunge_clear_of_hero(lp, hero.pos, keep);
         }
         tf.translation = Vec3::new(lp.x, gy + bob, lp.y);
         // Springy recoil-wobble on a blow taken (reuses the orks' / dummies' shape).
@@ -490,6 +505,27 @@ fn resolve_prey_kills(
         });
         crate::dying::begin_dying(&mut commands, ev.0, now);
     }
+}
+
+/// Ground height to draw a body at so it doesn't sink into an adjacent higher terrace step.
+/// Samples footing at the body-footprint edges (a touch past `body_r` to cover the long axis) and
+/// lifts the centre toward the HIGHEST nearby ground, but only up to [`STEP_CLEAR`] — so a body at
+/// a terrace edge clears the step instead of burying in it, while the downhill legs float only a
+/// little rather than a full step. `fallback` is used where footing is missing (over water/void).
+fn body_ground_y(pos: Vec2, body_r: f32, fallback: f32) -> f32 {
+    /// Max the body is lifted above its centre footing to clear a neighbouring step (world Y). A
+    /// touch over half a terrace (`GROUND_STEP = 0.5`): enough to pull the body out of the step
+    /// face, not so much that the low legs hang in the air.
+    const STEP_CLEAR: f32 = 0.3;
+    let center = footing(pos.x, pos.y).unwrap_or(fallback);
+    let r = body_r * 1.2; // reach a little past the collision skin → covers the longer body axis
+    let mut hi = center;
+    for (dx, dz) in [(r, 0.0), (-r, 0.0), (0.0, r), (0.0, -r)] {
+        if let Some(y) = footing(pos.x + dx, pos.y + dz) {
+            hi = hi.max(y);
+        }
+    }
+    center + (hi - center).min(STEP_CLEAR)
 }
 
 /// Which limb a species strikes with — keys the attack pose in [`animal_limbs`].
@@ -764,6 +800,20 @@ fn predator_stats(s: Species) -> Option<(f32, f32)> {
 /// woodcutter's threat sense in `lumberjack.rs`) — exactly the set that hunts people.
 pub(crate) fn is_hostile_species(s: Species) -> bool {
     predator_stats(s).is_some()
+}
+
+/// Extra keep-out (world units) a HUNTING predator reserves in front of its torso for the head /
+/// jaws (or tail / arm) it snaps forward on a strike. The hero is shoved this much further back
+/// (`player::movement`) so a biting head lands on his *front* instead of burying into his chest,
+/// and the strike-lunge render is clamped to the same line so the snout just reaches the skin.
+/// Grazers / neutral critters reserve nothing — you can brush right up to them. Scales with the
+/// body so a stone golem reserves more reach than a wolf. `0` ⇒ no muzzle keep-out.
+pub(crate) fn head_reach(s: Species, body_r: f32) -> f32 {
+    if is_hostile_species(s) {
+        (body_r * 0.85).max(0.22)
+    } else {
+        0.0
+    }
 }
 
 /// Grazers the predators hunt (the food-chain prey set). Dog/Cat are neutral critters — neither

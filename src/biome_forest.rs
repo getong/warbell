@@ -129,9 +129,12 @@ pub fn config() -> BiomeConfig {
                     v
                 },
                 chance: 0.03,
-                scale: (0.6, 1.6),
+                // Forest rocks are small ground dressing only — no big boulders, and NONE collide
+                // (you walk over/through them). `block_radius: 0.0` = walk-through (the 0.6–1.6 +
+                // 0.24-block boulders lived in the rocky/other biomes' intent, not the woodland).
+                scale: (0.5, 1.0),
                 tree: false,
-                block_radius: 0.24, // only big rocks block (scale ≳1.25 clears the 0.30 floor); smaller ones walk-through
+                block_radius: 0.0,
             },
             // Sawn stumps — sparse walkable ground detail (a felled-tree remnant), warm
             // bark + pale cut face. Tinted with the same hue spread so they don't all match.

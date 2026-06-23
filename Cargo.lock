@@ -5259,10 +5259,12 @@ version = "0.10.0"
 dependencies = [
  "bevy",
  "bevy_egui",
+ "image",
  "serde",
  "serde_json",
  "tileworld_core",
  "wgpu",
+ "winit",
  "winresource",
 ]
 

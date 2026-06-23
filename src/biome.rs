@@ -83,6 +83,10 @@ pub struct AtmoSample {
     /// keep the open-island distance. Eased like the colours so crossing a region edge ramps the
     /// fog rather than popping. Previously dead authored data.
     pub fog_density: f32,
+    /// Per-region bloom multiplier (1.0 = the island base). `scene::advance_sky` scales the camera
+    /// `Bloom` by this (× a dusk/night swell) so the Blight's embers glow hot, the swamp reads
+    /// muted, snow/desert sparkle. Eased like the colours so crossing a region edge ramps it.
+    pub bloom_scale: f32,
 }
 
 impl AtmoSample {
@@ -96,6 +100,14 @@ impl AtmoSample {
             ambient_color: srgb(c.ambient_color),
             ambient_brightness: c.ambient_brightness,
             fog_density: c.fog_density,
+            // Bloom is keyed off the biome here (rather than threaded through every `BiomeConfig`
+            // literal): the swamp reads damp + muted, the bright snow/desert sparkle a touch, the
+            // rest sit at the island base. The Blight's hot-ember bloom is set in `blight_ambience`.
+            bloom_scale: match c.biome {
+                Biome::Swamp => 0.85,
+                Biome::Snow | Biome::Desert => 1.12,
+                _ => 1.0,
+            },
         }
     }
     /// Build from the island-wide [`crate::worldmap::ATMOSPHERE`] tuple (the grass/ocean base).
@@ -114,6 +126,9 @@ impl AtmoSample {
             ambient_color: srgb(ambient_color),
             ambient_brightness,
             fog_density,
+            // Island base: neutral bloom. Callers that want a hotter glow (the Blight) bump this
+            // on the returned sample.
+            bloom_scale: 1.0,
         }
     }
 }
@@ -535,6 +550,10 @@ struct ClassHandles {
     /// share these); empty for passive classes, which merge their `variants` data instead.
     handles: Vec<Handle<Mesh>>,
     weights: Vec<f32>,
+    /// Per-variant UNIT-scale trunk-collision radius — populated ONLY for `tree` classes (each
+    /// kind's footprint derived from its own silhouette so a wide crown blocks wider than a slim
+    /// pole); empty otherwise. Aligned 1:1 with `variants`/`handles`.
+    block_radii: Vec<f32>,
     chance: f32,
     scale: (f32, f32),
     tree: bool,
@@ -558,7 +577,15 @@ fn upload_classes(src: &[PropClass], meshes: &mut Assets<Mesh>) -> Vec<ClassHand
             let n = c.variants.len() * PROP_TINTS.len();
             let mut variants = Vec::with_capacity(n);
             let mut weights = Vec::with_capacity(n);
+            let mut block_radii = Vec::with_capacity(if c.tree { n } else { 0 });
             for (m, w) in &c.variants {
+                // Trees collide on a per-kind footprint sized from the source mesh silhouette
+                // (cheap, once per variant — the ×PROP_TINTS copies share the same geometry).
+                let tree_r = if c.tree {
+                    crate::trees::silhouette_block_radius(m)
+                } else {
+                    0.0
+                };
                 for t in PROP_TINTS {
                     // Bake the per-variant tint into the raw mesh, then NORMALISE its attribute
                     // set: drop UV_0 so every passive variant in the biome carries the exact same
@@ -570,6 +597,9 @@ fn upload_classes(src: &[PropClass], meshes: &mut Assets<Mesh>) -> Vec<ClassHand
                     mesh.remove_attribute(Mesh::ATTRIBUTE_UV_0);
                     variants.push(mesh);
                     weights.push(*w / PROP_TINTS.len() as f32);
+                    if c.tree {
+                        block_radii.push(tree_r);
+                    }
                 }
             }
             // Trees spawn as individual entities sharing one handle per variant; passive props
@@ -582,6 +612,7 @@ fn upload_classes(src: &[PropClass], meshes: &mut Assets<Mesh>) -> Vec<ClassHand
             ClassHandles {
                 variants,
                 handles,
+                block_radii,
                 weights,
                 chance: c.chance,
                 scale: c.scale,
@@ -829,13 +860,13 @@ pub fn scatter_region(
                         }
                     } else {
                         tree_pts.push(p);
-                        // Only the TRUNK blocks — a small circle scaled with the instance
-                        // (capped ≤ the blockers neighbour-scan bound) so you can walk under
-                        // the canopy and brush past, but not through the bole. Small props
-                        // (bushes/rocks/barrel cacti/ground cover) register nothing.
-                        // 0.20 (not the old 0.16): leafy boles read wider than their thin
-                        // blocker — nudged up a touch so you bump the trunk, not stand in it.
-                        let trunk_r = (0.20 * s).min(0.8);
+                        // Per-KIND footprint (sized from each tree's own silhouette at upload):
+                        // a wide low crown / conifer skirt blocks wider so you sink only a little
+                        // into a big tree, while a slim poplar / airy birch lets you reach its
+                        // trunk. Scaled with the instance, capped ≤ the blockers neighbour-scan
+                        // bound. (Old behaviour was one flat 0.20 for every kind.)
+                        let unit_r = c.block_radii.get(vi).copied().unwrap_or(0.20);
+                        let trunk_r = (unit_r * s).min(0.8);
                         crate::blockers::add(cx, cz, trunk_r);
                         let base = cardinal(&mut r);
                         // Trees stay individual entities (chop HP + wind sway) sharing one
