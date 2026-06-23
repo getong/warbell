@@ -175,12 +175,59 @@ footer .sm{font-size:13px;opacity:.6;letter-spacing:.03em}
 
 <main class="log">
 
-  <!-- ── v0.10.0 ── -->
+  <!-- ── v0.11.0 ── -->
   <article class="rel latest rv">
     <div class="rel-head">
-      <span class="rel-ver">v0.10.0</span>
+      <span class="rel-ver">v0.11.0</span>
       <span class="rel-badge">Latest</span>
       <span class="rel-date">June 23, 2026</span>
+    </div>
+    <p class="rel-sum">Real light shafts, rolling storms, a succession beat you can read, a battlefield radar, and a proper Settings menu.</p>
+    <div class="rel-card">
+      <div class="grp">
+        <div class="grp-h"><span class="tag new">New</span></div>
+        <ul>
+          <li><strong>God rays.</strong> Sunlight now scatters into visible light shafts through the treeline and over the hills — a cheap, reliable screen-space pass that's on for both <strong>High</strong> and <strong>Ultra</strong> (the old Ultra-only volumetric version was invisible and tanked the framerate, so it's gone).</li>
+          <li><strong>Storms.</strong> Weather can roll in with lightning flashes and rolling thunder over the battlefield.</li>
+          <li><strong>Legible succession.</strong> When your hero falls, a short slow-motion beat shows the soul wisp fly from the corpse into the <strong>nearest villager</strong>, who rises as the new hero <em>where they stand</em> — making it clear that every heir is a townsperson.</li>
+          <li><strong>"Last of the line" warning.</strong> When the town runs out of heirs, an unmissable on-screen alert tells you your next death ends the run.</li>
+          <li><strong>Battlefield radar.</strong> The compass now shows live blips for nearby <strong>orks, bosses, and loot chests</strong> so you can read the fight and spot treasure at a glance.</li>
+          <li><strong>Unified Settings menu.</strong> Graphics, display, audio, and controls are now one clean tabbed menu, with a full graphics page: presets (Low / High / Ultra) plus individual toggles for shadows, anti-aliasing, ambient occlusion, bloom, depth of field, outline, god rays, terrain detail, and render scale.</li>
+          <li><strong>Window icon</strong> and <strong>kids-at-play village ambience</strong> for a bit more life and polish.</li>
+        </ul>
+      </div>
+      <div class="grp">
+        <div class="grp-h"><span class="tag new">Combat &amp; balance</span></div>
+        <ul>
+          <li>Tighter, more useful radar ranges — blips appear closer in (orks 46&rarr;30, bosses 78&rarr;48, chests 50&rarr;32) so the radar reads the immediate fight rather than the whole island.</li>
+        </ul>
+      </div>
+      <div class="grp">
+        <div class="grp-h"><span class="tag fix">Fixed</span></div>
+        <ul>
+          <li>Fixed a <strong>crash</strong> when raising the graphics preset or shadow level up from <strong>Low</strong>.</li>
+          <li>The succession beat no longer keeps running behind an open menu (it could slow time, lose a villager, and teleport the hero while paused).</li>
+          <li>Bloom no longer fights itself frame-to-frame, so the per-preset bloom shows correctly again.</li>
+          <li>Camera screen-shake no longer borrows the wrong direction from a previous sword swing.</li>
+          <li>Fixed a Windows crash from a debug memory diagnostic running on normal launches.</li>
+        </ul>
+      </div>
+      <div class="grp">
+        <div class="grp-h"><span class="tag perf">Under the hood</span></div>
+        <ul>
+          <li><strong>Performance</strong> — render-scale support gives integrated GPUs a real framerate lever on Low, plus a proper profiling framework (Chrome tracing) and scheduling fixes.</li>
+          <li>Retired the expensive, invisible volumetric god-ray pass (~13&nbsp;ms/frame) in favour of the new screen-space one.</li>
+        </ul>
+      </div>
+      <div class="rel-foot"><a href="https://github.com/miskibin/warbell/releases/tag/v0.11.0">Release on GitHub →</a></div>
+    </div>
+  </article>
+
+  <!-- ── v0.10.0 ── -->
+  <article class="rel rv">
+    <div class="rel-head">
+      <span class="rel-ver">v0.10.0</span>
+      <span class="rel-date">June 22, 2026</span>
     </div>
     <p class="rel-sum">Eyes Up — a strip compass and a clean, glanceable night HUD, on a Bevy 0.19 engine upgrade.</p>
     <div class="rel-card">
