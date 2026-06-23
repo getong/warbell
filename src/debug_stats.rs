@@ -41,14 +41,29 @@ impl Plugin for DebugStatsPlugin {
             // Per-render-pass GPU timings (shadow / prepass / main / bloom / SSAO / SMAA / …).
             // Needs the GPU's TIMESTAMP_QUERY feature; falls back to CPU span times without it.
             RenderDiagnosticsPlugin,
-            // Process RSS — so the overlay can show whether memory is climbing over a long session
-            // (a leak) vs. holding flat (then a late-session FPS drop is GPU/driver/thermal, not us).
-            SystemInformationDiagnosticsPlugin,
         ))
         .init_resource::<StatsPanel>()
         .add_systems(Update, toggle_panel)
         .add_systems(EguiPrimaryContextPass, stats_ui);
+
+        // Process-RSS diagnostic — so the overlay can show whether memory is climbing over a long
+        // session (a leak) vs. holding flat. Kept OFF normal player runs: on Windows its background
+        // sysinfo task intermittently panics (bevy_diagnostic system_information_diagnostics_plugin
+        // .rs:217, reading process memory in the Async Compute Task Pool). Loading it only on the
+        // leak-watch / perf path means that task — and so the panic — never exists for players. The
+        // overlay reads it via `.get(...)`, so its absence is handled gracefully (the RSS row shows
+        // a hint instead). Enable with `FOREST_PERFTEST` (the harness) or `FOREST_LEAKWATCH=1` (to
+        // get the F2 overlay's live RSS line on its own).
+        if leak_watch_enabled() {
+            app.add_plugins(SystemInformationDiagnosticsPlugin);
+        }
     }
+}
+
+/// Whether to load the process-RSS diagnostic. Off for normal players (its Windows sysinfo task can
+/// panic); on under the perf harness or an explicit opt-in.
+fn leak_watch_enabled() -> bool {
+    std::env::var("FOREST_PERFTEST").is_ok() || std::env::var("FOREST_LEAKWATCH").is_ok()
 }
 
 fn toggle_panel(keys: Res<ButtonInput<KeyCode>>, mut panel: ResMut<StatsPanel>) {
@@ -158,10 +173,13 @@ fn stats_ui(
             egui::Grid::new("mem").num_columns(2).striped(true).show(ui, |ui| {
                 let rss = diags
                     .get(&SystemInformationDiagnosticsPlugin::PROCESS_MEM_USAGE)
-                    .and_then(|d| d.value())
-                    .unwrap_or(0.0);
+                    .and_then(|d| d.value());
                 ui.label("RSS");
-                ui.label(format!("{rss:.2} GiB"));
+                match rss {
+                    Some(v) => ui.label(format!("{v:.2} GiB")),
+                    // The diagnostic is only loaded under the leak-watch path (see DebugStatsPlugin).
+                    None => ui.label("— set FOREST_LEAKWATCH"),
+                };
                 ui.end_row();
                 ui.label("meshes");
                 ui.label(format!("{}", meshes.len()));
