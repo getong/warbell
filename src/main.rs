@@ -52,7 +52,6 @@ mod dying;
 mod economy;
 mod tree_ui;
 mod firelight;
-mod footprints;
 mod footstep_fx;
 mod game_state;
 mod godrays;
@@ -273,8 +272,5 @@ fn main() {
         // Cinematic lens: vignette + chromatic aberration (per-preset, in quality.rs) + film grain.
         // The per-biome colour grade itself rides in scene::advance_sky.
         .add_plugins(postfx::PostFxPlugin)
-        // Biome-aware boot-print decals trailing the hero (standalone: the tuples above are at the
-        // `Plugins` arity-15 cap).
-        .add_plugins(footprints::FootprintPlugin)
         .run();
 }
