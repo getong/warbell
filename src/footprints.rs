@@ -70,11 +70,13 @@ fn surface_for(pos: Vec2) -> Option<Surface> {
 }
 
 // Per-surface looks, shared by `surface_for` and the `FOREST_FEETTEST` preview so the test row
-// matches the real in-world prints exactly.
-fn snow_look() -> Surface { Surface { color: Color::srgb(0.74, 0.80, 0.90), alpha: 0.42, size: 1.0, hold: 20.0, fade: 15.0 } }
-fn swamp_look() -> Surface { Surface { color: Color::srgb(0.17, 0.15, 0.11), alpha: 0.40, size: 1.05, hold: 14.0, fade: 12.0 } }
-fn desert_look() -> Surface { Surface { color: Color::srgb(0.68, 0.59, 0.42), alpha: 0.28, size: 1.0, hold: 6.0, fade: 6.0 } }
-fn dirt_look() -> Surface { Surface { color: Color::srgb(0.20, 0.16, 0.10), alpha: 0.28, size: 1.0, hold: 8.0, fade: 7.0 } }
+// matches the real in-world prints exactly. Tuned to READ as you walk (the grass/dirt scuff has to
+// peek through the dense groundcover) without being a hard white stamp — a clear pressing, slightly
+// oversized so it isn't lost among grass blades.
+fn snow_look() -> Surface { Surface { color: Color::srgb(0.70, 0.76, 0.87), alpha: 0.62, size: 1.15, hold: 20.0, fade: 15.0 } }
+fn swamp_look() -> Surface { Surface { color: Color::srgb(0.13, 0.11, 0.08), alpha: 0.62, size: 1.2, hold: 14.0, fade: 12.0 } }
+fn desert_look() -> Surface { Surface { color: Color::srgb(0.58, 0.49, 0.33), alpha: 0.50, size: 1.1, hold: 6.0, fade: 6.0 } }
+fn dirt_look() -> Surface { Surface { color: Color::srgb(0.14, 0.11, 0.06), alpha: 0.55, size: 1.22, hold: 8.0, fade: 7.0 } }
 
 /// One stamped print: fades its own (owned) material's alpha after a hold, then despawns + frees
 /// the material so the per-print clones never leak.
