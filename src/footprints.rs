@@ -73,10 +73,11 @@ fn surface_for(pos: Vec2) -> Option<Surface> {
 // matches the real in-world prints exactly. Tuned to READ as you walk (the grass/dirt scuff has to
 // peek through the dense groundcover) without being a hard white stamp — a clear pressing, slightly
 // oversized so it isn't lost among grass blades.
-fn snow_look() -> Surface { Surface { color: Color::srgb(0.70, 0.76, 0.87), alpha: 0.62, size: 1.15, hold: 20.0, fade: 15.0 } }
-fn swamp_look() -> Surface { Surface { color: Color::srgb(0.13, 0.11, 0.08), alpha: 0.62, size: 1.2, hold: 14.0, fade: 12.0 } }
-fn desert_look() -> Surface { Surface { color: Color::srgb(0.58, 0.49, 0.33), alpha: 0.50, size: 1.1, hold: 6.0, fade: 6.0 } }
-fn dirt_look() -> Surface { Surface { color: Color::srgb(0.14, 0.11, 0.06), alpha: 0.55, size: 1.22, hold: 8.0, fade: 7.0 } }
+// Small + simple, but DARK (contrast — not size — carries the read against grass groundcover).
+fn snow_look() -> Surface { Surface { color: Color::srgb(0.66, 0.72, 0.84), alpha: 0.66, size: 0.95, hold: 20.0, fade: 15.0 } }
+fn swamp_look() -> Surface { Surface { color: Color::srgb(0.09, 0.07, 0.05), alpha: 0.80, size: 1.0, hold: 14.0, fade: 12.0 } }
+fn desert_look() -> Surface { Surface { color: Color::srgb(0.52, 0.43, 0.28), alpha: 0.60, size: 0.95, hold: 6.0, fade: 6.0 } }
+fn dirt_look() -> Surface { Surface { color: Color::srgb(0.10, 0.08, 0.04), alpha: 0.82, size: 0.95, hold: 10.0, fade: 8.0 } }
 
 /// One stamped print: fades its own (owned) material's alpha after a hold, then despawns + frees
 /// the material so the per-print clones never leak.
@@ -116,14 +117,15 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
     commands.insert_resource(PrintAssets { boot: meshes.add(boot_mesh()) });
 }
 
-/// A small boot sole lying flat in XZ (normal up): a bigger ball disc toward +Z (the heading) and a
-/// smaller heel disc behind it, merged so the print reads as a boot rather than a plain dot.
+/// A small, simple oval smudge lying flat in XZ (normal up) — a single disc, narrowed and slightly
+/// elongated along the heading. Reads as a footstep without an over-detailed boot silhouette.
 fn boot_mesh() -> Mesh {
-    let lay = Quat::from_rotation_x(-FRAC_PI_2); // Circle is built in XY; lay it into the ground plane
-    let ball = Circle::new(0.11).mesh().resolution(12).build().rotated_by(lay).translated_by(Vec3::new(0.0, 0.0, 0.07));
-    let heel = Circle::new(0.075).mesh().resolution(10).build().rotated_by(lay).translated_by(Vec3::new(0.0, 0.0, -0.09));
-    let mut m = ball;
-    m.merge(&heel).expect("boot discs share attributes");
+    let mut m = Circle::new(0.1)
+        .mesh()
+        .resolution(14)
+        .build()
+        .rotated_by(Quat::from_rotation_x(-FRAC_PI_2)) // lay flat into the ground plane
+        .scaled_by(Vec3::new(0.78, 1.0, 1.45)); // narrow + a touch long along +Z (the heading)
     m.duplicate_vertices();
     m.compute_flat_normals();
     m
