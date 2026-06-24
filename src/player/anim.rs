@@ -399,59 +399,58 @@ pub(crate) fn attack_pose(variant: u8, phase: &Phase, p: f32) -> Pose {
     }
 }
 
-/// The charged **Heavy Strike** — a true two-handed **overhead smash**: the wind-up hauls the blade
-/// straight up over the head (the rig's real overhead reach is `sh_r` X≈2.8, per `victory_pose` —
-/// the old version only lifted to 0.55, which read as a stiff sword-out-to-the-side point), the
-/// strike drives it down through the front with the whole body behind it, and the recovery settles
-/// back to rest. The cocked **Wind-end pose IS the held charge stance** ([`charge_stance`]), so the
-/// release flows seamlessly from raised-overhead into the downward chop.
+/// The charged **Heavy Strike**. NB: this rig's sword extends *down* from the grip, so any raised /
+/// overhead arm flips it pommel-up, blade-down (even `victory_pose` does) — which reads as the blade
+/// held "the wrong way". So the charge is NOT an overhead raise: the hero **coils into a low braced
+/// crouch** with the sword kept in its natural ready orientation (blade up-forward, barely rotated
+/// from rest, so it always reads correctly), loading onto the rear foot, then **lunges forward into
+/// a downward chop**. The Wind-end crouch IS the held [`charge_stance`]; release springs from it.
 fn heavy_chop(phase: &Phase, p: f32) -> Pose {
     let mut po = rest();
     match phase {
         Phase::Wind => {
-            // Raise the blade overhead, coil back onto the rear foot — wound up to smash down.
-            po.hips = Jp { t: Some(Vec3::new(0.0, lerp(1.05, 1.0, p), lerp(0.0, -0.06, p))), r: e3(lerp(0.0, 0.05, p), lerp(0.0, -0.18, p), 0.0) };
-            po.torso = Jp::r(e3(lerp(0.0, -0.14, p), lerp(0.0, -0.16, p), 0.0));
-            po.head = Jp::r(e3(lerp(0.0, -0.04, p), lerp(0.0, 0.12, p), 0.0)); // eyes stay on the target
-            po.sh_r = Jp::r(e3(lerp(0.12, 2.6, p), 0.0, lerp(0.15, 0.08, p))); // upper arm swings straight OVERHEAD
-            po.el_r = Jp::r(rx(lerp(-0.4, -0.2, p))); // elbow near-straight so the blade points UP, not tucked behind
-            po.sword = Jp::r(e3(lerp(SWORD_REST_X, 0.2, p), 0.3, 0.0)); // blade skyward (cf. victory_pose)
-            po.sh_l = Jp::r(e3(lerp(0.1, 0.35, p), lerp(0.0, 0.2, p), lerp(-0.15, -0.25, p))); // shield braces up
-            po.el_l = Jp::r(rx(lerp(-0.5, -1.05, p)));
-            po.shield = Jp { t: Some(SHIELD_REST_T), r: e3(lerp(0.15, 0.32, p), lerp(-1.5, -1.2, p), 0.0) };
-            po.hip_l = Jp::r(rx(lerp(0.0, -0.12, p)));
-            po.hip_r = Jp::r(rx(lerp(0.0, -0.2, p)));
-            po.knee_l = Jp::r(rx(lerp(0.0, 0.18, p)));
-            po.knee_r = Jp::r(rx(lerp(0.0, 0.2, p)));
+            // Sink into a coiled, weight-back crouch; sword stays at the ready (blade up-forward).
+            po.hips = Jp { t: Some(Vec3::new(0.0, lerp(1.05, 0.93, p), lerp(0.0, -0.07, p))), r: e3(lerp(0.0, 0.06, p), lerp(0.0, -0.14, p), 0.0) };
+            po.torso = Jp::r(e3(lerp(0.0, -0.06, p), lerp(0.0, -0.16, p), 0.0)); // coil away, ready to uncoil
+            po.head = Jp::r(e3(lerp(0.0, -0.02, p), lerp(0.0, 0.14, p), 0.0)); // eyes on the target
+            po.sh_r = Jp::r(e3(lerp(0.12, 0.28, p), lerp(0.0, -0.12, p), lerp(0.15, 0.1, p)));
+            po.el_r = Jp::r(rx(lerp(-0.4, -0.6, p))); // only a touch more bend → blade keeps its rest tilt
+            po.sword = Jp::r(e3(lerp(SWORD_REST_X, 1.12, p), 0.3, 0.0)); // ≈ rest → blade up-forward (CORRECT way)
+            po.sh_l = Jp::r(e3(lerp(0.1, 0.28, p), lerp(0.0, 0.16, p), lerp(-0.15, -0.12, p))); // off hand toward the grip
+            po.el_l = Jp::r(rx(lerp(-0.5, -0.85, p)));
+            po.hip_l = Jp::r(rx(lerp(0.0, -0.26, p)));
+            po.hip_r = Jp::r(rx(lerp(0.0, -0.32, p)));
+            po.knee_l = Jp::r(rx(lerp(0.0, 0.42, p))); // deep braced crouch — visibly loading
+            po.knee_r = Jp::r(rx(lerp(0.0, 0.44, p)));
         }
         Phase::Strike => {
-            // Explosive downward chop — the raised arm smashes through the front, body drives in.
-            po.hips = Jp { t: Some(Vec3::new(0.0, 1.0 + (p * PI).sin() * 0.05, lerp(-0.06, 0.3, p))), r: e3(lerp(0.05, 0.18, p), lerp(-0.18, 0.15, p), 0.0) };
-            po.torso = Jp::r(e3(lerp(-0.14, 0.42, p), lerp(-0.16, 0.12, p), 0.0));
-            po.head = Jp::r(e3(lerp(-0.04, 0.14, p), lerp(0.12, -0.06, p), 0.0));
-            po.sh_r = Jp::r(e3(lerp(2.6, -1.45, p), lerp(0.0, 0.1, p), lerp(0.08, -0.12, p))); // overhead → down-front
-            po.el_r = Jp::r(rx(lerp(-0.2, -0.3, p))); // stiff-arm chop straight down
-            po.sword = Jp::r(e3(lerp(0.2, 2.75, p), lerp(0.3, -0.5, p), lerp(0.0, -0.3, p)));
-            po.sh_l = Jp::r(e3(lerp(0.35, -0.2, p), lerp(0.2, -0.12, p), lerp(-0.25, -0.4, p)));
-            po.el_l = Jp::r(rx(lerp(-1.05, -0.85, p)));
-            po.hip_l = Jp::r(rx(lerp(-0.12, 0.5, p)));
-            po.knee_l = Jp::r(rx(lerp(0.18, 0.6, p))); // step into a planted lunge
-            po.hip_r = Jp::r(rx(lerp(-0.2, -0.15, p)));
-            po.knee_r = Jp::r(rx(lerp(0.2, 0.42, p)));
+            // Uncoil: lunge forward and chop the blade down through the front.
+            po.hips = Jp { t: Some(Vec3::new(0.0, 0.93 + (p * PI).sin() * 0.06, lerp(-0.07, 0.32, p))), r: e3(lerp(0.06, 0.16, p), lerp(-0.14, 0.16, p), 0.0) };
+            po.torso = Jp::r(e3(lerp(-0.06, 0.36, p), lerp(-0.16, 0.12, p), 0.0));
+            po.head = Jp::r(e3(lerp(-0.02, 0.12, p), lerp(0.14, -0.06, p), 0.0));
+            po.sh_r = Jp::r(e3(lerp(0.28, -1.35, p), lerp(-0.12, 0.2, p), lerp(0.1, -0.15, p))); // arm drives down-front
+            po.el_r = Jp::r(rx(lerp(-0.6, -0.3, p)));
+            po.sword = Jp::r(e3(lerp(1.12, 2.7, p), lerp(0.3, -0.6, p), lerp(0.0, -0.4, p))); // chop down-forward
+            po.sh_l = Jp::r(e3(lerp(0.28, -0.18, p), lerp(0.16, -0.1, p), lerp(-0.12, -0.35, p)));
+            po.el_l = Jp::r(rx(lerp(-0.85, -0.85, p)));
+            po.hip_l = Jp::r(rx(lerp(-0.26, 0.5, p)));
+            po.knee_l = Jp::r(rx(lerp(0.42, 0.55, p))); // drive off the crouch into a planted lunge
+            po.hip_r = Jp::r(rx(lerp(-0.32, -0.12, p)));
+            po.knee_r = Jp::r(rx(lerp(0.44, 0.4, p)));
         }
         Phase::Recovery => {
-            po.hips = Jp { t: Some(Vec3::new(0.0, lerp(1.0, 1.05, p), lerp(0.3, 0.0, p))), r: e3(lerp(0.18, 0.0, p), lerp(0.15, 0.0, p), 0.0) };
-            po.torso = Jp::r(e3(lerp(0.42, 0.0, p), lerp(0.12, 0.0, p), 0.0));
-            po.head = Jp::r(e3(lerp(0.14, 0.0, p), lerp(-0.06, 0.0, p), 0.0));
-            po.sh_r = Jp::r(e3(lerp(-1.45, 0.12, p), lerp(0.1, 0.0, p), lerp(-0.12, 0.15, p)));
+            po.hips = Jp { t: Some(Vec3::new(0.0, lerp(0.93, 1.05, p), lerp(0.32, 0.0, p))), r: e3(lerp(0.16, 0.0, p), lerp(0.16, 0.0, p), 0.0) };
+            po.torso = Jp::r(e3(lerp(0.36, 0.0, p), lerp(0.12, 0.0, p), 0.0));
+            po.head = Jp::r(e3(lerp(0.12, 0.0, p), lerp(-0.06, 0.0, p), 0.0));
+            po.sh_r = Jp::r(e3(lerp(-1.35, 0.12, p), lerp(0.2, 0.0, p), lerp(-0.15, 0.15, p)));
             po.el_r = Jp::r(rx(lerp(-0.3, -0.4, p)));
-            po.sword = Jp::r(e3(lerp(2.75, SWORD_REST_X, p), lerp(-0.5, 0.3, p), lerp(-0.3, 0.0, p)));
-            po.sh_l = Jp::r(e3(lerp(-0.2, 0.1, p), lerp(-0.12, 0.0, p), lerp(-0.4, -0.15, p)));
+            po.sword = Jp::r(e3(lerp(2.7, SWORD_REST_X, p), lerp(-0.6, 0.3, p), lerp(-0.4, 0.0, p)));
+            po.sh_l = Jp::r(e3(lerp(-0.18, 0.1, p), lerp(-0.1, 0.0, p), lerp(-0.35, -0.15, p)));
             po.el_l = Jp::r(rx(lerp(-0.85, -0.5, p)));
             po.hip_l = Jp::r(rx(lerp(0.5, 0.0, p)));
-            po.knee_l = Jp::r(rx(lerp(0.6, 0.0, p)));
-            po.hip_r = Jp::r(rx(lerp(-0.15, 0.0, p)));
-            po.knee_r = Jp::r(rx(lerp(0.42, 0.0, p)));
+            po.knee_l = Jp::r(rx(lerp(0.55, 0.0, p)));
+            po.hip_r = Jp::r(rx(lerp(-0.12, 0.0, p)));
+            po.knee_r = Jp::r(rx(lerp(0.4, 0.0, p)));
         }
     }
     po
