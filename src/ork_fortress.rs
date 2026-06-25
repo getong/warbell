@@ -2577,11 +2577,12 @@ fn step_warp_bolts(
 }
 
 /// Shortest gap between fortress barks (a random slice on top keeps the cadence ragged).
-/// Tighter than the camp orks' gap — a whole hold full of orks SHOULD be rowdier.
-const FORT_BARK_GAP: f32 = 11.0;
-const FORT_BARK_JITTER: f32 = 9.0;
+/// A whole hold full of orks SHOULD be rowdy — pulled in to match the siege orks' tightened
+/// 5/5 cadence so a fortress assault roars instead of muttering.
+const FORT_BARK_GAP: f32 = 5.0;
+const FORT_BARK_JITTER: f32 = 4.0;
 /// A denizen must be within this of the hero for its taunt to be worth playing.
-const FORT_EARSHOT: f32 = 30.0;
+const FORT_EARSHOT: f32 = 38.0;
 
 /// Fortress taunts: the camp orks' battle-bark catalog (`Concept::OrkSpot` — "Where you
 /// hide, worm?" etc.), barked off the walls by the nearest denizen whenever the hero

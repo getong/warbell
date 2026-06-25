@@ -21,8 +21,16 @@ struct Settings {
 }
 @group(0) @binding(3) var<uniform> settings: Settings;
 
+// Fixed 32-tap disc — the original count and cost. A higher / dynamic count tanked weak GPUs:
+// most of a player-focused frame is max-blur background, so every extra tap is paid fullscreen,
+// and a variable loop bound also blocks the compiler from unrolling. Temporal stability comes
+// from the cheap Karis luma weight below + the smaller max radius, NOT brute tap count.
 const TAPS: i32 = 32;
 const GOLDEN_ANGLE: f32 = 2.39996323;
+
+fn luma(c: vec3<f32>) -> f32 {
+    return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+}
 
 // Eye-forward distance from reverse-z prepass depth. Sky / cleared depth → very far.
 fn dist_at(coord: vec2<i32>) -> f32 {
@@ -64,18 +72,24 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
 
     let texel = 1.0 / dims;
     let max_c = vec2<i32>(dims) - vec2<i32>(1, 1);
-    // Depth-aware sunflower-disc gather. Each tap is weighted by its own CoC, so sharp
-    // (in-focus) taps barely bleed into a blurred pixel, while blurred taps blend smoothly.
-    var acc = center.rgb * c;
-    var total = c;
+    // Depth-aware sunflower-disc gather. Each tap is weighted by its own CoC (so a sharp,
+    // in-focus tap barely bleeds into a blurred pixel) AND by a Karis luma term `1/(1+luma)`:
+    // that down-weights bright outlier pixels so a hot speck on the distant horizon can't pop
+    // in and out of the sparse disc as the camera moves (the classic bokeh sparkle). The luma
+    // term cancels on flat regions (numerator + denominator scale together), so it only shifts
+    // the result where there's contrast — exactly where the sparkle lives.
+    let cw = c / (1.0 + luma(center.rgb));
+    var acc = center.rgb * cw;
+    var total = cw;
     for (var i = 0; i < TAPS; i = i + 1) {
         let fi = f32(i) + 1.0;
         let ang = fi * GOLDEN_ANGLE;
         let rad = sqrt(fi / f32(TAPS)) * blur_px;
         let off = vec2<f32>(cos(ang), sin(ang)) * rad;
         let tap_coord = clamp(coord + vec2<i32>(off), vec2<i32>(0, 0), max_c);
-        let w = max(coc_of(dist_at(tap_coord)), 0.02);
-        acc += textureSample(screen_texture, texture_sampler, in.uv + off * texel).rgb * w;
+        let s = textureSample(screen_texture, texture_sampler, in.uv + off * texel).rgb;
+        let w = max(coc_of(dist_at(tap_coord)), 0.02) / (1.0 + luma(s));
+        acc += s * w;
         total += w;
     }
     return vec4<f32>(acc / total, center.a);

@@ -169,7 +169,9 @@ fn emit(
         let run = hero.run_amt.clamp(0.0, 1.0);
         let fwd = Vec2::new(hero.facing.sin(), hero.facing.cos());
         let kick = p - Vec3::new(fwd.x, 0.0, fwd.y) * (0.22 * run);
-        spawn_puffs(&mut commands, &fx.puff, &mat, kick, 5 + (run * 5.0) as u32, 1.1 + run * 1.6, 0.8 + run * 0.3, 0.0);
+        // Toned down (was 5 + run*5 motes @ 0.8 + run*0.3): a walk kicked up too much dust. Now
+        // 3 motes @ 0.65 for a walk, ramping to 6 @ 0.9 at a full sprint.
+        spawn_puffs(&mut commands, &fx.puff, &mat, kick, 3 + (run * 3.0) as u32, 1.1 + run * 1.6, 0.65 + run * 0.25, 0.0);
     }
 }
 

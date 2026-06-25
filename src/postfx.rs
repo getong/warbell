@@ -16,13 +16,13 @@ use crate::combat_fx::HitFeedback;
 /// vignette, which is a UI overlay). Inserted on the premium presets by `quality::apply_quality`;
 /// live-tunable in the F1 panel.
 pub fn default_vignette() -> Vignette {
-    Vignette { intensity: 0.26, radius: 0.78, smoothness: 1.6, ..default() }
+    Vignette { intensity: 0.34, radius: 0.78, smoothness: 1.6, ..default() } // 0.34 (was 0.26) — a touch stronger
 }
 
-/// Baseline lens colour-fringe; faint at rest, `drive_chromatic` adds a spike on a fresh hit.
-pub fn default_chromatic() -> ChromaticAberration {
-    ChromaticAberration { intensity: 0.004, ..default() }
-}
+// Chromatic aberration is disabled by default (user preference) — the component is no longer
+// inserted by `quality::apply_quality`, so there's no `default_chromatic()` constructor. The
+// `drive_chromatic` system + `LookSettings.chromatic` knob stay so it can be re-enabled later by
+// re-inserting a `ChromaticAberration` component on the camera; with none present it's a no-op.
 
 /// Live-tunable "look" knobs. The F1 panel edits these and the per-frame systems READ them, so a
 /// slider sticks instead of being stomped each frame (`grade.rs` re-derives `post_saturation`
@@ -38,7 +38,7 @@ pub struct LookSettings {
 
 impl Default for LookSettings {
     fn default() -> Self {
-        Self { saturation: 1.2, chromatic: 0.004 }
+        Self { saturation: 1.2, chromatic: 0.0 } // chromatic off by default (component not inserted anyway)
     }
 }
 

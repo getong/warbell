@@ -259,7 +259,7 @@ fn panel_ui(
             if let Ok((
                 mut fog,
                 mut dof,
-                mut bloom,
+                bloom,
                 mut grading,
                 mut exposure,
                 mut outline,
@@ -315,7 +315,11 @@ fn panel_ui(
                     let mut coc_debug = dof.debug_view > 0.5;
                     ui.checkbox(&mut coc_debug, "show CoC (white=blurred, black=sharp)");
                     dof.debug_view = if coc_debug { 1.0 } else { 0.0 };
-                    ui.add(egui::Slider::new(&mut bloom.intensity, 0.0..=1.0).text("bloom"));
+                    // Master bloom knob — routed through `VisualSettings` (read by `advance_sky`)
+                    // so it STICKS. Writing `bloom.intensity` here would be overwritten next frame
+                    // by that per-frame drive. Shows the resulting live intensity for reference.
+                    ui.add(egui::Slider::new(&mut visual.bloom, 0.0..=2.0).text("bloom (master)"));
+                    ui.label(format!("→ live intensity: {:.2}", bloom.intensity));
                 });
 
                 egui::CollapsingHeader::new("Render").default_open(true).show(ui, |ui| {

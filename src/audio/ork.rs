@@ -20,16 +20,17 @@ use crate::player::Hero;
 use super::frand;
 
 /// Shortest gap between ANY two ork utterances; a random slice up to [`BARK_GAP_JITTER`] is added
-/// on top so the cadence is irregular. (Tightened 18/14 → 12/10 on playtest feedback — the
-/// orks read too quiet; the fortress denizens run their own, slightly faster throttle in
-/// `ork_fortress::fortress_barks`.)
-const BARK_GAP: f32 = 12.0;
-const BARK_GAP_JITTER: f32 = 10.0;
+/// on top so the cadence is irregular. (Tightened 18/14 → 12/10 → 5/5 on playtest feedback — the
+/// orks fought too quiet; battle cries now land every ~5–10s mid-siege. The fortress denizens run
+/// their own, matching throttle in `ork_fortress::fortress_barks`.)
+const BARK_GAP: f32 = 5.0;
+const BARK_GAP_JITTER: f32 = 5.0;
 /// An ork must be within this of the hero (world units) for its bark to be worth playing.
-const EARSHOT: f32 = 32.0;
+const EARSHOT: f32 = 40.0;
 /// When an ork falls while the cooldown is clear, the chance we play its death snarl (vs. letting
-/// a living ork bark a battle line instead) — keeps frequent deaths from drowning out taunts.
-const DEATH_CHANCE: f32 = 0.4;
+/// a living ork bark a battle line instead) — keeps frequent deaths from drowning out the taunts
+/// the player actually asked to hear. Kept low so the living orks do most of the shouting.
+const DEATH_CHANCE: f32 = 0.22;
 
 /// Per-run ork bark trigger state. Replaces `OrkVoiceState` — this is now purely the throttle
 /// and jitter RNG; the director handles everything else.
@@ -42,7 +43,7 @@ pub(crate) struct OrkTrigger {
 
 impl Default for OrkTrigger {
     fn default() -> Self {
-        Self { next_bark: 20.0, rng: 0x51ed_270b }
+        Self { next_bark: 6.0, rng: 0x51ed_270b }
     }
 }
 

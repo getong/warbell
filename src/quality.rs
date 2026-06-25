@@ -220,11 +220,14 @@ pub fn preset_settings(quality: GraphicsQuality) -> GraphicsSettings {
         GraphicsQuality::High => GraphicsSettings {
             shadows: ShadowLevel::Medium, // 2048 / 3 cascades / 150 reach (authored look)
             antialias: AaLevel::High,
-            ssao: AoLevel::Medium,
+            // SSAO off: Bevy's GTAO temporal noise needs TAA to denoise; without it the AO pattern
+            // crawls/flickers under camera motion (the "moving black patches on grass"). ContactShadows
+            // on the sun/moon still give the contact-darkening read. Re-enableable via the menu.
+            ssao: AoLevel::Off,
             terrain: TerrainDetail::High,
             bloom: true,
             depth_of_field: true,
-            outline: true,
+            outline: false, // crisp toon edges off by default (user preference)
             god_rays: true, // screen-space light shafts (godrays.rs) — cheap, so High carries them too
             motion_blur: false, // opt-in only — see the field doc
             render_scale: 1.0,
@@ -232,11 +235,11 @@ pub fn preset_settings(quality: GraphicsQuality) -> GraphicsSettings {
         GraphicsQuality::Ultra => GraphicsSettings {
             shadows: ShadowLevel::High, // 4096 / 4 cascades / 190 reach
             antialias: AaLevel::Ultra,
-            ssao: AoLevel::Ultra,
+            ssao: AoLevel::Off, // off by default — see High preset (GTAO crawl without TAA)
             terrain: TerrainDetail::Ultra,
             bloom: true,
             depth_of_field: true,
-            outline: true,
+            outline: false, // crisp toon edges off by default (user preference)
             god_rays: true,
             motion_blur: false,
             render_scale: 1.0,
@@ -527,17 +530,18 @@ fn apply_quality(
             e.remove::<crate::godrays::GodRays>();
         }
 
-        // Cinematic lens (built-in `bevy_post_process` effects): a static edge vignette + a subtle
-        // chromatic aberration (punched on hits by `postfx::drive_chromatic`). Both ride in the
-        // existing effect-stack pass — no new render-graph node — so they're a cheap premium-preset
-        // dressing. Same on/off gate as god-rays (High/Ultra on, Low off). Film grain is a separate
-        // UI overlay (`postfx`), gated there.
+        // Cinematic lens: a static edge vignette only. Chromatic aberration is OFF by default (user
+        // preference) — the component is never inserted, so `postfx::drive_chromatic` finds nothing
+        // and there's no resting fringe NOR hit-spike fringe. The vignette rides the existing
+        // effect-stack pass (no new render-graph node) — a cheap premium-preset dressing, gated like
+        // god-rays (High/Ultra on, Low off). Film grain is a separate UI overlay (`postfx`).
         if god {
-            e.insert((crate::postfx::default_vignette(), crate::postfx::default_chromatic()));
+            e.insert(crate::postfx::default_vignette());
         } else {
             e.remove::<Vignette>();
-            e.remove::<ChromaticAberration>();
         }
+        // Chromatic aberration is disabled everywhere; ensure no stale component lingers.
+        e.remove::<ChromaticAberration>();
 
         // Motion blur: opt-in (off by default). Toggle ONLY the blur effect here — the
         // motion-vector prepass that feeds it lives on the camera from spawn and is never toggled,

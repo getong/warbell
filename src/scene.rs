@@ -61,8 +61,8 @@ const BASE_SUN_LUX: f32 = 11_000.0;
 /// Swamp (`0.034`) lands at ~(45, 121). Daytime-gated, so night returns to the open baseline.
 const FOG_REF_DENSITY: f32 = 0.009;
 const FOG_MAX_DENSITY: f32 = 0.036;
-const FOG_BASE_START: f32 = 85.0;
-const FOG_BASE_END: f32 = 190.0;
+const FOG_BASE_START: f32 = 57.0; // was 85 — pulled ~1/3 closer (more aggressive fog)
+const FOG_BASE_END: f32 = 127.0; // was 190 — pulled ~1/3 closer
 /// How far the foggy regions pull the clear radius / horizon IN. Kept gentle (was 43/75) so the
 /// fog reads as a long, gradual gradient that EXPANDS with distance — a sharp pull walled the
 /// swamp green close to the camera. Swamp (`d=0.034`) now ≈ (61, 153); Blight (`0.036`) ≈ (59, 150).
@@ -284,6 +284,7 @@ fn advance_sky(
     mut bloom_q: Query<&mut Bloom>,
     biome: Option<Res<SmoothBiomeAtmo>>,
     settings: Option<Res<crate::quality::GraphicsSettings>>,
+    visual: Res<crate::visual::VisualSettings>,
 ) {
     let dt = time.delta_secs();
     if keys.just_pressed(KeyCode::KeyP) {
@@ -404,17 +405,16 @@ fn advance_sky(
     let moon_dir = Vec3::new(-a.cos(), -a.sin(), 0.45).normalize();
     for (mut light, mut tf) in &mut moon_q {
         *tf = Transform::from_translation(moon_dir * 120.0).looking_at(Vec3::ZERO, Vec3::Y);
-        light.illuminance = 3800.0 * night;
+        light.illuminance = 4600.0 * night;
         light.shadow_maps_enabled = night > 0.05;
     }
 
-    // Ambient: night floor trimmed to ≈240 (was 270) — the moonlight key above is now the
-    // night's main light, and ambient is just the shadow-side fill (too much of it was half
-    // the night flatness). By DAY the ambient *dips* (≈195, was 140): the sun is the day's
-    // fill, but dropping ambient too far left day shadows reading pitch-black (player
-    // feedback) — a higher floor softens the shadow side while the sun still keys the contrast.
+    // Ambient: the shadow-side fill. Lifted (night ≈285, day ≈265) — player feedback that day
+    // shadows under the trees still read too dark/hard. The sun still keys the contrast; this just
+    // raises the floor so the shadow side isn't crushed to black. Night is also higher so the
+    // moonlit world stays readable alongside the brighter moon key above.
     // (Computed from `day`, never read-back, so it can't compound frame-to-frame.)
-    ambient.brightness = 240.0 - 45.0 * day;
+    ambient.brightness = 285.0 - 20.0 * day;
     ambient.color = lerp_col(Color::srgb(0.50, 0.60, 0.95), Color::srgb(1.0, 0.95, 0.86), day);
     // Golden hour: as the sun skims the horizon, warm the ambient fill too, so the whole
     // scene catches the sunset glow instead of just the sky band.
@@ -441,12 +441,12 @@ fn advance_sky(
     // after dark the scene is lit almost entirely by the Atmosphere sky (which bypasses
     // Exposure) — so a final-image stops cut here is what actually makes night read as a
     // dark, blue moonlit night instead of AgX dusk. Depth tunable via FOREST_NIGHT.
-    // 0.30 (was 0.42): with the brighter moonlight key above, the old cut left night too dark
-    // overall (player feedback) — the moody read now comes from contrast, not raw darkness.
+    // 0.22 (was 0.30): with the brighter moonlight key + lifted ambient above, night was reading
+    // too dark (player feedback) — the moody read now comes from contrast, not raw darkness.
     let night_stops = std::env::var("FOREST_NIGHT")
         .ok()
         .and_then(|s| s.trim().parse::<f32>().ok())
-        .unwrap_or(0.30);
+        .unwrap_or(0.22);
     for mut g in &mut grade_q {
         g.global.exposure = -night * night_stops;
     }
@@ -454,14 +454,16 @@ fn advance_sky(
     // Bloom: the camera's halo/glow, driven per-region + per-time so emissive things (fire,
     // torches, the sun disk, the Blight's embers) read hot. Base 0.30 (the spawn default) ×
     // the eased biome `bloom_scale` × a golden-hour swell (everything bright haloes at dusk) ×
-    // a gentle night lift (so torch/fire bloom hotter against the dark). Capped so a Blight dusk
-    // can't blow out into a white smear.
+    // a gentle night lift (so torch/fire bloom hotter against the dark). Scaled by the master
+    // `visual.bloom` knob (F1 panel) so the slider STICKS, then hard-clamped: even pushed, bloom
+    // can't blow the scene into an unreadable white smear.
     let bloom_scale = tint.map(|t| t.bloom_scale).unwrap_or(1.0);
-    // Base follows the active graphics preset (god-rays presets carry a +lift, matching
-    // `quality::apply_quality`) — otherwise this per-frame drive would silently stomp that preset
-    // bloom every frame and the Ultra/High lift would never show.
-    let bloom_base = settings.map(|s| if s.god_rays { 0.42 } else { 0.30 }).unwrap_or(0.30);
-    let bloom = (bloom_base * bloom_scale * (1.0 + horizon * 0.5) * (1.0 + night * 0.25)).min(0.70);
+    // Calmer base (0.22, god-rays 0.30 — was 0.30/0.42): the old amount read as too aggressive.
+    // Tune live with the F1 → "bloom (master)" slider; `visual.bloom` rides on top of this curve.
+    let bloom_base = settings.map(|s| if s.god_rays { 0.30 } else { 0.22 }).unwrap_or(0.22);
+    let bloom = (bloom_base * bloom_scale * (1.0 + horizon * 0.5) * (1.0 + night * 0.25)
+        * visual.bloom)
+        .clamp(0.0, 0.45);
     for mut b in &mut bloom_q {
         b.intensity = bloom;
     }
@@ -529,9 +531,9 @@ fn setup_camera(
 
     let mut grading = ColorGrading::default();
     grading.global.post_saturation = 1.2;
-    grading.shadows.contrast = 1.05;
-    grading.midtones.contrast = 1.35;
-    grading.highlights.contrast = 1.1;
+    grading.shadows.contrast = 1.0;
+    grading.midtones.contrast = 1.2;
+    grading.highlights.contrast = 1.03;
 
     commands.spawn((
         Camera3d::default(),
@@ -679,6 +681,14 @@ fn setup_sun(mut commands: Commands) {
             // for cameras carrying `ContactShadows` (added on High/Ultra in `quality.rs`), so this
             // flag is free on Low. Needs the depth prepass (present whenever ContactShadows is).
             contact_shadows_enabled: true,
+            // Shadow acne fix: Bevy's default bias (depth 0.02 / normal 1.8) is too small for the
+            // big flat walls (castle/fortress/hall) at a grazing low-sun angle — the surface
+            // shadow-maps ITSELF into a jagged stippled "acne" pattern. Bumped depth→0.05,
+            // normal→2.8 to push the comparison off the lit surface. Kept moderate so cast shadows
+            // don't visibly detach from their casters (peter-panning); small-scale ground contact
+            // is handled by `contact_shadows` above, not the cascade, so this can run a touch high.
+            shadow_depth_bias: 0.05,
+            shadow_normal_bias: 2.8,
             ..default()
         },
         // God rays are screen-space now (`godrays.rs`), so the sun needs no `VolumetricLight`.
@@ -711,6 +721,10 @@ fn setup_sun(mut commands: Commands) {
             color: Color::srgb(0.55, 0.66, 1.0), // cool moonlit blue (matches the night sun tint)
             illuminance: 0.0,
             shadow_maps_enabled: false,
+            // Same acne fix as the sun (see there): the moon is night's key light at an even
+            // shallower angle, so it needs the bias bump just as much on the fortress walls.
+            shadow_depth_bias: 0.05,
+            shadow_normal_bias: 2.8,
             ..default()
         },
         CascadeShadowConfigBuilder {

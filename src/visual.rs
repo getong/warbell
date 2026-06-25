@@ -29,11 +29,21 @@ pub struct VisualSettings {
     pub prop_roughness: f32,
     /// Reflectance pushed onto the white prop materials (specular strength).
     pub prop_reflectance: f32,
+    /// Master bloom multiplier. `advance_sky` computes a per-biome/per-time bloom each frame and
+    /// scales it by this, so the F1 panel's bloom slider STICKS (writing `Bloom::intensity` directly
+    /// would be stomped next frame by that drive). 1.0 = the authored amount, 0 = off.
+    pub bloom: f32,
 }
 
 impl Default for VisualSettings {
     fn default() -> Self {
-        Self { pollen_glow: 2.5, pollen_speed: 1.0, prop_roughness: 0.62, prop_reflectance: 0.50 }
+        Self {
+            pollen_glow: 2.5,
+            pollen_speed: 1.0,
+            prop_roughness: 0.62,
+            prop_reflectance: 0.50,
+            bloom: 1.0,
+        }
     }
 }
 
