@@ -53,9 +53,10 @@ const DASH_IFRAME: f32 = 0.45;
 const SWEEP_RADIUS: f32 = 2.8;
 const SWEEP_MULT: f32 = 1.4;
 /// Flat HP the hero heals every time the sweep is cast (even hitting nothing).
-const SWEEP_BASE_HEAL: f32 = 28.0;
-/// Extra HP healed per foe the sweep strikes.
-const SWEEP_LIFESTEAL: f32 = 18.0;
+/// Cut 20% (was 28) — the forest-warden boon was over-healing the hero.
+const SWEEP_BASE_HEAL: f32 = 22.4;
+/// Extra HP healed per foe the sweep strikes. Cut 20% (was 18) with the base heal.
+const SWEEP_LIFESTEAL: f32 = 14.4;
 /// Bramble Sweep is also a **field medic**: every ally (guard/villager) within this radius of the
 /// hero is mended on cast, so the move keeps your warband alive in a melee, not just you — the
 /// keystone for surviving a pitched fight with an army at your back. Both tunable.
@@ -84,7 +85,7 @@ pub fn player_arts(
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
     mut rewards: ResMut<crate::orbs::RewardBursts>,
     mut feedback: ResMut<crate::combat_fx::HitFeedback>,
-    mut hero_q: Query<(&mut Hero, &mut Transform, &mut super::HeroHealth)>,
+    mut hero_q: Query<(&mut Hero, &mut super::HeroHealth)>,
     mut targets: Query<
         (Entity, &GlobalTransform, &mut Health, Option<&Ork>, Option<&Animal>),
         (
@@ -98,7 +99,7 @@ pub fn player_arts(
         (With<crate::villagers::Townsfolk>, Without<crate::dying::Dying>),
     >,
 ) {
-    let Ok((mut hero, mut tf, mut hh)) = hero_q.single_mut() else { return };
+    let Ok((mut hero, mut hh)) = hero_q.single_mut() else { return };
 
     if *mode != PlayMode::Play || !player.0.is_alive() || !orbit.locked {
         return;
@@ -115,7 +116,7 @@ pub fn player_arts(
     } else if off_cd && player.0.has_sand_dash && hh.stamina >= DASH_STAMINA_COST && keys.just_pressed(KEY_DASH) {
         hh.stamina -= DASH_STAMINA_COST;
         hh.iframe_until = now + DASH_IFRAME; // invulnerable through the blink
-        // Dash forward to the furthest standable point along the heading.
+        // Find the furthest standable point along the heading.
         let from = hero.pos;
         let mut to = from;
         for k in 1..=6 {
@@ -126,10 +127,12 @@ pub fn player_arts(
                 break;
             }
         }
-        hero.pos = to;
-        if let Some(y) = crate::worldmap::ground_at_world(to.x, to.y) {
-            tf.translation = Vec3::new(to.x, y, to.y);
-        }
+        // Don't teleport — arm a swift slide. `movement::player_move` skates the body `from → to`
+        // over `DASH_TIME` (so the dash travels) and `anim` plays the dash-swipe lunge; the area
+        // damage below still bites the whole path on this cast frame.
+        hero.dash_from = from;
+        hero.dash_to = to;
+        hero.dash_t = 0.0;
         Some(Art::Dash { from, to })
     } else if off_cd && player.0.has_bramble_sweep && hh.stamina >= SWEEP_STAMINA_COST && keys.just_pressed(KEY_SWEEP) {
         hh.stamina -= SWEEP_STAMINA_COST;

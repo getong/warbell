@@ -57,7 +57,7 @@ const FP_EYE_H: f32 = 0.999;
 /// must stay BEHIND the sword-hand for the viewmodel to read. Slightly NEGATIVE: the eye sits a
 /// touch behind the body centre (the head is hidden in FP, so nothing clips) so the raised
 /// sword-arm has room to project forward into the lens instead of straddling it.
-const FP_FWD_OFF: f32 = -0.08;
+const FP_FWD_OFF: f32 = -0.18;
 /// First-person look-pitch clamp (radians): how far you can crane up/down. Symmetric, unlike the
 /// third-person `MIN/MAX_PITCH` (which is camera *elevation*, always tilting the view downward).
 const FP_PITCH_LIMIT: f32 = 1.3;

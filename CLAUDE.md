@@ -281,6 +281,31 @@ reads it to drop a beaten warden). `Lives.heirs` mirrors `town.population`, so i
   core's `wave.rs` and is the one in use; `KEEP_MAX_HP = 1500` / 12-per-s repair; the bespoke
   `Atmosphere`/IBL lighting; the custom CoC bokeh `dof.rs` over a plain DoF. Don't "restore" these
   to match core.
+- **The render pipeline is SINGLE-CAMERA — do NOT add a second `Camera3d`.** The "proper" Bevy
+  two-camera / `RenderLayers` first-person view-model pattern (the `first_person_view_model` example)
+  was tried and **fails three ways here** (June 2026): (1) a 2nd `Camera3d` makes every
+  `single()`/`Single<Camera3d>` query in the codebase ambiguous (`player_camera`, `drive_dof_focus`,
+  bloom/dof/godrays/outline/grade/atmosphere…), so the main camera silently stops being driven and
+  freezes at the boot overview pose; (2) a 2nd HDR+`Tonemapping` camera corrupts the main camera's
+  output — Bevy issue #17530 — washing the world to flat sky; (3) the heavy prepass+post stack
+  (Depth/Normal/MotionVector prepass + SSAO + DOF + godrays + outline + bloom) throws a hard **wgpu
+  Validation Error → the app quits**. Don't re-attempt it. Anything "in front of the lens" (a FP
+  weapon/arms view-model, a HUD-in-world overlay) must live in the ONE camera. The working FP
+  view-model knobs: `fp_keep` in `player/mod.rs::spawn_hero_meshes` picks which limb meshes survive
+  FP (hide the **upper-arm** meshes — they balloon at the eye — but KEEP the forearm so the weapon
+  has a hand and doesn't levitate); `camera::fp_body_visibility` applies it; the FP arm/sword/shield
+  poses are the `fp_amt` overrides in `anim::hero_anim`; the eye sits at `FP_EYE_H`/`FP_FWD_OFF` in
+  `player/camera.rs`; and the main-camera **near-plane** (`scene.rs::setup_camera`, `near: 0.04`) is
+  lowered so the close-held weapon doesn't slice the near-plane (that slicing was the walk-time
+  "flicker"). NB: FP melee inherently puts the enemy in your face — no view-model trick fixes that;
+  third-person is the design's combat view.
+- **Capture-harness flakes — confirm the `Screenshot saved` log line, and retry before debugging.**
+  A `FOREST_SHOT` run can emit a junk frame that is NOT a code bug: a **black** frame (cold pipeline,
+  see the bevy-0.19 note) or an **overview/god-cam** frame (the follow-cam hadn't engaged yet under
+  `FOREST_FP`/`FOREST_TPS`). And if the run **crashed** (e.g. a wgpu validation error) no new PNG is
+  written, so you'll `Read` the **stale** previous file and misread it as "my change did nothing".
+  Always grep the run output for `Screenshot saved` / `error[` / `panic` / `Validation` before
+  trusting the image; if a frame looks wrong, re-run once before diagnosing it.
 
 ## Reference material
 

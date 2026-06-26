@@ -32,7 +32,7 @@ struct Flame {
 }
 
 /// Number of build plots seeded around the castle.
-pub const PLOT_COUNT: usize = 8;
+pub const PLOT_COUNT: usize = 12;
 /// Starting wood so the player can build on day one.
 const START_WOOD: f64 = 16.0;
 
@@ -484,12 +484,24 @@ fn sync_population_bodies(
     }
 }
 
+/// Drop every producer's collision box. `spawn_building` registers one shared `blockers` box per
+/// built plot (at `pos.x - 0.95, pos.y`), but `blockers::reset` only runs on a full world rebuild —
+/// and a New Game / Continue reconciles the town IN-PROCESS without one. So the boxes must be
+/// removed here by plot box-centre or they linger as **invisible barriers** where a building stood
+/// last run. Castle walls/keep/houses sit at different centres, so this tight `eps` leaves them be.
+fn clear_building_blockers(spots: &PlotSpots) {
+    for pos in &spots.0 {
+        crate::blockers::remove_box_near(pos.x - 0.95, pos.y, 0.3);
+    }
+}
+
 /// New run: clear the town and seed starting wood. Mirrors `economy::reset_economy`.
 fn reset_town(
     mut town: ResMut<TownRes>,
     mut bank: ResMut<Bank>,
     mut build_mode: ResMut<BuildMode>,
     siege: Option<Res<crate::siege::Siege>>,
+    spots: Option<Res<PlotSpots>>,
     mut commands: Commands,
     stale: Query<Entity, Or<(With<BuildingMesh>, With<Flame>)>>,
 ) {
@@ -508,6 +520,11 @@ fn reset_town(
     // scene must match). Mirrors how succession_fx reaps graves on a new run.
     for e in &stale {
         commands.entity(e).try_despawn();
+    }
+    // ...and drop their collision boxes too, or the fresh run keeps the old buildings' invisible
+    // walls (the meshes vanish above, but the shared `blockers` set isn't reset in-process).
+    if let Some(spots) = spots {
+        clear_building_blockers(&spots);
     }
 }
 
@@ -531,6 +548,9 @@ fn restore_buildings(
     for e in &stale {
         commands.entity(e).try_despawn();
     }
+    // Drop the prior buildings' collision boxes before `spawn_building` re-adds them below, or a
+    // Continue duplicates/strands town boxes in the shared `blockers` set (no in-process reset).
+    clear_building_blockers(&spots);
     for (idx, plot) in town.0.plots.iter().enumerate() {
         if let (true, Some(kind)) = (plot.is_built(), plot.kind) {
             spawn_building(&mut commands, &mut meshes, &mats.0, idx, kind, &spots);
@@ -555,6 +575,12 @@ const PLOT_OFFSETS: [Vec2; PLOT_COUNT] = [
     Vec2::new(-20.0, 8.0),   // W  — west of wall, off gate lane
     Vec2::new(20.0, -8.0),   // E  — east of wall, off gate lane
     Vec2::new(-20.0, -8.0),  // W  — west of wall, off gate lane
+    // Outer corner ring — diagonal of each quadrant, still on forced-flat grass
+    // (length ~24.8 < SAFE_R+8 hill-flat cutoff), clear of the footprint and gate lanes.
+    Vec2::new(18.0, 17.0),   // NE corner
+    Vec2::new(-18.0, 17.0),  // NW corner
+    Vec2::new(18.0, -17.0),  // SE corner
+    Vec2::new(-18.0, -17.0), // SW corner
 ];
 
 /// World-XZ radius around each plot centre that must stay clear so a future building has room:

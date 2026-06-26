@@ -401,6 +401,10 @@ fn apply_pending_load(
     bank.0 = data.bank;
     inv.0 = data.bag.clone();
     town.0 = data.town.clone();
+    // Older saves were authored with fewer plots; pad up so the current outer
+    // ring stays buildable instead of indexing past the saved vec.
+    let plot_target = crate::town::PLOT_COUNT.max(town.0.plots.len());
+    town.0.plots.resize(plot_target, tileworld_core::town_store::Plot::empty());
 
     // Economy / defense. Upgrade ids re-interned; unlocked weapons re-derived from them.
     up.0 = UpgradeState::restore(&data.upgrades);

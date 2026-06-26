@@ -32,6 +32,13 @@ fn luma(c: vec3<f32>) -> f32 {
     return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
 }
 
+// Interleaved gradient noise → [0,1). Keyed on the *screen pixel* only (no time term), so the
+// rotation it drives is stable frame-to-frame: a still camera is pixel-identical every frame
+// (no flicker when standing), while neighbouring pixels get decorrelated disc orientations.
+fn ign(p: vec2<f32>) -> f32 {
+    return fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715))));
+}
+
 // Eye-forward distance from reverse-z prepass depth. Sky / cleared depth → very far.
 fn dist_at(coord: vec2<i32>) -> f32 {
     let d = textureLoad(depth_texture, coord, 0);
@@ -81,11 +88,22 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let cw = c / (1.0 + luma(center.rgb));
     var acc = center.rgb * cw;
     var total = cw;
+    // Per-pixel disc rotation: golden-angle taps give uniform coverage, but a *fixed* orientation
+    // means every pixel shares the same under-sampling blind spots — so a bright snow tip pops in
+    // and out of the sparse disc in a coherent patch as the scene slides past (motion sparkle).
+    // Rotating the whole disc by an IGN-hashed per-pixel angle decorrelates those blind spots into
+    // fine spatial noise the eye averages out. Screen-keyed only → a still frame stays flicker-free.
+    let rot = ign(in.position.xy) * 6.28318530718;
+    let cr = cos(rot);
+    let sr = sin(rot);
     for (var i = 0; i < TAPS; i = i + 1) {
         let fi = f32(i) + 1.0;
         let ang = fi * GOLDEN_ANGLE;
         let rad = sqrt(fi / f32(TAPS)) * blur_px;
-        let off = vec2<f32>(cos(ang), sin(ang)) * rad;
+        let ca = cos(ang);
+        let sa = sin(ang);
+        // (ca,sa) rotated by the per-pixel angle (cr,sr).
+        let off = vec2<f32>(ca * cr - sa * sr, ca * sr + sa * cr) * rad;
         let tap_coord = clamp(coord + vec2<i32>(off), vec2<i32>(0, 0), max_c);
         let s = textureSample(screen_texture, texture_sampler, in.uv + off * texel).rgb;
         let w = max(coc_of(dist_at(tap_coord)), 0.02) / (1.0 + luma(s));

@@ -409,6 +409,21 @@ const GUARD_ENGAGE: f32 = 8.0;
 /// Keep total HP — tuned so an unopposed early wave threatens it over the night and a late wave
 /// razes it fast, but the hero thinning the horde saves it.
 pub const KEEP_MAX_HP: f32 = 1500.0;
+/// The keep is reinforced as the siege escalates: its MAX HP grows by this fraction of base per
+/// night cleared (the town shores up the walls), so later nights — whose orks scale up too — don't
+/// trivially raze a fixed-HP keep. Night 0 = base; each subsequent night adds this much.
+const KEEP_HP_PER_NIGHT: f32 = 0.10;
+/// Cap on the per-night keep-HP growth (× base max), so it plateaus instead of climbing forever.
+const KEEP_HP_NIGHT_CAP: f32 = 2.5;
+
+/// The keep's MAX HP for night `wave_index` (0-based): base × difficulty handicap × per-night
+/// reinforcement, clamped to [`KEEP_HP_NIGHT_CAP`]. `wave_index < 0` (pre-first-night) → base.
+pub fn keep_max_for(wave_index: i32, diff: Difficulty) -> f32 {
+    let base = KEEP_MAX_HP * mods_for(diff).keep_hp_mul;
+    let nights = wave_index.max(0) as f32;
+    let scale = (1.0 + KEEP_HP_PER_NIGHT * nights).min(KEEP_HP_NIGHT_CAP);
+    base * scale
+}
 /// Keep self-repair during the prep breather (HP/s) — the day is a chance to recover.
 const KEEP_REPAIR_RATE: f32 = 12.0;
 /// On top of the slow continuous repair, the keep is shored up by this fraction of its MAX HP at
@@ -600,8 +615,9 @@ fn reset_siege(
     let diff = siege.difficulty;
     *siege = Siege { difficulty: diff, ..Siege::default() };
     // Re-derive the keep's max from base × the difficulty handicap (so switching difficulty between
-    // runs takes effect, and the Easy keep is genuinely tougher).
-    keep.max = KEEP_MAX_HP * mods_for(diff).keep_hp_mul;
+    // runs takes effect, and the Easy keep is genuinely tougher). At reset wave_index is -1 (pre
+    // first night), so this is the un-reinforced base — it grows per night via `keep_max_for`.
+    keep.max = keep_max_for(siege.wave_index, diff);
     keep.hp = keep.max;
 }
 
@@ -826,6 +842,14 @@ fn run_director(
             WaveAction::BeginWave { index } => {
                 siege.wave_index = index as i32;
                 siege.spawned = 0;
+                // Reinforce the keep for this night: its MAX HP scales with the night index, and
+                // the new headroom is granted as real HP (the town shored up the walls overnight).
+                let new_max = keep_max_for(siege.wave_index, siege.difficulty);
+                let delta = new_max - keep.max;
+                keep.max = new_max;
+                if delta > 0.0 {
+                    keep.hp = (keep.hp + delta).min(keep.max);
+                }
             }
             WaveAction::SetPhase(p) => {
                 siege.phase = p;

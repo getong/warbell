@@ -28,9 +28,13 @@ use crate::economy::Defenses;
 use crate::palette::srgb;
 
 // ── Palette (sRGB hex, from the TS materials) ────────────────────────────────────
-const STONE: u32 = 0x7d7e86;
-const DARK_STONE: u32 = 0x5c5d64;
-const LIGHT_STONE: u32 = 0x969aa4;
+// Castle/wall masonry — darkened ~10% off the old bright greys (0x7d7e86 / 0x5c5d64 / 0x969aa4)
+// so the keep + curtain walls read as weathered, mature stone instead of flat pale blocks, without
+// going gloomy. Paired with the higher-contrast, grime-streaked `tex_stone` below. (House stone
+// `H_STONE` stays lighter.)
+const STONE: u32 = 0x8a8b95;
+const DARK_STONE: u32 = 0x6a6b73;
+const LIGHT_STONE: u32 = 0x9da1ac;
 const BEAM: u32 = 0x5a3a22;
 const ROOF: u32 = 0x7a2f28;
 const BANNER: u32 = 0x2f5fa6;
@@ -48,7 +52,7 @@ const H_ROOF2: u32 = 0x6e6256; // weathered grey-brown shingle (house variety)
 const THATCH: u32 = 0xb89b4f; // bound-straw roofing (huts, the farm barn)
 const IRON: u32 = 0x6a6e72; // arms & armour (racks, blades, helms)
 const PARCHMENT: u32 = 0xe6d9b5; // notice/bounty-board paper
-const H_STONE: u32 = 0x6e6e76;
+const H_STONE: u32 = 0x86868e;
 const WINDOW_GLOW: u32 = 0xffd58c;
 const BRONZE: u32 = 0xb9892f;
 const BRONZE_DARK: u32 = 0x7c5a1e;
@@ -261,7 +265,9 @@ fn speckle(cv: &mut Canvas, r: &mut Rng, n: usize, c: [f32; 3]) {
 /// Ashlar courses — castle stone (running-bond bricks + mortar + bevel highlight).
 fn tex_stone(hex: u32) -> Image {
     let c = rgb(hex);
-    let mut cv = Canvas::new(shade(c, -0.07));
+    // Deep recessed mortar (was −0.07): a real shadowed joint gives the blocks 3D relief instead
+    // of the old near-flat grout that vanished at distance.
+    let mut cv = Canvas::new(shade(c, -0.13));
     let mut r = Rng(0x511 ^ hex);
     let (rows, cols) = (4usize, 4usize);
     let (bh, bw) = (TN as f32 / rows as f32, TN as f32 / cols as f32);
@@ -270,11 +276,22 @@ fn tex_stone(hex: u32) -> Image {
         for i in -1..=cols as i32 {
             let x = i as f32 * bw + off + 1.5;
             let y = ry as f32 * bh + 1.5;
-            cv.rect(x, y, bw - 3.0, bh - 3.0, shade(c, (r.f() - 0.5) * 0.12));
-            cv.rect(x, y, bw - 3.0, 1.5, shade(c, 0.06)); // top bevel
+            // Per-block value drift (gentler — was ±0.22): every stone weathers to its own tone, so a
+            // wall reads as aged masonry rather than one uniform grey slab, without looking grubby.
+            cv.rect(x, y, bw - 3.0, bh - 3.0, shade(c, (r.f() - 0.5) * 0.13));
+            cv.rect(x, y, bw - 3.0, 1.5, shade(c, 0.07)); // top bevel — lit upper lip
+            cv.rect(x, y + bh - 4.5, bw - 3.0, 1.5, shade(c, -0.11)); // bottom AO — block sits in its own shadow
         }
     }
-    speckle(&mut cv, &mut r, 600, c);
+    // Weathering: broad soft grime/damp stains drifting across the face (soot above torches, rain
+    // streaks) at low alpha so they tint the stone for a lived-in, mature look — not hard blotches.
+    for _ in 0..9 {
+        let x = r.f() * TN as f32;
+        let y = r.f() * TN as f32;
+        let rad = 6.0 + r.f() * 16.0;
+        cv.disc(x, y, rad, shade(c, -0.10 - r.f() * 0.08), 0.07 + r.f() * 0.07);
+    }
+    speckle(&mut cv, &mut r, 500, c);
     cv.into_image()
 }
 
@@ -491,10 +508,10 @@ fn build_mats(images: &mut Assets<Image>, std_mats: &mut Assets<StandardMaterial
         });
         h.insert(m as u8, handle);
     };
-    tex(tex_stone(STONE), 0.92, M::Stone);
-    tex(tex_stone(DARK_STONE), 0.92, M::DarkStone);
-    tex(tex_stone(LIGHT_STONE), 0.9, M::LightStone);
-    tex(tex_stone(H_STONE), 0.92, M::HouseStone);
+    tex(tex_stone(STONE), 0.84, M::Stone); // weathered masonry, but catches a soft highlight (was dead-matte 0.97)
+    tex(tex_stone(DARK_STONE), 0.84, M::DarkStone);
+    tex(tex_stone(LIGHT_STONE), 0.82, M::LightStone);
+    tex(tex_stone(H_STONE), 0.82, M::HouseStone);
     tex(tex_plaster(H_WALL), 0.95, M::Plaster);
     tex(tex_wood(WOOD, 3), 1.0, M::Wood);
     tex(tex_wood(BEAM, 4), 1.0, M::Beam);

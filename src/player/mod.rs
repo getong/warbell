@@ -26,6 +26,9 @@ mod movement;
 
 /// First-person view state, toggled by the HUD eye button ([`crate::ui::settings`]) and the V key.
 pub use camera::FirstPerson;
+/// Sand-Dash slide duration — re-exported so the standalone viewer (`viewer.rs`) can drive the
+/// dash-swipe preview at the real cadence. (`anim` reads it directly via `super::movement`.)
+pub(crate) use movement::DASH_TIME;
 
 use bevy::prelude::*;
 
@@ -121,6 +124,15 @@ pub struct Hero {
     /// juice) rather than a normal tap — drives the heavy pose ([`anim`]) + damage ([`combat`]).
     /// Set on release of a full charge; cleared when the swing ends. Transient.
     pub heavy: bool,
+    // ── Sand Dash slide ──
+    /// Seconds into the active Sand-Dash slide, or **`-1.0` when not dashing** (the sentinel).
+    /// Armed by `arts::player_arts`; [`movement`] slides the body `dash_from → dash_to` over
+    /// `movement::DASH_TIME` (so the dash *travels* instead of teleporting) and [`anim`] plays the
+    /// dash-swipe lunge from it. Transient (derived, like `attacking`) — not saved.
+    pub dash_t: f32,
+    /// World-XZ endpoints of the active dash slide (only meaningful while `dash_t >= 0.0`).
+    pub dash_from: Vec2,
+    pub dash_to: Vec2,
 }
 
 /// Hero **shield/stamina** state — only the block mechanic. HP, gold, XP/level and the combat
@@ -349,6 +361,10 @@ fn animtest(time: Res<Time>, mut hero_q: Query<(&mut Hero, &mut HeroHealth)>) {
             hero.charge_t = (time.elapsed_secs() * 0.25).min(combat::CHARGE_THRESHOLD);
         }
         "victory" => hero.victory = true,
+        "dash" => {
+            // Loop the Sand-Dash slide progress so a capture frames the dash-swipe lunge.
+            hero.dash_t = (time.elapsed_secs() * 0.5) % movement::DASH_TIME;
+        }
         "jump" => {
             hero.on_ground = false;
             hero.vel_y = 2.0;
@@ -407,6 +423,9 @@ fn spawn_hero(
                 victory: false,
                 charge_t: -1.0,
                 heavy: false,
+                dash_t: -1.0,
+                dash_from: Vec2::ZERO,
+                dash_to: Vec2::ZERO,
             },
             HeroHealth::default(),
         ))
@@ -479,6 +498,11 @@ pub(crate) fn spawn_hero_meshes(
     let p = |t: Vec3| Transform::from_translation(t);
     let body = |mesh: Handle<Mesh>| Some(Leaf { mesh, fp_keep: false, weapon: false });
     let arm = |mesh: Handle<Mesh>| Some(Leaf { mesh, fp_keep: true, weapon: false });
+    // The UPPER arms (shoulder meshes) sit right at the FP eye and balloon into two blobs that fill
+    // the lens. Hide just those in first person (`fp_keep:false`) like the body. The FOREARMS stay
+    // (`arm`, kept) so the sword/shield read as HELD in a hand — not levitating — posed low into the
+    // corners by the FP viewmodel raise (`anim::hero_anim`). Visible in third person regardless.
+    let upper = body;
 
     use model::{HIP_DX, O_ELBOW, O_FOOT, O_HAND, O_HEAD, O_HIP_Y, O_KNEE, O_NECK, O_SHOULDER_Y, O_TORSO, SHOULDER_DX, Y_HIPS};
 
@@ -496,7 +520,7 @@ pub(crate) fn spawn_hero_meshes(
     spawn_joint(commands, neck, Some(Head), p(Vec3::new(0.0, O_HEAD, 0.0)), mat, body(meshes.add(m.head)));
 
     // Left arm + heater shield on the hand pivot (`anim` rewrites the shield pose every frame).
-    let sh_l = spawn_joint(commands, torso, Some(ShoulderL), p(Vec3::new(-SHOULDER_DX, O_SHOULDER_Y, 0.01)), mat, arm(meshes.add(m.shoulder_l)));
+    let sh_l = spawn_joint(commands, torso, Some(ShoulderL), p(Vec3::new(-SHOULDER_DX, O_SHOULDER_Y, 0.01)), mat, upper(meshes.add(m.shoulder_l)));
     let el_l = spawn_joint(commands, sh_l, Some(ElbowL), p(Vec3::new(0.0, O_ELBOW, 0.0)), mat, arm(meshes.add(m.elbow_l)));
     let hand_l = spawn_joint(commands, el_l, None, p(Vec3::new(0.0, O_HAND, 0.0)), mat, None);
     let shield = spawn_joint(
@@ -510,7 +534,7 @@ pub(crate) fn spawn_hero_meshes(
     spawn_joint(commands, shield, None, p(Vec3::new(0.0, -0.03, 0.033)), mat, arm(meshes.add(m.lion)));
 
     // Right arm + held weapon on its own `Sword` pivot (attacks sweep it).
-    let sh_r = spawn_joint(commands, torso, Some(ShoulderR), p(Vec3::new(SHOULDER_DX, O_SHOULDER_Y, 0.01)), mat, arm(meshes.add(m.shoulder_r)));
+    let sh_r = spawn_joint(commands, torso, Some(ShoulderR), p(Vec3::new(SHOULDER_DX, O_SHOULDER_Y, 0.01)), mat, upper(meshes.add(m.shoulder_r)));
     let el_r = spawn_joint(commands, sh_r, Some(ElbowR), p(Vec3::new(0.0, O_ELBOW, 0.0)), mat, arm(meshes.add(m.elbow_r)));
     let hand_r = spawn_joint(commands, el_r, None, p(Vec3::new(0.0, O_HAND, 0.0)), mat, None);
     spawn_joint(commands, hand_r, Some(Sword), Transform::default(), mat, Some(Leaf { mesh: meshes.add(m.weapon), fp_keep: true, weapon: true }));
@@ -599,6 +623,9 @@ fn reset_player(
         victory: false,
         charge_t: -1.0,
         heavy: false,
+        dash_t: -1.0,
+        dash_from: Vec2::ZERO,
+        dash_to: Vec2::ZERO,
     };
     tf.translation = Vec3::new(pos.x, y, pos.y);
     tf.rotation = Quat::from_rotation_y(0.0);

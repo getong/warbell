@@ -325,6 +325,34 @@ fn leap_pose(vel_y: f32) -> Pose {
     p
 }
 
+/// **Sand Dash** — the blink read as a swift, committed forward lunge with a flat sword swipe, so
+/// the move *travels* instead of teleporting. `p` is 0→1 progress along the slide
+/// (`hero.dash_t / movement::DASH_TIME`). A `lunge` envelope (0 at the ends, 1 mid-blink) drops the
+/// hips and drives the legs into a speed-skater push; the sword arm whips a horizontal swipe across
+/// the dash. The tail eases back toward locomotion in [`hero_anim`] so there's no snap on landing.
+fn dash_pose(p: f32) -> Pose {
+    let lunge = (p * PI).sin(); // deepest commitment mid-dash, settled at both ends
+    let mut po = rest();
+    po.hips = Jp { t: Some(Vec3::new(0.0, 1.0 - lunge * 0.13, lunge * 0.05)), r: e3(lunge * 0.12, 0.0, 0.0) };
+    po.torso = Jp::r(e3(0.26 + lunge * 0.18, lerp(-0.32, 0.42, p), 0.0)); // pitch into the dash + twist through the swipe
+    po.head = Jp::r(e3(-0.16, lerp(-0.16, 0.22, p), 0.0));
+    // Lead (left) leg drives ahead, trail (right) leg streams back — a flat, low push.
+    po.hip_l = Jp::r(rx(-0.72 - lunge * 0.22));
+    po.knee_l = Jp::r(rx(0.5 + lunge * 0.3));
+    po.foot_l = Jp::r(rx(-0.2));
+    po.hip_r = Jp::r(rx(0.6 + lunge * 0.32));
+    po.knee_r = Jp::r(rx(0.42));
+    po.foot_r = Jp::r(rx(0.26));
+    // Sword arm whips a flat horizontal swipe across the blink; off hand trails for balance.
+    po.sh_r = Jp::r(e3(lerp(-0.2, -1.35, p), lerp(-0.7, 0.45, p), lerp(0.5, -0.3, p)));
+    po.el_r = Jp::r(rx(lerp(-1.25, -0.3, p)));
+    po.sword = Jp::r(e3(lerp(2.3, 2.5, p), lerp(0.7, -0.45, p), lerp(-0.55, 0.3, p)));
+    po.sh_l = Jp::r(e3(-0.3 - lunge * 0.2, 0.0, -0.5));
+    po.el_l = Jp::r(rx(-0.85));
+    po.shield = Jp { t: Some(SHIELD_GAIT_T), r: shield_gait_r() };
+    po
+}
+
 // ── Jump (physics height → studio airtime formulas) ─────────────────────────────────────
 fn jump_pose(vel_y: f32) -> Pose {
     let v = (vel_y / 6.5).clamp(-1.0, 1.0); // 6.5 = movement::JUMP_SPEED
@@ -765,6 +793,11 @@ pub fn hero_anim(
     let loco = loco_pose(now, hero.walk_phase, moving, hero.run_amt.clamp(0.0, 1.0));
     let pose = if hero.victory {
         victory_pose(now)
+    } else if hero.dash_t >= 0.0 {
+        // Sand Dash slide: play the dash-swipe lunge, easing back into locomotion at the blink's tail.
+        let p = (hero.dash_t / super::movement::DASH_TIME).clamp(0.0, 1.0);
+        let tail = smoothstep((p - 0.7) / 0.3);
+        dash_pose(p).lerp(&loco, tail)
     } else if let Some((phase, p)) = &attack {
         let atk = attack_pose(hero.attack_variant, phase, *p);
         if hero.on_ground && moving > 0.05 {
@@ -818,14 +851,34 @@ pub fn hero_anim(
                 if let Some((Some((sh, el)), _)) = gesture {
                     rot = if elbow { el } else { sh };
                 } else if attack.is_none() && fp_amt > 0.0 {
-                    let target = if elbow { rx(-1.0) } else { e3(-0.9, 0.2, 0.1) };
+                    // First-person sword viewmodel: raise the upper arm forward (out of the eye) but
+                    // bend the elbow hard so the hand + blade drop LOW into the bottom-right corner —
+                    // a classic FPS rest, not a blade filling the upper frame. Forward (not hanging)
+                    // keeps the hand ahead of the near plane so it doesn't clip.
+                    let target = if elbow { rx(-1.5) } else { e3(-0.12, 0.1, 0.18) };
                     rot = rot.slerp(target, fp_amt);
+                }
+            }
+            Joint::Sword => {
+                // A long blade held tip-up towers into the upper frame even with the hand dropped low.
+                // In first person, lay it forward-and-down (blade points away, low across the corner)
+                // so only the hilt + a foreslope of blade reads, not a flagpole. Attack/block own it
+                // otherwise.
+                if attack.is_none() && block_amt < 0.5 && fp_amt > 0.0 {
+                    rot = rot.slerp(e3(2.6, -0.5, 0.0), fp_amt);
                 }
             }
             Joint::ShoulderL | Joint::ElbowL => {
                 let elbow = part.joint == Joint::ElbowL;
                 if let Some((_, Some((sh, el)))) = gesture {
                     rot = if elbow { el } else { sh };
+                } else if attack.is_none() && block_amt < 0.5 && fp_amt > 0.0 {
+                    // First-person shield viewmodel (mirror of the sword arm): upper arm forward, elbow
+                    // bent hard so the shield drops LOW into the bottom-left corner instead of a slab
+                    // filling the upper frame. Skipped while blocking — `defend_pose` braces the shield
+                    // flat in front, which should win.
+                    let target = if elbow { rx(-1.8) } else { e3(-0.5, -0.1, -0.18) };
+                    rot = rot.slerp(target, fp_amt);
                 }
             }
             _ => {}

@@ -176,7 +176,7 @@ pub struct Plot {
 }
 
 impl Plot {
-    fn empty() -> Self {
+    pub fn empty() -> Self {
         Self { kind: None, state: PlotState::Empty, staffed: false }
     }
 

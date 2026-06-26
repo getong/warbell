@@ -186,20 +186,23 @@ fn start_t() -> f32 {
 // night (time visibly passes) but is HARD-CAPPED before the next sunrise, so night always stays
 // night however long the wave runs. End screens ease quickly back to daylight.
 // The prep day (siege PREP_DURATION) maps to the sun's arc: ~5:00 low golden morning (east)
-// → 13:00 noon (overhead) → dusk → nightfall right at countdown end.
+// → 13:00 noon (overhead) → dusk → TRUE MIDNIGHT right at countdown end (T_NIGHTFALL=0.75 — the
+// sun sits at the anti-solar point so the moon stands high, the approved deep-night look).
 const T_DAWN: f32 = 0.03; // ~5:00 — low sunrise sun, east horizon
-const T_NIGHTFALL: f32 = 0.55; // full dark — the t where `night`→1; prep's end / wave start moment
+const T_NIGHTFALL: f32 = 0.75; // true midnight — prep's end / wave start (the approved deep-night look)
 const T_NIGHT_CAP: f32 = 0.90; // deep pre-dawn — the sun holds here on long waves (sunrise ≈0.97)
 const T_NIGHT: f32 = 0.75; // midnight — only the FOREST_WAVE screenshot boot (`start_t`)
 const T_NOON: f32 = 0.25; // end-screen daylight
 const DAY_LERP_RATE: f32 = 0.7; // quick-ease speed (≈ a couple-second dusk/dawn) for edge transitions
 const NIGHT_DRIFT_RATE: f32 = 0.003; // slow clock creep through the wave (~100s nightfall→cap)
-// Ease-in on prep progress (>1): a GENTLE bias toward daylight, low enough that the sun visibly
-// tracks the countdown instead of loitering then crashing. It climbs dawn→noon over the first
-// half, then descends noon→dusk→dark over the second — one steady sun arc you can time the wave
-// by. Darkness still COMPLETES exactly at prog→1 (T_NIGHTFALL is the full-dark t), so there's no
-// "dark, then wait" tail; the final stretch is a visible sunset, not a sudden plunge.
-const PREP_SUN_EASE: f32 = 1.5;
+// Ease-in on prep progress (>1): a bias toward daylight that keeps the sun UP through most of the
+// countdown so it isn't already dark with a third of prep left. It climbs dawn→noon over the first
+// ~two-thirds, then descends noon→dusk→dark over the final stretch — one steady sun arc you can
+// time the wave by. At `1.5` the sky hit full dark (`night`→1, ≈t 0.55) at prog≈0.79 — ~40s of
+// dark before the war-bell, which read as "sun set too early"; `3.0` pushes full dark to prog≈0.89
+// (~20s), then the last stretch is the moon climbing to true midnight (T_NIGHTFALL 0.75). Still a
+// visible, moving sky (no "dark, then wait" pop), just night arriving nearer the wave.
+const PREP_SUN_EASE: f32 = 3.0;
 
 fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
     let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
@@ -409,12 +412,11 @@ fn advance_sky(
         light.shadow_maps_enabled = night > 0.05;
     }
 
-    // Ambient: the shadow-side fill. Lifted (night ≈285, day ≈265) — player feedback that day
-    // shadows under the trees still read too dark/hard. The sun still keys the contrast; this just
-    // raises the floor so the shadow side isn't crushed to black. Night is also higher so the
-    // moonlit world stays readable alongside the brighter moon key above.
-    // (Computed from `day`, never read-back, so it can't compound frame-to-frame.)
-    ambient.brightness = 285.0 - 20.0 * day;
+    // Ambient: the shadow-side fill. Day ≈265, night ≈350 — the `+ * night` term lifts the
+    // night fill specifically (player feedback: night still too dark) without touching day. The
+    // sun/moon still key the contrast; this raises the floor so the shadow side isn't crushed.
+    // (Computed from `day`/`night`, never read-back, so it can't compound frame-to-frame.)
+    ambient.brightness = 285.0 - 20.0 * day + 65.0 * night;
     ambient.color = lerp_col(Color::srgb(0.50, 0.60, 0.95), Color::srgb(1.0, 0.95, 0.86), day);
     // Golden hour: as the sun skims the horizon, warm the ambient fill too, so the whole
     // scene catches the sunset glow instead of just the sky band.
@@ -441,12 +443,12 @@ fn advance_sky(
     // after dark the scene is lit almost entirely by the Atmosphere sky (which bypasses
     // Exposure) — so a final-image stops cut here is what actually makes night read as a
     // dark, blue moonlit night instead of AgX dusk. Depth tunable via FOREST_NIGHT.
-    // 0.22 (was 0.30): with the brighter moonlight key + lifted ambient above, night was reading
-    // too dark (player feedback) — the moody read now comes from contrast, not raw darkness.
+    // 0.15 (was 0.22 → 0.30): still reading too dark (player feedback), so the night exposure cut
+    // is eased again — the moody read comes from contrast + the cool blue key, not raw darkness.
     let night_stops = std::env::var("FOREST_NIGHT")
         .ok()
         .and_then(|s| s.trim().parse::<f32>().ok())
-        .unwrap_or(0.22);
+        .unwrap_or(0.15);
     for mut g in &mut grade_q {
         g.global.exposure = -night * night_stops;
     }
@@ -542,7 +544,11 @@ fn setup_camera(
         // full cost. Clipping the frustum at 230 (40-tile margin) lets Bevy's frustum culler
         // drop all that far geometry for free: the opposite island edge / fogged ground-cover
         // stops being submitted when the player roams to a far shore. No visible change.
-        Projection::from(PerspectiveProjection { fov: 50f32.to_radians(), far: 230.0, ..default() }),
+        // near=0.04 (was the 0.1 default): in first person the sword/shield are held right at the
+        // lens and the default near-plane sliced through them, popping bits in/out every frame as the
+        // walk-bob moved them across z=near (the "flicker" bug). 0.04 keeps the close viewmodel whole.
+        // Safe for depth precision — `far` is only 230 (ratio ~5750:1), not the 1000 default.
+        Projection::from(PerspectiveProjection { fov: 50f32.to_radians(), near: 0.04, far: 230.0, ..default() }),
         cam_tf,
         Hdr,
         Exposure { ev100: 11.0 },

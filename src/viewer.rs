@@ -65,6 +65,7 @@ fn anim_drive(time: Res<Time>, mut q: Query<(&mut crate::player::Hero, &mut crat
     hero.victory = false;
     hero.heavy = false;
     hero.charge_t = -1.0;
+    hero.dash_t = -1.0;
     hh.blocking = false;
     // Loop a one-shot swing of the given studio attack variant for the preview.
     let swing = |hero: &mut crate::player::Hero, variant: u8| {
@@ -119,6 +120,8 @@ fn anim_drive(time: Res<Time>, mut q: Query<(&mut crate::player::Hero, &mut crat
             hero.vel_y = (time.elapsed_secs() * 1.2).cos() * 6.5;
         }
         "victory" => hero.victory = true,
+        // Loop the Sand-Dash slide progress (0→1 along the blink) so a clip shows the dash-swipe lunge.
+        "dash" => hero.dash_t = (time.elapsed_secs() * 0.5) % crate::player::DASH_TIME,
         "jump" => {
             // Sweep vel_y smoothly +JUMP_SPEED → −JUMP_SPEED so the continuous arc (and the landing
             // squash, when it touches back down at v≈0) is exercised through a turntable/clip.
@@ -260,6 +263,9 @@ fn setup(
                 victory: false,
                 charge_t: -1.0,
                 heavy: false,
+                dash_t: -1.0,
+                dash_from: Vec2::ZERO,
+                dash_to: Vec2::ZERO,
             },
             crate::player::HeroHealth::default(),
         ))

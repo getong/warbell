@@ -28,6 +28,11 @@ const ACCEL: f32 = 14.0;
 const DECEL: f32 = 9.0;
 const PLAYER_R: f32 = 0.22;
 
+/// Seconds the Sand-Dash slide takes to travel its whole blink (`arts::DASH_DIST`). Short + ease-out
+/// → an explosive launch that glides to a stop, so the dash *moves* the body instead of teleporting.
+/// Read by [`anim`] to drive the dash-swipe lunge progress.
+pub(crate) const DASH_TIME: f32 = 0.16;
+
 // ── Hazards (ported from Character.tsx) ──
 /// A fall shorter than this lands free; beyond it hurts.
 const FALL_SAFE: f32 = 1.1;
@@ -156,6 +161,7 @@ pub fn player_move(
     if *mode != PlayMode::Play || !player.0.is_alive() || build_mode.active {
         hero.moving = false;
         hero.vel = Vec2::ZERO;
+        hero.dash_t = -1.0; // cancel any in-flight dash (no corpse / frozen-hero skating)
         // The rig (hips joint in `anim`) owns the idle/walk bob — keep the root on the ground.
         tf.translation = Vec3::new(hero.pos.x, hero.y, hero.pos.y);
         write_state(&mut state, &hero);
@@ -164,6 +170,29 @@ pub fn player_move(
     }
 
     let dt = time.delta_secs().min(0.05);
+
+    // ── Sand Dash slide: while a dash is armed (by `arts::player_arts`), the dash OWNS locomotion —
+    // the body skates `dash_from → dash_to` over DASH_TIME with an ease-out (explosive launch, glide
+    // to a stop) instead of teleporting. Input is ignored for the blink; the path was pre-validated
+    // standable in `arts`, so we just ride it and snap Y to the ground. ──
+    if hero.dash_t >= 0.0 {
+        hero.dash_t += dt;
+        let u = (hero.dash_t / DASH_TIME).clamp(0.0, 1.0);
+        let e = 1.0 - (1.0 - u).powi(3); // ease-out: fast off the line, settle at the end
+        hero.pos = hero.dash_from.lerp(hero.dash_to, e);
+        hero.y = footing(hero.pos.x, hero.pos.y).unwrap_or(hero.y);
+        hero.vel = Vec2::ZERO;
+        hero.vel_y = 0.0;
+        hero.on_ground = true;
+        hero.moving = false;
+        if u >= 1.0 {
+            hero.dash_t = -1.0; // blink done — hand locomotion back to input next frame
+        }
+        tf.translation = Vec3::new(hero.pos.x, hero.y, hero.pos.y);
+        tf.rotation = Quat::from_rotation_y(hero.facing);
+        write_state(&mut state, &hero);
+        return;
+    }
 
     // ── Swamp poison: gnaws 2 HP every 2.5s while standing in the marsh, even idle (the first
     // tick fires the instant you step in — `swampPoisonAt` starts at 0 in the TS). ──
