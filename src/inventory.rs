@@ -76,7 +76,14 @@ impl CombatMods<'_> {
     /// Broadcast this swing's cone so the biome verbs (ore mining, training dummies) can react
     /// to the same blow. `base_dmg` is the non-crit damage (ore/dummies don't crit).
     pub fn publish_swing(&mut self, origin: Vec2, fwd: Vec2, base_dmg: f32) {
-        self.swings.write(crate::verbs::HeroSwing { origin, fwd, base_dmg });
+        // `harvest_dmg` is the FLAT tree/ore damage, intentionally NOT `base_dmg` — harvesting is
+        // decoupled from combat power so a maxed hero can't one-shot the forest (see `HeroSwing`).
+        self.swings.write(crate::verbs::HeroSwing {
+            origin,
+            fwd,
+            base_dmg,
+            harvest_dmg: crate::verbs::HERO_HARVEST_DMG,
+        });
     }
     /// Announce a slain wild animal so the verbs layer rolls + spawns its loot drops.
     pub fn publish_animal_kill(&mut self, at: Vec3, species: crate::critters::Species) {
@@ -97,10 +104,11 @@ pub fn try_grant(bag: &mut Bag, toasts: &mut ToastStack, id: &str, count: i64, n
 }
 
 /// Enact a consumable's returned effect against the live hero: heal + grant its timed buff.
-/// Healing now has a cost: each consumable restores a little LESS than its listed value and drains
-/// stamina, so you can't freely heal-spam mid-fight — the same bar you block/art with pays for it.
-const HEAL_EFFECTIVENESS: f64 = 0.8; // restore 80% of the item's listed heal
-const HEAL_STAMINA_COST: f32 = 35.0; // stamina spent per heal (~1/4 of the 150 base bar)
+/// Healing restores a little LESS than its listed value, and a *potion/elixir* heal also drains
+/// stamina, so you can't freely potion-spam mid-fight — the same bar you block/art with pays for it.
+/// **Eating food is exempt** (`eff.food`): snacking on bread/apples never costs stamina.
+const HEAL_EFFECTIVENESS: f64 = 0.7; // restore 70% of the item's listed heal
+const HEAL_STAMINA_COST: f32 = 35.0; // stamina spent per *potion* heal (~1/4 of the 150 base bar)
 
 pub fn apply_consume(
     eff: &ConsumeEffect,
@@ -111,7 +119,10 @@ pub fn apply_consume(
 ) {
     if eff.heal > 0.0 {
         player.heal(eff.heal * HEAL_EFFECTIVENESS);
-        hero.stamina = (hero.stamina - HEAL_STAMINA_COST).max(0.0);
+        if !eff.food {
+            // Potions/elixirs pay stamina; eating food does not.
+            hero.stamina = (hero.stamina - HEAL_STAMINA_COST).max(0.0);
+        }
     }
     if let Some((kind, duration_ms, mag)) = eff.buff {
         buffs.apply_buff(kind, duration_ms, mag, now);

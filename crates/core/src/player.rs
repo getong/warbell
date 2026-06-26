@@ -18,6 +18,22 @@ const XP_FIRST_LEVEL: i64 = 50;
 const HP_PER_LEVEL: f64 = 14.0;
 const DAMAGE_PER_LEVEL: f64 = 6.0;
 
+/// Soft-cap on per-level stat growth so the hero's total power lands in the same band as the ork
+/// night-curve (`siege::WAVES` ramps to ~3.5× HP / ~2.35× damage by night 7) instead of running
+/// away unbounded. The fraction below scales BOTH the HP and damage gain awarded for *reaching*
+/// `level`: full early (the climb still feels punchy), then halved, then a quarter tail (never
+/// zero, so a kill always nudges the bar). Worked points: L6 → 55 dmg / 195 HP, L12 → 73 / 237,
+/// L30 → 100 / 300 (vs the old linear 199 / 531 — a god). Tunable; the shape is the contract.
+fn level_gain_frac(level: i64) -> f64 {
+    if level <= 6 {
+        1.0
+    } else if level <= 12 {
+        0.5
+    } else {
+        0.25
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Player {
@@ -160,8 +176,9 @@ impl Player {
         while self.xp >= self.xp_to_next {
             self.xp -= self.xp_to_next;
             self.level += 1;
-            self.max_hp += HP_PER_LEVEL;
-            self.attack_damage += DAMAGE_PER_LEVEL;
+            let frac = level_gain_frac(self.level);
+            self.max_hp += HP_PER_LEVEL * frac;
+            self.attack_damage += DAMAGE_PER_LEVEL * frac;
             if self.hp > 0.0 {
                 self.hp = self.max_hp;
             }
@@ -324,6 +341,30 @@ mod tests {
         assert_eq!(p.xp_to_next, 150);
         assert_eq!(p.max_hp, PLAYER_MAX_HP + 28.0);
         assert_eq!(p.attack_damage, PLAYER_BASE_DAMAGE + 12.0);
+    }
+
+    #[test]
+    fn level_gains_taper_at_higher_levels() {
+        // Reaching L6 costs 50*(1+..+5)=750 xp — all in the full band (+6 dmg / +14 hp each).
+        let mut p = Player::new();
+        p.add_xp(750);
+        assert_eq!(p.level, 6);
+        assert_eq!(p.attack_damage, PLAYER_BASE_DAMAGE + 30.0); // 5 × full 6
+        assert_eq!(p.max_hp, PLAYER_MAX_HP + 70.0); // 5 × full 14
+
+        // L7..12 award half (+3 / +7). Reaching L12 costs 50*(1+..+11)=3300.
+        let mut p = Player::new();
+        p.add_xp(3300);
+        assert_eq!(p.level, 12);
+        assert_eq!(p.attack_damage, PLAYER_BASE_DAMAGE + 30.0 + 18.0); // +6 half-steps of 3
+        assert_eq!(p.max_hp, PLAYER_MAX_HP + 70.0 + 42.0); // +6 half-steps of 7
+
+        // L13+ award a quarter (+1.5 / +3.5). Reaching L20 costs 50*(1+..+19)=9500.
+        let mut p = Player::new();
+        p.add_xp(9500);
+        assert_eq!(p.level, 20);
+        assert_eq!(p.attack_damage, PLAYER_BASE_DAMAGE + 48.0 + 12.0); // 8 quarter-steps of 1.5 → 85
+        assert_eq!(p.max_hp, PLAYER_MAX_HP + 112.0 + 28.0); // 8 quarter-steps of 3.5 → 265
     }
 
     #[test]

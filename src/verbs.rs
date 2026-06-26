@@ -21,10 +21,10 @@ use crate::player::HeroState;
 use crate::worldmap;
 
 /// Forest ore HP — rescaled from core's TS-anchored 500 into forest's combat units, then bumped so
-/// a boulder is a REAL dig even for an upgraded hero: at base 25 dmg ≈24 swings, and a leveled hero
-/// (weapon bonus + power buff, ~55 dmg) still spends ~11 — long enough to feel like quarrying, not
-/// a one-combo pop. Ore takes the NON-crit `base_dmg`, so crit/lifesteal never shortcut a dig. The
-/// per-hit erosion (`drive_ore_wear`) makes the longer dig read as visible progress, not grind.
+/// a boulder is a REAL dig: at the flat [`HERO_HARVEST_DMG`] (30) it's a fixed ~20 swings, all run,
+/// no matter the hero's level/gear — quarrying stays a commitment, not a one-combo pop. Ore takes
+/// `harvest_dmg` (decoupled from combat), so leveling/crit/lifesteal never shortcut a dig. The
+/// per-hit erosion (`drive_ore_wear`) makes the long dig read as visible progress, not grind.
 const ORE_HP: f64 = 600.0;
 /// Front-cone reach the swing checks ore against (the hero melee cone + the boulder radius).
 const SWING_RANGE: f32 = 1.9;
@@ -46,9 +46,18 @@ pub struct HeroSwing {
     pub origin: Vec2,
     /// Facing unit vector `(sin, cos)`.
     pub fwd: Vec2,
-    /// Non-crit swing damage (ore/dummies take this; they don't crit).
+    /// Non-crit COMBAT damage (training dummies show this; it carries levels/weapon/crit-base).
     pub base_dmg: f32,
+    /// HARVEST damage — what trees/ore actually take. Deliberately decoupled from `base_dmg`: it is
+    /// the flat [`HERO_HARVEST_DMG`], so a late-game hero (200+ combat dmg) can't one-shot the forest
+    /// and trivialise the RTS economy. Chopping/mining stays a fixed-cost commitment all run.
+    pub harvest_dmg: f32,
 }
+
+/// Flat per-swing damage the hero deals to trees and ore — NOT his combat `attack_damage`. Sized so
+/// a tree (165 HP) falls in ~6 swings and a boulder (600 HP) in ~20, forever, regardless of level or
+/// gear. (The woodcutter/miner NPCs keep their own `CHOP_DMG`/`PICK_DMG` — this is the hero only.)
+pub const HERO_HARVEST_DMG: f32 = 30.0;
 
 /// A mineable boulder — wraps the pure `ore_store::Ore` (HP + shatter logic).
 #[derive(Component)]
@@ -176,7 +185,7 @@ fn mine_ore(
             if dir.dot(sw.fwd) < SWING_CONE_DOT {
                 continue;
             }
-            let shattered = node.ore.damage(sw.base_dmg as f64, now);
+            let shattered = node.ore.damage(sw.harvest_dmg as f64, now);
             let head = Vec3::new(p.x, p.y + 1.0, p.z);
             let chip_at = Vec3::new(p.x, p.y + 0.6, p.z);
             if shattered {
@@ -485,9 +494,9 @@ pub(crate) fn chop_burst(commands: &mut Commands, fxa: &TreeFx, tree_pos: Vec3, 
     crate::player::spawn_motes(commands, &fxa.chip_mesh, &fxa.leaf_mat, canopy, 3, 1.5, 1.1, 0.7);
 }
 
-/// Swings to fell a tree — ×3 the old 55 so chopping is a real commitment (~6 at the hero's base
-/// 25–30 dmg). The woodcutter NPC's per-swing damage is scaled to match, so town wood income keeps
-/// its old pace (see `lumberjack::CHOP_DMG`).
+/// Swings to fell a tree — a real commitment: ~6 hits at the hero's flat [`HERO_HARVEST_DMG`] (30),
+/// fixed for the whole run so a maxed hero can't one-shot the stand. The woodcutter NPC's per-swing
+/// damage is scaled to match, so town wood income keeps its old pace (see `lumberjack::CHOP_DMG`).
 const TREE_HP: f64 = 165.0;
 /// Wood banked per felled tree. This is the ONLY wood source — the Woodcutter plot has no
 /// passive trickle (core `BuildKind::produces` → `None`) — so a tree is worth a real haul.
@@ -587,7 +596,7 @@ fn chop_tree(
                 continue;
             }
             struck = true;
-            tree.hp -= sw.base_dmg as f64;
+            tree.hp -= sw.harvest_dmg as f64;
             if tree.hp <= 0.0 {
                 fell_tree(&mut commands, e, p, dir, now, &mut bank.0, &mut floats);
             } else {

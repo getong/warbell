@@ -11,7 +11,7 @@
 //! stay ungated. Numbers live in `town_store` (test-gated).
 
 use bevy::prelude::*;
-use tileworld_core::town_store::{BuildKind, Cost, PopEvent, Town, HOUSE_COST, POP_PER_HOUSE};
+use tileworld_core::town_store::{BuildKind, Cost, PopEvent, Town, POP_PER_HOUSE};
 
 use crate::castle::{Mats, VillageMats, M};
 use crate::combat_fx::FloatReq;
@@ -119,14 +119,18 @@ impl BuildType {
             BuildType::Producer(BuildKind::Mine) => "stat:stone",
         }
     }
-    fn cost(self) -> Cost {
-        match self {
-            BuildType::House => HOUSE_COST,
-            BuildType::Producer(k) => k.cost(),
-        }
-    }
     fn is_house(self) -> bool {
         matches!(self, BuildType::House)
+    }
+}
+
+/// The cost to raise `bt` *right now*: Houses escalate with the current count (core
+/// `Town::next_house_cost`), producers are flat. The UI gates + shows this so the displayed number
+/// matches what `build_house` will actually charge.
+fn build_cost(bt: BuildType, town: &Town) -> Cost {
+    match bt {
+        BuildType::House => town.next_house_cost(),
+        BuildType::Producer(k) => k.cost(),
     }
 }
 
@@ -1028,6 +1032,7 @@ fn sync_build_strip(
     existing: Query<Entity, With<BuildUi>>,
     fonts: Res<UiFonts>,
     icons: Res<crate::ui::icons::IconAtlas>,
+    town: Res<TownRes>,
     mut commands: Commands,
 ) {
     // `Modal::None` only exists inside `Playing` with no panel, so this one check means "show the
@@ -1035,7 +1040,7 @@ fn sync_build_strip(
     let show = mode.active && modal.map_or(false, |m| *m.get() == Modal::None);
     let shown = !existing.is_empty();
     if show && !shown {
-        spawn_build_strip(&mut commands, &fonts, &icons);
+        spawn_build_strip(&mut commands, &fonts, &icons, &town.0);
     } else if !show && shown {
         for e in &existing {
             commands.entity(e).try_despawn();
@@ -1046,7 +1051,7 @@ fn sync_build_strip(
 /// Build the big build palette (bottom-centre): a title, a row of four large building cards
 /// (icon + name + description + cost), and a hint line. The cards stay visible over the glowing
 /// settlement behind them. Selection highlight + the hint are driven live by `build_strip_update`.
-fn spawn_build_strip(commands: &mut Commands, fonts: &UiFonts, icons: &crate::ui::icons::IconAtlas) {
+fn spawn_build_strip(commands: &mut Commands, fonts: &UiFonts, icons: &crate::ui::icons::IconAtlas, town: &Town) {
     commands
         .spawn((
             Node {
@@ -1081,7 +1086,7 @@ fn spawn_build_strip(commands: &mut Commands, fonts: &UiFonts, icons: &crate::ui
             ))
             .with_children(|row| {
                 for (i, item) in BUILD_TYPES.iter().enumerate() {
-                    let c = item.cost();
+                    let c = build_cost(*item, town);
                     row.spawn((
                         Button,
                         Interaction::default(),
@@ -1161,6 +1166,7 @@ const BUILD_DIM_BG: Color = Color::srgba(0.0, 0.0, 0.0, 0.32);
 fn build_strip_update(
     mode: Res<BuildMode>,
     bank: Res<Bank>,
+    town: Res<TownRes>,
     mut rows: Query<(Entity, &BuildOption, &mut BorderColor, &mut BackgroundColor)>,
     kids: Query<&Children>,
     mut texts: Query<&mut TextColor, Without<BuildHint>>,
@@ -1171,7 +1177,7 @@ fn build_strip_update(
         return;
     }
     for (card, opt, mut bc, mut bg) in &mut rows {
-        let unaffordable = cost_shortfall(BUILD_TYPES[opt.0].cost(), &bank.0).is_some();
+        let unaffordable = cost_shortfall(build_cost(BUILD_TYPES[opt.0], &town.0), &bank.0).is_some();
         *bc = BorderColor::all(if opt.0 == mode.sel {
             GOLD
         } else if unaffordable {
@@ -1197,7 +1203,7 @@ fn build_strip_update(
         }
     }
     let kind = mode.kind();
-    let (msg, short) = match cost_shortfall(kind.cost(), &bank.0) {
+    let (msg, short) = match cost_shortfall(build_cost(kind, &town.0), &bank.0) {
         Some(short) => (format!("{} \u{2014} {short}", kind.label()), true),
         None => (
             format!("Place a {} \u{2014} click a glowing plot, or W\u{00b7}S + Enter \u{00b7} A\u{00b7}D change \u{00b7} Esc leave", kind.label()),
@@ -1351,7 +1357,7 @@ fn build_place(
                     scale: 1.25,
                 });
             } else {
-                push_cant_afford(&mut floats, HOUSE_COST, &bank.0, "House", site);
+                push_cant_afford(&mut floats, town.0.next_house_cost(), &bank.0, "House", site);
             }
         }
     }

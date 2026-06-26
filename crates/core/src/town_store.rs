@@ -51,9 +51,22 @@ pub const LARDER_POP: u32 = 2;
 pub const LARDER_REGROW_RATE: f64 = 0.25;
 /// Building HP healed per second while repairing (Prep phase).
 pub const REPAIR_PER_SEC: f64 = 8.0;
-/// Cost to raise one House (inside the walls). Houses don't burn, so this is the only gate
-/// besides `MAX_HOUSES`.
+/// Base cost to raise the FIRST House (inside the walls). Houses don't burn, so cost + `MAX_HOUSES`
+/// are the only gates. The real cost climbs with the count — see [`house_cost`].
 pub const HOUSE_COST: Cost = Cost { wood: 12.0, stone: 8.0 };
+/// Per-already-standing-House surcharge added on top of [`HOUSE_COST`]. The population snowball
+/// (more houses → more peasants → more gold/workers → faster everything) still runs, but each new
+/// dwelling is a bigger haul, so the ramp decelerates instead of letting you spam all `MAX_HOUSES`
+/// for a flat pittance. House #2 (1 standing) = 18 wood / 12 stone; the 12th = 78 / 52. Tunable.
+pub const HOUSE_COST_STEP: Cost = Cost { wood: 6.0, stone: 4.0 };
+
+/// Cost to raise the next House given how many already stand: `HOUSE_COST + houses × HOUSE_COST_STEP`.
+pub fn house_cost(houses: u32) -> Cost {
+    Cost {
+        wood: HOUSE_COST.wood + HOUSE_COST_STEP.wood * houses as f64,
+        stone: HOUSE_COST.stone + HOUSE_COST_STEP.stone * houses as f64,
+    }
+}
 /// Gold each villager pays at dawn after a survived night (the **tithe**) — the town IS the
 /// gold engine: grow the population to grow the income. The Tax Office upgrade doubles it.
 pub const TITHE_GOLD_PER_POP: i64 = 2;
@@ -222,17 +235,24 @@ impl Town {
 
     // ── Houses (interior, protected — a count, not a plot) ─────────────────────────
 
-    pub fn can_build_house(&self, bank: &ResourceState) -> bool {
-        self.houses < MAX_HOUSES && bank.wood() >= HOUSE_COST.wood && bank.stone() >= HOUSE_COST.stone
+    /// The escalating cost of the *next* House at the current count (UI reads this to show + gate).
+    pub fn next_house_cost(&self) -> Cost {
+        house_cost(self.houses)
     }
 
-    /// Raise one House (spending wood+stone atomically). Returns true on success.
+    pub fn can_build_house(&self, bank: &ResourceState) -> bool {
+        let c = self.next_house_cost();
+        self.houses < MAX_HOUSES && bank.wood() >= c.wood && bank.stone() >= c.stone
+    }
+
+    /// Raise one House (spending its escalating wood+stone atomically). Returns true on success.
     pub fn build_house(&mut self, bank: &mut ResourceState) -> bool {
         if !self.can_build_house(bank) {
             return false;
         }
-        bank.spend_wood(HOUSE_COST.wood);
-        bank.spend_stone(HOUSE_COST.stone);
+        let c = self.next_house_cost();
+        bank.spend_wood(c.wood);
+        bank.spend_stone(c.stone);
         self.houses += 1;
         true
     }
@@ -462,6 +482,26 @@ mod tests {
         }
         assert_eq!(t.houses, MAX_HOUSES);
         assert!(!t.build_house(&mut bank)); // no more slots
+    }
+
+    #[test]
+    fn house_cost_escalates_with_count() {
+        // First house at the base; each subsequent adds the step (6 wood / 4 stone).
+        assert_eq!(house_cost(0), Cost { wood: 12.0, stone: 8.0 });
+        assert_eq!(house_cost(1), Cost { wood: 18.0, stone: 12.0 });
+        assert_eq!(house_cost(11), Cost { wood: 78.0, stone: 52.0 });
+
+        // Build two in a row: the second deducts the escalated cost, not the base.
+        let mut t = Town::new(0, 0);
+        let mut bank = bank_with(100.0, 100.0, 0.0);
+        assert_eq!(t.next_house_cost(), Cost { wood: 12.0, stone: 8.0 });
+        assert!(t.build_house(&mut bank));
+        assert_eq!(bank.wood(), 88.0); // 100 - 12
+        assert_eq!(bank.stone(), 92.0); // 100 - 8
+        assert_eq!(t.next_house_cost(), Cost { wood: 18.0, stone: 12.0 });
+        assert!(t.build_house(&mut bank));
+        assert_eq!(bank.wood(), 70.0); // 88 - 18
+        assert_eq!(bank.stone(), 80.0); // 92 - 12
     }
 
     #[test]
