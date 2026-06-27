@@ -262,8 +262,10 @@ fn speckle(cv: &mut Canvas, r: &mut Rng, n: usize, c: [f32; 3]) {
     }
 }
 
-/// Ashlar courses — castle stone (running-bond bricks + mortar + bevel highlight).
-fn tex_stone(hex: u32) -> Image {
+/// Ashlar courses — castle stone (running-bond bricks + mortar + bevel highlight). `pub(crate)` so
+/// the rival fort (`rival.rs`) can bake sandstone-hued masonry from the same generator (textured,
+/// not flat blocks) while keeping its own warm palette.
+pub(crate) fn tex_stone(hex: u32) -> Image {
     let c = rgb(hex);
     // Deep recessed mortar (was −0.07): a real shadowed joint gives the blocks 3D relief instead
     // of the old near-flat grout that vanished at distance.
@@ -310,8 +312,9 @@ fn tex_plaster(hex: u32) -> Image {
     cv.into_image()
 }
 
-/// Wood planks — beams/doors (vertical planks + gaps + grain streaks).
-fn tex_wood(hex: u32, planks: usize) -> Image {
+/// Wood planks — beams/doors (vertical planks + gaps + grain streaks). `pub(crate)` for the rival
+/// fort's timber (gates/poles).
+pub(crate) fn tex_wood(hex: u32, planks: usize) -> Image {
     let c = rgb(hex);
     let mut cv = Canvas::new(shade(c, 0.0));
     let mut r = Rng(0x4d2 ^ hex);
@@ -1732,6 +1735,40 @@ fn register_house_blocker(i: usize) {
     crate::blockers::add_box(x, z, hw, hd);
 }
 
+/// Drop the lazily-registered wall / tower / house collision boxes by their centres (the keep box
+/// stays — it's permanent). Pairs with resetting [`CastleBuilt`] so `sync_castle` re-registers the
+/// boxes the loaded run actually earns. The eps is loose enough to catch each box's centre but far
+/// below the spacing between distinct boxes, so it leaves the keep (origin) and the town/rival plots
+/// (≥10 units out) untouched.
+fn clear_castle_blockers() {
+    for (x, z, _, _) in wall_segments() {
+        crate::blockers::remove_box_near(x, z, 0.4);
+    }
+    for (x, z) in towers() {
+        crate::blockers::remove_box_near(x, z, 0.4);
+    }
+    for (x, z) in houses() {
+        crate::blockers::remove_box_near(x, z, 0.4);
+    }
+}
+
+/// On a Continue/Load ([`crate::savegame::GameLoaded`]), reconcile the castle's lazily-registered
+/// collision to the loaded build state. `CastleBuilt` + the wall/tower/house boxes are otherwise
+/// only reset by a full world rebuild's `blockers::reset` (`biome::apply_build`); an in-process
+/// Continue rebuilds nothing, so loading into a less-built state would leave last run's
+/// wall/tower/house boxes lingering as **invisible barriers** while their meshes hide. Drop those
+/// boxes + re-arm `CastleBuilt`; `sync_castle` re-registers from the loaded flags next pass.
+fn reconcile_castle_blockers_on_load(
+    mut ev: MessageReader<crate::savegame::GameLoaded>,
+    mut built: ResMut<CastleBuilt>,
+) {
+    if ev.read().count() == 0 {
+        return;
+    }
+    clear_castle_blockers();
+    *built = CastleBuilt::default();
+}
+
 // ── Drifting chimney smoke ───────────────────────────────────────────────────────
 #[derive(Component)]
 struct Smoke {
@@ -1776,10 +1813,12 @@ pub(crate) struct CastlePart {
 }
 
 /// Which gated groups have had their (append-only) collision blockers registered, so each is
-/// added exactly once the first time it's revealed. **Must be reset whenever `blockers::reset()`
-/// wipes the obstacle set** (e.g. a world rebuild / biome swap), or the lazily-registered
-/// wall/tower/house boxes never come back — they read as "already built" while their collision is
-/// gone. `biome::apply_build` does this reset right after it calls `blockers::reset()`.
+/// added exactly once the first time it's revealed. **Must be reset whenever the matching boxes
+/// leave the obstacle set**, or the lazily-registered wall/tower/house boxes never come back — they
+/// read as "already built" while their collision is gone. Two reset paths: a full world rebuild /
+/// biome swap (`biome::apply_build` resets this right after `blockers::reset()`), and an in-process
+/// Continue/Load (`reconcile_castle_blockers_on_load` — a Load rebuilds nothing, so it drops last
+/// run's boxes by centre and re-arms this so `sync_castle` re-registers from the loaded flags).
 #[derive(Resource, Default)]
 pub(crate) struct CastleBuilt {
     walls: bool,
@@ -1870,8 +1909,18 @@ fn window_glow(
 pub struct CastlePlugin;
 impl Plugin for CastlePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<CastleBuilt>()
-            .add_systems(Update, (drift_smoke, peck_hens, sync_castle, window_glow));
+        app.init_resource::<CastleBuilt>().add_systems(
+            Update,
+            (
+                drift_smoke,
+                peck_hens,
+                // Reconcile-on-load runs before sync so the same frame re-registers from the
+                // loaded flags after last run's stale boxes are dropped.
+                reconcile_castle_blockers_on_load.before(sync_castle),
+                sync_castle,
+                window_glow,
+            ),
+        );
     }
 }
 

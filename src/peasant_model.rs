@@ -38,6 +38,11 @@ const DARK: u32 = 0x23160f; // eyes/mouth
 const STRAW: u32 = 0xd7b45f; // farmer hat
 const PATCH: u32 = 0x9f7f4f; // stripes/apron/patches/torn hem
 const LAMP: u32 = 0xffd166; // miner lamp
+// Desert garb (rival NPCs): a keffiyeh headcloth + agal cord + a draped cloak/sash, so the rival's
+// men read instantly as "not ours" no matter their trade.
+const DESERT_CLOTH: u32 = 0xe7d9b6; // pale sand headcloth drape
+const DESERT_BAND: u32 = 0x4a3a22; // dark agal cord / sash
+const DESERT_CLOAK: u32 = 0xb1925a; // warm sand cloak
 
 fn v(x: f32, y: f32, z: f32) -> Vec3 {
     Vec3::new(x, y, z)
@@ -143,7 +148,7 @@ fn cone(r: f32, h: f32, off: Vec3, rot: Quat, scale: Vec3, c: u32, s: Surf) -> M
 }
 
 /// Build the per-joint peasant meshes for `kind` with the given body colours.
-pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u32, kid: bool) -> BipedMeshes {
+pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u32, kid: bool, desert: bool) -> BipedMeshes {
     use PeasantKind::*;
     // Surfaces: leather/wood-trim/straw/hair/patches read as matte Cloth; iron + the brass lamp as
     // Metal; skin/eyes/mouth as Skin. (WOOD here is a pale trim hue on tool hafts — flat Skin avoids
@@ -185,6 +190,12 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
     if miner {
         torso_parts.push(bxr(0.23, 0.12, 0.035, v(0.0, 0.22, 0.19), rx(0.08), DARK, Surf::Skin)); // dust panel
     }
+    if desert {
+        // A cloak draped down the back + a sash slung across the chest — a clear desert silhouette
+        // over whatever trade clothes are underneath.
+        torso_parts.push(bxr(0.36, 0.52, 0.04, v(0.0, 0.04, -0.17), rx(-0.05), DESERT_CLOAK, Surf::Cloth)); // back cloak
+        torso_parts.push(bxr(0.46, 0.075, 0.05, v(0.0, 0.12, 0.19), rz(0.5), DESERT_BAND, Surf::Cloth)); // chest sash
+    }
     let torso = group(torso_parts);
 
     let neck = group(vec![frustum(0.08, 0.09, 0.08, v(0.0, -0.02, 0.0), skin, Surf::Skin)]);
@@ -202,7 +213,16 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
     if (woodcutter || unemployed) && !kid {
         head_parts.push(bxr(0.14, 0.07, 0.028, v(0.0, -0.035, 0.12), rx(0.15), HAIR, Surf::Cloth)); // beard (never on kids — they read as children)
     }
-    if farmer {
+    if desert {
+        // Keffiyeh/turban — REPLACES the trade headgear for every rival NPC (soldier or worker), so
+        // the desert read is uniform. The tool/torso still tells farmer from soldier underneath.
+        head_parts.push(frustum(0.138, 0.118, 0.135, v(0.0, 0.155, 0.0), DESERT_CLOTH, Surf::Cloth)); // crown wrap
+        head_parts.push(frustum(0.144, 0.148, 0.038, v(0.0, 0.125, 0.0), DESERT_BAND, Surf::Cloth)); // agal cord
+        head_parts.push(bxr(0.24, 0.2, 0.03, v(0.0, 0.0, -0.12), rx(-0.12), DESERT_CLOTH, Surf::Cloth)); // back drape
+        for side in [-1.0_f32, 1.0] {
+            head_parts.push(bxr(0.04, 0.2, 0.18, v(side * 0.125, 0.0, 0.0), Quat::IDENTITY, DESERT_CLOTH, Surf::Cloth)); // cheek flap
+        }
+    } else if farmer {
         head_parts.push(frustum_s(0.2, 0.22, 0.022, v(1.15, 1.0, 0.82), v(0.0, 0.17, 0.0), STRAW, Surf::Cloth)); // brim
         head_parts.push(frustum(0.1, 0.13, 0.09, v(0.0, 0.225, 0.0), STRAW, Surf::Cloth)); // crown
         head_parts.push(frustum(0.105, 0.132, 0.018, v(0.0, 0.195, 0.0), LEATHER, Surf::Cloth)); // hat band

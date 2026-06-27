@@ -48,8 +48,11 @@ impl Plugin for MainMenuPlugin {
 
 // ── Dusk pin ────────────────────────────────────────────────────────────────────────────
 
-/// Dusk: sun at the west horizon — a warm-dark sky that lets the embers/fireflies glow.
-const DUSK_T: f32 = 0.5;
+/// Golden-hour dusk: sun low in the west but still ABOVE the horizon, so the forest is warmly lit
+/// (not black) while the sky stays warm-dark enough for the embers/fireflies to glow. Pure horizon
+/// (`t = 0.5`, sun elevation ≈ 0 → `advance_sky` `day` ≈ 0.02) rendered the wider, un-buried menu
+/// framing as near-black; this lifts the sun just enough to read.
+const DUSK_T: f32 = 0.475;
 
 /// Hold the sky at dusk while the menu is up. `advance_sky` honors `paused`, so pinning `t` here
 /// keeps it from drifting toward the live siege-phase sun arc.
@@ -65,20 +68,34 @@ fn exit_menu_sky(mut clock: ResMut<SkyClock>) {
 
 // ── Menu camera (a slow drift over the forest) ──────────────────────────────────────────────
 
-/// World XZ of the forest biome region (see `CLAUDE.md` biome centres). The menu frames *this*,
-/// not the whole island — a tight, tree-filled dusk shot reads far better than a map-like overview.
-const SCENE_CENTER: Vec3 = Vec3::new(-60.0, 0.0, 39.0);
+/// World XZ of the forest biome region. The menu frames *this*, not the whole island — a tight,
+/// tree-filled dusk shot reads far better than a map-like overview. DERIVED from the forest blob's
+/// base-grid centre (`worldmap::REGIONS` forest = base (32, 80)) via `world = base·MAP_SCALE − G`, so
+/// it tracks the real forest at any `MAP_SCALE` — the hardcoded `(-60, 39)` was tuned at an old scale
+/// and the 2.0 enlargement slid the forest out from under the menu camera.
+const SCENE_CENTER: Vec3 = Vec3::new(
+    32.0 * crate::worldmap::MAP_SCALE - crate::worldmap::GX,
+    0.0,
+    80.0 * crate::worldmap::MAP_SCALE - crate::worldmap::GZ,
+);
 
-// A fixed, player-eye-level shot looking into the forest — no drift, no orbit.
-const CAM_OFFSET: Vec3 = Vec3::new(24.0, 2.2, 18.0); // from SCENE_CENTER; y ≈ a standing player's eye
-const CAM_LOOK_Y: f32 = 3.5; // look level-to-slightly-up into the trees
+// A fixed, standing-height shot looking into the forest — no drift, no orbit. The X/Z is an offset
+// from SCENE_CENTER; the Y is added ON TOP of the local terrain height (the camera is ground-snapped
+// each frame, see `menu_orbit`) — the map enlargement (MAP_SCALE 2.0) raised the forest terrace
+// under the old fixed y=2.2 eye, burying the camera and blacking the scene.
+const CAM_OFFSET: Vec3 = Vec3::new(26.0, 4.5, 20.0); // x/z from SCENE_CENTER; y = eye above local ground
+const CAM_LOOK_Y: f32 = 4.0; // look this far above the forest floor (into the canopy)
 
-/// Hold the camera at a static, player-height pose over the forest. Overwrites the transform every
-/// frame so nothing nudges it; only runs on `StartScreen`, where no other system drives the camera.
+/// Hold the camera at a static, terrain-relative pose over the forest. Ground-snaps both the eye and
+/// the look target to the live terrain so it frames trees (not dirt or void) at any `MAP_SCALE`.
+/// Overwrites the transform every frame so nothing nudges it; only runs on `StartScreen`, where no
+/// other system drives the camera.
 fn menu_orbit(mut cam: Query<&mut Transform, With<Camera3d>>) {
     let Some(mut tf) = cam.iter_mut().next() else { return };
-    let pos = SCENE_CENTER + CAM_OFFSET;
-    let look = SCENE_CENTER + Vec3::new(0.0, CAM_LOOK_Y, 0.0);
+    let cam_xz = SCENE_CENTER + Vec3::new(CAM_OFFSET.x, 0.0, CAM_OFFSET.z);
+    let ground = |x: f32, z: f32| crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
+    let pos = Vec3::new(cam_xz.x, ground(cam_xz.x, cam_xz.z) + CAM_OFFSET.y, cam_xz.z);
+    let look = Vec3::new(SCENE_CENTER.x, ground(SCENE_CENTER.x, SCENE_CENTER.z) + CAM_LOOK_Y, SCENE_CENTER.z);
     *tf = Transform::from_translation(pos).looking_at(look, Vec3::Y);
 }
 

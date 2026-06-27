@@ -71,13 +71,25 @@ struct DecorSolid {
     yaw: f32,
 }
 
+/// Marks a [`DecorSolid`] piece whose oriented box is currently registered in [`crate::blockers`],
+/// so [`sync_decor`] adds it exactly once. Unlike removing `DecorSolid` (which would strand the
+/// box forever), this is droppable: an in-process Continue/Load drops it via
+/// [`reconcile_decor_blockers_on_load`] so the box can be re-registered from the loaded flags.
+#[derive(Component)]
+struct DecorBoxed;
+
 pub struct CastleDecorPlugin;
 
 impl Plugin for CastleDecorPlugin {
     fn build(&self, app: &mut App) {
         // Render-side reveal (like castle::sync_castle): ungated, so a loaded save or a staged
-        // screenshot shows the right dressing even while the sim is frozen.
-        app.add_systems(Update, sync_decor);
+        // screenshot shows the right dressing even while the sim is frozen. Reconcile-on-load runs
+        // before sync so the same frame re-registers the loaded run's decor boxes after last run's
+        // stale ones are dropped.
+        app.add_systems(
+            Update,
+            (reconcile_decor_blockers_on_load.before(sync_decor), sync_decor),
+        );
     }
 }
 
@@ -96,6 +108,7 @@ fn sync_decor(
         &mut Transform,
         Option<&crate::build_fx::RevealAt>,
         Option<&DecorSolid>,
+        Has<DecorBoxed>,
     )>,
     mut seeded: Local<bool>,
 ) {
@@ -105,7 +118,7 @@ fn sync_decor(
         && (up.is_changed() || def.is_changed() || eco.is_changed() || town.is_changed());
     *seeded = true;
     let mut dust: Vec<Vec3> = Vec::new();
-    for (e, d, mut vis, mut tf, at, solid) in &mut q {
+    for (e, d, mut vis, mut tf, at, solid, boxed) in &mut q {
         let show = match d.gate {
             DecorGate::Always => true,
             DecorGate::House(n) => town.0.houses > n,
@@ -131,16 +144,40 @@ fn sync_decor(
             }
         }
         // Lazy, once-only collision: register the piece's oriented box the first frame it shows,
-        // then drop the marker so it never double-registers (the box is append-only). Independent
+        // then tag `DecorBoxed` so it never double-registers (the box is append-only). Independent
         // of `live` so it also covers the day-one `Always` pieces and a loaded save that boots with
-        // gated pieces already revealed.
-        if show {
+        // gated pieces already revealed. `DecorSolid` is KEPT (not removed) so a Continue/Load that
+        // drops the tag can re-register the box (see `reconcile_decor_blockers_on_load`).
+        if show && !boxed {
             if let (Some(solid), Some(crate::build_fx::RevealAt(pos))) = (solid, at) {
                 crate::blockers::add_obb(pos.x, pos.z, solid.hw, solid.hd, solid.yaw);
-                commands.entity(e).remove::<DecorSolid>();
+                commands.entity(e).try_insert(DecorBoxed);
             }
         }
         *vis = if show { Visibility::Inherited } else { Visibility::Hidden };
+    }
+}
+
+/// On a Continue/Load ([`crate::savegame::GameLoaded`]), drop every registered decor box and clear
+/// its `DecorBoxed` tag, so `sync_decor` re-registers only the pieces the loaded run actually shows.
+/// The decor boxes are otherwise only reset by a full world rebuild's `blockers::reset`
+/// (`biome::apply_build`); an in-process Continue rebuilds nothing, so loading into a less-built
+/// state would leave last run's armory / shrine / tax-booth / brazier boxes lingering as **invisible
+/// barriers** while their meshes hide.
+fn reconcile_decor_blockers_on_load(
+    mut ev: MessageReader<crate::savegame::GameLoaded>,
+    mut commands: Commands,
+    q: Query<(Entity, &crate::build_fx::RevealAt), With<DecorBoxed>>,
+) {
+    if ev.read().count() == 0 {
+        return;
+    }
+    for (e, crate::build_fx::RevealAt(pos)) in &q {
+        // Match the registered box by its centre. The eps catches the piece's own box (and, if a
+        // decor centre coincides with a wall/tower box, that one too — both re-register from their
+        // sync, so over-clearing is self-healing).
+        crate::blockers::remove_box_near(pos.x, pos.z, 0.1);
+        commands.entity(e).remove::<DecorBoxed>();
     }
 }
 

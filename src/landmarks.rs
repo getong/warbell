@@ -10,9 +10,12 @@
 //!   against a guardian horde; win → the named gear). See the trial systems below.
 //! - **Shrine** — once a landmark's gear is claimed (or for gear-less vignettes), the same `[E]`
 //!   prays at it for a timed buff (per-biome Resist/Power/Haste, on a [`SHRINE_CD`] cooldown).
-//! - **Beacon** — over each *undiscovered* landmark a column of emissive will-o'-wisp motes
-//!   (unlit → punches through the fog) draws the eye from afar. It despawns once the place is
-//!   found. Ambient life as a signpost: "something is out there."
+//! - **Beacon** — a column of emissive will-o'-wisp motes (unlit → punches through the fog) over a
+//!   landmark draws the eye from afar. It marks *both* an undiscovered landmark ("something is out
+//!   there") AND a discovered one whose **boost is ready to claim** — a sealed-gear trial, or a
+//!   shrine that's off cooldown. It hides only while the shrine rests on its [`SHRINE_CD`] timeout,
+//!   then re-lights, so the smoke is a live "usable now" signpost, not a one-shot find marker
+//!   ([`sync_beacons`]).
 //!
 //! All reward plumbing reuses the verbs/inventory path (`try_grant`, `PlayerRes::add_gold`,
 //! `FloatQueue`, `AudioCue`). Discovery/shrine state lives on the [`Landmark`] component; the
@@ -273,6 +276,8 @@ fn spawn_beacon(
             MeshMaterial3d(mat.clone()),
             Transform::from_xyz(pos.x + off.x, y, pos.z + off.z)
                 .with_scale(Vec3::splat(0.7 + h0 * 0.7)),
+            // Explicit Visibility so `sync_beacons` can toggle the column on the shrine cooldown.
+            Visibility::Inherited,
             Beacon {
                 name,
                 base: Vec3::new(pos.x + off.x, 0.0, pos.z + off.z),
@@ -306,9 +311,9 @@ impl Plugin for LandmarksPlugin {
             .add_message::<LandmarkInteract>()
             // Beacon drift is a visual — runs even while the world is frozen, like the particles.
             .add_systems(Update, beacon_drift)
-            // Reconcile beacons to discovery state (ungated): catches the save-restore path, which
-            // flips `discovered` directly without going through `discover`'s beacon snuff.
-            .add_systems(Update, snuff_found_beacons)
+            // Light/snuff each beacon to mirror its landmark's "boost ready" state (ungated, so it
+            // tracks through the save-restore path too — that flips `discovered` directly).
+            .add_systems(Update, sync_beacons)
             // The trial HUD + rune ring draw ungated (like the rest of the HUD) so they show + clean
             // up through any frame.
             .add_systems(Update, (sync_rune_hud, sync_rune_ring))
@@ -347,18 +352,39 @@ fn beacon_drift(time: Res<Time>, mut q: Query<(&Beacon, &mut Transform)>) {
     }
 }
 
-/// Despawn any beacon whose landmark is already discovered. The live `discover` path snuffs its
-/// own beacon inline; this covers the **save-restore** path, where `Landmark::set_discovered`
-/// flips the flag with no beacon bookkeeping. Cheap: idles once every found landmark's column is
-/// gone (the common steady state), only doing work the frame after a load marks new discoveries.
-fn snuff_found_beacons(
-    mut commands: Commands,
-    found: Query<&Landmark>,
-    beacons: Query<(Entity, &Beacon)>,
+/// Whether a landmark's beacon column should currently glow: an undiscovered landmark (find-me),
+/// a discovered one with sealed gear still to claim (its trial is a boost waiting), or a shrine
+/// whose [`SHRINE_CD`] cooldown has elapsed. A shrine resting on cooldown goes dark — that gap IS
+/// the "used, come back later" signal.
+fn beacon_shown(lm: &Landmark, now: f32) -> bool {
+    if !lm.discovered {
+        return true; // undiscovered → the original "something's out there" find marker
+    }
+    if lm.has_gear() && !lm.gear_claimed {
+        return true; // sealed gear → its Hold-the-Rune trial is the boost to claim
+    }
+    now >= lm.shrine_ready_at // shrine: lit when ready, dark while on its cooldown timeout
+}
+
+/// Toggle each beacon's visibility to mirror its landmark's "boost ready" state (matched by name).
+/// Replaces the old despawn-on-discovery: the column persists so a known-but-ready shrine still
+/// shows its smoke, and only winks out for the shrine's cooldown — making reusability legible.
+/// Ungated + cheap (≤ a handful of landmarks × their motes), so it also covers the save-restore
+/// path, where `Landmark::set_discovered` flips the flag with no beacon bookkeeping.
+fn sync_beacons(
+    time: Res<Time>,
+    landmarks: Query<&Landmark>,
+    mut beacons: Query<(&Beacon, &mut Visibility)>,
 ) {
-    for (e, b) in &beacons {
-        if found.iter().any(|lm| lm.discovered && lm.name == b.name) {
-            commands.entity(e).try_despawn();
+    let now = time.elapsed_secs();
+    for (b, mut vis) in &mut beacons {
+        let show = landmarks
+            .iter()
+            .find(|lm| lm.name == b.name)
+            .is_some_and(|lm| beacon_shown(lm, now));
+        let want = if show { Visibility::Inherited } else { Visibility::Hidden };
+        if *vis != want {
+            *vis = want;
         }
     }
 }
@@ -375,9 +401,7 @@ fn discover(
     mut cues: MessageWriter<AudioCue>,
     mut speak: MessageWriter<crate::audio::Speak>,
     mut disc: ResMut<Discoveries>,
-    mut commands: Commands,
     mut q: Query<(&mut Landmark, &Transform)>,
-    beacons: Query<(Entity, &Beacon)>,
 ) {
     if !hero.alive {
         return;
@@ -430,12 +454,9 @@ fn discover(
         cues.write(AudioCue::Gold);
         speak.write(crate::audio::Speak::new(crate::audio::Concept::ChestOpen));
 
-        // Snuff the beacon — it's been found.
-        for (e, b) in &beacons {
-            if b.name == lm.name {
-                commands.entity(e).try_despawn();
-            }
-        }
+        // The beacon is NOT snuffed on discovery any more — `sync_beacons` keeps it lit as a
+        // "boost ready" marker (sealed-gear trial / off-cooldown shrine) and only hides it while
+        // the shrine rests, so a usable landmark always shows its smoke.
 
         disc.found += 1;
         if disc.total > 0 && disc.found >= disc.total && !disc.completed {

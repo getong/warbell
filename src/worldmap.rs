@@ -64,7 +64,13 @@ pub const GZ: f32 = CZ * MAP_SCALE; // 97.2 at 1.8
 const ISLAND_RX: f32 = 71.0;
 const ISLAND_RZ: f32 = 53.0;
 const ISLAND_EXP: f32 = 2.6;
-pub const SAFE_R: f32 = 18.0; // castle safe-zone radius (forced flat grass)
+// Castle safe-zone radius in BASE space (forced flat grass, no biome scatter). `classify` runs in
+// base space, so the WORLD radius is `SAFE_R * MAP_SCALE` (≈32.4 at MAP_SCALE 2.0). Trimmed from
+// 18.0 — bumping MAP_SCALE 1.8→2.0 silently grew the *world* safe-zone ~11% (this is base-space, so
+// it scales with the map); 16.2 restores the pre-bump world size so the biome-free ring round the
+// castle isn't oversized. Town build plots flatten themselves (`near_build_plot`), so this doesn't
+// gate their footing.
+pub const SAFE_R: f32 = 16.2;
 pub const GROUND_STEP: f32 = 0.5; // world-Y per height class
 const SEA_Y: f32 = -0.4;
 /// Colour-blend half-width (tiles) at biome edges.
@@ -1158,7 +1164,7 @@ pub fn build_step(
         25 => crate::ork_fortress::build(commands, meshes, images, std_mats, creature_mats),
         26 => crate::bridges::populate(commands, meshes, std_mats),
         27 => crate::distant_isles::build(commands, meshes, std_mats),
-        28 => crate::rival::build(commands, meshes, std_mats),
+        28 => crate::rival::build(commands, meshes, images, std_mats),
         _ => {}
     }
 }

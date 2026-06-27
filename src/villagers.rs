@@ -488,15 +488,16 @@ pub fn spawn_courtyard_guard(
     let half = crate::castle::courtyard_half();
     let home = courtyard_spot(&mut rng, half, &[]).unwrap_or(Vec2::new(0.0, 5.0));
     let kind = Kind::Guard { skin: SKIN[(seed as usize) % SKIN.len()], tunic: TUNIC[1] };
-    spawn(commands, meshes, &mat, kind, home, home, 2.7, 1.4, SCALE, next_u32(&mut rng)); // peasant base walk a touch quicker (was 2.3)
+    spawn(commands, meshes, &mat, kind, home, home, 2.7, 1.4, SCALE, next_u32(&mut rng), false); // peasant base walk a touch quicker (was 2.3)
 }
 
 /// Spawn a **rival** soldier body for `rival.rs` — a helmeted, sword-bearing guard biped in the
-/// rival lord's crimson livery, anchored at `home`, spawned at `pos`. It reuses the guard MODEL
-/// (`Kind::Guard` → `PeasantKind::Guard`) but is NOT a town guard: the town-pool identity `spawn`
-/// attaches (`Guard`/`NpcHp`/`Townsfolk`) is stripped here, so none of the player's town/militia
-/// systems touch it. The caller (`rival.rs`) adds the `RivalSoldier` marker, `Health`, and its own
-/// combat brain (which drives the `Villager` pose fields → `villager_drive`/`animate_biped`).
+/// rival's **desert** garb (sandy-ochre tunic, NOT the player militia's colours), anchored at `home`,
+/// spawned at `pos`. It reuses the guard MODEL (`Kind::Guard` → `PeasantKind::Guard`) but is NOT a
+/// town guard: the town-pool identity `spawn` attaches (`Guard`/`NpcHp`/`Townsfolk`) is stripped
+/// here, so none of the player's town/militia systems touch it. The caller (`rival.rs`) adds the
+/// `RivalSoldier` marker, `Health`, and its own combat brain (which drives the `Villager` pose fields
+/// → `villager_drive`/`animate_biped`).
 pub fn spawn_rival_soldier(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -506,10 +507,31 @@ pub fn spawn_rival_soldier(
     seed: u32,
 ) -> Entity {
     let mat = crate::creature::make_creature_material(creature_mats);
-    let kind = Kind::Guard { skin: SKIN[(seed as usize) % SKIN.len()], tunic: 0x8a2a26 }; // crimson livery
-    let root = spawn(commands, meshes, &mat, kind, home, pos, 2.6, 2.0, SCALE, seed);
+    // Desert ochre tunic so the rival's men read instantly as "not ours" — the distinction the
+    // textured-sandstone fort no longer carries on its own.
+    let kind = Kind::Guard { skin: SKIN[(seed as usize) % SKIN.len()], tunic: 0xbf9a55 }; // desert garb
+    let root = spawn(commands, meshes, &mat, kind, home, pos, 2.6, 2.0, SCALE, seed, true); // desert = keffiyeh + cloak
     commands.entity(root).remove::<(Guard, NpcHp, Townsfolk)>();
     root
+}
+
+/// Spawn a **rival** worker body for `rival.rs` — a desert-garbed tradesman (farmer / woodcutter /
+/// miner) in the same keffiyeh + cloak as the soldiers, carrying their trade's tool. Reuses the town
+/// worker MODEL (`Kind::Worker` → the studio peasant) but, like the soldier, gains NONE of the
+/// player's town/militia components (`Kind::Worker` adds none in `spawn`). The caller (`rival.rs`)
+/// adds its own `RivalWorker` marker + cosmetic brain. `home`/`pos` anchor it near its building.
+pub fn spawn_rival_worker(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
+    trade: Trade,
+    home: Vec2,
+    pos: Vec2,
+    seed: u32,
+) -> Entity {
+    let mat = crate::creature::make_creature_material(creature_mats);
+    let kind = Kind::Worker { trade, skin: SKIN[(seed as usize) % SKIN.len()], tunic: 0xbf9a55 }; // desert garb
+    spawn(commands, meshes, &mat, kind, home, pos, 2.2, 1.6, SCALE, seed, true)
 }
 
 /// Spawn a plain **peasant** for a staged trailer scene at `pos`/`facing`, tagged
@@ -532,7 +554,7 @@ pub fn spawn_scene_peasant(
         Some(trade) => Kind::Worker { trade, skin, tunic },
         None => Kind::Peasant { skin, tunic, hat: seed & 1 == 0 },
     };
-    let e = spawn(commands, meshes, &mat, kind, pos, pos, 1.4, 1.0, SCALE, next_u32(&mut rng));
+    let e = spawn(commands, meshes, &mat, kind, pos, pos, 1.4, 1.0, SCALE, next_u32(&mut rng), false);
     commands
         .entity(e)
         .insert(crate::scenes::SceneActor)
@@ -650,9 +672,10 @@ fn villager_brain(
             Without<crate::dying::Dying>,
             // Staged-scene villagers (trailer tableaus) are posed by `scenes.rs`, not the brain.
             Without<crate::scenes::SceneActor>,
-            // Rival soldiers carry `Villager` (for locomotion/anim) but are driven by `rival.rs`'s
-            // own combat brain, not the town's ambient wander.
+            // Rival soldiers + workers carry `Villager` (for locomotion/anim) but are driven by
+            // `rival.rs`'s own brains, not the town's ambient wander.
             Without<crate::rival::RivalSoldier>,
+            Without<crate::rival::RivalWorker>,
         ),
     >,
 ) {
@@ -2071,7 +2094,7 @@ pub fn populate(
         let g = gates[i % gates.len()];
         let home = g + (-g).normalize_or_zero() * 2.0;
         let kind = Kind::Peasant { skin: SKIN[i % SKIN.len()], tunic: PILGRIM_ROBE, hat: true };
-        let e = spawn(commands, meshes, &body_mat, kind, home, home, 2.0, 2.0, SCALE, next_u32(&mut rng));
+        let e = spawn(commands, meshes, &body_mat, kind, home, home, 2.0, 2.0, SCALE, next_u32(&mut rng), false);
         commands.entity(e).insert(Pilgrim {
             target: home,
             pause: 0.0,
@@ -2118,7 +2141,7 @@ pub fn populate(
     for i in 0..4 {
         let home = play + Vec2::new(rng_range(&mut rng, -1.6, 1.6), rng_range(&mut rng, -1.6, 1.6));
         let kind = Kind::Peasant { skin: SKIN[i % SKIN.len()], tunic: TUNIC[(i + 1) % TUNIC.len()], hat: i % 2 == 0 };
-        let e = spawn(commands, meshes, &body_mat, kind, home, home, 2.8, 1.7, KID_SCALE, next_u32(&mut rng));
+        let e = spawn(commands, meshes, &body_mat, kind, home, home, 2.8, 1.7, KID_SCALE, next_u32(&mut rng), false);
         commands.entity(e).insert(Kid);
     }
 
@@ -2139,7 +2162,7 @@ pub fn populate(
                 let x = p[0] + i as f32 * 1.5 - 3.0;
                 let home = Vec2::new(x, p[1]);
                 // speed 0 + wander 0 → they stand stock-still for the capture.
-                let e = spawn(commands, meshes, &body_mat, k, home, home, 0.0, 0.0, SCALE, 50 + i as u32 * 13);
+                let e = spawn(commands, meshes, &body_mat, k, home, home, 0.0, 0.0, SCALE, 50 + i as u32 * 13, false);
                 // Face the camera (−Z) + tag SceneActor so the wander brain leaves the transform
                 // alone and the facing sticks (clean front-on face shots).
                 let y = worldmap::ground_at_world(x, p[1]).unwrap_or(0.0);
@@ -2257,6 +2280,7 @@ fn spawn(
     wander_r: f32,
     scale: f32,
     seed: u32,
+    desert: bool,
 ) -> Entity {
     let mut r = seed | 1;
     let phase = rng01(&mut r) * TAU;
@@ -2296,7 +2320,7 @@ fn spawn(
         ))
         .id();
     // Kids pass KID_SCALE (< SCALE) — detect that here so they get the childlike build.
-    build_biped_body(commands, root, kind, seed, scale < SCALE, mat, meshes);
+    build_biped_body(commands, root, kind, seed, scale < SCALE, desert, mat, meshes);
 
     // Armoured townsfolk double as town guards — they fight invaders at night and can be pulled to
     // staff a producer by day (the `Townsfolk` pool). They carry their identity colours [`Folk`] +
@@ -2328,7 +2352,7 @@ fn pouch_xf() -> Transform {
 
 /// Map a villager [`Kind`] (+ cosmetic `seed`) to a studio peasant biped mesh set. The town keeps
 /// its per-villager skin/tunic variety; the trouser tone is picked deterministically from the seed.
-fn vil_biped_meshes(kind: Kind, seed: u32, kid: bool) -> BipedMeshes {
+fn vil_biped_meshes(kind: Kind, seed: u32, kid: bool, desert: bool) -> BipedMeshes {
     let trouser = PANT_TONES[(seed as usize) % PANT_TONES.len()];
     let (pk, skin, tunic) = match kind {
         Kind::Guard { skin, tunic } => (PeasantKind::Guard, skin, tunic),
@@ -2343,7 +2367,7 @@ fn vil_biped_meshes(kind: Kind, seed: u32, kid: bool) -> BipedMeshes {
         ),
         Kind::Peasant { skin, tunic, .. } => (PeasantKind::Unemployed, skin, tunic),
     };
-    peasant_biped_meshes(pk, skin, tunic, trouser, kid)
+    peasant_biped_meshes(pk, skin, tunic, trouser, kid, desert)
 }
 
 /// Build a townsperson's body on the shared studio biped skeleton (`biped.rs`): one [`spawn_biped`]
@@ -2356,10 +2380,11 @@ fn build_biped_body(
     kind: Kind,
     seed: u32,
     kid: bool,
+    desert: bool,
     mat: &Handle<crate::creature::CreatureMaterial>,
     meshes: &mut Assets<Mesh>,
 ) {
-    let h = vil_biped_meshes(kind, seed, kid).upload(meshes);
+    let h = vil_biped_meshes(kind, seed, kid, desert).upload(meshes);
     // Kids get an oversized head on a downscaled body (chibi proportions) so they read as children,
     // not just small adults.
     let head_scale = if kid { 1.55 } else { 1.06 };
@@ -2422,7 +2447,7 @@ fn reskin_townsfolk(
             Role::Guard => Kind::Guard { skin: f.skin, tunic: f.tunic },
             Role::Working(trade) => Kind::Worker { trade, skin: f.skin, tunic: f.tunic },
         };
-        build_biped_body(&mut commands, e, kind, f.seed, false, &body_mat.0, &mut meshes);
+        build_biped_body(&mut commands, e, kind, f.seed, false, false, &body_mat.0, &mut meshes);
         *role = desired;
     }
 }

@@ -313,7 +313,11 @@ fn spawn_model(
                 Some("guard") => Guard,
                 _ => Woodcutter,
             };
-            let m = crate::peasant_model::peasant_biped_meshes(kind, 0xd8a06a, 0x6a4a2a, 0x3a2a18, false);
+            // `FOREST_VIEW=peasant:guard:desert` (any `desert` in the spec) inspects the rival's
+            // desert-garbed variant (turban + cloak, sandy tunic).
+            let desert = s.contains("desert");
+            let tunic = if desert { 0xbf9a55 } else { 0x6a4a2a };
+            let m = crate::peasant_model::peasant_biped_meshes(kind, 0xd8a06a, tunic, 0x3a2a18, false, desert);
             let h = m.upload(meshes);
             let shield_xf = Transform {
                 translation: Vec3::new(0.0, 0.0, 0.14),

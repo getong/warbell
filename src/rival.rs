@@ -5,15 +5,18 @@
 //! hero and the player's townsfolk when they meet. It is NOT part of the night siege — the orks
 //! ignore it; it is a separate rivalry.
 //!
-//! This step builds the **static fort** only. Like the player castle and the ork fortress, the fort
-//! is WORLD geometry: raised once with the island as a `worldmap::build_step` phase (NOT per-run),
-//! so it persists across New Game / Continue in-process. The growing economy, garrison and save
-//! state arrive in the following steps.
+//! Only the **keep** is permanent WORLD geometry (raised once with the island as a
+//! `worldmap::build_step` phase, NOT per-run, so it persists across New Game / Continue in-process).
+//! Everything else is EARNED: the bailey starts bare AND unwalled — exactly like the player's own
+//! castle starts the run — and the rival's autonomous economy raises buildings on the plots and then
+//! its curtain wall ([`raise_walls`], gated on [`WALL_AT`]) over time. None of that needs a new save
+//! field: it all derives from `RivalState.built`, which already round-trips.
 //!
-//! Meshes reuse the castle's primitive helpers (`castle::bx`/`gable`/`cyl`) but render against a
-//! bespoke plain-material set ([`RivalMats`]) — warm sandstone, dark courses, crimson banners,
-//! timber and iron — kept fully decoupled from the player town's textured [`crate::castle::Mats`]
-//! so the two strongholds never look alike.
+//! Meshes reuse the castle's primitive helpers (`castle::bx`/`cyl`) and its procedural masonry/timber
+//! texture generators ([`crate::castle::tex_stone`]/`tex_wood`), but baked in a warm **sandstone**
+//! hue — so the fort reads as proper textured ashlar like ours (not flat blocks) while staying a
+//! distinct desert colour. The "enemy" read is carried by the crimson banners + the rival's
+//! desert-garbed garrison, not by a separate untextured look.
 
 use bevy::prelude::*;
 
@@ -35,6 +38,17 @@ pub const RIVAL_CENTRE: Vec2 =
 /// buildings + the skirmish ground, so the fort never straddles a dune terrace lip.
 pub const RIVAL_FLAT_R: f32 = 20.0;
 
+/// **LOD radius.** Beyond this distance from the fort the per-frame rival sim (worker/soldier AI,
+/// garrison upkeep) is FROZEN to save CPU + frames — out here the NPCs are off-screen or distant
+/// specks, and the player can't interact with the garrison anyway (soldier sight/leash are ≤26). The
+/// garrison also **lazy-spawns**: no soldiers exist until the hero first comes within this ring.
+const RIVAL_LOD_R: f32 = 70.0;
+
+/// Is the hero too far from the fort for its sim to matter this frame? (See [`RIVAL_LOD_R`].)
+fn hero_far(p: Vec2) -> bool {
+    p.distance(RIVAL_CENTRE) > RIVAL_LOD_R
+}
+
 /// Is world `(wx, wz)` inside the rival fort's forced-flat plateau? `worldmap::classify` force-sets
 /// flat desert here, the mirror of the castle's `SAFE_R` safe-zone (and the town build plots).
 pub fn fort_flat_zone(wx: f32, wz: f32) -> bool {
@@ -47,7 +61,10 @@ pub fn fort_flat_zone(wx: f32, wz: f32) -> bool {
 /// Outer half-extent of the curtain-wall ring (square). The gate gap faces +Z (south, toward the
 /// player's castle).
 const WALL_HALF: f32 = 12.0;
-const WALL_H: f32 = 2.8;
+/// Curtain-wall height — kept close to the player castle's own wall height (`castle::WALL_H` ≈ 1.35)
+/// so the rival's ramparts don't tower over everything; the merlons + corner towers add the rest of
+/// the silhouette. (Was 2.8 — read as a giant blank wall.)
+const WALL_H: f32 = 1.5;
 const WALL_T: f32 = 0.7;
 /// Half-width of the south gate gap.
 const GATE_HALF: f32 = 2.4;
@@ -71,9 +88,10 @@ pub fn near_fort(wx: f32, wz: f32) -> bool {
 }
 
 // ── Materials ──────────────────────────────────────────────────────────────────────
-// Plain solid-colour StandardMaterials (the game's low-poly prop aesthetic). Warm sandstone +
-// crimson reads instantly as a desert enemy fort, distinct from the player castle's grey ashlar and
-// blue banners.
+// TEXTURED StandardMaterials (the same procedural masonry/timber generators the player castle uses,
+// `castle::tex_stone`/`tex_wood`), but baked in a warm SANDSTONE hue — so the fort reads as proper
+// ashlar like ours (not flat untextured blocks) while staying a distinct desert colour. Banners stay
+// a flat crimson; the enemy read now comes from the crimson pennants + the rival's desert garrison.
 const SAND: u32 = 0xc9a36a; // warm sandstone courses
 const SAND_DARK: u32 = 0x9c7a48; // shadowed banding / battlement caps
 const CRIMSON: u32 = 0x9a2420; // enemy banners + pennants
@@ -90,8 +108,8 @@ enum RM {
     Iron,
 }
 
-/// The rival's plain-material set. Stored as a Resource so the economy tick can spawn new
-/// buildings at runtime with the same look the fort was built with.
+/// The rival's textured-sandstone material set. Stored as a Resource so the economy tick can raise
+/// new buildings + the curtain wall at runtime with the same look the keep was built with.
 #[derive(Resource)]
 struct RivalMats {
     sand: Handle<StandardMaterial>,
@@ -102,21 +120,32 @@ struct RivalMats {
 }
 
 impl RivalMats {
-    fn build(std_mats: &mut Assets<StandardMaterial>) -> Self {
-        let mut solid = |hex: u32, rough: f32| {
+    fn build(images: &mut Assets<Image>, std_mats: &mut Assets<StandardMaterial>) -> Self {
+        // Textured slot: the hue is baked into the masonry/timber texture itself (the generator takes
+        // a base hex), so base_color stays WHITE and the relief reads. Double-sided like the castle's
+        // (our gable/slab meshes aren't all wound CCW-outward).
+        let mut tex = |img: Image, rough: f32| {
+            let t = images.add(img);
             std_mats.add(StandardMaterial {
-                base_color: srgb(hex),
+                base_color: Color::WHITE,
+                base_color_texture: Some(t),
                 perceptual_roughness: rough,
+                cull_mode: None,
+                double_sided: true,
                 ..default()
             })
         };
-        Self {
-            sand: solid(SAND, 0.92),
-            sand_dark: solid(SAND_DARK, 0.92),
-            crimson: solid(CRIMSON, 0.85),
-            timber: solid(TIMBER, 0.9),
-            iron: solid(IRON, 0.6),
-        }
+        let sand = tex(crate::castle::tex_stone(SAND), 0.84);
+        let sand_dark = tex(crate::castle::tex_stone(SAND_DARK), 0.84);
+        let timber = tex(crate::castle::tex_wood(TIMBER, 3), 0.9);
+        drop(tex); // release the &mut std_mats borrow before the solid-accent closure takes it
+        // Flat solid for the small accent bits (banner cloth, iron bands) — no texture wanted there.
+        let mut solid = |hex: u32, rough: f32| {
+            std_mats.add(StandardMaterial { base_color: srgb(hex), perceptual_roughness: rough, ..default() })
+        };
+        let crimson = solid(CRIMSON, 0.85);
+        let iron = solid(IRON, 0.6);
+        Self { sand, sand_dark, crimson, timber, iron }
     }
     fn get(&self, m: RM) -> Handle<StandardMaterial> {
         match m {
@@ -195,13 +224,16 @@ fn wall_run(v: &mut Vec<(Mesh, RM)>, x0: f32, z0: f32, x1: f32, z1: f32) {
 
 /// A square sandstone corner tower with battlements + a small crimson pennant.
 fn corner_tower(v: &mut Vec<(Mesh, RM)>, x: f32, z: f32) {
-    v.push((bx(2.8, WALL_H + 2.2, 2.8, x, (WALL_H + 2.2) / 2.0, z), RM::Sand));
-    v.push((bx(3.0, 0.3, 3.0, x, WALL_H + 2.2, z), RM::SandDark));
+    // Towers stand a touch above the curtain (~+1.6) so they read as towers without the old
+    // skyscraper height that the 2.8 wall produced.
+    let th = WALL_H + 1.6;
+    v.push((bx(2.8, th, 2.8, x, th / 2.0, z), RM::Sand));
+    v.push((bx(3.0, 0.3, 3.0, x, th, z), RM::SandDark));
     // Local merlons (a tiny ring around the tower top).
     for (dx, dz) in [(-1.0_f32, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0), (0.0, -1.0), (0.0, 1.0)] {
-        v.push((bx(0.42, 0.5, 0.42, x + dx, WALL_H + 2.55, z + dz), RM::SandDark));
+        v.push((bx(0.42, 0.5, 0.42, x + dx, th + 0.35, z + dz), RM::SandDark));
     }
-    banner(v, x, z, WALL_H + 2.2, 1.8);
+    banner(v, x, z, th, 1.6);
 }
 
 /// A simple flat-roofed sandstone desert dwelling at (x, z) — the kind the rival's economy will
@@ -215,9 +247,10 @@ fn desert_house(x: f32, z: f32) -> Vec<(Mesh, RM)> {
     ]
 }
 
-/// The whole stronghold as a local-space part list.
-fn fort_parts() -> (Vec<(Mesh, RM)>, Vec<(Mesh, RM)>) {
-    let keep = keep_parts();
+/// The curtain wall + gate + corner towers as a local-space part list (the keep is separate, built
+/// statically; this whole ring is *earned* — the rival raises it once its economy is going, see
+/// [`raise_walls`]). The bailey itself starts bare; the economy raises buildings on [`PLOT_OFFSETS`].
+fn wall_parts() -> Vec<(Mesh, RM)> {
     let mut rest: Vec<(Mesh, RM)> = Vec::new();
     let h = WALL_HALF;
     // North / east / west walls (full runs); south wall split around the gate gap.
@@ -238,9 +271,7 @@ fn fort_parts() -> (Vec<(Mesh, RM)>, Vec<(Mesh, RM)>) {
     for (sx, sz) in [(-1.0_f32, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
         corner_tower(&mut rest, sx * h, sz * h);
     }
-    // No dwellings here — the bailey starts bare and the rival's economy raises buildings on the
-    // [`PLOT_OFFSETS`] over time (the "watch it grow" core of the rivalry).
-    (keep, rest)
+    rest
 }
 
 // ── Economy buildings (raised on plots by the rival's autonomous economy) ─────────────
@@ -260,66 +291,58 @@ const PLOT_OFFSETS: [Vec2; 10] = [
     Vec2::new(4.5, 9.0),
 ];
 
-/// The kind of building the rival raises. `Dwelling` lifts its population (→ more tax income);
-/// the others are economy set-dressing that mark a growing settlement.
+/// The kind of building the rival raises. A `House` is a sandstone desert dwelling (lifts the
+/// rival's population → more tax income, keeping its bailey cohesive with the sandstone keep/walls);
+/// the producers (`Farm`/`Lumber`/`Mine`) reuse the **player town's own models** so the rival reads
+/// as a real economic settlement (a Stronghold-style mirror), each staffed by a desert worker.
 #[derive(Clone, Copy, PartialEq)]
 pub enum RivalKind {
-    Dwelling,
-    Granary,
-    Workshop,
+    House,
+    Farm,
+    Lumber,
+    Mine,
 }
 
 impl RivalKind {
     fn is_house(self) -> bool {
-        matches!(self, RivalKind::Dwelling)
+        matches!(self, RivalKind::House)
+    }
+    /// The trade of the worker that mans this building (None for a house).
+    fn worker_trade(self) -> Option<crate::villagers::Trade> {
+        use crate::villagers::Trade;
+        match self {
+            RivalKind::Farm => Some(Trade::Farmer),
+            RivalKind::Lumber => Some(Trade::Woodcutter),
+            RivalKind::Mine => Some(Trade::Miner),
+            RivalKind::House => None,
+        }
+    }
+    /// Collision half-extents `(hw, hd)` — sized to the structure's footprint (+ a small body
+    /// margin). Box is centred on the plot; mirrors the castle/town per-structure boxes.
+    fn block(self) -> (f32, f32) {
+        match self {
+            RivalKind::House => (1.5, 1.4),
+            RivalKind::Farm => (1.5, 1.4),
+            RivalKind::Lumber => (1.4, 1.3),
+            RivalKind::Mine => (1.5, 1.4),
+        }
     }
 }
 
-/// The fixed order the rival builds in — dwellings interleaved with stores/workshops so its
-/// population (and thus income) climbs steadily, Stronghold-style.
+/// The fixed order the rival builds in — houses (population/income) interleaved with the three
+/// producers so its settlement grows steadily, Stronghold-style. 10 plots.
 const BUILD_ORDER: [RivalKind; 10] = [
-    RivalKind::Dwelling,
-    RivalKind::Granary,
-    RivalKind::Dwelling,
-    RivalKind::Workshop,
-    RivalKind::Dwelling,
-    RivalKind::Granary,
-    RivalKind::Dwelling,
-    RivalKind::Workshop,
-    RivalKind::Dwelling,
-    RivalKind::Granary,
+    RivalKind::House,
+    RivalKind::Farm,
+    RivalKind::House,
+    RivalKind::Lumber,
+    RivalKind::Farm,
+    RivalKind::Mine,
+    RivalKind::House,
+    RivalKind::Farm,
+    RivalKind::Lumber,
+    RivalKind::Mine,
 ];
-
-/// A round sandstone granary silo with a domed cap and a dark course band.
-fn granary(x: f32, z: f32) -> Vec<(Mesh, RM)> {
-    vec![
-        (cyl(1.25, 2.2, x, 1.1, z), RM::Sand),
-        (cyl(1.32, 0.3, x, 1.9, z), RM::SandDark), // band
-        (cyl(0.95, 0.7, x, 2.55, z), RM::SandDark), // domed cap (squat cylinder)
-        (bx(0.5, 0.7, 0.08, x, 0.45, z + 1.25), RM::Timber), // hatch door
-    ]
-}
-
-/// A low sandstone workshop with a timber lean-to awning on iron posts.
-fn workshop(x: f32, z: f32) -> Vec<(Mesh, RM)> {
-    vec![
-        (bx(2.8, 1.5, 2.2, x, 0.75, z), RM::Sand),
-        (bx(3.0, 0.22, 2.4, x, 1.5, z), RM::SandDark), // flat roof slab
-        (bx(2.4, 0.12, 1.0, x, 1.15, z + 1.6), RM::Timber), // awning
-        (bx(0.1, 1.1, 0.1, x - 1.1, 0.55, z + 2.0), RM::Iron), // awning post
-        (bx(0.1, 1.1, 0.1, x + 1.1, 0.55, z + 2.0), RM::Iron),
-        (bx(0.55, 0.95, 0.08, x, 0.48, z + 1.1), RM::Timber), // door
-    ]
-}
-
-/// Local-space part list for a building of `kind` at (x, z).
-fn building_parts(kind: RivalKind, x: f32, z: f32) -> Vec<(Mesh, RM)> {
-    match kind {
-        RivalKind::Dwelling => desert_house(x, z),
-        RivalKind::Granary => granary(x, z),
-        RivalKind::Workshop => workshop(x, z),
-    }
-}
 
 /// Tags a building the rival economy raised on plot `idx` (so later steps can damage/topple it).
 #[derive(Component)]
@@ -327,12 +350,29 @@ pub struct RivalBuilding {
     pub idx: usize,
 }
 
-/// Spawn one rival building at plot `idx` (world-snapped, its own entity). Shared by the runtime
-/// economy tick, the load-restore reconcile, and the screenshot-staging hook.
+/// Tags a desert worker the rival raised to man a producer on plot `idx` — cosmetic (it potters
+/// near its building; the rival's economy is tax-funded, not producer-fed). Driven by
+/// [`rival_workers`], excluded from the town's ambient wander brain.
+#[derive(Component)]
+pub struct RivalWorker {
+    home: Vec2,
+    patrol: Vec2,
+    patrol_t: f32,
+    /// Cooldown until the next work swing (hoe/chop/pick) while standing at post.
+    work_cd: f32,
+    rng: u32,
+}
+
+/// Spawn one rival building at plot `idx` (world-snapped, its own entity), plus its desert worker if
+/// it's a producer. Shared by the runtime economy tick, the load-restore reconcile, and the
+/// screenshot stager. `village` is the player town's textured material set (for the producer models);
+/// `rival` the sandstone set (for the desert houses).
 fn spawn_building(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
-    mats: &RivalMats,
+    creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
+    rival: &RivalMats,
+    village: &crate::castle::Mats,
     idx: usize,
     kind: RivalKind,
 ) {
@@ -349,26 +389,70 @@ fn spawn_building(
             RivalBuilding { idx },
         ))
         .id();
+    // Houses: sandstone (RivalMats + desert_house). Producers: the player town's textured models +
+    // material set, so they're literally the same farm/saw-shed/pit-head the player builds.
     commands.entity(parent).with_children(|p| {
-        for (mesh, slot) in building_parts(kind, 0.0, 0.0) {
-            p.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mats.get(slot)), Transform::default()));
+        match kind {
+            RivalKind::House => {
+                for (mesh, slot) in desert_house(0.0, 0.0) {
+                    p.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(rival.get(slot)), Transform::default()));
+                }
+            }
+            RivalKind::Farm | RivalKind::Lumber | RivalKind::Mine => {
+                let parts = match kind {
+                    RivalKind::Farm => crate::town_meshes::farm_parts(),
+                    RivalKind::Lumber => crate::town_meshes::woodcutter_parts(),
+                    _ => crate::town_meshes::mine_parts(),
+                };
+                for (mesh, m) in parts {
+                    p.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(village.get(m)), Transform::default()));
+                }
+            }
         }
     });
+    // Make it SOLID. Dedupe first (an in-process Continue reaps + re-raises the same plots, which
+    // would otherwise stack duplicate boxes at the same spot).
+    let (hw, hd) = kind.block();
+    crate::blockers::remove_box_near(wx, wz, 0.05);
+    crate::blockers::add_box(wx, wz, hw, hd);
+    // A producer is manned by one desert worker, spawned in the working yard (+X side) clear of the
+    // building's collision box (half-extent ≤1.5) so it doesn't start stuck inside the wall.
+    if let Some(trade) = kind.worker_trade() {
+        let home = Vec2::new(wx + 2.3, wz);
+        let wseed = 0x9a17_0000u32.wrapping_add((idx as u32).wrapping_mul(2654435761)) | 1;
+        let e = crate::villagers::spawn_rival_worker(commands, meshes, creature_mats, trade, home, home, wseed);
+        commands.entity(e).insert(RivalWorker { home, patrol: home, patrol_t: 0.0, work_cd: 0.0, rng: wseed });
+    }
 }
+
+/// Tags the rival's curtain-wall / gate / tower ring — one despawn target, and the marker the
+/// economy/restore checks so it raises the walls exactly once. The walls are EARNED (see
+/// [`raise_walls`]), so unlike the keep they're dynamic, not permanent world geometry.
+#[derive(Component)]
+pub struct RivalWalls;
+
+/// How many buildings the rival raises before it can afford to wall its bailey. Below this it stands
+/// open like the player's day-1 castle; at/after it, the economy puts up the full curtain + towers.
+/// Derived purely from `RivalState.built`, so it round-trips the save for free (no new `SaveData`
+/// field) and resets with the economy. At ~75 s/build that's a good ~5+ minutes in, not 2.
+const WALL_AT: usize = 4;
 
 // ── Build (a worldmap build phase) ──────────────────────────────────────────────────
 
 /// Raise the rival stronghold at [`RIVAL_CENTRE`]. Called once from `worldmap::build_step`. Home map
 /// only — the desert sits elsewhere on the Ashlands layout, so the fort would land in the wrong
 /// biome there; a future step can place an Ashlands variant.
-pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: &mut Assets<StandardMaterial>) {
+///
+/// Only the KEEP is raised here (permanent world geometry). The bailey starts bare AND wall-less —
+/// just like the player's own castle starts unwalled — and the rival's economy raises buildings and
+/// then the curtain wall over time ([`maybe_raise_walls`]).
+pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &mut Assets<Image>, std_mats: &mut Assets<StandardMaterial>) {
     if crate::worldmap::MapId::from_u8(crate::worldmap::current_map_u8()) != crate::worldmap::MapId::Home {
         return;
     }
-    let mats = RivalMats::build(std_mats);
+    let mats = RivalMats::build(images, std_mats);
     let centre = RIVAL_CENTRE;
     let y = ground_at_world(centre.x, centre.y).unwrap_or(0.0);
-    let (keep, rest) = fort_parts();
 
     // Keep root (own tag so later damage VFX can find it).
     let keep_root = commands
@@ -381,74 +465,116 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: &mut 
         ))
         .id();
     commands.entity(keep_root).with_children(|p| {
-        for (mesh, slot) in keep {
+        for (mesh, slot) in keep_parts() {
             p.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mats.get(slot)), Transform::default()));
         }
     });
 
-    // Walls / towers root (the bailey starts bare — the economy raises buildings on plots).
-    let fort_root = commands
-        .spawn((Transform::from_xyz(centre.x, y, centre.y), Visibility::Visible, BiomeEntity, RivalEntity))
-        .id();
-    commands.entity(fort_root).with_children(|p| {
-        for (mesh, slot) in rest {
-            p.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mats.get(slot)), Transform::default()));
-        }
-    });
-
-    // Hand the material set to the economy tick so it can raise buildings at runtime.
+    // Hand the material set to the economy tick so it can raise buildings / walls at runtime.
     commands.insert_resource(mats);
 
-    // Make the fort SOLID — register collision boxes for the curtain walls, keep and towers (the
-    // mirror of the player castle's wall blockers) so the hero can't walk through the ramparts and
-    // world-prop placement avoids them. Registered once; the fort is permanent world geometry, so
-    // (like the castle) these are never removed.
-    register_blockers(centre);
+    // The keep is permanent world geometry → its collision box is registered once and never removed.
+    // The walls' boxes are registered later, when the walls are earned (see [`raise_walls`]).
+    crate::blockers::add_box(centre.x, centre.y, 3.1, 3.1); // keep (6×6 base)
 }
 
-/// Curtain-wall / keep / tower collision boxes (axis-aligned — the fort is square). The south gate
-/// gap is left open so units sally through it, exactly like the player castle's gate gaps.
-fn register_blockers(centre: Vec2) {
-    use crate::blockers::add_box;
+/// Raise the curtain wall + gate + corner towers as one dynamic structure (tagged [`RivalWalls`])
+/// and register their collision boxes. Idempotent — a no-op if the walls already stand — so the
+/// economy tick, the load-restore, and the screenshot stager can all call it freely. The south gate
+/// gap is left open so units sally through it, like the player castle's gate gaps.
+fn raise_walls(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &RivalMats, exists: bool) {
+    if exists {
+        return;
+    }
+    let centre = RIVAL_CENTRE;
+    let y = ground_at_world(centre.x, centre.y).unwrap_or(0.0);
+    let root = commands
+        .spawn((Transform::from_xyz(centre.x, y, centre.y), Visibility::Visible, BiomeEntity, RivalEntity, RivalWalls))
+        .id();
+    commands.entity(root).with_children(|p| {
+        for (mesh, slot) in wall_parts() {
+            p.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mats.get(slot)), Transform::default()));
+        }
+    });
+    register_wall_blockers(centre);
+}
+
+/// Curtain-wall / tower collision boxes (axis-aligned — the fort is square). Deduped first so an
+/// in-process Continue (which reaps + re-raises the walls) doesn't stack duplicates.
+fn register_wall_blockers(centre: Vec2) {
+    use crate::blockers::{add_box, remove_box_near};
     let (cx, cz) = (centre.x, centre.y);
     let h = WALL_HALF;
     let t = WALL_T / 2.0 + 0.2; // wall half-depth + a small body margin
-    add_box(cx, cz - h, h, t); // north wall
-    add_box(cx + h, cz, t, h); // east wall
-    add_box(cx - h, cz, t, h); // west wall
-    // South wall, split around the gate gap (±GATE_HALF stays passable).
     let seg_hw = (h - GATE_HALF) / 2.0;
     let seg_cx = (h + GATE_HALF) / 2.0;
-    add_box(cx - seg_cx, cz + h, seg_hw, t); // south-west of gate
-    add_box(cx + seg_cx, cz + h, seg_hw, t); // south-east of gate
-    add_box(cx, cz, 3.1, 3.1); // keep (6×6 base)
-    for (sx, sz) in [(-1.0_f32, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
-        add_box(cx + sx * h, cz + sz * h, 1.5, 1.5); // corner towers
+    // (centre, hw, hd) for every wall/tower box.
+    let boxes = [
+        (cx, cz - h, h, t),            // north wall
+        (cx + h, cz, t, h),            // east wall
+        (cx - h, cz, t, h),            // west wall
+        (cx - seg_cx, cz + h, seg_hw, t), // south-west of gate
+        (cx + seg_cx, cz + h, seg_hw, t), // south-east of gate
+        (cx - h, cz - h, 1.5, 1.5),    // corner towers
+        (cx + h, cz - h, 1.5, 1.5),
+        (cx - h, cz + h, 1.5, 1.5),
+        (cx + h, cz + h, 1.5, 1.5),
+    ];
+    for (bx, bz, hw, hd) in boxes {
+        remove_box_near(bx, bz, 0.05);
+        add_box(bx, bz, hw, hd);
+    }
+}
+
+/// Drop every economy-building collision box (one per plot). Pairs with [`clear_wall_blockers`] so a
+/// reset/Continue rebuilds the rival's blocker set purely from the live `built` count — no phantom
+/// boxes at plots the new run hasn't raised yet. `spawn_building` re-adds the live ones.
+fn clear_building_blockers() {
+    for off in PLOT_OFFSETS {
+        crate::blockers::remove_box_near(RIVAL_CENTRE.x + off.x, RIVAL_CENTRE.y + off.y, 0.05);
+    }
+}
+
+/// Drop the curtain-wall / tower collision boxes (so an in-process reset/Continue that hasn't earned
+/// the walls back doesn't leave invisible ramparts standing). The keep box stays — the keep is
+/// permanent. Positions mirror [`register_wall_blockers`].
+fn clear_wall_blockers(centre: Vec2) {
+    let (cx, cz) = (centre.x, centre.y);
+    let h = WALL_HALF;
+    let seg_cx = (h + GATE_HALF) / 2.0;
+    for (bx, bz) in [
+        (cx, cz - h), (cx + h, cz), (cx - h, cz),
+        (cx - seg_cx, cz + h), (cx + seg_cx, cz + h),
+        (cx - h, cz - h), (cx + h, cz - h), (cx - h, cz + h), (cx + h, cz + h),
+    ] {
+        crate::blockers::remove_box_near(bx, bz, 0.05);
     }
 }
 
 // ── Autonomous economy ───────────────────────────────────────────────────────────────
 //
-// The rival funds itself purely from **taxes** (no producer/worker simulation — that's the
-// player's depth). Its population pays a per-capita tithe every second; the rate is deliberately
-// HIGHER than the player's so the AI, which has no hero out earning gold from kills/chests, can
-// still afford to expand at a comparable pace. When it has banked the next building's cost (and a
-// minimum interval has passed so growth reads as paced, not instant), it raises the next building
-// in [`BUILD_ORDER`] on the next free plot — dwellings lift its population, which lifts its income,
-// so it snowballs steadily like a Stronghold AI lord.
+// The rival funds itself purely from **taxes** — its producers are staffed by workers for *show*
+// (they really swing tools at the yards, see `rival_workers`), but the gold comes from the tithe,
+// not from hauled wood/stone (real production is the player's depth). Its population pays a
+// per-capita tithe every second. When it has banked the next building's cost AND a minimum interval
+// has passed (a SLOW, watchable pace — minutes per build, not seconds), it raises the next building
+// in [`BUILD_ORDER`] on the next free plot — houses lift its population, which lifts its income, so
+// it grows steadily over the campaign like a Stronghold AI lord.
 
 /// Headcount a fresh rival keep starts with (the garrison + the lord's household).
 const RIVAL_BASE_POP: u32 = 4;
 /// Each dwelling the rival raises shelters this many more taxpayers.
 const RIVAL_POP_PER_HOUSE: u32 = 2;
-/// Gold per second per head of population. Higher than the player's tithe — the AI has no hero
-/// income, so taxes are its whole economy.
-const RIVAL_TAX_PER_CAPITA: f64 = 0.85;
+/// Gold per second per head of population. The AI has no hero income, so taxes are its whole
+/// economy. Deliberately MODEST — the rival should grow over a whole campaign, not erect its full
+/// fort in two minutes (the earlier 0.85 + cheap builds did exactly that).
+const RIVAL_TAX_PER_CAPITA: f64 = 0.55;
 /// First building's cost; each subsequent one costs [`RIVAL_BUILD_COST_STEP`] more.
-const RIVAL_BUILD_BASE_COST: f64 = 55.0;
-const RIVAL_BUILD_COST_STEP: f64 = 22.0;
-/// Minimum real seconds between two builds, so even a flush treasury expands at a watchable pace.
-const RIVAL_BUILD_MIN_INTERVAL: f32 = 11.0;
+const RIVAL_BUILD_BASE_COST: f64 = 110.0;
+const RIVAL_BUILD_COST_STEP: f64 = 45.0;
+/// Minimum real seconds between two builds, so even a flush treasury expands at a slow, watchable
+/// pace — a building every few minutes, not every ten seconds.
+const RIVAL_BUILD_MIN_INTERVAL: f32 = 75.0;
 
 /// The rival lord's run-state: treasury, population, and how many buildings it has raised. Reset on
 /// New Game and (in a later step) round-tripped through the save.
@@ -481,8 +607,11 @@ fn rival_economy(
     time: Res<Time>,
     mut state: ResMut<RivalState>,
     mats: Option<Res<RivalMats>>,
+    village: Option<Res<crate::castle::VillageMats>>,
+    walls: Query<(), With<RivalWalls>>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut creature_mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
 ) {
     let dt = time.delta_secs();
     // Collect taxes.
@@ -492,49 +621,58 @@ fn rival_economy(
     if state.built >= PLOT_OFFSETS.len() {
         return; // bailey full
     }
-    let Some(mats) = mats else { return };
+    let (Some(mats), Some(village)) = (mats, village) else { return }; // wait for the fort + town models
     if state.since_build < RIVAL_BUILD_MIN_INTERVAL || state.gold < state.next_cost() {
         return;
     }
     let idx = state.built;
     let kind = BUILD_ORDER[idx % BUILD_ORDER.len()];
-    spawn_building(&mut commands, &mut meshes, &mats, idx, kind);
+    spawn_building(&mut commands, &mut meshes, &mut creature_mats, &mats, &village.0, idx, kind);
     state.gold -= state.next_cost();
     state.built += 1;
     state.since_build = 0.0;
     if kind.is_house() {
         state.population += RIVAL_POP_PER_HOUSE;
     }
+    // Once it's a few buildings deep, the rival walls its bailey (once).
+    if state.built >= WALL_AT {
+        raise_walls(&mut commands, &mut meshes, &mats, !walls.is_empty());
+    }
 }
 
-/// New run: wipe the rival's treasury/population and reap every building its economy raised (the
-/// static fort — keep/walls/towers — is world geometry and stays). Mirrors `town::reset_town`.
+/// New run: wipe the rival's treasury/population and reap every building its economy raised AND its
+/// earned curtain wall (only the keep is permanent world geometry). Mirrors `town::reset_town`.
 fn reset_rival(
     mut state: ResMut<RivalState>,
     mut commands: Commands,
-    stale: Query<Entity, Or<(With<RivalBuilding>, With<RivalSoldier>)>>,
+    stale: Query<Entity, Or<(With<RivalBuilding>, With<RivalSoldier>, With<RivalWorker>, With<RivalWalls>)>>,
 ) {
     *state = RivalState::default();
     for e in &stale {
         commands.entity(e).try_despawn();
     }
+    clear_building_blockers();
+    clear_wall_blockers(RIVAL_CENTRE);
 }
 
 /// On a loaded game (`GameLoaded`), restore the rival's treasury/population/build-count from the
 /// carried snapshot and reconcile its buildings to match (reap the live ones, raise one per built
-/// plot) — the mirror of `town::restore_buildings`. Reads the value off the carried `SaveData`, not
-/// the live `RivalState` (which load may write the same frame in undefined order). The static fort
-/// (keep/walls/towers) is world geometry and untouched; the garrison re-tops-up on its own.
+/// plot, and re-raise the curtain wall iff the save earned it) — the mirror of
+/// `town::restore_buildings`. Reads the value off the carried `SaveData`, not the live `RivalState`
+/// (which load may write the same frame in undefined order). The keep is permanent world geometry and
+/// untouched; the garrison re-tops-up on its own.
 fn restore_rival(
     mut ev: MessageReader<crate::savegame::GameLoaded>,
     mut state: ResMut<RivalState>,
     mats: Option<Res<RivalMats>>,
+    village: Option<Res<crate::castle::VillageMats>>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    // Reap the prior in-process run's buildings AND live soldiers — the garrison is transient (not
-    // saved), so a Continue starts from a clean fort and `rival_garrison` re-tops it up. Matches the
-    // New-Game `reset_rival` sweep.
-    stale: Query<Entity, Or<(With<RivalBuilding>, With<RivalSoldier>)>>,
+    mut creature_mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
+    // Reap the prior in-process run's buildings, workers AND live soldiers — the garrison + workers
+    // are transient (not saved), so a Continue starts clean and `spawn_building`/`rival_garrison`
+    // re-raise them. Matches the New-Game `reset_rival` sweep.
+    stale: Query<Entity, Or<(With<RivalBuilding>, With<RivalSoldier>, With<RivalWorker>, With<RivalWalls>)>>,
 ) {
     let Some(crate::savegame::GameLoaded(data)) = ev.read().last() else { return };
     state.gold = data.rival_gold;
@@ -547,10 +685,19 @@ fn restore_rival(
     for e in &stale {
         commands.entity(e).try_despawn();
     }
-    let Some(mats) = mats else { return };
+    // Drop the old run's blocker boxes; we re-add live ones below (buildings per plot, walls only if
+    // this save earned the curtain).
+    clear_building_blockers();
+    clear_wall_blockers(RIVAL_CENTRE);
+    let (Some(mats), Some(village)) = (mats, village) else { return };
     for idx in 0..state.built {
         let kind = BUILD_ORDER[idx % BUILD_ORDER.len()];
-        spawn_building(&mut commands, &mut meshes, &mats, idx, kind);
+        spawn_building(&mut commands, &mut meshes, &mut creature_mats, &mats, &village.0, idx, kind);
+    }
+    // Walls are derived from `built` (no separate save field), so re-raise them iff this save is past
+    // the threshold. `exists = false` — we just despawned the live ring above.
+    if state.built >= WALL_AT {
+        raise_walls(&mut commands, &mut meshes, &mats, false);
     }
 }
 
@@ -559,26 +706,33 @@ fn restore_rival(
 fn stage_rival_for_shot(
     app: Res<State<crate::game_state::AppState>>,
     mats: Option<Res<RivalMats>>,
+    village: Option<Res<crate::castle::VillageMats>>,
+    walls: Query<(), With<RivalWalls>>,
     mut state: ResMut<RivalState>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut creature_mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
     mut done: Local<bool>,
 ) {
     if *done || *app.get() != crate::game_state::AppState::Playing {
         return;
     }
     let Ok(val) = std::env::var("FOREST_RIVAL") else { *done = true; return };
-    let Some(mats) = mats else { return }; // wait for the fort (and its mats) to exist
+    let (Some(mats), Some(village)) = (mats, village) else { return }; // wait for the fort + town models
     *done = true;
     let n = val.parse::<usize>().unwrap_or(PLOT_OFFSETS.len()).min(PLOT_OFFSETS.len());
     for idx in state.built..n {
         let kind = BUILD_ORDER[idx % BUILD_ORDER.len()];
-        spawn_building(&mut commands, &mut meshes, &mats, idx, kind);
+        spawn_building(&mut commands, &mut meshes, &mut creature_mats, &mats, &village.0, idx, kind);
         if kind.is_house() {
             state.population += RIVAL_POP_PER_HOUSE;
         }
     }
     state.built = state.built.max(n);
+    // Match the runtime rule: a staged grown rival also shows its earned curtain wall.
+    if state.built >= WALL_AT {
+        raise_walls(&mut commands, &mut meshes, &mats, !walls.is_empty());
+    }
 }
 
 // ── Skirmishing garrison ───────────────────────────────────────────────────────────
@@ -634,6 +788,7 @@ fn next_f(s: &mut u32) -> f32 {
 fn rival_garrison(
     time: Res<Time>,
     state: Res<RivalState>,
+    hero: Res<crate::player::HeroState>,
     mats: Option<Res<RivalMats>>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -644,6 +799,11 @@ fn rival_garrison(
 ) {
     if mats.is_none() {
         return; // no fort here → no garrison
+    }
+    // LOD / lazy-spawn: don't field (or top up) the garrison until the hero is near the fort. Far
+    // away the soldiers would just be unseen bodies burning CPU on their patrol brain.
+    if hero_far(hero.pos) {
+        return;
     }
     let target = (GARRISON_BASE + state.built / 3).min(GARRISON_MAX);
     let have = soldiers.iter().count();
@@ -682,6 +842,12 @@ fn rival_combat(
     mut soldiers: Query<(Entity, &mut RivalSoldier, &mut crate::villagers::Villager, &mut Transform), Without<crate::dying::Dying>>,
     townsfolk: Query<(Entity, &Transform), (With<crate::villagers::Townsfolk>, Without<crate::dying::Dying>, Without<RivalSoldier>)>,
 ) {
+    // LOD: with the hero far, nothing can reach a soldier (sight/leash ≤26) and they're off-screen —
+    // freeze the whole brain to save CPU/frames. (Townsfolk live ~100 from the fort, beyond leash, so
+    // the hero's distance alone decides this.)
+    if hero_far(hero.pos) {
+        return;
+    }
     let dt = time.delta_secs().min(0.05);
     let now = time.elapsed_secs();
     let tw = time.elapsed_secs_wrapped();
@@ -728,18 +894,68 @@ fn rival_combat(
                 step_toward(&mut v, tpos, sp, cur_y, dt);
             }
         } else {
-            // Patrol near home.
+            // Hold post: stand guard most of the time, with the occasional short repositioning step,
+            // so the garrison reads as *guarding* the fort — not endlessly circling it. (Long pauses
+            // + a tight radius; once at the spot, `step_toward` reports not-moving → an idle stance.)
             sol.patrol_t -= dt;
-            if sol.patrol_t <= 0.0 || vpos.distance(sol.patrol) < 0.6 {
+            if sol.patrol_t <= 0.0 {
                 let a = next_f(&mut sol.rng) * std::f32::consts::TAU;
-                let rad = 5.0 + next_f(&mut sol.rng) * 4.5; // patrol the open ring inside the walls
+                let rad = 4.0 + next_f(&mut sol.rng) * 4.0; // a post somewhere inside the walls
                 sol.patrol = sol.home + Vec2::new(a.cos() * rad, a.sin() * rad);
-                sol.patrol_t = 3.0 + next_f(&mut sol.rng) * 4.0;
+                sol.patrol_t = 9.0 + next_f(&mut sol.rng) * 10.0; // then stand there a good while
             }
-            let sp = v.speed * 0.6 * dt;
+            let sp = v.speed * 0.5 * dt;
             step_toward(&mut v, sol.patrol, sp, cur_y, dt);
         }
 
+        let gy = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+        let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
+        tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
+        tf.rotation = Quat::from_rotation_y(v.facing);
+    }
+}
+
+/// Worker brain: man the producer's yard — stand at a work spot and swing the trade's tool
+/// (hoe/chop/pick) on a cooldown, with the occasional short repositioning step. They don't circle
+/// the fort and they don't idly wander — they read as *working*. (The rival's economy is still
+/// tax-funded; the labour is visual, but it's real on-screen work, not aimless milling.) The swing
+/// reuses the `Villager.atk_anim` path `villager_drive` turns into an overhead strike. LOD-frozen
+/// when the hero is far. Gated on `Modal::None` with the rest of the sim.
+fn rival_workers(
+    time: Res<Time>,
+    hero: Res<crate::player::HeroState>,
+    mut workers: Query<(&mut RivalWorker, &mut crate::villagers::Villager, &mut Transform), Without<crate::dying::Dying>>,
+) {
+    if hero_far(hero.pos) {
+        return; // off-screen — freeze the labour (LOD)
+    }
+    let dt = time.delta_secs().min(0.05);
+    let now = time.elapsed_secs();
+    let tw = time.elapsed_secs_wrapped();
+    for (mut w, mut v, mut tf) in &mut workers {
+        w.patrol_t -= dt;
+        let vpos = v.pos;
+        // Pick a new work spot only every so often (a long dwell), and tight to the yard — so they
+        // mostly STAND and work rather than pace.
+        if w.patrol_t <= 0.0 {
+            let a = next_f(&mut w.rng) * std::f32::consts::TAU;
+            let rad = next_f(&mut w.rng) * 1.4;
+            w.patrol = w.home + Vec2::new(a.cos() * rad, a.sin() * rad);
+            w.patrol_t = 7.0 + next_f(&mut w.rng) * 8.0;
+        }
+        let cur_y = crate::steer::footing(vpos.x, vpos.y).unwrap_or(tf.translation.y);
+        if vpos.distance(w.patrol) < 0.4 {
+            // At the spot → work: hold still and swing the tool on a short cooldown.
+            v.moving = false;
+            w.work_cd -= dt;
+            if w.work_cd <= 0.0 {
+                w.work_cd = 1.2 + next_f(&mut w.rng) * 1.0;
+                v.atk_anim = now; // fire a hoe/chop/pick swing (read by villager_drive)
+            }
+        } else {
+            let sp = v.speed * 0.5 * dt;
+            step_toward(&mut v, w.patrol, sp, cur_y, dt);
+        }
         let gy = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
         let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
         tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
@@ -774,7 +990,8 @@ impl Plugin for RivalPlugin {
             // sim under any panel / pause).
             .add_systems(
                 Update,
-                (rival_economy, rival_garrison, rival_combat).run_if(in_state(crate::game_state::Modal::None)),
+                (rival_economy, rival_garrison, rival_combat, rival_workers)
+                    .run_if(in_state(crate::game_state::Modal::None)),
             )
             // Reconcile the rival's economy + buildings to a loaded save (ungated; fires on a load).
             .add_systems(Update, restore_rival)

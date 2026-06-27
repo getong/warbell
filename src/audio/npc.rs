@@ -138,7 +138,12 @@ pub(crate) fn detect_villager_events(
     mut t: ResMut<VillagerTrigger>,
     mgr: Res<VoiceManager>,
     hero: Query<&Hero>,
-    villagers: Query<(Entity, &GlobalTransform), With<Villager>>,
+    // The rival's desert garrison + workers carry `Villager` (for animation) but are NOT our
+    // townsfolk — they must never voice the player's villager lines (dawn relief, etc.).
+    villagers: Query<
+        (Entity, &GlobalTransform),
+        (With<Villager>, Without<crate::rival::RivalSoldier>, Without<crate::rival::RivalWorker>),
+    >,
     siege: Option<Res<crate::siege::Siege>>,
     mut cues: MessageReader<super::AudioCue>,
     mut speak: MessageWriter<Speak>,
