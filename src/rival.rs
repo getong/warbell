@@ -22,11 +22,27 @@ use crate::castle::{bx, cyl};
 use crate::palette::srgb;
 use crate::worldmap::ground_at_world;
 
-/// World-XZ centre of the rival keep. The NE **desert** region sits at world ≈ (52, −79) — already
-/// ~95 units from the player castle at the origin — so the two develop independently and only clash
-/// when someone crosses the open ground between them. Nudged a touch toward the island interior so
-/// the fort stands on solid desert rather than the north beach.
-pub const RIVAL_CENTRE: Vec2 = Vec2::new(54.0, -72.0);
+/// World-XZ centre of the rival keep, anchored to the NE **desert** at base tile ≈ (102, 14) and
+/// derived from `MAP_SCALE` (world = `(base − island-centre)·MAP_SCALE`) so it stays in the desert
+/// at any map scale. It sits ~100 units from the player castle at the origin, so the two develop
+/// independently and only clash when someone crosses the open ground between them. A forced-flat
+/// plateau ([`fort_flat_zone`]) levels the dune terraces under + around it.
+pub const RIVAL_CENTRE: Vec2 =
+    Vec2::new(30.0 * crate::worldmap::MAP_SCALE, -40.0 * crate::worldmap::MAP_SCALE);
+
+/// Radius of the rival fort's forced-flat desert plateau (world units) — its own "safe-zone": the
+/// curtain walls span ±[`WALL_HALF`], this clears a generous flat apron beyond them for the rival's
+/// buildings + the skirmish ground, so the fort never straddles a dune terrace lip.
+pub const RIVAL_FLAT_R: f32 = 20.0;
+
+/// Is world `(wx, wz)` inside the rival fort's forced-flat plateau? `worldmap::classify` force-sets
+/// flat desert here, the mirror of the castle's `SAFE_R` safe-zone (and the town build plots).
+pub fn fort_flat_zone(wx: f32, wz: f32) -> bool {
+    if crate::worldmap::MapId::from_u8(crate::worldmap::current_map_u8()) != crate::worldmap::MapId::Home {
+        return false;
+    }
+    Vec2::new(wx, wz).distance(RIVAL_CENTRE) < RIVAL_FLAT_R
+}
 
 /// Outer half-extent of the curtain-wall ring (square). The gate gap faces +Z (south, toward the
 /// player's castle).
@@ -50,10 +66,8 @@ pub struct RivalKeep;
 /// (cacti, rocks, props) rejects this so the bailey reads clean — the mirror of
 /// `castle::in_footprint` for the player keep. Home map only (the fort is Home-only).
 pub fn near_fort(wx: f32, wz: f32) -> bool {
-    if crate::worldmap::MapId::from_u8(crate::worldmap::current_map_u8()) != crate::worldmap::MapId::Home {
-        return false;
-    }
-    (wx - RIVAL_CENTRE.x).abs() <= WALL_HALF + 1.5 && (wz - RIVAL_CENTRE.y).abs() <= WALL_HALF + 1.5
+    // The whole forced-flat plateau (walls + apron) reads clean — no cacti against the ramparts.
+    fort_flat_zone(wx, wz)
 }
 
 // ── Materials ──────────────────────────────────────────────────────────────────────

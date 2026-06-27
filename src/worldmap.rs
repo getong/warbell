@@ -36,8 +36,12 @@ use crate::water::{WaterExt, WaterMaterial, WaterParams};
 
 // ── Map dimensions ───────────────────────────────────────────────────────────────
 /// Map enlargement vs the original base island (more tiles → more land + props).
-/// Bumped 1.5 → 1.8 (a clean +20% on every axis) to make the playable world ~20% bigger.
-pub const MAP_SCALE: f32 = 1.8;
+/// Bumped 1.5 → 1.8 (a clean +20% on every axis), then 1.8 → 2.0 to give the strongholds (esp.
+/// the desert rival, jammed against the north coast) more room. The two world-coord-authored
+/// landmarks scale with it automatically: `ork_fortress::BLIGHT_DZ` and `rival::RIVAL_CENTRE` are
+/// both derived from `MAP_SCALE`, so bumping it keeps the ork gate on the south coast and the
+/// rival fort in the desert with no hand-tuning.
+pub const MAP_SCALE: f32 = 2.0;
 // The GRID is the enlarged resolution; GENERATION still runs in *base* space — the grid
 // loop samples `classify(ix / MAP_SCALE, …)`, so the island shape is identical, just
 // drawn over more tiles. `CX/CZ` stay the BASE centre used by all the generation math;
@@ -631,6 +635,11 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
     // space; this runs in base space, so convert (world = base·MAP_SCALE − G).
     if crate::town::near_build_plot(x * MAP_SCALE - GX, z * MAP_SCALE - GZ) {
         return Some((TB::Grass, 1));
+    }
+    // The rival stronghold gets its own forced-flat DESERT plateau (its safe-zone), so its keep,
+    // walls and the skirmish ground around it sit level instead of straddling the dune terraces.
+    if crate::rival::fort_flat_zone(x * MAP_SCALE - GX, z * MAP_SCALE - GZ) {
+        return Some((TB::Desert, 1));
     }
     let dc = dist_from_castle(x, z);
     if dc < SAFE_R + edge_fray(x, z).max(-4.0) {
