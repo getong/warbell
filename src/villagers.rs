@@ -491,6 +491,27 @@ pub fn spawn_courtyard_guard(
     spawn(commands, meshes, &mat, kind, home, home, 2.7, 1.4, SCALE, next_u32(&mut rng)); // peasant base walk a touch quicker (was 2.3)
 }
 
+/// Spawn a **rival** soldier body for `rival.rs` — a helmeted, sword-bearing guard biped in the
+/// rival lord's crimson livery, anchored at `home`, spawned at `pos`. It reuses the guard MODEL
+/// (`Kind::Guard` → `PeasantKind::Guard`) but is NOT a town guard: the town-pool identity `spawn`
+/// attaches (`Guard`/`NpcHp`/`Townsfolk`) is stripped here, so none of the player's town/militia
+/// systems touch it. The caller (`rival.rs`) adds the `RivalSoldier` marker, `Health`, and its own
+/// combat brain (which drives the `Villager` pose fields → `villager_drive`/`animate_biped`).
+pub fn spawn_rival_soldier(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
+    home: Vec2,
+    pos: Vec2,
+    seed: u32,
+) -> Entity {
+    let mat = crate::creature::make_creature_material(creature_mats);
+    let kind = Kind::Guard { skin: SKIN[(seed as usize) % SKIN.len()], tunic: 0x8a2a26 }; // crimson livery
+    let root = spawn(commands, meshes, &mat, kind, home, pos, 2.6, 2.0, SCALE, seed);
+    commands.entity(root).remove::<(Guard, NpcHp, Townsfolk)>();
+    root
+}
+
 /// Spawn a plain **peasant** for a staged trailer scene at `pos`/`facing`, tagged
 /// [`crate::scenes::SceneActor`] so the wander brain leaves it alone (the scene poses it). Returns
 /// the root so the caller can drive it. `held` picks a baked tool (None / a farmer's hoe, etc.).
@@ -629,6 +650,9 @@ fn villager_brain(
             Without<crate::dying::Dying>,
             // Staged-scene villagers (trailer tableaus) are posed by `scenes.rs`, not the brain.
             Without<crate::scenes::SceneActor>,
+            // Rival soldiers carry `Villager` (for locomotion/anim) but are driven by `rival.rs`'s
+            // own combat brain, not the town's ambient wander.
+            Without<crate::rival::RivalSoldier>,
         ),
     >,
 ) {
@@ -1199,7 +1223,10 @@ fn guard_combat(
             // he'd be invisible to guard targeting. Only RALLIED guards ever reach him (he stands far
             // off in the Hold, past every non-rallied detect/hunt ring), so this doesn't pull the
             // standing militia south.
-            Or<(With<crate::orks::Ork>, With<crate::wildlife::Animal>, With<crate::warlord::Warlord>)>,
+            // Rival soldiers join the hostile set so the player's militia (and a mustered war party
+            // taken to the desert) fights them like any other foe — they carry `Health` but neither
+            // `Ork` nor `Animal`.
+            Or<(With<crate::orks::Ork>, With<crate::wildlife::Animal>, With<crate::warlord::Warlord>, With<crate::rival::RivalSoldier>)>,
             Without<Guard>,
             Without<crate::dying::Dying>,
         ),
