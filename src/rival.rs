@@ -471,10 +471,10 @@ fn rival_economy(
 fn reset_rival(
     mut state: ResMut<RivalState>,
     mut commands: Commands,
-    buildings: Query<Entity, With<RivalBuilding>>,
+    stale: Query<Entity, Or<(With<RivalBuilding>, With<RivalSoldier>)>>,
 ) {
     *state = RivalState::default();
-    for e in &buildings {
+    for e in &stale {
         commands.entity(e).try_despawn();
     }
 }
@@ -506,6 +506,184 @@ fn stage_rival_for_shot(
     state.built = state.built.max(n);
 }
 
+// ── Skirmishing garrison ───────────────────────────────────────────────────────────
+//
+// The rival keeps a small standing garrison of human soldiers (the player's own peasant-guard
+// model, reskinned in crimson livery, NOT orks). They patrol near the fort and, the moment the
+// hero or any of the player's townsfolk strays within sight AND within leash of the keep, they
+// close and fight — bidirectionally: the soldier deals damage through the same channels the orks
+// use (`PendingHeroDamage` / `NpcDamage`), and the hero (and the player's militia) cut them down
+// through the same `Health` melee path the orks die by (they carry the `RivalSoldier` marker, now
+// in the hero/guard target sets, so death routes through the shared `dying` fade). They are wholly
+// outside the night siege — the orks never target them; this is a separate rivalry.
+
+const GARRISON_BASE: usize = 4;
+const GARRISON_MAX: usize = 8;
+/// Seconds between respawns once the garrison has taken losses (slow — a wiped garrison rebuilds
+/// over a few minutes, so clearing it out actually means something).
+const GARRISON_RESPAWN_DELAY: f32 = 18.0;
+/// Soldier hit points — sturdier than a single ork grunt is soft, so a lone hero must commit but a
+/// war party makes short work of them.
+const SOLDIER_HP: f32 = 120.0;
+const SOLDIER_DMG: f32 = 11.0;
+const SOLDIER_ATK_CD: f32 = 1.1;
+const SOLDIER_MELEE: f32 = 1.7;
+/// How near a foe must come before a soldier engages…
+const SOLDIER_SIGHT: f32 = 13.0;
+/// …and how far from the keep it will chase before breaking off (so they defend home, not roam the
+/// island — "they only clash when someone crosses into the other's ground").
+const SOLDIER_LEASH: f32 = 26.0;
+const SOLDIER_TURN: f32 = 3.2;
+
+/// A rival soldier's brain state. The body is a `villagers` peasant-guard biped (it keeps `Villager`
+/// so `villager_drive`/`animate_biped` animate it for free); this carries the bits the town `Villager`
+/// doesn't expose — its home anchor, strike cooldown, and a patrol target.
+#[derive(Component)]
+pub struct RivalSoldier {
+    home: Vec2,
+    atk_cd: f32,
+    patrol: Vec2,
+    patrol_t: f32,
+    rng: u32,
+}
+
+/// Tiny LCG for patrol jitter (no `Math::random` in the deterministic core; this is cosmetic).
+fn next_f(s: &mut u32) -> f32 {
+    *s = s.wrapping_mul(1664525).wrapping_add(1013904223);
+    (*s >> 8) as f32 / (1u32 << 24) as f32
+}
+
+/// Keep the garrison topped up to a population-scaled target: fill fast at boot, then replace
+/// losses slowly. Only runs where the fort exists (its [`RivalMats`] resource is present — Home map).
+#[allow(clippy::too_many_arguments)]
+fn rival_garrison(
+    time: Res<Time>,
+    state: Res<RivalState>,
+    mats: Option<Res<RivalMats>>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut creature_mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
+    soldiers: Query<(), (With<RivalSoldier>, Without<crate::dying::Dying>)>,
+    mut timer: Local<f32>,
+    mut seed: Local<u32>,
+) {
+    if mats.is_none() {
+        return; // no fort here → no garrison
+    }
+    let target = (GARRISON_BASE + state.built / 3).min(GARRISON_MAX);
+    let have = soldiers.iter().count();
+    if have >= target {
+        return;
+    }
+    *timer -= time.delta_secs();
+    if *timer > 0.0 {
+        return;
+    }
+    // Fill the founding garrison quickly; replace later losses slowly.
+    *timer = if have < GARRISON_BASE { 0.3 } else { GARRISON_RESPAWN_DELAY };
+    *seed = seed.wrapping_add(1);
+    let s = 0x5217_0000u32.wrapping_add(seed.wrapping_mul(2654435761));
+    let mut r = s | 1;
+    let a = next_f(&mut r) * std::f32::consts::TAU;
+    let rad = 3.0 + next_f(&mut r) * 5.0;
+    let pos = RIVAL_CENTRE + Vec2::new(a.cos() * rad, a.sin() * rad);
+    let e = crate::villagers::spawn_rival_soldier(&mut commands, &mut meshes, &mut creature_mats, RIVAL_CENTRE, pos, s);
+    commands.entity(e).insert((
+        RivalSoldier { home: RIVAL_CENTRE, atk_cd: 0.0, patrol: pos, patrol_t: 0.0, rng: r },
+        crate::player::Health { hp: SOLDIER_HP, max: SOLDIER_HP },
+    ));
+}
+
+/// The soldier brain: pick the nearest foe (hero or a player townsperson) in sight and within leash
+/// of the keep, close to melee and strike on cooldown; otherwise patrol near home. Drives the
+/// `Villager` pose fields (position/facing/moving/atk_anim) that `villager_drive` turns into walk +
+/// swing clips. Gated on `Modal::None` with the rest of the sim.
+#[allow(clippy::type_complexity)]
+fn rival_combat(
+    time: Res<Time>,
+    hero: Res<crate::player::HeroState>,
+    mut pending: ResMut<crate::player::PendingHeroDamage>,
+    mut npc_dmg: ResMut<crate::villagers::NpcDamage>,
+    mut soldiers: Query<(Entity, &mut RivalSoldier, &mut crate::villagers::Villager, &mut Transform), Without<crate::dying::Dying>>,
+    townsfolk: Query<(Entity, &Transform), (With<crate::villagers::Townsfolk>, Without<crate::dying::Dying>, Without<RivalSoldier>)>,
+) {
+    let dt = time.delta_secs().min(0.05);
+    let now = time.elapsed_secs();
+    let tw = time.elapsed_secs_wrapped();
+    let folk: Vec<(Entity, Vec2)> =
+        townsfolk.iter().map(|(e, t)| (e, Vec2::new(t.translation.x, t.translation.z))).collect();
+
+    for (e, mut sol, mut v, mut tf) in &mut soldiers {
+        sol.atk_cd -= dt;
+        let vpos = v.pos;
+        // Nearest hostile in sight AND within leash of the keep.
+        let mut best: Option<(f32, Vec2, Option<Entity>)> = None; // (dist, pos, townsperson victim)
+        if hero.alive {
+            let d = vpos.distance(hero.pos);
+            if d < SOLDIER_SIGHT && sol.home.distance(hero.pos) < SOLDIER_LEASH {
+                best = Some((d, hero.pos, None));
+            }
+        }
+        for (fe, fp) in &folk {
+            let d = vpos.distance(*fp);
+            if d < SOLDIER_SIGHT && sol.home.distance(*fp) < SOLDIER_LEASH && best.map_or(true, |(bd, _, _)| d < bd) {
+                best = Some((d, *fp, Some(*fe)));
+            }
+        }
+
+        let cur_y = crate::steer::footing(vpos.x, vpos.y).unwrap_or(tf.translation.y);
+        if let Some((d, tpos, victim)) = best {
+            if d <= SOLDIER_MELEE {
+                v.moving = false;
+                let to = tpos - vpos;
+                if to.length_squared() > 1e-4 {
+                    let want = to.x.atan2(to.y);
+                    v.facing += crate::steer::wrap_pi(want - v.facing).clamp(-SOLDIER_TURN * 2.0 * dt, SOLDIER_TURN * 2.0 * dt);
+                }
+                if sol.atk_cd <= 0.0 {
+                    sol.atk_cd = SOLDIER_ATK_CD;
+                    v.atk_anim = now; // fire the swing clip (read by villager_drive)
+                    match victim {
+                        None => pending.0 += SOLDIER_DMG,
+                        Some(ve) => npc_dmg.0.push(crate::villagers::NpcHit { victim: ve, amount: SOLDIER_DMG, attacker: Some(e) }),
+                    }
+                }
+            } else {
+                let sp = v.speed * dt;
+                step_toward(&mut v, tpos, sp, cur_y, dt);
+            }
+        } else {
+            // Patrol near home.
+            sol.patrol_t -= dt;
+            if sol.patrol_t <= 0.0 || vpos.distance(sol.patrol) < 0.6 {
+                let a = next_f(&mut sol.rng) * std::f32::consts::TAU;
+                let rad = 2.0 + next_f(&mut sol.rng) * 7.0;
+                sol.patrol = sol.home + Vec2::new(a.cos() * rad, a.sin() * rad);
+                sol.patrol_t = 3.0 + next_f(&mut sol.rng) * 4.0;
+            }
+            let sp = v.speed * 0.6 * dt;
+            step_toward(&mut v, sol.patrol, sp, cur_y, dt);
+        }
+
+        let gy = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+        let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
+        tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
+        tf.rotation = Quat::from_rotation_y(v.facing);
+    }
+}
+
+/// Steer a soldier's `Villager` pose one step toward `target` (shared by chase + patrol).
+fn step_toward(v: &mut crate::villagers::Villager, target: Vec2, step: f32, cur_y: f32, dt: f32) {
+    match crate::steer::advance(v.pos, v.facing, target, step, v.body_r, cur_y, SOLDIER_TURN * dt) {
+        Some(s) => {
+            v.facing = s.facing;
+            v.pos = s.pos;
+            v.moving = s.moving;
+        }
+        None => v.moving = false,
+    }
+}
+
 // ── Plugin ─────────────────────────────────────────────────────────────────────────
 
 pub struct RivalPlugin;
@@ -517,10 +695,14 @@ impl Plugin for RivalPlugin {
             // built from `worldmap::build_step`, persists).
             .add_systems(OnExit(crate::game_state::AppState::StartScreen), reset_rival)
             .add_systems(OnExit(crate::game_state::AppState::GameOver), reset_rival)
-            // Tax + paced building (frozen with the sim under any panel / pause).
-            .add_systems(Update, rival_economy.run_if(in_state(crate::game_state::Modal::None)))
+            // Tax + paced building, garrison upkeep, and the soldier combat brain (frozen with the
+            // sim under any panel / pause).
+            .add_systems(
+                Update,
+                (rival_economy, rival_garrison, rival_combat).run_if(in_state(crate::game_state::Modal::None)),
+            )
             // Screenshot staging (ungated; env-gated inside).
             .add_systems(Update, stage_rival_for_shot);
-        // The skirmishing garrison and save/load land in later steps.
+        // Save/load round-trip lands in the next step.
     }
 }
