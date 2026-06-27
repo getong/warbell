@@ -23,12 +23,14 @@ const FLOAT_RISE: f32 = 1.3;
 const FLOAT_FONT: f32 = 24.0;
 /// Drop-shadow alpha at full opacity (fades with the number).
 const FLOAT_SHADOW_A: f32 = 0.85;
-/// White-flash duration on a struck ork (s).
-const HURT_FLASH_DUR: f32 = 0.12;
-/// Peak emissive of the hurt-flash. Deliberately FAINT: a bright white flash (0.8, then 0.28)
-/// strobed under rapid hits and masked the squash/recoil body language — at 0.12 it's a glint
-/// that confirms the hit while the pose does the talking.
-const HURT_FLASH_PEAK: f32 = 0.12;
+/// Hurt-flash duration on a struck ork (s). SHORT on purpose: the flash is now a *pop* (a bright
+/// hot core at the contact frame that falls off fast), not the old faint plateau — a quick punch
+/// reads as impact without strobing the model on rapid hits.
+const HURT_FLASH_DUR: f32 = 0.11;
+/// Warm tint of the flash (linear RGB weights) — a hot white-amber spark, NOT flat engine-white,
+/// so the pop reads as a struck-flesh impact rather than a placeholder blink. Scaled by the
+/// per-hit `intensity` (light < crit < heavy), so a heavy blow flashes far harder than a poke.
+const HURT_FLASH_TINT: [f32; 3] = [1.0, 0.92, 0.78];
 /// Trauma shed per second (old `TRAUMA_DECAY`).
 const SHAKE_DECAY: f32 = 2.4;
 /// Camera offset (world units) at full trauma.
@@ -189,6 +191,63 @@ fn float_test(
     for (text, color, scale, off) in samples {
         q.0.push(FloatReq { world: base + off, text: text.into(), color, scale });
     }
+}
+
+/// Tuning/capture hook: `FOREST_HITTEST=1` staged-hits the ork nearest the hero every ~0.6s,
+/// cycling light → crit → heavy, so a clip/still shows the flash pop + absorb squash + recoil lean
+/// across all three weight tiers without landing real swings. Pair with `FOREST_ORKLINE` (parked
+/// orks) + `FOREST_TPS`/`FOREST_CLIP`. No effect in normal play.
+fn hit_test(
+    time: Res<Time>,
+    hero: Res<crate::player::HeroState>,
+    mut commands: Commands,
+    mut orks: Query<(Entity, &GlobalTransform, &mut Ork), Without<crate::dying::Dying>>,
+    mut floats: ResMut<FloatQueue>,
+    mut t: Local<f32>,
+    mut tier: Local<u32>,
+) {
+    if std::env::var("FOREST_HITTEST").is_err() {
+        return;
+    }
+    *t -= time.delta_secs();
+    if *t > 0.0 {
+        return;
+    }
+    *t = 0.6;
+    let now = time.elapsed_secs();
+    let mut best: Option<(Entity, Vec3, f32)> = None;
+    for (e, gt, _) in &orks {
+        let p = gt.translation();
+        let d = Vec2::new(p.x - hero.pos.x, p.z - hero.pos.y).length();
+        if best.is_none_or(|b| d < b.2) {
+            best = Some((e, p, d));
+        }
+    }
+    let Some((e, p, _)) = best else { return };
+    // Step 3 stages a DIRECTED KILL (topples away from the hero) so a clip shows the death money-shot
+    // + proves the corpse stops colliding; steps 0–2 cycle the light/crit/heavy hit reaction.
+    if *tier % 4 == 3 {
+        *tier += 1;
+        let dir = Vec2::new(p.x - hero.pos.x, p.z - hero.pos.y);
+        crate::dying::begin_dying_struck(&mut commands, e, now, dir, true);
+        floats.0.push(FloatReq { world: p + Vec3::Y * 2.2, text: "†".into(), color: col_kill(), scale: 1.4 });
+        return;
+    }
+    let (intensity, amp, label, heavy) = match *tier % 4 {
+        0 => (0.34, 0.10, "hit", false),
+        1 => (0.65, 0.14, "CRIT", false),
+        _ => (0.95, 0.17, "HEAVY", true),
+    };
+    *tier += 1;
+    if let Ok((_, _, mut o)) = orks.get_mut(e) {
+        o.hit_recoil = now;
+        if heavy || label == "CRIT" {
+            o.atk_anim = 0.0; // stagger: cancel any wind-up
+        }
+    }
+    commands.entity(e).try_insert(HurtFlash::new(now, intensity));
+    commands.entity(e).try_insert(HitSquash::new(now, amp, false));
+    floats.0.push(FloatReq { world: p + Vec3::Y * 2.2, text: label.into(), color: col_ork_hit(), scale: 1.2 });
 }
 
 // ── 2. Ork HP bars (billboard follower entities) ────────────────────────────
@@ -358,16 +417,18 @@ fn drive_hp_bars(
 // Shared by orks AND wildlife: a struck target whitens for a beat. Both ship sharing one skin
 // material (batching), so we clone a per-entity copy on the fly and flash only that copy.
 
-/// A struck ork / animal flashes white until this time (s).
+/// A struck ork / animal flashes hot until this time (s); `intensity` is the per-hit peak emissive
+/// (tiered by blow weight at the hit-site, ~0.3 light → ~0.95 heavy).
 #[derive(Component)]
 pub struct HurtFlash {
     pub until: f32,
+    pub intensity: f32,
 }
 
 impl HurtFlash {
-    /// Flash starting now.
-    pub fn new(now: f32) -> Self {
-        HurtFlash { until: now + HURT_FLASH_DUR }
+    /// Flash starting now at the given peak intensity.
+    pub fn new(now: f32, intensity: f32) -> Self {
+        HurtFlash { until: now + HURT_FLASH_DUR, intensity }
     }
 }
 
@@ -449,12 +510,13 @@ fn hurt_flash(
             commands.entity(e).remove::<HurtFlash>();
             continue;
         }
+        // Front-loaded pop: bright at the contact frame, falls off fast (k² not linear) so it
+        // punches then clears instead of plateauing. Warm-tinted + scaled by the per-hit intensity.
         let k = (remain / HURT_FLASH_DUR).clamp(0.0, 1.0);
         if let Some(mut m) = mats.get_mut(&skin.0) {
-            // A subtle whiten, not a strobe — kept low so rapid hits don't blow out the model
-            // (and so the squash/recoil pose stays readable through the flash).
-            let v = k * HURT_FLASH_PEAK;
-            m.base.emissive = LinearRgba::rgb(v, v, v);
+            let v = k * k * hf.intensity;
+            m.base.emissive =
+                LinearRgba::rgb(v * HURT_FLASH_TINT[0], v * HURT_FLASH_TINT[1], v * HURT_FLASH_TINT[2]);
         }
     }
 }
@@ -472,28 +534,32 @@ pub struct HitSquash {
     /// Rest scale, captured on the first drive frame (roots bake a per-variant scale there,
     /// so the hit-site can't just assume `Vec3::ONE`).
     base: Option<Vec3>,
+    /// Peak compression (fraction of rest height), tiered by blow weight at the hit-site.
+    amp: f32,
+    /// `true` = soft body (wildlife): a springy ring that bounces past rest — the cartoon "boing".
+    /// `false` = armoured ork: a single damped *absorb* pulse that compresses on impact and eases
+    /// back with NO overshoot — reads as weight/give, not a bounce (the old ring read cheap).
+    springy: bool,
 }
 
 impl HitSquash {
-    /// Squash starting now.
-    pub fn new(now: f32) -> Self {
-        HitSquash { started: now, base: None }
+    /// Squash starting now at the given peak amplitude; `springy` picks bounce vs absorb.
+    pub fn new(now: f32, amp: f32, springy: bool) -> Self {
+        HitSquash { started: now, base: None, amp, springy }
     }
-    /// Re-kick an in-flight squash (rapid hits) without forgetting the true rest scale.
-    pub fn restart(&mut self, now: f32) {
+    /// Re-kick an in-flight squash (rapid hits) without forgetting the true rest scale; keeps the
+    /// HARDER of the two amplitudes so a heavy landing on a light one isn't softened.
+    pub fn restart(&mut self, now: f32, amp: f32) {
         self.started = now;
+        self.amp = self.amp.max(amp);
     }
 }
 
 /// How long the squash rings (s) — under the 0.45s swing so spam-clicks read as separate pops.
 const SQUASH_DUR: f32 = 0.34;
-/// Peak vertical compression (fraction of rest height) at the moment of impact. Kept SMALL — on the
-/// tall armoured biped/ork models a big cartoon squash-stretch reads wrong (they already lean back
-/// via `orks::recoil_tilt`); this is just a subtle impact pop layered under the lean.
-const SQUASH_AMP: f32 = 0.09;
-/// Ring frequency (rad/s). Kept LOW on purpose: hit-stop freezes virtual time for the first
-/// 0.05–0.09s of the squash, so the post-freeze compression has to last several more frames to
-/// read — at the old 26 rad/s it decayed within ~2 frames and the effect was invisible.
+/// Ring frequency (rad/s) for the SPRINGY (wildlife) bounce. Kept LOW on purpose: hit-stop freezes
+/// virtual time for the first 0.05–0.09s of the squash, so the post-freeze compression has to last
+/// several more frames to read — at the old 26 rad/s it decayed within ~2 frames and was invisible.
 const SQUASH_FREQ: f32 = 14.0;
 
 /// Drive each squash: a damped cosine that starts fully compressed at impact, springs PAST rest
@@ -513,9 +579,17 @@ fn drive_hit_squash(
             commands.entity(e).try_remove::<HitSquash>();
             continue;
         }
-        let k = 1.0 - t / SQUASH_DUR;
-        let w = (t * SQUASH_FREQ).cos() * SQUASH_AMP * k * k;
-        tf.scale = base * Vec3::new(1.0 + w * 0.7, 1.0 - w, 1.0 + w * 0.7);
+        let k = 1.0 - t / SQUASH_DUR; // 1 at impact → 0 at ring-out (envelope)
+        let w = if sq.springy {
+            // Soft body: damped cosine — springs PAST rest on the rebound (the cartoon boing).
+            (t * SQUASH_FREQ).cos() * sq.amp * k * k
+        } else {
+            // Armoured ork: a single absorb pulse — full compression at impact, eases back to rest
+            // with NO overshoot. `k²` front-loads the give so the hit lands hard then settles.
+            sq.amp * k * k
+        };
+        // +w on the horizontals (anti-phase bulge) keeps the body roughly constant volume.
+        tf.scale = base * Vec3::new(1.0 + w * 0.6, 1.0 - w, 1.0 + w * 0.6);
     }
 }
 
@@ -583,6 +657,7 @@ impl Plugin for CombatFxPlugin {
                 Update,
                 (
                     float_test,
+                    hit_test,
                     spawn_floats,
                     drive_floats,
                     ensure_ork_skin,

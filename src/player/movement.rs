@@ -116,8 +116,10 @@ fn shove_out_of(hero: &mut Hero, c: Vec2, body_r: f32, cur_y: f32) {
 /// wardens are solid too.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(super) struct Bodies<'w, 's> {
-    orks: Query<'w, 's, &'static Ork>,
-    animals: Query<'w, 's, &'static Animal>,
+    // `Without<Dying>`: a crumpling corpse must NOT keep its body collision, or the hero hits an
+    // invisible wall where an enemy just died (the corpse's logical `pos` lingers for the ~1.4s fade).
+    orks: Query<'w, 's, &'static Ork, Without<crate::dying::Dying>>,
+    animals: Query<'w, 's, &'static Animal, Without<crate::dying::Dying>>,
     villagers: Query<'w, 's, &'static Villager>,
     bosses: Query<'w, 's, &'static crate::boss::Boss, Without<crate::dying::Dying>>,
     /// Present when a demo script owns the hero — `player_move` then yields locomotion to it
@@ -305,14 +307,29 @@ pub fn player_move(
 
     // ── Body-collision vs creatures: shove the hero out of any overlap so he can't clip through
     // an ork or animal (one-way push — the creature holds its ground). ──
+    // The hero's shield state — a raised shield extends the keep-out out front (directional, in
+    // `hero_guard_radius`) so a guarded attacker is held off the shield, not the torso. Read from
+    // `HeroState` (the same source `wildlife`/`orks` use for the lunge clamp) so the render and the
+    // collision shove agree on the keep-out line every frame.
+    let blocking = state.blocking;
     for o in &bodies.orks {
-        shove_out_of(&mut hero, o.pos, o.body_r, cur_y);
+        // Hold the hero's SHIELD/torso out of the ork's body, not just his slim nav centre: reserve
+        // the visible guard half-width in place of `PLAYER_R` so a pressed-in knight can't bury his
+        // shield in the ork (`shove_out_of` adds `PLAYER_R` back internally, so inflate `body_r` by
+        // the difference → min gap = body_r + guard). `guard` grows out front while blocking.
+        let guard = crate::orks::hero_guard_radius(hero.pos, hero.facing, blocking, o.pos);
+        shove_out_of(&mut hero, o.pos, o.body_r + (guard - PLAYER_R), cur_y);
     }
     for a in &bodies.animals {
-        // Hunting predators reserve a head-reach margin in front of the torso so the jaws they
-        // snap forward on a bite land on the hero's front, not inside his chest (the strike-lunge
-        // render is held to the same line). Grazers add nothing — you bump them at the skin.
-        let r = a.body_r + crate::wildlife::head_reach(a.species, a.body_r);
+        // Hunting predators reserve a head-reach margin in front of the torso so the jaws they snap
+        // forward on a bite land on the hero's front, not inside his chest (the strike-lunge render
+        // is held to the same line). Use the BARE guard (never the blocking shield-reach extension):
+        // a charging beast stops ~1.2 out to bite, and the extra shield reach pushed that keep-out
+        // line PAST the bite stop, so a blocking hero got bulldozed backwards ("sliding") instead of
+        // standing his ground while the beast bit his shield. The render-side clamp still uses the
+        // full shield guard, so the snout is visually held off a raised shield regardless.
+        let r = a.body_r + crate::wildlife::head_reach(a.species, a.body_r)
+            + (crate::orks::HERO_GUARD_R - PLAYER_R);
         shove_out_of(&mut hero, a.pos, r, cur_y);
     }
     // Townsfolk are solid too — you bump them, you don't walk through them.

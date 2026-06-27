@@ -50,7 +50,7 @@ pub struct Dof {
 
 /// A tasteful default; tunable live in the Debug panel.
 pub fn default_dof() -> Dof {
-    Dof { focal: 28.0, range: 16.0, far_ramp: 120.0, max_radius: 14.0, near: NEAR, debug_view: 0.0 }
+    Dof { focal: 28.0, range: 45.0, far_ramp: 130.0, max_radius: 17.0, near: NEAR, debug_view: 0.0 }
 }
 
 pub struct DofPlugin;

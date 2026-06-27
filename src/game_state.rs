@@ -1694,7 +1694,7 @@ mod tests {
 
         // Flag set ⇒ every transient is reaped, an unrelated entity is kept, the flag resets.
         let marcher = app.world_mut().spawn(DirectorMarcher).id();
-        let corpse = app.world_mut().spawn(Dying { since: 0.0 }).id();
+        let corpse = app.world_mut().spawn(Dying { since: 0.0, dir: Vec2::ZERO, power: 1.0 }).id();
         let bystander = app.world_mut().spawn_empty().id();
         app.world_mut().resource_mut::<ContinueInPlace>().0 = true;
         app.update();

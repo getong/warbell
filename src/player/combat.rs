@@ -65,6 +65,16 @@ const SHAKE_CRIT: f32 = 0.32;
 const SHAKE_HIT: f32 = 0.20;
 const KNOCKBACK: f32 = 6.0;
 const KNOCKBACK_CRIT: f32 = 9.0;
+/// A crit/heavy blow STAGGERS the ork: its attack is interrupted and its next strike pushed out by
+/// this long (s). Reuses the existing `atk_cd` gate (honoured by both the camp and siege brains) so
+/// a hard hit visibly stops the ork's offense — the "you felt that" beat — with no new AI state.
+const STAGGER_CD: f32 = 0.55;
+/// Per-blow-weight juice: (hurt-flash peak intensity, squash amplitude). Light poke → crit → heavy.
+/// The flash pops far harder and the body gives more as the blow gets heavier, so the three tiers
+/// read as distinct hits instead of one flat reaction.
+const JUICE_HEAVY: (f32, f32) = (0.95, 0.17);
+const JUICE_CRIT: (f32, f32) = (0.65, 0.14);
+const JUICE_HIT: (f32, f32) = (0.34, 0.10);
 
 // ── Charged Heavy Strike ────────────────────────────────────────────────────────────────────────
 // Holding LMB past `CHARGE_THRESHOLD` and releasing unleashes a guaranteed-crit Heavy Strike — a
@@ -562,13 +572,30 @@ pub fn player_attack(
                 player.0.heal(lifesteal);
             }
             // Fade out (crumple) instead of popping; the target query excludes Dying so it's
-            // never re-hit / re-rewarded.
-            crate::dying::begin_dying(&mut commands, e, time.elapsed_secs());
+            // never re-hit / re-rewarded. Directed by the blow so the corpse topples + lurches the
+            // way you struck it (a heavy throws it harder) — the kill money-shot.
+            crate::dying::begin_dying_struck(&mut commands, e, now_s, dir, hero.heavy);
         } else {
+            // Blow-weight tier drives the whole reaction (flash pop, squash give, stagger, spark).
+            let (flash_i, sq_amp) = if hero.heavy { JUICE_HEAVY } else if crit { JUICE_CRIT } else { JUICE_HIT };
+            // Soft wildlife bounces (springy); armoured orks ABSORB (no cartoon ring).
+            let springy = animal.is_some();
             // Shove a surviving ork back along the blow (harder on a crit) + a springy recoil.
             if let Some(o) = ork.as_deref_mut() {
                 o.kb = dir * if crit { KNOCKBACK_CRIT } else { KNOCKBACK };
                 o.hit_recoil = now_s;
+                // Crit/heavy STAGGERS: cancel any wind-up (zero the strike anim) and push the next
+                // strike out, so a hard blow visibly interrupts the ork instead of trading evenly.
+                if crit || hero.heavy {
+                    o.atk_anim = 0.0;
+                    o.atk_cd = o.atk_cd.max(STAGGER_CD);
+                }
+            }
+            // A contact spark gout on a crit — metal-on-ork crunch at the hit point, on TOP of the
+            // per-hit blood + slash-flash. (A heavy already fired its bigger gout above; light
+            // pokes stay clean.)
+            if crit && !hero.heavy {
+                spawn_burst(&mut commands, &fx, mid, false);
             }
             // A heavy reads as "{dmg}!!" big in gold; a lucky crit "{dmg}!"; a normal hit the plain
             // number.
@@ -580,13 +607,13 @@ pub fn player_attack(
                 (format!("{}", dmg as i32), crate::combat_fx::col_ork_hit(), 1.0)
             };
             floats.0.push(crate::combat_fx::FloatReq { world: head, text, color, scale: fscale });
-            commands.entity(e).try_insert(crate::combat_fx::HurtFlash::new(time.elapsed_secs()));
-            // Springy body squash-and-stretch — re-kicked in place on rapid hits so the rest
-            // scale captured by the first squash is never forgotten.
+            commands.entity(e).try_insert(crate::combat_fx::HurtFlash::new(now_s, flash_i));
+            // Body give — absorb (ork) or bounce (wildlife). Re-kicked in place on rapid hits so the
+            // rest scale captured by the first squash is never forgotten.
             match squash.as_deref_mut() {
-                Some(s) => s.restart(now_s),
+                Some(s) => s.restart(now_s, sq_amp),
                 None => {
-                    commands.entity(e).try_insert(crate::combat_fx::HitSquash::new(now_s));
+                    commands.entity(e).try_insert(crate::combat_fx::HitSquash::new(now_s, sq_amp, springy));
                 }
             }
             // A struck (surviving) animal staggers back along the blow (harder on a crit) +
@@ -662,10 +689,11 @@ pub fn player_attack(
                     if let Some(mut o) = ork {
                         o.hit_recoil = now_s;
                     }
+                    // Cleave splash only hits orks → absorb (not springy), light amplitude.
                     match squash.as_deref_mut() {
-                        Some(s) => s.restart(now_s),
+                        Some(s) => s.restart(now_s, JUICE_HIT.1),
                         None => {
-                            commands.entity(e).try_insert(crate::combat_fx::HitSquash::new(now_s));
+                            commands.entity(e).try_insert(crate::combat_fx::HitSquash::new(now_s, JUICE_HIT.1, false));
                         }
                     }
                 }

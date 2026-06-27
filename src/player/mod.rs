@@ -197,6 +197,10 @@ pub struct HeroState {
     pub y: f32,
     pub facing: f32,
     pub alive: bool,
+    /// Shield raised this frame — read by the ork/wildlife keep-out so a guarded attacker is held
+    /// off the *extended* shield (further out front) rather than the bare torso. Published by
+    /// `block::player_block`.
+    pub blocking: bool,
 }
 
 /// Damage the orks have dealt the hero since the last health tick. Orks accumulate onto it
@@ -442,7 +446,7 @@ fn spawn_hero(
     // reactive atmosphere/weather pick up that region immediately (in FreeRoam capture mode
     // `player_move` doesn't run, so it never would otherwise).
     if staged.is_some() {
-        commands.insert_resource(HeroState { pos, y, facing, alive: true });
+        commands.insert_resource(HeroState { pos, y, facing, alive: true, blocking: false });
     }
 }
 

@@ -504,8 +504,10 @@ fn ork_brain(
         let fwd = Vec2::new(o.facing.sin(), o.facing.cos());
         let mut lp = o.pos + fwd * lunge;
         // Don't let the lunge slide the body into the knight (the shove only pushes him off `pos`).
+        // Shield-aware: a guarded, head-on hero shoves the lunge further out (see `hero_guard_radius`).
         if hero.alive {
-            lp = lunge_clear_of_hero(lp, hero.pos, o.body_r + HERO_R);
+            let keep = o.body_r + hero_guard_radius(hero.pos, hero.facing, hero.blocking, o.pos);
+            lp = lunge_clear_of_hero(lp, hero.pos, keep);
         }
         tf.translation = Vec3::new(lp.x, gy + bob, lp.y);
         // Springy recoil-wobble on a blow taken (composes with the facing yaw).
@@ -550,16 +552,48 @@ pub(crate) fn recoil_tilt(hit_recoil: f32, now: f32) -> f32 {
     -(r * 17.0).cos() * 0.3 * k * k
 }
 
-/// Hero body half-width — mirrors the private `player::movement::PLAYER_R` (kept in sync by hand).
-/// Used to keep an attacker's lunge from clipping into the knight.
-pub(crate) const HERO_R: f32 = 0.22;
+/// Hero's *visible* front half-width — his shield + torso reach out well past the slim navigation
+/// radius (0.22, mirroring `player::movement::PLAYER_R`). Melee attackers keep their body this far
+/// off his centre so a
+/// pressed-in or club-lunging ork doesn't drive its wide torso through him (the bug: the keep-outs
+/// used the 0.22 nav radius, so an ork mesh buried itself in the hero). Their club still reaches —
+/// only the body is held back. Tunable: bigger = more standoff, smaller = tighter.
+pub(crate) const HERO_GUARD_R: f32 = 0.5;
+
+/// Extra forward reach the RAISED shield adds to the guard when an attacker presses head-on: the
+/// braced shield juts out front, so a blocked ork/animal is shoved off the *shield's* face, not the
+/// torso. Tapers with the cosine of the attacker's bearing → full at dead-ahead, 0 at the flank/rear
+/// (the shield only covers the front), so a creature behind a blocking hero isn't pushed away.
+pub(crate) const SHIELD_REACH: f32 = 0.4;
+
+/// The hero's directional keep-out radius against an attacker at `attacker` — how far that
+/// creature's *centre* is held off the hero's centre is `creature_body_r + this`. It's the bare
+/// [`HERO_GUARD_R`] normally, extended by up to [`SHIELD_REACH`] when the shield is raised and the
+/// attacker is in front (so a guarded blow lands on a shield held at arm's length, never inside the
+/// knight). Shared by the body-shove (`player::movement`) and the strike-lunge clamp so the render
+/// and the collision hold the exact same line.
+pub(crate) fn hero_guard_radius(hero_pos: Vec2, hero_facing: f32, blocking: bool, attacker: Vec2) -> f32 {
+    if !blocking {
+        return HERO_GUARD_R;
+    }
+    let to = attacker - hero_pos;
+    let d = to.length();
+    if d < 1e-4 {
+        return HERO_GUARD_R;
+    }
+    // cos(bearing): +1 dead ahead of the hero's facing, 0 abeam, <0 behind.
+    let fwd = Vec2::new(hero_facing.sin(), hero_facing.cos());
+    let aim = (to.x * fwd.x + to.y * fwd.y) / d;
+    HERO_GUARD_R + SHIELD_REACH * aim.max(0.0)
+}
 
 /// Keep an attacker's forward strike *lunge* — a visual-only mesh slide over the strike beat —
 /// from clipping into the knight. The hero shove (`player::movement::shove_out_of`) pushes him
 /// off the body's locomotion `pos`, NOT this lunged draw position, so an un-clamped lunge slides
 /// the rendered body straight through him (worst right at melee range, exactly when he's fighting
 /// it). Project the lunged point `lp` back out of the hero's keep-out cylinder of radius `keep`
-/// (= the body's `body_r + HERO_R`, so the skins just touch). Purely cosmetic — `pos`/gameplay are
+/// (= `body_r + hero_guard_radius`, so the body just touches the shield/torso line). Purely
+/// cosmetic — `pos`/gameplay are
 /// untouched, and the radial projection works whatever the attacker faces (hero or a rival brawl).
 /// Shared by the ork + wildlife strike renders.
 pub(crate) fn lunge_clear_of_hero(lp: Vec2, hero_pos: Vec2, keep: f32) -> Vec2 {

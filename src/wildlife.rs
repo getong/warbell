@@ -465,7 +465,11 @@ fn animal_brain(
         // line (`player::movement`), so a pressed-in hero can't force the overlap either. Grazers
         // add no reach → the old skin-touch clamp.
         if hero.alive {
-            let keep = a.body_r + crate::orks::HERO_R + head_reach(a.species, a.body_r);
+            // Shield-aware + muzzle-aware: hold the torso off by the hero's guard (extended out
+            // front when he blocks) PLUS the predator's head-reach, so the snout just reaches a
+            // raised shield instead of the body sliding through him.
+            let guard = crate::orks::hero_guard_radius(hero.pos, hero.facing, hero.blocking, a.pos);
+            let keep = a.body_r + guard + head_reach(a.species, a.body_r);
             lp = crate::orks::lunge_clear_of_hero(lp, hero.pos, keep);
         }
         tf.translation = Vec3::new(lp.x, gy + bob, lp.y);

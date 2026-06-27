@@ -61,8 +61,8 @@ const BASE_SUN_LUX: f32 = 11_000.0;
 /// Swamp (`0.034`) lands at ~(45, 121). Daytime-gated, so night returns to the open baseline.
 const FOG_REF_DENSITY: f32 = 0.009;
 const FOG_MAX_DENSITY: f32 = 0.036;
-const FOG_BASE_START: f32 = 57.0; // was 85 — pulled ~1/3 closer (more aggressive fog)
-const FOG_BASE_END: f32 = 127.0; // was 190 — pulled ~1/3 closer
+const FOG_BASE_START: f32 = 48.0; // was 57 (was 85) — pulled in further for a little more haze
+const FOG_BASE_END: f32 = 112.0; // was 127 (was 190) — pulled in further for a little more haze
 /// How far the foggy regions pull the clear radius / horizon IN. Kept gentle (was 43/75) so the
 /// fog reads as a long, gradual gradient that EXPANDS with distance — a sharp pull walled the
 /// swamp green close to the camera. Swamp (`d=0.034`) now ≈ (61, 153); Blight (`0.036`) ≈ (59, 150).
@@ -639,12 +639,25 @@ fn env_cam() -> Option<Transform> {
 /// so the hero stays sharp while the fore/background melt into bokeh.
 fn drive_dof_focus(
     mode: Res<crate::player::PlayMode>,
+    build_mode: Res<crate::town::BuildMode>,
     mut cam_q: Query<(&GlobalTransform, &mut crate::dof::Dof), With<Camera3d>>,
     hero_q: Query<&crate::player::Hero>,
+    mut saved_radius: Local<Option<f32>>,
 ) {
     let Ok((cam_tf, mut dof)) = cam_q.single_mut() else {
         return;
     };
+    // Build mode: drop the depth-of-field blur so the whole bailey reads sharp while you place a
+    // building (the far-blur fights the placement read). Snapshot the live radius on enter, restore
+    // it on exit so a Debug-panel tweak made during play survives the round-trip.
+    if build_mode.active {
+        if saved_radius.is_none() {
+            *saved_radius = Some(dof.max_radius);
+        }
+        dof.max_radius = 0.0;
+    } else if let Some(r) = saved_radius.take() {
+        dof.max_radius = r;
+    }
     // Screenshot knob: FOREST_NOBLUR disables the depth-of-field blur entirely (zero CoC radius)
     // so staged model close-ups stay crisp edge-to-edge.
     if std::env::var("FOREST_NOBLUR").is_ok() {

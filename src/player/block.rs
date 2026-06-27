@@ -19,6 +19,7 @@ pub fn player_block(
     player: Res<PlayerRes>,
     buttons: Res<ButtonInput<MouseButton>>,
     mut hero_q: Query<&mut HeroHealth>,
+    mut hero_state: ResMut<super::HeroState>,
 ) {
     let Ok(mut hh) = hero_q.single_mut() else { return };
     let dt = time.delta_secs();
@@ -34,6 +35,7 @@ pub fn player_block(
 
     if *mode != PlayMode::Play || !player.0.is_alive() {
         hh.blocking = false;
+        hero_state.blocking = false;
         return;
     }
 
@@ -59,4 +61,6 @@ pub fn player_block(
             }
         }
     }
+
+    hero_state.blocking = hh.blocking;
 }

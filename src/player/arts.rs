@@ -241,7 +241,7 @@ pub fn player_arts(
             crate::dying::begin_dying(&mut commands, e, now);
         } else {
             floats.0.push(crate::combat_fx::FloatReq { world: head, text: format!("{}", dmg as i32), color: crate::combat_fx::col_ork_hit(), scale: 1.0 });
-            commands.entity(e).try_insert(crate::combat_fx::HurtFlash::new(now));
+            commands.entity(e).try_insert(crate::combat_fx::HurtFlash::new(now, 0.7));
             // Slam shoves survivors outward; the boons chill/poison them.
             if matches!(art, Art::Slam) {
                 if let Some(_o) = ork {
