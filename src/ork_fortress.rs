@@ -38,13 +38,14 @@ use crate::worldmap::{self, GX, GZ, MAP_SCALE};
 
 // ── Layout (world space; the OLD grid's south edge was z = +81 — the Blight extends it) ──
 
-/// Southward shift applied to the ENTIRE Blight/fortress (every world-z constant below adds
-/// it). The island grew +20% when `MAP_SCALE` went 1.5→1.8, pushing its south coast ~16 units
-/// further south; the fortress is the only landmark authored in fixed world coords, so it is
-/// re-anchored by this much to keep its gate meeting the (now larger) coast. Bump this in step
-/// with `MAP_SCALE` if the island is rescaled again. All fortress z-coords are written as
-/// `<authored> + BLIGHT_DZ` so the original layout stays readable and the shift has one source.
-const BLIGHT_DZ: f32 = 16.2;
+/// Southward shift applied to the ENTIRE Blight/fortress (every world-z constant below adds it).
+/// The fortress is the only landmark authored in fixed world coords, so it is re-anchored to keep
+/// its gate meeting the island's south coast — which sits at world z = `ISLAND_RZ·MAP_SCALE` (=
+/// `53·MAP_SCALE`) and so moves south as the map is rescaled. Derived from `MAP_SCALE` (not a hand
+/// value) so a rescale needs no re-tuning: it yields the old 16.2 at the previous 1.8 scale and
+/// tracks the coast at any scale. All fortress z-coords are written as `<authored> + BLIGHT_DZ` so
+/// the original layout stays readable and the shift has one source.
+const BLIGHT_DZ: f32 = 53.0 * MAP_SCALE - 79.2;
 
 /// Fortress centre — the hold blob and the "inside the walls" tests key off this.
 const CENTRE: Vec2 = Vec2::new(12.0, 103.0 + BLIGHT_DZ);

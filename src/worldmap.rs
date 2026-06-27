@@ -36,8 +36,12 @@ use crate::water::{WaterExt, WaterMaterial, WaterParams};
 
 // ── Map dimensions ───────────────────────────────────────────────────────────────
 /// Map enlargement vs the original base island (more tiles → more land + props).
-/// Bumped 1.5 → 1.8 (a clean +20% on every axis) to make the playable world ~20% bigger.
-pub const MAP_SCALE: f32 = 1.8;
+/// Bumped 1.5 → 1.8 (a clean +20% on every axis), then 1.8 → 2.0 to give the strongholds (esp.
+/// the desert rival, jammed against the north coast) more room. The two world-coord-authored
+/// landmarks scale with it automatically: `ork_fortress::BLIGHT_DZ` and `rival::RIVAL_CENTRE` are
+/// both derived from `MAP_SCALE`, so bumping it keeps the ork gate on the south coast and the
+/// rival fort in the desert with no hand-tuning.
+pub const MAP_SCALE: f32 = 2.0;
 // The GRID is the enlarged resolution; GENERATION still runs in *base* space — the grid
 // loop samples `classify(ix / MAP_SCALE, …)`, so the island shape is identical, just
 // drawn over more tiles. `CX/CZ` stay the BASE centre used by all the generation math;
@@ -632,6 +636,11 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
     if crate::town::near_build_plot(x * MAP_SCALE - GX, z * MAP_SCALE - GZ) {
         return Some((TB::Grass, 1));
     }
+    // The rival stronghold gets its own forced-flat DESERT plateau (its safe-zone), so its keep,
+    // walls and the skirmish ground around it sit level instead of straddling the dune terraces.
+    if crate::rival::fort_flat_zone(x * MAP_SCALE - GX, z * MAP_SCALE - GZ) {
+        return Some((TB::Desert, 1));
+    }
     let dc = dist_from_castle(x, z);
     if dc < SAFE_R + edge_fray(x, z).max(-4.0) {
         return Some((TB::Grass, 1));
@@ -1080,7 +1089,7 @@ pub struct BuildState {
 }
 
 /// Number of phases [`build_step`] walks through. The loading veil maps its progress bar onto this.
-pub const BUILD_STEPS: u32 = 28;
+pub const BUILD_STEPS: u32 = 29;
 
 /// Build the whole world in ONE call (terrain → scatter → castle → fortress → …). Used by the
 /// capture harnesses (`FOREST_SHOT`/`FOREST_CLIP`), which want the world up on frame 0. The normal
@@ -1149,6 +1158,7 @@ pub fn build_step(
         25 => crate::ork_fortress::build(commands, meshes, images, std_mats, creature_mats),
         26 => crate::bridges::populate(commands, meshes, std_mats),
         27 => crate::distant_isles::build(commands, meshes, std_mats),
+        28 => crate::rival::build(commands, meshes, std_mats),
         _ => {}
     }
 }
@@ -1302,6 +1312,7 @@ fn bs_scatter_biome(biome: Biome, commands: &mut Commands, meshes: &mut Assets<M
                 && !crate::bridges::near_bridge(x, z, 1.0)
                 && !crate::ork_fortress::on_gate_approach(x, z)
                 && !(crate::ork_fortress::in_blight_world(x, z) && z > 86.0)
+                && !crate::rival::near_fort(x, z)
         },
         &|x, z| tile_top_y_world(x, z),
     );
