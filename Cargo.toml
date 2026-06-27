@@ -3,7 +3,7 @@ members = ["crates/core"]
 
 [package]
 name = "tileworld_bevy_forest"
-version = "0.12.0"
+version = "0.13.0"
 edition = "2024"
 
 [dependencies]
