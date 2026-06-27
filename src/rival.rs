@@ -76,6 +76,9 @@ enum RM {
     Iron,
 }
 
+/// The rival's plain-material set. Stored as a Resource so the economy tick can spawn new
+/// buildings at runtime with the same look the fort was built with.
+#[derive(Resource)]
 struct RivalMats {
     sand: Handle<StandardMaterial>,
     sand_dark: Handle<StandardMaterial>,
@@ -221,11 +224,122 @@ fn fort_parts() -> (Vec<(Mesh, RM)>, Vec<(Mesh, RM)>) {
     for (sx, sz) in [(-1.0_f32, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
         corner_tower(&mut rest, sx * h, sz * h);
     }
-    // A few starter dwellings inside the bailey (around the keep).
-    for (hx, hz) in [(-7.5, -6.0), (7.5, -6.0), (-7.5, 6.5)] {
-        rest.extend(desert_house(hx, hz));
-    }
+    // No dwellings here — the bailey starts bare and the rival's economy raises buildings on the
+    // [`PLOT_OFFSETS`] over time (the "watch it grow" core of the rivalry).
     (keep, rest)
+}
+
+// ── Economy buildings (raised on plots by the rival's autonomous economy) ─────────────
+
+/// Bailey plot offsets (local XZ from [`RIVAL_CENTRE`]) the rival raises buildings on, in build
+/// order. Kept clear of the central keep (±~4) and the south gate lane.
+const PLOT_OFFSETS: [Vec2; 10] = [
+    Vec2::new(-8.0, -6.5),
+    Vec2::new(8.0, -6.5),
+    Vec2::new(-8.5, 0.5),
+    Vec2::new(8.5, 0.5),
+    Vec2::new(-8.0, 7.0),
+    Vec2::new(8.0, 7.0),
+    Vec2::new(-4.5, -9.0),
+    Vec2::new(4.5, -9.0),
+    Vec2::new(-4.5, 9.0),
+    Vec2::new(4.5, 9.0),
+];
+
+/// The kind of building the rival raises. `Dwelling` lifts its population (→ more tax income);
+/// the others are economy set-dressing that mark a growing settlement.
+#[derive(Clone, Copy, PartialEq)]
+pub enum RivalKind {
+    Dwelling,
+    Granary,
+    Workshop,
+}
+
+impl RivalKind {
+    fn is_house(self) -> bool {
+        matches!(self, RivalKind::Dwelling)
+    }
+}
+
+/// The fixed order the rival builds in — dwellings interleaved with stores/workshops so its
+/// population (and thus income) climbs steadily, Stronghold-style.
+const BUILD_ORDER: [RivalKind; 10] = [
+    RivalKind::Dwelling,
+    RivalKind::Granary,
+    RivalKind::Dwelling,
+    RivalKind::Workshop,
+    RivalKind::Dwelling,
+    RivalKind::Granary,
+    RivalKind::Dwelling,
+    RivalKind::Workshop,
+    RivalKind::Dwelling,
+    RivalKind::Granary,
+];
+
+/// A round sandstone granary silo with a domed cap and a dark course band.
+fn granary(x: f32, z: f32) -> Vec<(Mesh, RM)> {
+    vec![
+        (cyl(1.25, 2.2, x, 1.1, z), RM::Sand),
+        (cyl(1.32, 0.3, x, 1.9, z), RM::SandDark), // band
+        (cyl(0.95, 0.7, x, 2.55, z), RM::SandDark), // domed cap (squat cylinder)
+        (bx(0.5, 0.7, 0.08, x, 0.45, z + 1.25), RM::Timber), // hatch door
+    ]
+}
+
+/// A low sandstone workshop with a timber lean-to awning on iron posts.
+fn workshop(x: f32, z: f32) -> Vec<(Mesh, RM)> {
+    vec![
+        (bx(2.8, 1.5, 2.2, x, 0.75, z), RM::Sand),
+        (bx(3.0, 0.22, 2.4, x, 1.5, z), RM::SandDark), // flat roof slab
+        (bx(2.4, 0.12, 1.0, x, 1.15, z + 1.6), RM::Timber), // awning
+        (bx(0.1, 1.1, 0.1, x - 1.1, 0.55, z + 2.0), RM::Iron), // awning post
+        (bx(0.1, 1.1, 0.1, x + 1.1, 0.55, z + 2.0), RM::Iron),
+        (bx(0.55, 0.95, 0.08, x, 0.48, z + 1.1), RM::Timber), // door
+    ]
+}
+
+/// Local-space part list for a building of `kind` at (x, z).
+fn building_parts(kind: RivalKind, x: f32, z: f32) -> Vec<(Mesh, RM)> {
+    match kind {
+        RivalKind::Dwelling => desert_house(x, z),
+        RivalKind::Granary => granary(x, z),
+        RivalKind::Workshop => workshop(x, z),
+    }
+}
+
+/// Tags a building the rival economy raised on plot `idx` (so later steps can damage/topple it).
+#[derive(Component)]
+pub struct RivalBuilding {
+    pub idx: usize,
+}
+
+/// Spawn one rival building at plot `idx` (world-snapped, its own entity). Shared by the build-time
+/// pre-fill (none, currently) and the runtime economy tick.
+fn spawn_building(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    mats: &RivalMats,
+    idx: usize,
+    kind: RivalKind,
+) {
+    let Some(off) = PLOT_OFFSETS.get(idx).copied() else { return };
+    let wx = RIVAL_CENTRE.x + off.x;
+    let wz = RIVAL_CENTRE.y + off.y;
+    let y = ground_at_world(wx, wz).unwrap_or(0.0);
+    let parent = commands
+        .spawn((
+            Transform::from_xyz(wx, y, wz),
+            Visibility::Visible,
+            BiomeEntity,
+            RivalEntity,
+            RivalBuilding { idx },
+        ))
+        .id();
+    commands.entity(parent).with_children(|p| {
+        for (mesh, slot) in building_parts(kind, 0.0, 0.0) {
+            p.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mats.get(slot)), Transform::default()));
+        }
+    });
 }
 
 // ── Build (a worldmap build phase) ──────────────────────────────────────────────────
@@ -267,15 +381,146 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: &mut 
             p.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mats.get(slot)), Transform::default()));
         }
     });
+
+    // Hand the material set to the economy tick so it can raise buildings at runtime.
+    commands.insert_resource(mats);
 }
 
-// ── Plugin (no systems yet — economy/garrison/save land in later steps) ──────────────
+// ── Autonomous economy ───────────────────────────────────────────────────────────────
+//
+// The rival funds itself purely from **taxes** (no producer/worker simulation — that's the
+// player's depth). Its population pays a per-capita tithe every second; the rate is deliberately
+// HIGHER than the player's so the AI, which has no hero out earning gold from kills/chests, can
+// still afford to expand at a comparable pace. When it has banked the next building's cost (and a
+// minimum interval has passed so growth reads as paced, not instant), it raises the next building
+// in [`BUILD_ORDER`] on the next free plot — dwellings lift its population, which lifts its income,
+// so it snowballs steadily like a Stronghold AI lord.
+
+/// Headcount a fresh rival keep starts with (the garrison + the lord's household).
+const RIVAL_BASE_POP: u32 = 4;
+/// Each dwelling the rival raises shelters this many more taxpayers.
+const RIVAL_POP_PER_HOUSE: u32 = 2;
+/// Gold per second per head of population. Higher than the player's tithe — the AI has no hero
+/// income, so taxes are its whole economy.
+const RIVAL_TAX_PER_CAPITA: f64 = 0.85;
+/// First building's cost; each subsequent one costs [`RIVAL_BUILD_COST_STEP`] more.
+const RIVAL_BUILD_BASE_COST: f64 = 55.0;
+const RIVAL_BUILD_COST_STEP: f64 = 22.0;
+/// Minimum real seconds between two builds, so even a flush treasury expands at a watchable pace.
+const RIVAL_BUILD_MIN_INTERVAL: f32 = 11.0;
+
+/// The rival lord's run-state: treasury, population, and how many buildings it has raised. Reset on
+/// New Game and (in a later step) round-tripped through the save.
+#[derive(Resource)]
+pub struct RivalState {
+    pub gold: f64,
+    pub population: u32,
+    /// Buildings raised so far == the next free plot index.
+    pub built: usize,
+    /// Seconds since the last build (paces growth).
+    since_build: f32,
+}
+
+impl Default for RivalState {
+    fn default() -> Self {
+        Self { gold: 0.0, population: RIVAL_BASE_POP, built: 0, since_build: RIVAL_BUILD_MIN_INTERVAL }
+    }
+}
+
+impl RivalState {
+    /// Cost to raise the next building.
+    fn next_cost(&self) -> f64 {
+        RIVAL_BUILD_BASE_COST + self.built as f64 * RIVAL_BUILD_COST_STEP
+    }
+}
+
+/// Tax accrual + paced building. Gated on `Modal::None` (frozen with the rest of the sim while a
+/// panel is open / paused), like every other simulation system.
+fn rival_economy(
+    time: Res<Time>,
+    mut state: ResMut<RivalState>,
+    mats: Option<Res<RivalMats>>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    let dt = time.delta_secs();
+    // Collect taxes.
+    state.gold += dt as f64 * state.population as f64 * RIVAL_TAX_PER_CAPITA;
+    state.since_build += dt;
+    // Try to raise the next building.
+    if state.built >= PLOT_OFFSETS.len() {
+        return; // bailey full
+    }
+    let Some(mats) = mats else { return };
+    if state.since_build < RIVAL_BUILD_MIN_INTERVAL || state.gold < state.next_cost() {
+        return;
+    }
+    let idx = state.built;
+    let kind = BUILD_ORDER[idx % BUILD_ORDER.len()];
+    spawn_building(&mut commands, &mut meshes, &mats, idx, kind);
+    state.gold -= state.next_cost();
+    state.built += 1;
+    state.since_build = 0.0;
+    if kind.is_house() {
+        state.population += RIVAL_POP_PER_HOUSE;
+    }
+}
+
+/// New run: wipe the rival's treasury/population and reap every building its economy raised (the
+/// static fort — keep/walls/towers — is world geometry and stays). Mirrors `town::reset_town`.
+fn reset_rival(
+    mut state: ResMut<RivalState>,
+    mut commands: Commands,
+    buildings: Query<Entity, With<RivalBuilding>>,
+) {
+    *state = RivalState::default();
+    for e in &buildings {
+        commands.entity(e).try_despawn();
+    }
+}
+
+/// Screenshot staging (`FOREST_RIVAL=<n>`): instantly raise `n` rival buildings (default: fill the
+/// bailey) so a shot can frame a grown rival town without waiting out the economy. No-op otherwise.
+fn stage_rival_for_shot(
+    app: Res<State<crate::game_state::AppState>>,
+    mats: Option<Res<RivalMats>>,
+    mut state: ResMut<RivalState>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut done: Local<bool>,
+) {
+    if *done || *app.get() != crate::game_state::AppState::Playing {
+        return;
+    }
+    let Ok(val) = std::env::var("FOREST_RIVAL") else { *done = true; return };
+    let Some(mats) = mats else { return }; // wait for the fort (and its mats) to exist
+    *done = true;
+    let n = val.parse::<usize>().unwrap_or(PLOT_OFFSETS.len()).min(PLOT_OFFSETS.len());
+    for idx in state.built..n {
+        let kind = BUILD_ORDER[idx % BUILD_ORDER.len()];
+        spawn_building(&mut commands, &mut meshes, &mats, idx, kind);
+        if kind.is_house() {
+            state.population += RIVAL_POP_PER_HOUSE;
+        }
+    }
+    state.built = state.built.max(n);
+}
+
+// ── Plugin ─────────────────────────────────────────────────────────────────────────
 
 pub struct RivalPlugin;
 
 impl Plugin for RivalPlugin {
-    fn build(&self, _app: &mut App) {
-        // Step 1 is pure world geometry (built from `worldmap::build_step`). Systems for the
-        // autonomous economy, the skirmishing garrison and save/load are added here in later steps.
+    fn build(&self, app: &mut App) {
+        app.init_resource::<RivalState>()
+            // Fresh run wipes the rival's economy + reaps its raised buildings (the static fort,
+            // built from `worldmap::build_step`, persists).
+            .add_systems(OnExit(crate::game_state::AppState::StartScreen), reset_rival)
+            .add_systems(OnExit(crate::game_state::AppState::GameOver), reset_rival)
+            // Tax + paced building (frozen with the sim under any panel / pause).
+            .add_systems(Update, rival_economy.run_if(in_state(crate::game_state::Modal::None)))
+            // Screenshot staging (ungated; env-gated inside).
+            .add_systems(Update, stage_rival_for_shot);
+        // The skirmishing garrison and save/load land in later steps.
     }
 }
