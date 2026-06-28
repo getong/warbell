@@ -31,7 +31,7 @@ impl Plugin for MainMenuPlugin {
         app.init_resource::<CreditsOpen>()
             .add_systems(
                 OnEnter(AppState::StartScreen),
-                (enter_menu_sky, spawn_menu_particles),
+                (enter_menu_sky, spawn_menu_backdrop),
             )
             .add_systems(
                 OnExit(AppState::StartScreen),
@@ -39,7 +39,7 @@ impl Plugin for MainMenuPlugin {
             )
             .add_systems(
                 Update,
-                (menu_orbit, menu_drift).run_if(in_state(AppState::StartScreen)),
+                menu_park_camera.run_if(in_state(AppState::StartScreen)),
             )
             // Credits overlay is reconciled ungated so its open/close survives state edges.
             .add_systems(Update, (sync_credits_overlay, credits_input));
@@ -66,182 +66,46 @@ fn exit_menu_sky(mut clock: ResMut<SkyClock>) {
     clock.paused = false;
 }
 
-// ── Menu camera (a slow drift over the forest) ──────────────────────────────────────────────
+// ── Menu camera (parked at the sky, behind the static backdrop) ──────────────────────────────
 
-/// World XZ of the forest biome region. The menu frames *this*, not the whole island — a tight,
-/// tree-filled dusk shot reads far better than a map-like overview. DERIVED from the forest blob's
-/// base-grid centre (`worldmap::REGIONS` forest = base (32, 80)) via `world = base·MAP_SCALE − G`, so
-/// it tracks the real forest at any `MAP_SCALE` — the hardcoded `(-60, 39)` was tuned at an old scale
-/// and the 2.0 enlargement slid the forest out from under the menu camera.
-const SCENE_CENTER: Vec3 = Vec3::new(
-    32.0 * crate::worldmap::MAP_SCALE - crate::worldmap::GX,
-    0.0,
-    80.0 * crate::worldmap::MAP_SCALE - crate::worldmap::GZ,
-);
-
-// A fixed, standing-height shot looking into the forest — no drift, no orbit. The X/Z is an offset
-// from SCENE_CENTER; the Y is added ON TOP of the local terrain height (the camera is ground-snapped
-// each frame, see `menu_orbit`) — the map enlargement (MAP_SCALE 2.0) raised the forest terrace
-// under the old fixed y=2.2 eye, burying the camera and blacking the scene.
-const CAM_OFFSET: Vec3 = Vec3::new(26.0, 4.5, 20.0); // x/z from SCENE_CENTER; y = eye above local ground
-const CAM_LOOK_Y: f32 = 4.0; // look this far above the forest floor (into the canopy)
-
-/// Hold the camera at a static, terrain-relative pose over the forest. Ground-snaps both the eye and
-/// the look target to the live terrain so it frames trees (not dirt or void) at any `MAP_SCALE`.
-/// Overwrites the transform every frame so nothing nudges it; only runs on `StartScreen`, where no
-/// other system drives the camera.
-fn menu_orbit(mut cam: Query<&mut Transform, With<Camera3d>>) {
+/// Park the camera tilted UP at the empty dusk sky while the menu is up. The menu now draws a
+/// pre-rendered [`spawn_menu_backdrop`] image over the whole screen, so the live 3D scene is never
+/// seen — pointing the camera at bare sky frustum-culls the forest (and its shadow/SSAO/outline
+/// work over geometry), which is the one GPU win we can take SAFELY. We deliberately do NOT cut the
+/// post-FX stack per-screen: `quality::apply_quality` re-inserts the bloom/DoF/SSAO passes on any
+/// settings change, and toggling them at runtime is a documented wgpu-validation crash (the
+/// `debug_qswitch` crash-repro). The pose is fixed (no per-frame terrain snap); overwritten every
+/// frame so nothing nudges it. Only runs on `StartScreen`, where no other system drives the camera.
+fn menu_park_camera(mut cam: Query<&mut Transform, With<Camera3d>>) {
     let Some(mut tf) = cam.iter_mut().next() else { return };
-    let cam_xz = SCENE_CENTER + Vec3::new(CAM_OFFSET.x, 0.0, CAM_OFFSET.z);
-    let ground = |x: f32, z: f32| crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
-    let pos = Vec3::new(cam_xz.x, ground(cam_xz.x, cam_xz.z) + CAM_OFFSET.y, cam_xz.z);
-    let look = Vec3::new(SCENE_CENTER.x, ground(SCENE_CENTER.x, SCENE_CENTER.z) + CAM_LOOK_Y, SCENE_CENTER.z);
-    *tf = Transform::from_translation(pos).looking_at(look, Vec3::Y);
+    // Eye up high, looking up-and-out at the horizon sky — almost no geometry in frustum.
+    *tf = Transform::from_xyz(0.0, 30.0, 0.0)
+        .looking_to(Vec3::new(0.0, 0.5, -1.0).normalize(), Vec3::Y);
 }
 
-// ── Embers + fireflies ──────────────────────────────────────────────────────────────────────
+// ── Static backdrop ──────────────────────────────────────────────────────────────────────────
 
-/// Everything spawned for the menu scene (motes) — despawned wholesale on exit.
+/// Everything spawned for the menu scene — despawned wholesale on exit.
 #[derive(Component)]
 struct MenuSceneEntity;
 
-/// A drifting menu mote. Embers rise + recycle; fireflies (`twinkle`) bob laterally and pulse.
-#[derive(Component)]
-struct MenuMote {
-    vel: Vec3,
-    phase: f32,
-    sway: f32,
-    y_min: f32,
-    y_max: f32,
-    base_scale: f32,
-    twinkle: bool,
-}
-
-/// Half-extent of the mote box around [`SCENE_CENTER`] — sized to keep the field in the forest
-/// camera's frame.
-const BOX_R: f32 = 26.0;
-
-/// Tiny deterministic hash → [0,1) for per-instance variation (no RNG dependency).
-fn h(n: u32) -> f32 {
-    let mut t = n.wrapping_mul(0x6d2b_79f5).wrapping_add(0x9e37_79b9);
-    t = (t ^ (t >> 15)).wrapping_mul(t | 1);
-    t ^= t.wrapping_add((t ^ (t >> 7)).wrapping_mul(t | 61));
-    ((t ^ (t >> 14)) as f32) / 4_294_967_296.0
-}
-
-fn spawn_menu_particles(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    // Warm embers — orange, gently glowing, rising and recycling.
-    let ember_col = Color::srgb(1.0, 0.5, 0.18);
-    let ember_mesh = meshes.add(Sphere::new(0.075).mesh().ico(1).unwrap());
-    let ember_mat = materials.add(StandardMaterial {
-        base_color: ember_col.with_alpha(0.9),
-        emissive: LinearRgba::from(ember_col) * 3.2,
-        unlit: true,
-        alpha_mode: AlphaMode::Blend,
-        cull_mode: None,
-        ..default()
-    });
-    // Fireflies — warm yellow-green, glowing (bloom), bobbing + twinkling.
-    let fly_col = Color::srgb(0.92, 1.0, 0.5);
-    let fly_mesh = meshes.add(Sphere::new(0.1).mesh().ico(1).unwrap());
-    let fly_mat = materials.add(StandardMaterial {
-        base_color: fly_col.with_alpha(1.0),
-        emissive: LinearRgba::from(fly_col) * 5.5,
-        unlit: true,
-        alpha_mode: AlphaMode::Blend,
-        cull_mode: None,
-        ..default()
-    });
-
-    const EMBER_N: u32 = 150;
-    for i in 0..EMBER_N {
-        let x = SCENE_CENTER.x + (h(i) * 2.0 - 1.0) * BOX_R;
-        let z = SCENE_CENTER.z + (h(i + 7777) * 2.0 - 1.0) * BOX_R;
-        let y = h(i + 1234) * 22.0;
-        let scale = 0.6 + h(i + 5) * 0.7;
-        let vel = Vec3::new(
-            (h(i + 11) - 0.5) * 0.5,
-            0.7 + h(i + 22) * 0.8, // rise
-            (h(i + 33) - 0.5) * 0.5,
-        );
-        commands.spawn((
-            Mesh3d(ember_mesh.clone()),
-            MeshMaterial3d(ember_mat.clone()),
-            Transform::from_xyz(x, y, z).with_scale(Vec3::splat(scale)),
-            MenuMote {
-                vel,
-                phase: h(i + 99) * std::f32::consts::TAU,
-                sway: 0.6,
-                y_min: 0.0,
-                y_max: 22.0,
-                base_scale: scale,
-                twinkle: false,
-            },
-            bevy::light::NotShadowCaster,
-            MenuSceneEntity,
-        ));
-    }
-
-    const FLY_N: u32 = 32;
-    for i in 0..FLY_N {
-        let x = SCENE_CENTER.x + (h(i + 311) * 2.0 - 1.0) * BOX_R;
-        let z = SCENE_CENTER.z + (h(i + 911) * 2.0 - 1.0) * BOX_R;
-        let y = 1.5 + h(i + 555) * 5.5;
-        let scale = 0.7 + h(i + 71) * 0.6;
-        let vel = Vec3::new((h(i + 17) - 0.5) * 0.6, 0.0, (h(i + 29) - 0.5) * 0.6);
-        commands.spawn((
-            Mesh3d(fly_mesh.clone()),
-            MeshMaterial3d(fly_mat.clone()),
-            Transform::from_xyz(x, y, z).with_scale(Vec3::splat(scale)),
-            MenuMote {
-                vel,
-                phase: h(i + 99) * std::f32::consts::TAU,
-                sway: 0.9,
-                y_min: 1.2,
-                y_max: 7.5,
-                base_scale: scale,
-                twinkle: true,
-            },
-            bevy::light::NotShadowCaster,
-            MenuSceneEntity,
-        ));
-    }
-}
-
-/// Drift + sway + wrap every menu mote within the box around the keep; twinkle the fireflies.
-fn menu_drift(time: Res<Time>, mut q: Query<(&MenuMote, &mut Transform), With<MenuSceneEntity>>) {
-    let dt = time.delta_secs();
-    let t = time.elapsed_secs_wrapped();
-    for (m, mut tf) in &mut q {
-        tf.translation += m.vel * dt;
-        tf.translation.x += (t + m.phase).sin() * m.sway * dt;
-        tf.translation.z += (t * 0.8 + m.phase).cos() * m.sway * dt;
-        // Vertical recycle within the mote's band.
-        if tf.translation.y > m.y_max {
-            tf.translation.y = m.y_min;
-        } else if tf.translation.y < m.y_min {
-            tf.translation.y = m.y_max;
-        }
-        // Horizontal wrap within the box (keeps the field centred on the forest forever).
-        if tf.translation.x > SCENE_CENTER.x + BOX_R {
-            tf.translation.x -= 2.0 * BOX_R;
-        } else if tf.translation.x < SCENE_CENTER.x - BOX_R {
-            tf.translation.x += 2.0 * BOX_R;
-        }
-        if tf.translation.z > SCENE_CENTER.z + BOX_R {
-            tf.translation.z -= 2.0 * BOX_R;
-        } else if tf.translation.z < SCENE_CENTER.z - BOX_R {
-            tf.translation.z += 2.0 * BOX_R;
-        }
-        if m.twinkle {
-            let pulse = 0.6 + 0.4 * ((t * 3.0 + m.phase).sin() * 0.5 + 0.5);
-            tf.scale = Vec3::splat(m.base_scale * pulse);
-        }
-    }
+/// The pre-rendered menu backdrop (dusk forest, baked fireflies + DoF). It covers the whole screen
+/// as a UI image, so the live 3D world is never seen on the menu — that's what lets
+/// [`menu_park_camera`] aim at bare sky and skip drawing the forest. `GlobalZIndex(-100)` keeps it
+/// BEHIND the start-screen title/buttons (`game_state.rs`, default z) but in front of the 3D pass
+/// (all UI draws over 3D). Tagged [`MenuSceneEntity`] so `despawn_menu_scene` clears it on exit.
+fn spawn_menu_backdrop(mut commands: Commands, asset_server: Res<AssetServer>) {
+    commands.spawn((
+        ImageNode::new(asset_server.load("ui/menu_backdrop.png")),
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            ..default()
+        },
+        GlobalZIndex(-100),
+        MenuSceneEntity,
+    ));
 }
 
 fn despawn_menu_scene(mut commands: Commands, q: Query<Entity, With<MenuSceneEntity>>) {

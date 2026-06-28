@@ -35,8 +35,11 @@ pub const RIVAL_CENTRE: Vec2 =
 
 /// Radius of the rival fort's forced-flat desert plateau (world units) — its own "safe-zone": the
 /// curtain walls span ±[`WALL_HALF`], this clears a generous flat apron beyond them for the rival's
-/// buildings + the skirmish ground, so the fort never straddles a dune terrace lip.
-pub const RIVAL_FLAT_R: f32 = 20.0;
+/// buildings + the skirmish ground, so the fort never straddles a dune terrace lip. `classify` checks
+/// this BEFORE `is_river`, so widening it also keeps the desert river channel out of the fort's
+/// grounds — enlarged so the producer buildings + worker gather-sites that now sit OUTSIDE the walls
+/// (up to ~radius 28) still land on level desert.
+pub const RIVAL_FLAT_R: f32 = 30.0;
 
 /// **LOD radius.** Beyond this distance from the fort the per-frame rival sim (worker/soldier AI,
 /// garrison upkeep) is FROZEN to save CPU + frames — out here the NPCs are off-screen or distant
@@ -66,8 +69,9 @@ const WALL_HALF: f32 = 12.0;
 /// the silhouette. (Was 2.8 — read as a giant blank wall.)
 const WALL_H: f32 = 1.5;
 const WALL_T: f32 = 0.7;
-/// Half-width of the south gate gap.
-const GATE_HALF: f32 = 2.4;
+/// Half-width of the south gate gap. Wide + left standing open (the leaves swing back against the
+/// jambs in [`wall_parts`]) so the player can see straight into the bailey.
+const GATE_HALF: f32 = 3.5;
 
 /// Tags every part of the rival stronghold — one despawn target for a future rebuild/teardown, and
 /// (later) what the destructibility pass will reap. Also `BiomeEntity` so a single-biome viewer swap
@@ -259,13 +263,15 @@ fn wall_parts() -> Vec<(Mesh, RM)> {
     wall_run(&mut rest, -h, -h, -h, h); // west
     wall_run(&mut rest, -h, h, -GATE_HALF, h); // south-west of gate
     wall_run(&mut rest, GATE_HALF, h, h, h); // south-east of gate
-    // Gate: two timber leaves with iron banding under a sandstone lintel.
-    rest.push((bx(GATE_HALF * 2.0 + 0.6, 0.6, WALL_T + 0.3, 0.0, WALL_H + 0.1, h), RM::Sand)); // lintel
+    // Gate: a wide opening under a sandstone lintel, the two timber leaves swung OPEN against the
+    // jambs (narrow panels at the gate edges) so the centre stays clear — the player sees into the
+    // bailey instead of a shut door.
+    rest.push((bx(GATE_HALF * 2.0 + 0.8, 0.6, WALL_T + 0.3, 0.0, WALL_H + 0.1, h), RM::Sand)); // lintel
+    let leaf_w = 0.55;
     for sx in [-1.0_f32, 1.0] {
-        rest.push((bx(GATE_HALF - 0.1, WALL_H - 0.2, 0.3, sx * (GATE_HALF / 2.0), (WALL_H - 0.2) / 2.0, h), RM::Timber));
-    }
-    for sx in [-1.0_f32, 1.0] {
-        rest.push((bx(GATE_HALF * 2.0 - 0.2, 0.18, 0.36, 0.0, 0.6 + sx * 0.7 + 0.7, h), RM::Iron)); // bands
+        let lx = sx * (GATE_HALF - leaf_w * 0.5 - 0.05); // flush to the jamb, center open
+        rest.push((bx(leaf_w, WALL_H - 0.2, 0.5, lx, (WALL_H - 0.2) / 2.0, h), RM::Timber)); // open leaf
+        rest.push((bx(leaf_w - 0.08, 0.16, 0.56, lx, 0.6, h), RM::Iron)); // iron band on the leaf
     }
     // Corner towers.
     for (sx, sz) in [(-1.0_f32, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
@@ -276,20 +282,33 @@ fn wall_parts() -> Vec<(Mesh, RM)> {
 
 // ── Economy buildings (raised on plots by the rival's autonomous economy) ─────────────
 
-/// Bailey plot offsets (local XZ from [`RIVAL_CENTRE`]) the rival raises buildings on, in build
-/// order. Kept clear of the central keep (±~4) and the south gate lane.
-const PLOT_OFFSETS: [Vec2; 10] = [
+/// Building plot offsets (local XZ from [`RIVAL_CENTRE`]), paired by index with [`BUILD_ORDER`].
+/// HOUSES sit INSIDE the curtain ring (|x|,|z| < [`WALL_HALF`]=12, clear of the keep ±~4); PRODUCERS
+/// sit OUTSIDE the south wall (z > 12, in the enlarged flat apron) — a settlement that spills past
+/// its walls like the player's own town, with the workshops/fields out by the resources. The gate
+/// faces +Z, so the outside cluster is in front of it where the player approaches and can see it.
+const PLOT_OFFSETS: [Vec2; 12] = [
+    // Inside the walls — dwellings + the lord's household.
     Vec2::new(-8.0, -6.5),
     Vec2::new(8.0, -6.5),
     Vec2::new(-8.5, 0.5),
     Vec2::new(8.5, 0.5),
-    Vec2::new(-8.0, 7.0),
-    Vec2::new(8.0, 7.0),
-    Vec2::new(-4.5, -9.0),
-    Vec2::new(4.5, -9.0),
-    Vec2::new(-4.5, 9.0),
-    Vec2::new(4.5, 9.0),
+    Vec2::new(0.0, -8.5),
+    // Outside the walls — producers spread across the southern apron (gate side).
+    Vec2::new(-19.0, 15.0),
+    Vec2::new(9.0, 21.0),
+    Vec2::new(19.0, 15.0),
+    Vec2::new(-9.0, 21.0),
+    Vec2::new(-22.0, 6.0),
+    Vec2::new(22.0, 6.0),
+    Vec2::new(0.0, 23.0),
 ];
+
+/// True if plot `idx` sits OUTSIDE the curtain wall (a producer in the open apron) rather than inside
+/// the bailey. Drives the worker gather-loop (outside workers walk out to a resource site and back).
+fn plot_is_outside(idx: usize) -> bool {
+    PLOT_OFFSETS.get(idx).is_some_and(|o| o.x.abs() >= WALL_HALF || o.y.abs() >= WALL_HALF)
+}
 
 /// The kind of building the rival raises. A `House` is a sandstone desert dwelling (lifts the
 /// rival's population → more tax income, keeping its bailey cohesive with the sandstone keep/walls);
@@ -331,17 +350,20 @@ impl RivalKind {
 
 /// The fixed order the rival builds in — houses (population/income) interleaved with the three
 /// producers so its settlement grows steadily, Stronghold-style. 10 plots.
-const BUILD_ORDER: [RivalKind; 10] = [
+const BUILD_ORDER: [RivalKind; 12] = [
+    // Index-paired with PLOT_OFFSETS: the 5 inside plots are houses, the 7 outside plots producers.
+    RivalKind::House,
+    RivalKind::House,
+    RivalKind::House,
+    RivalKind::House,
     RivalKind::House,
     RivalKind::Farm,
-    RivalKind::House,
     RivalKind::Lumber,
-    RivalKind::Farm,
     RivalKind::Mine,
-    RivalKind::House,
     RivalKind::Farm,
     RivalKind::Lumber,
     RivalKind::Mine,
+    RivalKind::Farm,
 ];
 
 /// Tags a building the rival economy raised on plot `idx` (so later steps can damage/topple it).
@@ -355,10 +377,15 @@ pub struct RivalBuilding {
 /// [`rival_workers`], excluded from the town's ambient wander brain.
 #[derive(Component)]
 pub struct RivalWorker {
+    /// The building's yard — where the worker deposits / idles between trips.
     home: Vec2,
+    /// The outside resource spot (a "lasek"/"kamieniołom"/field) the worker walks OUT to and gathers
+    /// at, further from the fort than `home`. For an inside producer this equals `home` (no trip).
+    site: Vec2,
+    /// Current destination this trip (toggles between `home` and `site`).
     patrol: Vec2,
     patrol_t: f32,
-    /// Cooldown until the next work swing (hoe/chop/pick) while standing at post.
+    /// Cooldown until the next work swing (hoe/chop/pick) while standing at the site.
     work_cd: f32,
     rng: u32,
 }
@@ -418,10 +445,31 @@ fn spawn_building(
     // A producer is manned by one desert worker, spawned in the working yard (+X side) clear of the
     // building's collision box (half-extent ≤1.5) so it doesn't start stuck inside the wall.
     if let Some(trade) = kind.worker_trade() {
-        let home = Vec2::new(wx + 2.3, wz);
+        // `home` (idle/deposit) AND `site` (gather) both sit on the SAME outward radial from the fort
+        // centre, OUTSIDE the building. The old `home = (wx+2.3, wz)` was a fixed +X offset while
+        // `site = home + out*reach` reached along the radial — for plots not due-east of the centre
+        // those directions fought, dropping `site` back onto the building's own collision box, so the
+        // worker jammed against the wall and never reached its work spot (it stood there idle). Keeping
+        // both on the radial clears the box (half-extent ≤1.5) at every plot, so the worker actually
+        // walks out to chop/mine/hoe and back.
+        let bpos = Vec2::new(wx, wz);
+        let out = {
+            let o = (bpos - RIVAL_CENTRE).normalize_or_zero();
+            if o == Vec2::ZERO { Vec2::X } else { o }
+        };
+        let home = bpos + out * 2.6; // deposit/idle spot just clear of the building box
+        let reach = if plot_is_outside(idx) {
+            match kind {
+                RivalKind::Lumber | RivalKind::Mine => 5.0,
+                _ => 2.5, // farm field, just past the building
+            }
+        } else {
+            0.0
+        };
+        let site = home + out * reach;
         let wseed = 0x9a17_0000u32.wrapping_add((idx as u32).wrapping_mul(2654435761)) | 1;
         let e = crate::villagers::spawn_rival_worker(commands, meshes, creature_mats, trade, home, home, wseed);
-        commands.entity(e).insert(RivalWorker { home, patrol: home, patrol_t: 0.0, work_cd: 0.0, rng: wseed });
+        commands.entity(e).insert(RivalWorker { home, site, patrol: site, patrol_t: 0.0, work_cd: 0.0, rng: wseed });
     }
 }
 
@@ -434,8 +482,10 @@ pub struct RivalWalls;
 /// How many buildings the rival raises before it can afford to wall its bailey. Below this it stands
 /// open like the player's day-1 castle; at/after it, the economy puts up the full curtain + towers.
 /// Derived purely from `RivalState.built`, so it round-trips the save for free (no new `SaveData`
-/// field) and resets with the economy. At ~75 s/build that's a good ~5+ minutes in, not 2.
-const WALL_AT: usize = 4;
+/// field) and resets with the economy. At ~75 s/build (+ a rising cost) that's a good ~10+ minutes
+/// in — the rival stays an OPEN settlement (houses + producers spilling outside) for most of a
+/// campaign, then walls its bailey late.
+const WALL_AT: usize = 8;
 
 // ── Build (a worldmap build phase) ──────────────────────────────────────────────────
 
@@ -578,6 +628,12 @@ const RIVAL_BUILD_MIN_INTERVAL: f32 = 75.0;
 
 /// The rival lord's run-state: treasury, population, and how many buildings it has raised. Reset on
 /// New Game and (in a later step) round-tripped through the save.
+/// Hit points of the rival keep — razed by the hero's blows (see [`rival_fort_damage`]). At 0 the
+/// whole fort topples, the daily raids stop, and a bounty drops. `keep_hp` is transient (resets to
+/// full on load — the *objective* `destroyed` is what round-trips); a war party makes short work of
+/// it, a lone hero must commit.
+const RIVAL_KEEP_HP: f32 = 1400.0;
+
 #[derive(Resource)]
 pub struct RivalState {
     pub gold: f64,
@@ -586,11 +642,23 @@ pub struct RivalState {
     pub built: usize,
     /// Seconds since the last build (paces growth).
     since_build: f32,
+    /// Remaining keep HP (transient — not saved; full on a fresh load unless `destroyed`).
+    keep_hp: f32,
+    /// The fort has been razed by the player: no more buildings/garrison/raids, fort meshes toppled.
+    /// Round-trips the save so a destroyed fort stays destroyed.
+    pub destroyed: bool,
 }
 
 impl Default for RivalState {
     fn default() -> Self {
-        Self { gold: 0.0, population: RIVAL_BASE_POP, built: 0, since_build: RIVAL_BUILD_MIN_INTERVAL }
+        Self {
+            gold: 0.0,
+            population: RIVAL_BASE_POP,
+            built: 0,
+            since_build: RIVAL_BUILD_MIN_INTERVAL,
+            keep_hp: RIVAL_KEEP_HP,
+            destroyed: false,
+        }
     }
 }
 
@@ -613,6 +681,9 @@ fn rival_economy(
     mut meshes: ResMut<Assets<Mesh>>,
     mut creature_mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
 ) {
+    if state.destroyed {
+        return; // razed — the lord is gone, no more tax or building
+    }
     let dt = time.delta_secs();
     // Collect taxes.
     state.gold += dt as f64 * state.population as f64 * RIVAL_TAX_PER_CAPITA;
@@ -673,6 +744,9 @@ fn restore_rival(
     // are transient (not saved), so a Continue starts clean and `spawn_building`/`rival_garrison`
     // re-raise them. Matches the New-Game `reset_rival` sweep.
     stale: Query<Entity, Or<(With<RivalBuilding>, With<RivalSoldier>, With<RivalWorker>, With<RivalWalls>)>>,
+    // The keep is normally permanent (built once in `worldmap::build`), so it's reaped ONLY when the
+    // save says the fort was razed — never on an ordinary Continue.
+    keep: Query<Entity, With<RivalKeep>>,
 ) {
     let Some(crate::savegame::GameLoaded(data)) = ev.read().last() else { return };
     state.gold = data.rival_gold;
@@ -682,6 +756,22 @@ fn restore_rival(
     state.population = data.rival_population.max(RIVAL_BASE_POP);
     state.built = data.rival_built.min(PLOT_OFFSETS.len());
     state.since_build = RIVAL_BUILD_MIN_INTERVAL;
+    state.destroyed = data.rival_destroyed;
+    state.keep_hp = RIVAL_KEEP_HP; // transient — full again on load unless razed
+    // Razed save: reap the whole fort (the boot rebuild raised it; tear it down) + clear ALL its
+    // collision, and skip the normal rebuild below.
+    if data.rival_destroyed {
+        for e in &stale {
+            commands.entity(e).try_despawn();
+        }
+        for e in &keep {
+            commands.entity(e).try_despawn();
+        }
+        clear_building_blockers();
+        clear_wall_blockers(RIVAL_CENTRE);
+        crate::blockers::remove_box_near(RIVAL_CENTRE.x, RIVAL_CENTRE.y, 0.3);
+        return;
+    }
     for e in &stale {
         commands.entity(e).try_despawn();
     }
@@ -793,12 +883,12 @@ fn rival_garrison(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut creature_mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
-    soldiers: Query<(), (With<RivalSoldier>, Without<crate::dying::Dying>)>,
+    soldiers: Query<(), (With<RivalSoldier>, Without<RivalRaider>, Without<crate::dying::Dying>)>,
     mut timer: Local<f32>,
     mut seed: Local<u32>,
 ) {
-    if mats.is_none() {
-        return; // no fort here → no garrison
+    if mats.is_none() || state.destroyed {
+        return; // no fort here (or it's been razed) → no garrison
     }
     // LOD / lazy-spawn: don't field (or top up) the garrison until the hero is near the fort. Far
     // away the soldiers would just be unseen bodies burning CPU on their patrol brain.
@@ -839,7 +929,7 @@ fn rival_combat(
     hero: Res<crate::player::HeroState>,
     mut pending: ResMut<crate::player::PendingHeroDamage>,
     mut npc_dmg: ResMut<crate::villagers::NpcDamage>,
-    mut soldiers: Query<(Entity, &mut RivalSoldier, &mut crate::villagers::Villager, &mut Transform), Without<crate::dying::Dying>>,
+    mut soldiers: Query<(Entity, &mut RivalSoldier, &mut crate::villagers::Villager, &mut Transform), (Without<crate::dying::Dying>, Without<RivalRaider>)>,
     townsfolk: Query<(Entity, &Transform), (With<crate::villagers::Townsfolk>, Without<crate::dying::Dying>, Without<RivalSoldier>)>,
 ) {
     // LOD: with the hero far, nothing can reach a soldier (sight/leash ≤26) and they're off-screen —
@@ -935,22 +1025,31 @@ fn rival_workers(
     for (mut w, mut v, mut tf) in &mut workers {
         w.patrol_t -= dt;
         let vpos = v.pos;
-        // Pick a new work spot only every so often (a long dwell), and tight to the yard — so they
-        // mostly STAND and work rather than pace.
-        if w.patrol_t <= 0.0 {
-            let a = next_f(&mut w.rng) * std::f32::consts::TAU;
-            let rad = next_f(&mut w.rng) * 1.4;
-            w.patrol = w.home + Vec2::new(a.cos() * rad, a.sin() * rad);
-            w.patrol_t = 7.0 + next_f(&mut w.rng) * 8.0;
-        }
         let cur_y = crate::steer::footing(vpos.x, vpos.y).unwrap_or(tf.translation.y);
+        let at_site = w.patrol.distance(w.site) < 0.05; // current destination IS the work site
         if vpos.distance(w.patrol) < 0.4 {
-            // At the spot → work: hold still and swing the tool on a short cooldown.
+            // Arrived. At the site, work (swing the tool); at home, just deposit/idle. After a dwell,
+            // walk back the other way — an out-to-gather, back-to-deposit loop past the open gate.
             v.moving = false;
-            w.work_cd -= dt;
-            if w.work_cd <= 0.0 {
-                w.work_cd = 1.2 + next_f(&mut w.rng) * 1.0;
-                v.atk_anim = now; // fire a hoe/chop/pick swing (read by villager_drive)
+            // Work at the site. INSIDE-bailey producers have no outside field (`site == home`, see
+            // `spawn_building`'s reach=0), so they'd otherwise stand idle forever — let them work in
+            // place at the building instead of only when site differs from home.
+            if at_site {
+                w.work_cd -= dt;
+                if w.work_cd <= 0.0 {
+                    w.work_cd = 1.2 + next_f(&mut w.rng) * 1.0;
+                    v.atk_anim = now; // fire a hoe/chop/pick swing (read by villager_drive)
+                }
+            }
+            if w.patrol_t <= 0.0 {
+                // Toggle destination. Linger longer at the site (working) than at home (depositing).
+                if at_site {
+                    w.patrol = w.home;
+                    w.patrol_t = 2.5 + next_f(&mut w.rng) * 2.0;
+                } else {
+                    w.patrol = w.site;
+                    w.patrol_t = 6.0 + next_f(&mut w.rng) * 4.0;
+                }
             }
         } else {
             let sp = v.speed * 0.5 * dt;
@@ -975,6 +1074,281 @@ fn step_toward(v: &mut crate::villagers::Villager, target: Vec2, step: f32, cur_
     }
 }
 
+// ── Daily raids (the rival marches on the player's castle) ───────────────────────────
+//
+// From day 2, each dawn the rival musters a SMALL, soft army (easy to wipe) that marches from the
+// fort to the player's keep, trading blows with any guard/hero on the way and chipping the keep.
+// They carry `RivalSoldier` (so the hero + town guards already target/kill them) PLUS `RivalRaider`
+// (which swaps the leashed garrison brain for a march-on-the-keep one). At nightfall survivors
+// retreat, so each raid lives one day. The chip is modest — pressure, not a death sentence (the
+// keep-0 defeat stays night-gated in `siege.rs`).
+
+const RAIDER_HP: f32 = 70.0;
+const RAIDER_HERO_DMG: f32 = 8.0;
+const RAIDER_NPC_DMG: f32 = 9.0;
+/// Per-strike keep chip. Modest: a full party (~5) just out-paces the prep-time repair, so an
+/// ignored raid softens you for the night without razing the keep by itself.
+const RAIDER_KEEP_DMG: f32 = 3.5;
+const RAIDER_ATK_CD: f32 = 1.2;
+const RAIDER_MELEE: f32 = 1.8;
+const RAIDER_SIGHT: f32 = 11.0;
+const RAIDER_KEEP_RANGE: f32 = 5.0;
+const RAIDER_SPEED: f32 = 2.6;
+const RAIDER_TURN: f32 = 3.0;
+/// Largest raid party (grows with the day, capped here). Kept small — these are a daily nuisance.
+const RAID_MAX: usize = 5;
+
+/// A rival raider: a `RivalSoldier`-bodied attacker with its own march-on-the-keep brain.
+#[derive(Component)]
+pub struct RivalRaider {
+    atk_cd: f32,
+}
+
+/// Once per day from day 2 (the dawn edge Wave→Prep, `wave_index >= 0`), muster a raid party at the
+/// gate and send it on the player's keep; at nightfall (edge into Wave) survivors retreat. No-op
+/// while the fort is razed or on a map without the fort.
+#[allow(clippy::too_many_arguments)]
+fn rival_raid_director(
+    time: Res<Time>,
+    siege: Res<crate::siege::Siege>,
+    state: Res<RivalState>,
+    mats: Option<Res<RivalMats>>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut creature_mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
+    mut notice: ResMut<crate::ui::notice::Notice>,
+    raiders: Query<Entity, With<RivalRaider>>,
+    mut prev: Local<Option<crate::siege::GamePhase>>,
+    mut seed: Local<u32>,
+) {
+    use crate::siege::GamePhase;
+    let cur = siege.phase;
+    let was = prev.replace(cur);
+    if mats.is_none() {
+        return; // no fort on this map
+    }
+    // Nightfall: surviving raiders retreat for the night.
+    if cur == GamePhase::Wave && was != Some(GamePhase::Wave) {
+        for e in &raiders {
+            commands.entity(e).try_despawn();
+        }
+        return;
+    }
+    // Dawn. `Some(Wave)` skips the boot Prep; `wave_index >= 0` = at least one night cleared (day 2+).
+    if cur == GamePhase::Prep && matches!(was, Some(GamePhase::Wave)) && !state.destroyed && siege.wave_index >= 0 {
+        for e in &raiders {
+            commands.entity(e).try_despawn(); // clear any stragglers before mustering a fresh party
+        }
+        let count = (2 + (siege.wave_index as usize) / 2).min(RAID_MAX);
+        for i in 0..count {
+            *seed = seed.wrapping_add(1);
+            let s = 0x5a1d_0000u32.wrapping_add(seed.wrapping_mul(2654435761)) | 1;
+            let spread = (i as f32 - (count as f32 - 1.0) * 0.5) * 1.6; // form up across the gate
+            let pos = RIVAL_CENTRE + Vec2::new(spread, WALL_HALF + 3.0);
+            spawn_raider(&mut commands, &mut meshes, &mut creature_mats, pos, s);
+        }
+        notice.push("Najeźdźcy rywala maszerują na zamek!", time.elapsed_secs_f64());
+    }
+}
+
+/// Spawn one raider at `pos`, marching on the player keep. Carries `RivalSoldier` (so the hero + town
+/// guards already target/kill it) + `RivalRaider` (the march-on-the-keep brain). Shared by the daily
+/// director and the screenshot stager.
+fn spawn_raider(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
+    pos: Vec2,
+    seed: u32,
+) {
+    let e = crate::villagers::spawn_rival_soldier(commands, meshes, creature_mats, crate::siege::KEEP_POS, pos, seed);
+    commands.entity(e).insert((
+        RivalSoldier { home: crate::siege::KEEP_POS, atk_cd: 0.0, patrol: pos, patrol_t: 0.0, rng: seed },
+        RivalRaider { atk_cd: 0.0 },
+        crate::player::Health { hp: RAIDER_HP, max: RAIDER_HP },
+    ));
+}
+
+/// Screenshot/test staging (`FOREST_RAID=1`): muster a raid party right outside the castle at boot so
+/// a shot/clip frames the attack + the town's defence immediately (the real raids only come at dawn
+/// of day 2+). No-op otherwise.
+fn stage_raid_for_shot(
+    app: Res<State<crate::game_state::AppState>>,
+    mats: Option<Res<RivalMats>>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut creature_mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
+    mut done: Local<bool>,
+) {
+    if *done || *app.get() != crate::game_state::AppState::Playing {
+        return;
+    }
+    if std::env::var("FOREST_RAID").is_err() {
+        *done = true;
+        return;
+    }
+    if mats.is_none() {
+        return; // wait for the fort/map to exist
+    }
+    *done = true;
+    for i in 0..4 {
+        let s = 0x5a1d_7000u32.wrapping_add((i as u32).wrapping_mul(2654435761)) | 1;
+        let pos = crate::siege::KEEP_POS + Vec2::new((i as f32 - 1.5) * 1.6, 16.0);
+        spawn_raider(&mut commands, &mut meshes, &mut creature_mats, pos, s);
+    }
+}
+
+/// Drive each raider toward the player's keep: engage the nearest guard/townsperson/hero in sight,
+/// else press to the keep and batter it (modest chip). Gated on `Modal::None` with the rest of the
+/// sim. A raid is a handful of bodies alive for one day, heading to where the player lives — no LOD.
+#[allow(clippy::type_complexity)]
+fn rival_raid_brain(
+    time: Res<Time>,
+    hero: Res<crate::player::HeroState>,
+    mut pending: ResMut<crate::player::PendingHeroDamage>,
+    mut npc_dmg: ResMut<crate::villagers::NpcDamage>,
+    mut keep: ResMut<crate::siege::KeepHp>,
+    mut raiders: Query<(&mut RivalRaider, &mut crate::villagers::Villager, &mut Transform), Without<crate::dying::Dying>>,
+    townsfolk: Query<(Entity, &Transform), (With<crate::villagers::Townsfolk>, Without<crate::dying::Dying>, Without<RivalSoldier>, Without<RivalRaider>)>,
+) {
+    let dt = time.delta_secs().min(0.05);
+    let now = time.elapsed_secs();
+    let tw = time.elapsed_secs_wrapped();
+    let goal = crate::siege::KEEP_POS;
+    let folk: Vec<(Entity, Vec2)> =
+        townsfolk.iter().map(|(e, t)| (e, Vec2::new(t.translation.x, t.translation.z))).collect();
+    for (mut rd, mut v, mut tf) in &mut raiders {
+        rd.atk_cd -= dt;
+        let vpos = v.pos;
+        // Nearest of our people (hero or townsperson) in sight.
+        let mut best: Option<(f32, Vec2, Option<Entity>)> = None;
+        if hero.alive {
+            let d = vpos.distance(hero.pos);
+            if d < RAIDER_SIGHT {
+                best = Some((d, hero.pos, None));
+            }
+        }
+        for (fe, fp) in &folk {
+            let d = vpos.distance(*fp);
+            if d < RAIDER_SIGHT && best.is_none_or(|(bd, _, _)| d < bd) {
+                best = Some((d, *fp, Some(*fe)));
+            }
+        }
+        let cur_y = crate::steer::footing(vpos.x, vpos.y).unwrap_or(tf.translation.y);
+        let turn = RAIDER_TURN * 2.0 * dt;
+        if let Some((d, tpos, victim)) = best {
+            if d <= RAIDER_MELEE {
+                v.moving = false;
+                let to = tpos - vpos;
+                if to.length_squared() > 1e-4 {
+                    let want = to.x.atan2(to.y);
+                    v.facing += crate::steer::wrap_pi(want - v.facing).clamp(-turn, turn);
+                }
+                if rd.atk_cd <= 0.0 {
+                    rd.atk_cd = RAIDER_ATK_CD;
+                    v.atk_anim = now;
+                    match victim {
+                        None => pending.0 += RAIDER_HERO_DMG,
+                        Some(ve) => npc_dmg.0.push(crate::villagers::NpcHit { victim: ve, amount: RAIDER_NPC_DMG, attacker: None }),
+                    }
+                }
+            } else {
+                step_toward(&mut v, tpos, RAIDER_SPEED * dt, cur_y, dt);
+            }
+        } else if vpos.distance(goal) <= RAIDER_KEEP_RANGE {
+            v.moving = false;
+            let to = goal - vpos;
+            if to.length_squared() > 1e-4 {
+                let want = to.x.atan2(to.y);
+                v.facing += crate::steer::wrap_pi(want - v.facing).clamp(-turn, turn);
+            }
+            if rd.atk_cd <= 0.0 {
+                rd.atk_cd = RAIDER_ATK_CD;
+                v.atk_anim = now;
+                keep.hp = (keep.hp - RAIDER_KEEP_DMG).max(0.0);
+            }
+        } else {
+            step_toward(&mut v, goal, RAIDER_SPEED * dt, cur_y, dt);
+        }
+        let gy = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+        let bob = if v.moving { (tw * v.gait + v.phase).sin().abs() * v.bob } else { 0.0 };
+        tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
+        tf.rotation = Quat::from_rotation_y(v.facing);
+    }
+}
+
+// ── Razing the rival fort (the player destroys the stronghold) ───────────────────────
+
+/// Reach the hero's swing must land within of the keep centre to chip it (keep half-girth ≈3.1 +
+/// melee reach). And the swing-cone dot (≈70°, matching the combat cone).
+const FORT_HIT_REACH: f32 = 5.0;
+const FORT_CONE_DOT: f32 = 0.35;
+
+/// The player razes the fort: every hero swing whose cone falls on the keep chips its HP (using the
+/// shared [`crate::verbs::HeroSwing`] cone that ore/dummies read). At 0 the whole fort topples (keep,
+/// walls, buildings, garrison + workers + raiders), its collision is cleared, the daily raids stop,
+/// a bounty drops and a notice fires. A SECONDARY objective — the campaign win is still the Warlord.
+#[allow(clippy::too_many_arguments)]
+fn rival_fort_damage(
+    time: Res<Time>,
+    mut swings: MessageReader<crate::verbs::HeroSwing>,
+    mut state: ResMut<RivalState>,
+    mut commands: Commands,
+    mut notice: ResMut<crate::ui::notice::Notice>,
+    mut rewards: ResMut<crate::orbs::RewardBursts>,
+    mut floats: ResMut<crate::combat_fx::FloatQueue>,
+    keep: Query<(), With<RivalKeep>>,
+    parts: Query<Entity, Or<(With<RivalEntity>, With<RivalSoldier>, With<RivalWorker>)>>,
+) {
+    if state.destroyed || keep.is_empty() {
+        swings.clear(); // no live fort → drain so the reader doesn't backlog
+        return;
+    }
+    let now = time.elapsed_secs();
+    let mut chipped = false;
+    for sw in swings.read() {
+        let to = RIVAL_CENTRE - sw.origin;
+        let d = to.length();
+        if d > FORT_HIT_REACH {
+            continue;
+        }
+        if d > 1e-3 && (to / d).dot(sw.fwd) < FORT_CONE_DOT {
+            continue;
+        }
+        state.keep_hp = (state.keep_hp - sw.base_dmg).max(0.0);
+        chipped = true;
+    }
+    if !chipped {
+        return;
+    }
+    // Chip number over the keep.
+    let gy = ground_at_world(RIVAL_CENTRE.x, RIVAL_CENTRE.y).unwrap_or(0.0);
+    floats.0.push(crate::combat_fx::FloatReq {
+        world: Vec3::new(RIVAL_CENTRE.x, gy + 5.5, RIVAL_CENTRE.y),
+        text: format!("{}", state.keep_hp.ceil() as i32),
+        color: crate::combat_fx::col_ork_hit(),
+        scale: 1.1,
+    });
+    if state.keep_hp <= 0.0 {
+        state.destroyed = true;
+        // Topple everything rival (keep + walls + buildings + workers + garrison + raiders).
+        for e in &parts {
+            crate::dying::begin_dying(&mut commands, e, now);
+        }
+        // Drop ALL its collision — buildings, curtain wall, and the otherwise-permanent keep box —
+        // so the razed ground is walkable, not a field of invisible boxes.
+        clear_building_blockers();
+        clear_wall_blockers(RIVAL_CENTRE);
+        crate::blockers::remove_box_near(RIVAL_CENTRE.x, RIVAL_CENTRE.y, 0.3);
+        rewards.0.push(crate::orbs::RewardBurst {
+            at: Vec3::new(RIVAL_CENTRE.x, gy + 1.0, RIVAL_CENTRE.y),
+            gold: 400,
+            xp: 300,
+        });
+        notice.push("Twierdza rywala padła! Najazdy ustają.", time.elapsed_secs_f64());
+    }
+}
+
 // ── Plugin ─────────────────────────────────────────────────────────────────────────
 
 pub struct RivalPlugin;
@@ -990,12 +1364,20 @@ impl Plugin for RivalPlugin {
             // sim under any panel / pause).
             .add_systems(
                 Update,
-                (rival_economy, rival_garrison, rival_combat, rival_workers)
+                (
+                    rival_economy,
+                    rival_garrison,
+                    rival_combat,
+                    rival_workers,
+                    rival_raid_director,
+                    rival_raid_brain,
+                    rival_fort_damage,
+                )
                     .run_if(in_state(crate::game_state::Modal::None)),
             )
             // Reconcile the rival's economy + buildings to a loaded save (ungated; fires on a load).
             .add_systems(Update, restore_rival)
             // Screenshot staging (ungated; env-gated inside).
-            .add_systems(Update, stage_rival_for_shot);
+            .add_systems(Update, (stage_rival_for_shot, stage_raid_for_shot));
     }
 }

@@ -111,6 +111,12 @@ fn crossing_at(x: f32, z: f32) -> Option<Span> {
     if !is_river_world(x, z) {
         return None;
     }
+    // The rival fort's forced-flat plateau buries the pure river channel under sand (`classify`
+    // levels it before `is_river`), so a deck here would span an invisible river and read as a
+    // random bridge in the dunes. Skip the whole fort zone — mirrors `near_fort` scatter rejection.
+    if crate::rival::fort_flat_zone(x, z) {
+        return None;
+    }
     let (cx_x, half_x) = water_run(x, z, true)?; // channel along X
     let (cz_z, half_z) = water_run(x, z, false)?; // channel along Z
     // Narrower axis = the crossing direction (the deck spans it, bank to bank).
