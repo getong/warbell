@@ -102,6 +102,73 @@ fn sample_detail(wp: vec2<f32>, scale: f32) -> vec3<f32> {
     return textureSample(detail_tex, detail_samp, wp * scale + warp * 0.4).rgb;
 }
 
+// Distance from point `p` to the line segment a→b (analytic capsule SDF core).
+fn seg_dist(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
+    let pa = p - a;
+    let ba = b - a;
+    let h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-5), 0.0, 1.0);
+    return length(pa - ba * h);
+}
+
+// Scattered fallen-twig field in world XZ, baked into the floor texture so the ground reads
+// littered EVERYWHERE, not only under a 3D litter prop. One short twig per cell on a ~1.25u
+// lattice, each with an INDEPENDENT random position / angle / length — localised segments at
+// every orientation, NOT a world-spanning anisotropic streak (the banned flat-ground artifact
+// was a single global directional lattice tiling into diagonal bands; random per-cell sticks
+// never reinforce into one). Scans the 3×3 neighbourhood so a twig straddling a cell border
+// still draws.
+//
+// A clean SDF segment reads as a flat painted DASH — geometric, "immature", out of place on
+// the noisy ground. So this is deliberately organic: the query point is DOMAIN-WARPED (a low
+// + high freq pair) so each stick bends and frays instead of running dead straight; the width
+// TAPERS to thin ends like a real twig (not a constant-width dash); the edge is softened by a
+// noisy band so it's ragged, not vector-crisp. Returns coverage `x` plus an along-stick tone
+// `y` (0..1) so the caller can vary the bark colour down its length.
+fn twig_field(wp: vec2<f32>, seedoff: f32, base_w: f32) -> vec2<f32> {
+    // Bend (low-freq) + fray (high-freq) domain warp.
+    let warp = (vec2<f32>(ter_noise(wp * 0.8 + seedoff + 8.0), ter_noise(wp * 0.8 + seedoff + 30.0)) - 0.5) * 1.7
+             + (vec2<f32>(ter_noise(wp * 2.6 + seedoff + 3.0), ter_noise(wp * 2.6 + seedoff + 21.0)) - 0.5) * 0.7;
+    let q = wp + warp * 0.10;
+    let cell = 1.25;
+    let ci = floor(q / cell);
+    var best_d = 1e9;
+    var best_h = 0.0;
+    var best_seed = 0.0;
+    for (var dy = -1; dy <= 1; dy += 1) {
+        for (var dx = -1; dx <= 1; dx += 1) {
+            let c = ci + vec2<f32>(f32(dx), f32(dy));
+            let r1 = ter_hash(c + seedoff);
+            // ~45% of cells carry a twig — sparse, like a real forest floor.
+            if (r1 < 0.45) {
+                let r2 = ter_hash(c + seedoff + 17.3);
+                let r3 = ter_hash(c + seedoff + 41.7);
+                let r4 = ter_hash(c + seedoff + 71.1);
+                let center = (c + vec2<f32>(r2, r3)) * cell;
+                let ang = r4 * 6.28318;
+                let dir = vec2<f32>(cos(ang), sin(ang));
+                let len = (0.20 + r1 * 0.55) * cell;   // ~0.25–0.8u sticks
+                let a = center - dir * len * 0.5;
+                let ba = dir * len;
+                let pa = q - a;
+                let h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-5), 0.0, 1.0);
+                let d = length(pa - ba * h);
+                if (d < best_d) {
+                    best_d = d;
+                    best_h = h;
+                    best_seed = r2;
+                }
+            }
+        }
+    }
+    // Taper: full width mid-stick, thinning to a point at both ends.
+    let w = base_w * (0.30 + 0.70 * (1.0 - pow(abs(best_h * 2.0 - 1.0), 1.7)));
+    // Ragged, noisy soft edge (not a crisp vector line).
+    let edge = 0.008 + 0.014 * ter_noise(wp * 9.0 + seedoff);
+    let cov = 1.0 - smoothstep(w, w + edge, best_d);
+    let tone = ter_noise(vec2<f32>(best_h * 4.0, best_seed * 13.0));
+    return vec2<f32>(cov, tone);
+}
+
 @fragment
 fn fragment(
     in: VertexOutput,
@@ -138,7 +205,7 @@ fn fragment(
         ter_m += ter_noise_rot(wp * 1.7, 0.682, 0.731) * 0.30
                + ter_noise_rot(wp * 5.5, 0.292, 0.956) * 0.15;
     }
-    rgb *= 0.80 + ter_m * 0.42;
+    rgb *= 0.83 + ter_m * 0.34;
 
     // (2) large-scale analytic hue + value drift — the soft cloudy patches (cure for
     //     flat green): broad areas drift warm yellow-green ↔ cool deep-green + lighten.
@@ -177,17 +244,41 @@ fn fragment(
         // Worn sun-bleached dirt scuffs (bald spots / trodden paths) — warm + desaturated.
         // Lower thresholds widen each patch and stronger mixes raise the contrast between
         // them, so the field reads as a genuinely varied meadow rather than one flat tone.
-        let worn = smoothstep(0.42, 0.78, ter_noise(wp * 0.020 + vec2<f32>(5.0, 9.0)));
-        rgb = mix(rgb, rgb * vec3<f32>(0.72, 0.60, 0.40), worn * 0.58 * green * variety);
+        let worn = smoothstep(0.48, 0.82, ter_noise(wp * 0.020 + vec2<f32>(5.0, 9.0)));
+        rgb = mix(rgb, rgb * vec3<f32>(0.76, 0.65, 0.46), worn * 0.46 * green * variety);
         // Damp moss hollows — cool, rich, slightly darker green.
-        let moss = smoothstep(0.46, 0.82, ter_noise(wp * 0.040 + vec2<f32>(19.0, 2.0)));
-        rgb = mix(rgb, rgb * vec3<f32>(0.60, 0.88, 0.50), moss * 0.50 * green * variety);
+        let moss = smoothstep(0.52, 0.86, ter_noise(wp * 0.040 + vec2<f32>(19.0, 2.0)));
+        rgb = mix(rgb, rgb * vec3<f32>(0.66, 0.90, 0.56), moss * 0.40 * green * variety);
         // Sun-dried golden sweeps — drier grass catching the light (a brighter warm push).
-        let dry = smoothstep(0.48, 0.84, ter_noise(wp * 0.015 + vec2<f32>(33.0, 7.0)));
-        rgb = mix(rgb, rgb * vec3<f32>(1.22, 1.04, 0.56), dry * 0.44 * green * variety);
+        let dry = smoothstep(0.54, 0.87, ter_noise(wp * 0.015 + vec2<f32>(33.0, 7.0)));
+        rgb = mix(rgb, rgb * vec3<f32>(1.18, 1.04, 0.60), dry * 0.36 * green * variety);
         // Lush well-watered patches — deep saturated green.
-        let lush = smoothstep(0.50, 0.86, ter_noise(wp * 0.030 + vec2<f32>(2.0, 27.0)));
-        rgb = mix(rgb, rgb * vec3<f32>(0.66, 1.04, 0.62), lush * 0.42 * green * variety);
+        let lush = smoothstep(0.56, 0.89, ter_noise(wp * 0.030 + vec2<f32>(2.0, 27.0)));
+        rgb = mix(rgb, rgb * vec3<f32>(0.70, 1.03, 0.66), lush * 0.34 * green * variety);
+
+        // ── Forest-floor debris baked into the texture (the "patyki + szare placki"): scattered
+        //    twigs and bare-earth / lichen patches, so the floor reads littered EVERYWHERE, not
+        //    only where a 3D litter prop happens to sit. Top-faces only (`topd`) + green-gated so
+        //    it never smears onto cliff walls / snow / sand; preset-scaled by `variety`.
+        let topd = smoothstep(0.35, 0.80, in.world_normal.y);
+        let debris_w = topd * green * variety;
+        // (a) Bare-earth / lichen blotches — the "szare placki": broad low-freq blobs drifting
+        //     the green toward a desaturated grey-tan soil. One main blob field thresholded so
+        //     patches are clearly readable, broken up by a finer octave so their edges are ragged
+        //     (organic), not clean ovals; a faint grain keeps them from looking painted.
+        let soil = smoothstep(0.60, 0.78, ter_noise(wp * 0.06 + vec2<f32>(61.0, 13.0)));
+        let soil_edge = soil * (0.70 + 0.30 * ter_noise(wp * 0.28 + vec2<f32>(7.0, 51.0)));
+        let earth = vec3<f32>(0.45, 0.44, 0.41) * (0.90 + ter_m * 0.20);
+        rgb = mix(rgb, earth, soil_edge * 0.55 * debris_w);
+        // (b) Scattered twigs (organic — warped/tapered/soft, see `twig_field`): a brown-bark
+        //     pass + a sparser, greyer driftwood pass (offset seed so they don't coincide).
+        //     Bark colour drifts dark↔mid down each stick (`.y`) so it's not a flat fill.
+        let tb = twig_field(wp, 0.0, 0.024);
+        let bark = mix(vec3<f32>(0.28, 0.19, 0.11), vec3<f32>(0.45, 0.34, 0.21), tb.y);
+        rgb = mix(rgb, bark, tb.x * 0.66 * debris_w);
+        let tg = twig_field(wp, 123.4, 0.018);
+        let drift = mix(vec3<f32>(0.38, 0.35, 0.30), vec3<f32>(0.55, 0.52, 0.46), tg.y);
+        rgb = mix(rgb, drift, tg.x * 0.48 * debris_w);
     }
 
     pbr_input.material.base_color = vec4<f32>(max(rgb, vec3<f32>(0.0)), pbr_input.material.base_color.a);
@@ -215,7 +306,7 @@ fn fragment(
         let e = 0.18;
         let hx = terrain_h(wp + vec2<f32>(e, 0.0)) - terrain_h(wp - vec2<f32>(e, 0.0));
         let hz = terrain_h(wp + vec2<f32>(0.0, e)) - terrain_h(wp - vec2<f32>(0.0, e));
-        var n2 = normalize(gn + vec3<f32>(-hx, 0.0, -hz) * bump * topw * 1.7);
+        var n2 = normalize(gn + vec3<f32>(-hx, 0.0, -hz) * bump * topw * 1.35);
 
         // Side-face rock relief on the terrace WALLS. The top relief above is an XZ height
         // field — meaningless across a near-vertical face (XZ barely moves down a wall), so
@@ -264,8 +355,8 @@ fn fragment(
         let groove = smoothstep(0.32, 0.70, crease);
         // Deepest where a broad hollow AND a fine groove coincide; strong sun-kissed crowns on
         // the mound tops so the relief pops both ways (bright peaks ↔ dark pits).
-        let ao = mix(0.46, 1.0, mound) * mix(0.62, 1.0, groove);
-        let crown = 1.0 + smoothstep(0.60, 1.0, h0) * 0.30;
+        let ao = mix(0.56, 1.0, mound) * mix(0.72, 1.0, groove);
+        let crown = 1.0 + smoothstep(0.62, 1.0, h0) * 0.20;
         let shade = mix(1.0, ao * crown, topw);
         pbr_input.material.base_color = vec4<f32>(pbr_input.material.base_color.rgb * shade, pbr_input.material.base_color.a);
 
