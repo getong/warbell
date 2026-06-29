@@ -16,6 +16,9 @@ pub enum Speaker {
     Hero,
     Villager,
     Ork,
+    /// The desert rival's garrison — foreign Saracen-style mercenaries (`rival.rs`). Spatial, like
+    /// the orks, with a pitch jitter so one recorded voice covers the whole host.
+    Rival,
 }
 
 /// How a speaker's voice is routed. Looked up from [`SPEAKERS`] by the director.
@@ -36,6 +39,7 @@ pub const SPEAKERS: &[(Speaker, SpeakerVoice)] = &[
     (Speaker::Hero,     SpeakerVoice { spatial: false, gain: 1.0,  name: None,              pitch: (1.0,  1.0)  }),
     (Speaker::Villager, SpeakerVoice { spatial: true,  gain: 1.4,  name: Some("Townsfolk"), pitch: (1.0,  1.0)  }),
     (Speaker::Ork,      SpeakerVoice { spatial: true,  gain: 0.85, name: None,              pitch: (0.82, 1.18) }),
+    (Speaker::Rival,    SpeakerVoice { spatial: true,  gain: 0.9,  name: Some("Rival"),     pitch: (0.88, 1.12) }),
 ];
 
 pub fn speaker_voice(s: Speaker) -> SpeakerVoice {
@@ -89,6 +93,14 @@ pub enum Concept {
     // ── Ork ──
     OrkSpot,
     OrkDeath,
+    // ── Rival garrison (desert AI opponent) — spatial enemy barks, like the orks. `RivalSpot` is
+    //    the catch-all combat bark (aggro / attack cries / gloating taunts / pain), `RivalDeath`
+    //    the death cry, `RivalRaidMarch` the cue when their raid sets out, `RivalIdle` the bored
+    //    patrol murmur (peaceful — muted once the hero is in a fight). ──
+    RivalSpot,
+    RivalDeath,
+    RivalRaidMarch,
+    RivalIdle,
     // ── Chain reply concepts ──
     ReplyToVillagerJab,
     /// Second-level chain: after the hero's comeback, the villager gets the last word.
@@ -111,6 +123,26 @@ pub enum Concept {
     //    (emitted by `boss::boss_proximity`). ──
     WardenSighted,
     NearWarden(Biome),
+}
+
+/// PEACEFUL concepts — ambient/exploration/economy lines that must fall silent the moment the hero
+/// is in a fight (see `HeroThreat`). The director drops these while `in_danger`, so one rule covers
+/// what used to be a scatter of per-trigger phase checks (and the gap that let "Quiet day…" play
+/// during a warden fight). Everything NOT listed here — combat reactions, warnings, kill barks,
+/// enemy taunts, the dawn-relief / wave-survived beats, muster orders — is allowed to cut through a
+/// fight. Tunable: move a concept in/out of this list to change whether it survives combat.
+pub fn is_peaceful(c: Concept) -> bool {
+    use Concept::*;
+    matches!(
+        c,
+        Intro | NearTown | NearKids | NearPet | NearGuard | InKeep | NearFortress
+            | QuietMusing | BiomeEntered(_)
+            | Greeting | VillagerArmedJab | ReplyToVillagerJab | VillagerLastWord
+            | AdviseFarm | AdviseHouses | AdviseWood | AdviseStone | AdviseUpgrade | AdviseWalls
+            | AdviseBell | PrepNudge | PopLost | TownThriving
+            | GoldRich | Broke | LevelUp | Equip | ChestOpen | ShrineHeal | FirstStone | Home
+            | RivalIdle
+    )
 }
 
 /// A follow-up dispatched when a line finishes: ask `target` to look up a line whose
@@ -182,8 +214,8 @@ pub const LINES: &[Line] = &[
     // `detect_gear_found`); the one armour-flavoured clip covers either find. Text == the `equip.ogg`
     // transcript (don't reword without re-recording, or the subtitle desyncs from the audio).
     Line { once: true,  priority: 15, ..line("equip",         Speaker::Hero, Concept::Equip,        "Mm, new armor. I should look it over in my satchel.") },
-    Line { floor: 300.0, priority: 15, ..line("levelup",      Speaker::Hero, Concept::LevelUp,      "Stronger. The blade feels lighter than it did.") },
-    Line { floor: 300.0, priority: 20, ..line("wave_survived", Speaker::Hero, Concept::WaveSurvived, "Dawn. We held. ...this time.") },
+    Line { floor: 300.0,               ..line("levelup",      Speaker::Hero, Concept::LevelUp,      "Stronger. The blade feels lighter than it did.") },
+    Line { floor: 300.0, priority: 12, ..line("wave_survived", Speaker::Hero, Concept::WaveSurvived, "Dawn. We held. ...this time.") },
     Line { once: true,  priority: 15, ..line("first_kill",    Speaker::Hero, Concept::FirstKill,    "Down it goes. Plenty more where that came from.") },
     Line { once: true,                ..line("gold_rich",     Speaker::Hero, Concept::GoldRich,     "Coin enough to make the merchant smile. Good.") },
     Line { floor: 300.0,              ..line("broke",         Speaker::Hero, Concept::Broke,        "Pockets empty. Steel will have to do the talking.") },
@@ -343,6 +375,47 @@ pub const LINES: &[Line] = &[
     Line { ..line("death",  Speaker::Ork, Concept::OrkDeath, "Not done.") },
     Line { ..line("death_2", Speaker::Ork, Concept::OrkDeath, "Cold... why cold...") },
     Line { ..line("death_3", Speaker::Ork, Concept::OrkDeath, "Good fight. Good... fight.") },
+    // ── Rival garrison (desert mercenaries) — clips at `audio/vo/rival/<id>.ogg`, transcripts are
+    //    the actual recorded lines (ElevenLabs, per the chop). RivalSpot is the catch-all combat
+    //    bark pool (aggro + attack cries + gloating + pain + exertion grunts); the detector
+    //    (`rival_voice.rs`) rolls one when the hero fights near a rival. Default prio 10 like the
+    //    orks; the spatial routing + pitch jitter live on the `Rival` SpeakerVoice. ──
+    Line { ..line("spot_dog",    Speaker::Rival, Concept::RivalSpot, "Northern dog! You are far from your little walls.") },
+    Line { ..line("spot_beggar", Speaker::Rival, Concept::RivalSpot, "Another beggar-knight. The sand will drink you.") },
+    Line { ..line("spot_mine",   Speaker::Rival, Concept::RivalSpot, "Hut! He is mine — fan out!") },
+    Line { ..line("spot_dunes",  Speaker::Rival, Concept::RivalSpot, "You should not have crossed the dunes, stranger.") },
+    Line { ..line("spot_toy",    Speaker::Rival, Concept::RivalSpot, "Look at his shining toy sword. Pretty. Useless.") },
+    Line { ..line("spot_pasha",  Speaker::Rival, Concept::RivalSpot, "For the Pasha! Yaaah!") },
+    Line { ..line("atk_bleed",   Speaker::Rival, Concept::RivalSpot, "Hah! Bleed!") },
+    Line { ..line("atk_strike",  Speaker::Rival, Concept::RivalSpot, "Strike — down, dog!") },
+    Line { ..line("atk_head",    Speaker::Rival, Concept::RivalSpot, "Take his head!") },
+    Line { ..line("atk_still",   Speaker::Rival, Concept::RivalSpot, "Stand still!") },
+    Line { ..line("atk_ribbons", Speaker::Rival, Concept::RivalSpot, "Cut him to ribbons!") },
+    Line { ..line("taunt_army",  Speaker::Rival, Concept::RivalSpot, "Is this your army? Peasants with sticks.") },
+    Line { ..line("taunt_down",  Speaker::Rival, Concept::RivalSpot, "Down he goes. Sweep them aside.") },
+    Line { ..line("taunt_farmers", Speaker::Rival, Concept::RivalSpot, "Run home, farmers!") },
+    Line { ..line("hurt_pay",    Speaker::Rival, Concept::RivalSpot, "You will pay for that.") },
+    Line { ..line("hurt_all",    Speaker::Rival, Concept::RivalSpot, "Is that all, runt?") },
+    Line { ..line("hurt_coward", Speaker::Rival, Concept::RivalSpot, "Coward's blow!") },
+    Line { ..line("hurt_angry",  Speaker::Rival, Concept::RivalSpot, "You only make me angry.") },
+    Line { ..line("grunt_1",     Speaker::Rival, Concept::RivalSpot, "Ugh!") },
+    Line { ..line("grunt_2",     Speaker::Rival, Concept::RivalSpot, "Hah!") },
+    // Death cry (on a rival's fall).
+    Line { ..line("death_sands",   Speaker::Rival, Concept::RivalDeath, "The sands... take me...") },
+    Line { ..line("death_held",    Speaker::Rival, Concept::RivalDeath, "Tell the Pasha... I held...") },
+    Line { ..line("death_cold",    Speaker::Rival, Concept::RivalDeath, "Cold... northern... cold...") },
+    Line { ..line("death_nothing", Speaker::Rival, Concept::RivalDeath, "You... win nothing... dog...") },
+    // Raid-march cue — fired when the daytime raid sets out (`rival.rs`). Slightly louder so it
+    // carries across the field as the warning it is.
+    Line { priority: 12, floor: 30.0, ..line("raid_forward",  Speaker::Rival, Concept::RivalRaidMarch, "Forward! Burn their keep!") },
+    Line { priority: 12, floor: 30.0, ..line("raid_chant",    Speaker::Rival, Concept::RivalRaidMarch, "Sand and steel! Sand and steel!") },
+    Line { priority: 12, floor: 30.0, ..line("raid_drums",    Speaker::Rival, Concept::RivalRaidMarch, "Beat the drums — we march!") },
+    Line { priority: 12, floor: 30.0, ..line("raid_kindling", Speaker::Rival, Concept::RivalRaidMarch, "Your walls are kindling, little lord.") },
+    // Idle patrol murmur (peaceful — `is_peaceful`, muted once the hero is fighting). Floored so a
+    // sentry doesn't mutter constantly.
+    Line { floor: 25.0, ..line("idle_wind",  Speaker::Rival, Concept::RivalIdle, "Hot wind today... bad omen.") },
+    Line { floor: 25.0, ..line("idle_quiet", Speaker::Rival, Concept::RivalIdle, "Quiet on the eastern wall. Too quiet.") },
+    Line { floor: 25.0, ..line("idle_gold",  Speaker::Rival, Concept::RivalIdle, "The Pasha promised us gold. I see only sand.") },
     // ── Hero comebacks to a villager's jab (chain replies — `reply_to`, never emitted directly) ──
     // Dispatched by `tick_chains` when a `pa_*` jab finishes; `pick`-of-pool gives variety. Priority
     // 12 so the retort lands over idle chatter; floored so the same comeback doesn't repeat soon.
@@ -384,12 +457,12 @@ pub const LINES: &[Line] = &[
     // ── Warden approach (hero) — priority 15 (urgent tier): approaching a world boss is a rare,
     //    significant beat, so it must cut through the hero-line window (anything < 15 is held while
     //    the window is open, which would silently drop this once-per-warden line). ──
-    Line { once: true, priority: 15, ..line("warden_near",   Speaker::Hero, Concept::WardenSighted,          "Something vast sleeps out here. I feel it in my bones — put that beast down, and I'd walk away the stronger for it.") },
-    Line { floor: 600.0, priority: 15, ..line("warden_forest", Speaker::Hero, Concept::NearWarden(Biome::Forest), "That old wooden thing among the trees… beat it, and I think my blade would learn a new sweep. I can almost feel it.") },
-    Line { floor: 600.0, priority: 15, ..line("warden_snow",   Speaker::Hero, Concept::NearWarden(Biome::Snow),   "Whatever stirs in the ice up here — kill it, and I swear the cold itself would start fighting on my side.") },
-    Line { floor: 600.0, priority: 15, ..line("warden_rock",   Speaker::Hero, Concept::NearWarden(Biome::Rocky),  "A mountain that walks. Break it, and maybe I'd learn to bring the mountain down myself.") },
-    Line { floor: 600.0, priority: 15, ..line("warden_desert", Speaker::Hero, Concept::NearWarden(Biome::Desert), "That dead thing moves like the wind off the dunes. Put it down, and perhaps I would too.") },
-    Line { floor: 600.0, priority: 15, ..line("warden_swamp",  Speaker::Hero, Concept::NearWarden(Biome::Swamp),  "The bog-hag's brewed every poison there is. Best her, and I'd turn that venom loose on the horde.") },
+    Line { once: true, ..line("warden_near",   Speaker::Hero, Concept::WardenSighted,          "Something vast sleeps out here. I feel it in my bones — put that beast down, and I'd walk away the stronger for it.") },
+    Line { floor: 600.0, ..line("warden_forest", Speaker::Hero, Concept::NearWarden(Biome::Forest), "That old wooden thing among the trees… beat it, and I think my blade would learn a new sweep. I can almost feel it.") },
+    Line { floor: 600.0, ..line("warden_snow",   Speaker::Hero, Concept::NearWarden(Biome::Snow),   "Whatever stirs in the ice up here — kill it, and I swear the cold itself would start fighting on my side.") },
+    Line { floor: 600.0, ..line("warden_rock",   Speaker::Hero, Concept::NearWarden(Biome::Rocky),  "A mountain that walks. Break it, and maybe I'd learn to bring the mountain down myself.") },
+    Line { floor: 600.0, ..line("warden_desert", Speaker::Hero, Concept::NearWarden(Biome::Desert), "That dead thing moves like the wind off the dunes. Put it down, and perhaps I would too.") },
+    Line { floor: 600.0, ..line("warden_swamp",  Speaker::Hero, Concept::NearWarden(Biome::Swamp),  "The bog-hag's brewed every poison there is. Best her, and I'd turn that venom loose on the horde.") },
 ];
 
 /// All catalog lines for a concept, in declaration order.
@@ -586,7 +659,7 @@ mod tests {
 
     #[test]
     fn every_speaker_is_registered() {
-        for s in [Speaker::Hero, Speaker::Villager, Speaker::Ork] {
+        for s in [Speaker::Hero, Speaker::Villager, Speaker::Ork, Speaker::Rival] {
             let _ = speaker_voice(s);
         }
     }

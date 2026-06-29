@@ -118,6 +118,7 @@ pub fn speak_director(
     mut reqs: MessageReader<Speak>,
     sinks: Query<(Entity, &VoiceSink)>,
     hero: Query<&crate::player::Hero>,
+    threat: Res<super::HeroThreat>,
     mut subs: ResMut<crate::subtitles::Subtitles>,
     sources: Res<Assets<AudioSource>>,
 ) {
@@ -125,6 +126,13 @@ pub fn speak_director(
     let hero_pos = hero.single().ok().map(|h| Vec3::new(h.pos.x, 1.6, h.pos.y));
 
     for req in reqs.read() {
+        // Central combat gate: while the hero is in a fight, drop every PEACEFUL concept (ambient
+        // chatter, town advice, exploration musings). One rule replaces the old scattered phase
+        // checks — and closes the gap that let a daytime warden/boss/rival fight slip a "Quiet day…"
+        // musing through. Combat/urgent concepts (warnings, kill barks, enemy taunts) pass.
+        if threat.in_danger && super::lines::is_peaceful(req.concept) {
+            continue;
+        }
         // Pull rng out across the immutable `pick_line` borrow of `mgr.last_played`.
         let mut rng = mgr.rng;
         let chosen = pick_line(req.concept, &mgr.last_played, &mgr.played_once, now, &mut rng).copied();
@@ -303,6 +311,7 @@ pub fn preload_voice_lines(asset: Res<AssetServer>, mut mgr: ResMut<VoiceManager
             Speaker::Hero => "hero",
             Speaker::Villager => "npc",
             Speaker::Ork => "ork",
+            Speaker::Rival => "rival",
         };
         let handle = asset.load(format!("audio/vo/{dir}/{}.ogg", line.id));
         mgr.clips.insert(line.id, handle);

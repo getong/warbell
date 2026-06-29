@@ -21,6 +21,7 @@ pub(crate) mod lines;
 mod music;
 mod npc;
 mod ork;
+mod rival_voice;
 mod sfx;
 pub(crate) mod synth;
 mod voice;
@@ -187,6 +188,53 @@ pub(crate) struct HeroLineCooldown {
 /// Length of [`HeroLineCooldown`] (seconds) — per user: ~20 s between hero lines.
 pub(crate) const HERO_LINE_CD: f32 = 20.0;
 
+/// One central "is the hero in a fight right now" flag, recomputed each frame by
+/// [`track_hero_threat`]. The director consults it to MUTE every *peaceful* concept
+/// (`lines::is_peaceful`) — ambient remarks, town chatter, economy advice, exploration musings —
+/// the instant combat is on, no matter the siege phase. This replaces the old scatter of
+/// per-trigger phase checks that let e.g. a daytime warden fight slip a "Quiet day…" musing through
+/// (the bug: the old gate only counted *orks*, so a boss/warden/rival fight read as "peaceful").
+#[derive(Resource, Default)]
+pub(crate) struct HeroThreat {
+    pub in_danger: bool,
+}
+/// A hostile this near the hero (world units) counts as "in a fight" for voice gating.
+const THREAT_RADIUS: f32 = 22.0;
+
+/// Recompute [`HeroThreat`]: in danger if ANY live hostile (ork, biome warden / night boss, the
+/// Warlord, or a rival soldier/raider) is within [`THREAT_RADIUS`] of the hero, OR a night wave is
+/// underway. Predators are intentionally excluded for now (prey animals share the `Animal` tag, so
+/// "near a deer" must not read as combat) — a future pass can add predator-only detection.
+pub(crate) fn track_hero_threat(
+    mut threat: ResMut<HeroThreat>,
+    hero: Option<Res<crate::player::HeroState>>,
+    siege: Option<Res<crate::siege::Siege>>,
+    hostiles: Query<
+        &GlobalTransform,
+        (
+            Or<(
+                With<crate::orks::Ork>,
+                With<crate::boss::Boss>,
+                With<crate::warlord::Warlord>,
+                With<crate::rival::RivalSoldier>,
+                With<crate::rival::RivalRaider>,
+            )>,
+            Without<crate::dying::Dying>,
+        ),
+    >,
+) {
+    let wave = siege.is_some_and(|s| s.phase == crate::siege::GamePhase::Wave);
+    let near = hero.is_some_and(|h| {
+        let hp = h.pos;
+        let r2 = THREAT_RADIUS * THREAT_RADIUS;
+        hostiles.iter().any(|g| {
+            let t = g.translation();
+            Vec2::new(t.x, t.z).distance_squared(hp) < r2
+        })
+    });
+    threat.in_danger = wave || near;
+}
+
 // The old `HeroSpeaking` / `OthersSpeaking` "who's mid-sentence" resources are gone: the director's
 // `VoiceManager::hero_speaking(now)` / `others_speaking(now)` derive the same facts from the active
 // per-speaker lines, so villagers/orks/hero all defer to each other through one source of truth.
@@ -268,8 +316,10 @@ impl Plugin for GameAudioPlugin {
             .init_resource::<director::VoiceManager>()
             .init_resource::<director::OfferedReply>()
             .init_resource::<RemarkTrigger>()
+            .init_resource::<HeroThreat>()
             .init_resource::<npc::VillagerTrigger>()
             .init_resource::<ork::OrkTrigger>()
+            .init_resource::<rival_voice::RivalVoiceTrigger>()
             .init_resource::<advice::AdviceTrigger>()
             .add_message::<AudioCue>()
             .add_message::<director::Speak>()
@@ -330,7 +380,7 @@ impl Plugin for GameAudioPlugin {
             // `HeroLineCooldown` first — event/biome lines win, observational remarks defer.
             .add_systems(
                 Update,
-                (npc::detect_villager_ambient, npc::detect_villager_events, ork::detect_ork_voices, detect_hero_remarks)
+                (npc::detect_villager_ambient, npc::detect_villager_events, ork::detect_ork_voices, rival_voice::detect_rival_voices, detect_hero_remarks)
                     .after(voice::play_voice_cues)
                     .run_if(in_state(crate::game_state::AppState::Playing)),
             )
@@ -338,6 +388,14 @@ impl Plugin for GameAudioPlugin {
             // system) so an in-flight line finishes through a panel. The SIM layer is the
             // `detect_*` trigger systems that emit `Speak`; those carry `Modal::None` so no new
             // line is *decided* while the world is frozen.
+            // Recompute the central combat flag just before the director reads it, so a peaceful
+            // line decided this frame is muted the instant a fight is on.
+            .add_systems(
+                Update,
+                track_hero_threat
+                    .before(director::speak_director)
+                    .run_if(in_state(crate::game_state::AppState::Playing)),
+            )
             .add_systems(
                 Update,
                 (director::speak_director, director::tick_chains)
@@ -346,11 +404,11 @@ impl Plugin for GameAudioPlugin {
             // Fresh run: clear the once-per-run voice gates (mirrors siege's reset).
             .add_systems(
                 OnExit(crate::game_state::AppState::StartScreen),
-                (reset_hero_line_gates, reset_remark_trigger, director::reset_voices, npc::reset_villager_trigger, ork::reset_ork_trigger, advice::reset_advice),
+                (reset_hero_line_gates, reset_remark_trigger, director::reset_voices, npc::reset_villager_trigger, ork::reset_ork_trigger, rival_voice::reset_rival_trigger, advice::reset_advice),
             )
             .add_systems(
                 OnExit(crate::game_state::AppState::GameOver),
-                (reset_hero_line_gates, reset_remark_trigger, director::reset_voices, npc::reset_villager_trigger, ork::reset_ork_trigger, advice::reset_advice),
+                (reset_hero_line_gates, reset_remark_trigger, director::reset_voices, npc::reset_villager_trigger, ork::reset_ork_trigger, rival_voice::reset_rival_trigger, advice::reset_advice),
             );
     }
 }

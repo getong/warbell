@@ -32,6 +32,9 @@ const CAMPFIRE_VOL: f32 = 0.5;
 
 /// How close to the castle (origin) the camera must be for the town-square bed to fade in.
 const CASTLE_AMBIENCE_R: f32 = 24.0;
+/// Meadow (grasshoppers / open-field) bed gain, relative to `ambience_vol`. Sits under the biome
+/// beds — it's the quiet country hum of the grass ring around the castle, not a feature in itself.
+const MEADOW_AMBIENCE_MULT: f32 = 1.5;
 
 /// What makes an ambience loop fade in.
 #[derive(Clone, Copy, PartialEq)]
@@ -44,6 +47,10 @@ enum AmbienceKind {
     /// The busy town-square bustle around the castle — only during the **day** (prep); it falls
     /// silent at night when the curfew empties the streets for the siege.
     Castle,
+    /// The open meadow ("łąka") — grasshoppers + field hum over the grass ring AROUND the castle
+    /// (beyond the town-square radius), but NOT inside any of the five biome blobs and NOT over
+    /// water. Day only, like the town bustle: the grasshoppers fall silent under the night siege.
+    Meadow,
 }
 
 /// A persistent ambience loop + its current (lerped) volume level.
@@ -134,6 +141,7 @@ pub(crate) fn setup_ambience(asset: Res<AssetServer>, mut commands: Commands) {
         (AmbienceKind::Biome(Biome::Swamp), "audio/swamp-ambient.ogg"),
         (AmbienceKind::Water, "audio/water.ogg"),
         (AmbienceKind::Castle, "audio/castle-ambient.ogg"),
+        (AmbienceKind::Meadow, "audio/meadow-ambient.ogg"),
     ];
     for (kind, file) in beds {
         commands.spawn((
@@ -287,6 +295,11 @@ pub(crate) fn biome_ambience(
     // it falls silent during a wave.
     let day = siege.map(|s| s.phase != crate::siege::GamePhase::Wave).unwrap_or(true);
     let near_castle = cam_xz.is_some_and(|p| p.length() < CASTLE_AMBIENCE_R);
+    // The grass ring ("łąka"): standing on dry land that belongs to no biome blob, beyond the
+    // town-square radius, and not over water. `cur` is None over grass AND over open sea, so the
+    // explicit ground check rules out the sea.
+    let on_grass = cam_xz.is_some_and(|p| worldmap::ground_at_world(p.x, p.y).is_some());
+    let meadow = cur.is_none() && on_grass && !water && !near_castle && day;
     let k = (dt * AMBIENCE_FADE).min(1.0);
     for (mut amb, mut sink) in &mut q {
         // Each bed rides `ambience_vol`, scaled per kind: biome beds louder, water quieter.
@@ -294,6 +307,7 @@ pub(crate) fn biome_ambience(
             AmbienceKind::Biome(b) => (Some(b) == cur, BIOME_AMBIENCE_MULT),
             AmbienceKind::Water => (water, WATER_AMBIENCE_MULT),
             AmbienceKind::Castle => (near_castle && day, 1.0),
+            AmbienceKind::Meadow => (meadow, MEADOW_AMBIENCE_MULT),
         };
         let target = if on { cfg.ambience_vol * mult } else { 0.0 };
         amb.level += (target - amb.level) * k;

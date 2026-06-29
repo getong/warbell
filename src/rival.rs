@@ -1117,6 +1117,7 @@ fn rival_raid_director(
     mut meshes: ResMut<Assets<Mesh>>,
     mut creature_mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
     mut notice: ResMut<crate::ui::notice::Notice>,
+    mut speak: MessageWriter<crate::audio::Speak>,
     raiders: Query<Entity, With<RivalRaider>>,
     mut prev: Local<Option<crate::siege::GamePhase>>,
     mut seed: Local<u32>,
@@ -1148,6 +1149,11 @@ fn rival_raid_director(
             spawn_raider(&mut commands, &mut meshes, &mut creature_mats, pos, s);
         }
         notice.push("Rival raiders march on the keep!", time.elapsed_secs_f64());
+        // A raider barks the march cue from the gate as the party sets out.
+        speak.write(crate::audio::Speak::at(
+            crate::audio::Concept::RivalRaidMarch,
+            Vec3::new(RIVAL_CENTRE.x, 1.6, RIVAL_CENTRE.y + WALL_HALF + 3.0),
+        ));
     }
 }
 
