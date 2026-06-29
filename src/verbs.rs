@@ -1494,14 +1494,16 @@ fn animal_drops(
                 drops.push(id);
             }
         }
-        // Gear gate: a hunt-kill never yields mid/top weapons or armor (e.g. the golem's
-        // stone_maul/iron_armor) — that ladder is earned ONLY at the biome landmark trials. Meat,
-        // hides, buff consumables and the basic starter kit pass through.
+        // Gear gate: a hunt-kill NEVER yields weapons or armor — not the golem's stone_maul/iron_armor,
+        // and not the polar bear's leather_armor either. Wearable gear comes ONLY from the shop and the
+        // biome landmark trials (player rule). Meat, hides and buff consumables still pass through.
+        // (This was the long-standing "random armor at random moments" leak: hunting polar bears rained
+        // leather_armor because the old gate kept the "starter kit" — there is no starter exception now.)
         drops.retain(|id| {
             let wearable = tileworld_core::inventory::item_def(id)
                 .map(|d| matches!(d.kind, tileworld_core::inventory::ItemKind::Weapon | tileworld_core::inventory::ItemKind::Armor))
                 .unwrap_or(false);
-            !wearable || matches!(*id, "sword_iron" | "leather_armor")
+            !wearable
         });
         for id in drops {
             let ang = (rng.unit() * std::f64::consts::TAU) as f32;

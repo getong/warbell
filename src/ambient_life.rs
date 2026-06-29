@@ -79,6 +79,7 @@ fn spawn_butterfly(
     hindwing: &Handle<Mesh>,
     body: &Handle<Mesh>,
     wing_mat: &Handle<StandardMaterial>,
+    hind_mat: &Handle<StandardMaterial>,
     body_mat: &Handle<StandardMaterial>,
     phase: f32,
     home_r: f32,
@@ -100,31 +101,38 @@ fn spawn_butterfly(
                 Transform::from_xyz(0.0, 0.0, 0.0),
                 bevy::light::NotShadowCaster,
             ));
+            use core::f32::consts::FRAC_PI_2;
             for side in [-1.0_f32, 1.0] {
-                // Wings hinge at the body centreline, tilted up into a shallow V at rest.
-                let base = Quat::from_rotation_z(side * 0.4);
-                // Forewing — larger, set slightly forward.
+                // Lay each wing FLAT (ellipse faces +Z → rotate -90° about X so it lies horizontal,
+                // face up), then YAW it about vertical so the four wings splay into a butterfly
+                // X-silhouette — forewing points forward-out, hindwing back-out — instead of merging
+                // into one oval. The flap raises them into a V about the body's fore-aft axis
+                // (`flap_wings`), so from above you read the wing FACES, never an edge-on sliver.
+                let flat = Quat::from_rotation_x(-FRAC_PI_2);
+                let base_fore = Quat::from_rotation_y(side * 0.5) * flat; // forward-out
+                let base_hind = Quat::from_rotation_y(side * -0.55) * flat; // back-out
+                // Forewing — larger, set forward + outward.
                 p.spawn((
                     Mesh3d(forewing.clone()),
                     MeshMaterial3d(wing_mat.clone()),
                     Transform {
-                        translation: Vec3::new(side * 0.05, 0.0, 0.04),
-                        rotation: base,
+                        translation: Vec3::new(side * 0.11, 0.0, 0.075),
+                        rotation: base_fore,
                         ..default()
                     },
-                    Wing { side, base, rate, phase },
+                    Wing { side, base: base_fore, rate, phase },
                     bevy::light::NotShadowCaster,
                 ));
-                // Hindwing — smaller, set back.
+                // Hindwing — smaller, darker, set back + outward.
                 p.spawn((
                     Mesh3d(hindwing.clone()),
-                    MeshMaterial3d(wing_mat.clone()),
+                    MeshMaterial3d(hind_mat.clone()),
                     Transform {
-                        translation: Vec3::new(side * 0.045, -0.01, -0.05),
-                        rotation: base,
+                        translation: Vec3::new(side * 0.09, -0.006, -0.08),
+                        rotation: base_hind,
                         ..default()
                     },
-                    Wing { side, base, rate, phase },
+                    Wing { side, base: base_hind, rate, phase },
                     bevy::light::NotShadowCaster,
                 ));
             }
@@ -144,16 +152,19 @@ fn spawn_once(
     }
     done.0 = true;
 
-    // Small wing quads + a slim body. Forewing slightly larger than the hindwing.
-    let forewing = meshes.add(Rectangle::new(0.11, 0.13));
-    let hindwing = meshes.add(Rectangle::new(0.085, 0.085));
-    let body = meshes.add(Cuboid::new(0.022, 0.022, 0.16));
+    // ROUNDED wings (ellipses, not paper rectangles) — a wide forewing + a smaller hindwing read as
+    // a butterfly silhouette instead of a flat scrap. `Ellipse::new(half_w, half_h)`.
+    let forewing = meshes.add(Ellipse::new(0.14, 0.085)); // wide, shallow forewing
+    let hindwing = meshes.add(Ellipse::new(0.085, 0.10)); // rounder, longer hindwing
+    let body = meshes.add(Cuboid::new(0.018, 0.018, 0.15));
 
-    // Soft, DESATURATED pastels — gentle flecks against the grass, not bright confetti.
-    let wing_cols = [0xf1ead4, 0xeadfa6, 0xd9e0ea, 0xe7cbb0, 0xddd6e6, 0xd4e0c6];
+    // Saturated, recognisable butterfly colours — NOT washed-out pastels (which read as flat white
+    // under the unlit midday sun). Monarch orange, sulphur yellow, sky-blue, cabbage-white, dusky
+    // rose, pale green.
+    let wing_cols = [0xd9772b, 0xe6b829, 0x4f86c6, 0xe8e8ea, 0xcf6f86, 0x8fb45a];
     // One shared dark body material for every butterfly.
     let body_mat = mats.add(StandardMaterial {
-        base_color: crate::palette::srgb(0x2b2620),
+        base_color: crate::palette::srgb(0x241f19),
         unlit: true,
         ..default()
     });
@@ -165,10 +176,19 @@ fn spawn_once(
             cull_mode: None, // two-sided so a wing shows from either face
             ..default()
         });
+        // Hindwing a shade darker than the forewing → a hint of two-tone depth, less flat.
+        let h = crate::palette::lin_scaled(wing_cols[i % wing_cols.len()], 0.7);
+        let hc = Color::linear_rgba(h[0], h[1], h[2], h[3]);
+        let hind_mat = mats.add(StandardMaterial {
+            base_color: hc,
+            unlit: true,
+            cull_mode: None,
+            ..default()
+        });
         let phase = i as f32 * 2.39996; // golden-angle spread
         // Stable scattered territory radius from the phase: 3..TERRITORY_R.
         let home_r = 3.0 + (phase * 1.3).sin().abs() * (TERRITORY_R - 3.0);
-        spawn_butterfly(&mut commands, &forewing, &hindwing, &body, &wing_mat, &body_mat, phase, home_r);
+        spawn_butterfly(&mut commands, &forewing, &hindwing, &body, &wing_mat, &hind_mat, &body_mat, phase, home_r);
     }
 }
 
@@ -222,8 +242,10 @@ fn fly_butterflies(
 fn flap_wings(time: Res<Time>, mut q: Query<(&Wing, &mut Transform)>) {
     let t = time.elapsed_secs_wrapped();
     for (w, mut tf) in &mut q {
-        // Bias the clap upward (rest at a shallow V, snapping up toward a vertical clap).
-        let flap = (t * w.rate + w.phase).sin() * 0.55 + 0.35;
-        tf.rotation = w.base * Quat::from_rotation_z(w.side * flap);
+        // Raise the flat wing into a shallow V about the body's fore-aft axis (parent-space Z), so
+        // it claps between ~9° (nearly flat, full face) and ~40° up — gentle flutter, never edge-on.
+        let osc = (t * w.rate + w.phase).sin() * 0.5 + 0.5; // 0..1
+        let dihedral = 0.35 + osc * 0.4; // ~20°..43° up — clear butterfly V, never edge-on
+        tf.rotation = Quat::from_rotation_z(w.side * dihedral) * w.base;
     }
 }
