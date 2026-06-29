@@ -371,11 +371,14 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
             bxr(0.22, 0.045, 0.035, v(0.12, 0.5, 0.02), rz(0.55), IRON, Surf::Metal), // hoe blade
         ]))
     } else if guard {
+        // A REAL arming sword: a long flat blade tapering to a point above the crossguard — the old
+        // "blade" was a degenerate height-0.04 cone (radius 0), so the guard held a bare hilt stub.
         Some(group(vec![
-            cone(0.0, 0.04, v(0.0, 0.4, 0.0), Quat::IDENTITY, v(1.6, 1.0, 0.22), IRON, Surf::Metal), // blade (flat diamond)
-            bx(0.18, 0.04, 0.04, v(0.0, 0.06, 0.0), IRON, Surf::Metal), // guard
+            bx(0.06, 0.46, 0.024, v(0.0, 0.31, 0.0), IRON, Surf::Metal), // blade
+            cone(0.03, 0.12, v(0.0, 0.58, 0.0), Quat::IDENTITY, v(2.0, 1.0, 0.8), IRON, Surf::Metal), // point
+            bx(0.18, 0.045, 0.05, v(0.0, 0.06, 0.0), IRON, Surf::Metal), // crossguard
             frustum(0.02, 0.018, 0.14, v(0.0, -0.03, 0.0), LEATHER, Surf::Cloth), // grip
-            bx(0.04, 0.04, 0.04, v(0.0, -0.11, 0.0), IRON, Surf::Metal), // pommel
+            bx(0.05, 0.05, 0.05, v(0.0, -0.11, 0.0), IRON, Surf::Metal), // pommel
         ]))
     } else {
         None // unemployed — empty handed
