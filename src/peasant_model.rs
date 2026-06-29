@@ -52,6 +52,12 @@ const DESERT_CLOAK: u32 = 0xb1925a; // warm sand cloak
 const LIVERY_BLUE: u32 = 0x2f4a8a;
 const LIVERY_CRIMSON: u32 = 0x9a2420;
 const PLATE: u32 = 0xb9bec8; // brushed steel armour (a touch darker than the bright IRON tool blade)
+const DESERT_BRONZE: u32 = 0x8a6a34; // warm desert war-metal (small accents: helm spike, scimitar hilt)
+const DESERT_BRONZE_DK: u32 = 0x5f4720; // shadowed bronze (groove/hem lines)
+// The rival garrison's body armour is PALE SANDY lamellar (sun-bleached leather/scale), NOT heavy
+// cold steel like ours and NOT dark bronze — so the desert soldier reads "piaskowy" (sandy/light).
+const DESERT_ARMOR: u32 = 0xcab089; // sandy lamellar plate
+const DESERT_ARMOR_DK: u32 = 0x90763f; // sand groove/scale-row line
 // Desert lower-body garb (rival workers) — a flowing thobe + loose linens + sandals, so the rival's
 // men read as a foreign desert people from head to toe, not "our peasant in a headscarf".
 const DESERT_ROBE: u32 = 0xcdb784; // sand thobe skirt (a shade lighter/warmer than the DESERT_CLOTH headwrap)
@@ -231,10 +237,20 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
         // tabard (blue = player militia, crimson = rival garrison). Unarmed peasants/workers never get
         // this, so the player can tell whom to cut down from whom to spare.
         let livery = if desert { LIVERY_CRIMSON } else { LIVERY_BLUE };
-        torso_parts.push(frustum_s(0.255, 0.215, 0.40, v(1.08, 1.0, 0.88), v(0.0, 0.16, 0.03), PLATE, Surf::Metal)); // breastplate
+        // Ours is cold STEEL plate; the rival's is PALE SANDY lamellar (sun-bleached leather/scale) so
+        // the desert soldier reads light and sandy, not a dark-bronze knight. Desert plate gets scale
+        // row lines too. The surface family is Cloth for the sandy leather (matte, not steel-shiny).
+        let armor = if desert { DESERT_ARMOR } else { PLATE };
+        let armor_surf = if desert { Surf::Cloth } else { Surf::Metal };
+        torso_parts.push(frustum_s(0.255, 0.215, 0.40, v(1.08, 1.0, 0.88), v(0.0, 0.16, 0.03), armor, armor_surf)); // breastplate
+        if desert {
+            for y in [0.0_f32, 0.12, 0.24] {
+                torso_parts.push(frustum_s(0.262, 0.222, 0.018, v(1.09, 1.0, 0.9), v(0.0, y, 0.03), DESERT_ARMOR_DK, Surf::Cloth)); // lamellar row line
+            }
+        }
         torso_parts.push(bxr(0.21, 0.36, 0.03, v(0.0, 0.13, 0.2), rx(0.05), livery, Surf::Cloth)); // tabard front
         for side in [-1.0_f32, 1.0] {
-            torso_parts.push(bxr(0.14, 0.08, 0.18, v(side * 0.2, 0.31, 0.02), rz(side * -0.2), PLATE, Surf::Metal)); // pauldron
+            torso_parts.push(bxr(0.14, 0.08, 0.18, v(side * 0.2, 0.31, 0.02), rz(side * -0.2), armor, armor_surf)); // pauldron
         }
     }
     let torso = group(torso_parts);
@@ -281,10 +297,10 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
         // spiked war-helm sunk into a fat pale turban, with cheek-drapes and a DARK face-veil over the
         // mouth. Warm bronze + dark veil give the contrast the pale-on-steel first cut lacked. The
         // crimson tabard + plate below still mark him a fighter (vs the keffiyeh-only worker).
-        const BRONZE: u32 = 0x8a6a34; // warm desert war-metal (distinct from our cold PLATE/IRON steel)
-        head_parts.push(frustum(0.11, 0.125, 0.085, v(0.0, 0.16, 0.0), BRONZE, Surf::Metal)); // bronze skull-cap
-        head_parts.push(frustum(0.02, 0.092, 0.16, v(0.0, 0.27, 0.0), BRONZE, Surf::Metal)); // tall spike point
-        head_parts.push(bx(0.024, 0.05, 0.024, v(0.0, 0.38, 0.0), BRONZE, Surf::Metal)); // finial knob
+        let bronze = DESERT_BRONZE;
+        head_parts.push(frustum(0.11, 0.125, 0.085, v(0.0, 0.16, 0.0), bronze, Surf::Metal)); // bronze skull-cap
+        head_parts.push(frustum(0.02, 0.092, 0.16, v(0.0, 0.27, 0.0), bronze, Surf::Metal)); // tall spike point
+        head_parts.push(bx(0.024, 0.05, 0.024, v(0.0, 0.38, 0.0), bronze, Surf::Metal)); // finial knob
         // Pale turban wrapped fat around the helm base — the dominant desert silhouette.
         head_parts.push(frustum(0.158, 0.16, 0.085, v(0.0, 0.11, 0.0), DESERT_CLOTH, Surf::Cloth)); // turban wrap
         head_parts.push(frustum(0.15, 0.156, 0.03, v(0.0, 0.155, 0.0), DESERT_BAND, Surf::Cloth)); // wrap fold line
@@ -370,6 +386,25 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
             frustum(0.032, 0.036, 0.08, v(0.0, 0.5, 0.0), IRON, Surf::Metal), // socket
             bxr(0.22, 0.045, 0.035, v(0.12, 0.5, 0.02), rz(0.55), IRON, Surf::Metal), // hoe blade
         ]))
+    } else if guard && desert {
+        // The rival garrison carries a CURVED SCIMITAR (a saracen sabre), not our straight arming
+        // sword — segmented along a shallow arc with the cutting edge swept toward +X, bronze hilt.
+        let mut parts = vec![
+            bx(0.16, 0.05, 0.05, v(0.0, 0.08, 0.0), DESERT_BRONZE, Surf::Metal), // crossguard
+            frustum(0.02, 0.018, 0.14, v(0.0, -0.03, 0.0), LEATHER, Surf::Cloth), // grip
+            bx(0.05, 0.05, 0.05, v(0.0, -0.11, 0.0), DESERT_BRONZE, Surf::Metal), // pommel
+        ];
+        // (width, height, offset, z-rotation) — precomputed arc segments (see commit note).
+        for (w, h, off, a) in [
+            (0.050_f32, 0.15_f32, v(0.007, 0.165, 0.0), -0.1125_f32),
+            (0.055, 0.15, v(0.036, 0.291, 0.0), -0.3375),
+            (0.060, 0.15, v(0.092, 0.407, 0.0), -0.5625),
+            (0.055, 0.15, v(0.173, 0.508, 0.0), -0.7875),
+        ] {
+            parts.push(bxr(w, h, 0.022, off, rz(a), IRON, Surf::Metal)); // blade segment
+        }
+        parts.push(cone(0.03, 0.14, v(0.266, 0.591, 0.0), rz(-0.95), v(1.7, 1.0, 0.73), IRON, Surf::Metal)); // swept point
+        Some(group(parts))
     } else if guard {
         // A REAL arming sword: a long flat blade tapering to a point above the crossguard — the old
         // "blade" was a degenerate height-0.04 cone (radius 0), so the guard held a bare hilt stub.
