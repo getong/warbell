@@ -21,7 +21,7 @@ use crate::player::HeroState;
 use crate::siege::GameTime;
 
 /// How many butterflies wander near the hero. Kept low — a few drifting specks, not a swarm.
-const BUTTERFLY_COUNT: usize = 4;
+const BUTTERFLY_COUNT: usize = 2;
 /// How fast a butterfly fades in/out (alpha units per second) as it enters/leaves green daytime
 /// country. Low → a soft ~1.5s dissolve, never a pop.
 const FADE_RATE: f32 = 0.7;
@@ -167,9 +167,9 @@ fn spawn_once(
 
     // ROUNDED wings (ellipses, not paper rectangles) — a wide forewing + a smaller hindwing read as
     // a butterfly silhouette instead of a flat scrap. `Ellipse::new(half_w, half_h)`.
-    let forewing = meshes.add(Ellipse::new(0.14, 0.085)); // wide, shallow forewing
-    let hindwing = meshes.add(Ellipse::new(0.085, 0.10)); // rounder, longer hindwing
-    let body = meshes.add(Cuboid::new(0.018, 0.018, 0.15));
+    let forewing = meshes.add(Ellipse::new(0.10, 0.060)); // wide, shallow forewing (~30% smaller)
+    let hindwing = meshes.add(Ellipse::new(0.060, 0.072)); // rounder, longer hindwing
+    let body = meshes.add(Cuboid::new(0.014, 0.014, 0.11));
 
     // Saturated, recognisable butterfly colours — NOT washed-out pastels (which read as flat white
     // under the unlit midday sun). Monarch orange, sulphur yellow, sky-blue, cabbage-white, dusky

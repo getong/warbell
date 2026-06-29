@@ -338,6 +338,9 @@ fn ensure_hp_bars(
     // float the same bar as any creature, just lower (their rig is shorter). It only shows when
     // wounded, exactly like the orks'.
     folk: Query<Entity, (With<crate::villagers::NpcHp>, Without<HasHpBar>)>,
+    // Rival soldiers are biped guards carrying `Health` (not `NpcHp`) — give them the same bar as
+    // the townsfolk so the player can read a guard's HP as they whittle it down.
+    rivals: Query<Entity, (With<crate::rival::RivalSoldier>, With<Health>, Without<HasHpBar>)>,
 ) {
     // Orks + townsfolk were enlarged by WORLD_BUMP (animals were not), so lift their bars to match
     // the taller heads. The base sits at y=0 and scales about it, so head height scales by the bump.
@@ -351,6 +354,9 @@ fn ensure_hp_bars(
     for e in &folk {
         spawn_hp_bar(&mut commands, &assets, e, HP_BAR_Y_NPC * bump);
     }
+    for e in &rivals {
+        spawn_hp_bar(&mut commands, &assets, e, HP_BAR_Y_NPC * bump);
+    }
 }
 
 #[allow(clippy::type_complexity)]
@@ -362,7 +368,7 @@ fn drive_hp_bars(
     // Vitals come from `Health` (orks/animals) OR `NpcHp` (town NPCs) — whichever the target carries.
     targets: Query<
         (&GlobalTransform, Option<&Health>, Option<&crate::villagers::NpcHp>, Option<&HurtFlash>, Option<&crate::dying::Dying>),
-        Or<(With<Ork>, With<crate::wildlife::Animal>, With<crate::villagers::NpcHp>)>,
+        Or<(With<Ork>, With<crate::wildlife::Animal>, With<crate::villagers::NpcHp>, With<crate::rival::RivalSoldier>)>,
     >,
     mut bars: Query<(Entity, &HpBar, &mut Transform, &mut Visibility, &Children)>,
     mut fgs: Query<(&mut Transform, &mut MeshMaterial3d<StandardMaterial>), (With<HpBarFg>, Without<HpBar>)>,

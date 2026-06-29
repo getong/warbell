@@ -87,6 +87,13 @@ pub struct AtmoSample {
     /// `Bloom` by this (× a dusk/night swell) so the Blight's embers glow hot, the swamp reads
     /// muted, snow/desert sparkle. Eased like the colours so crossing a region edge ramps it.
     pub bloom_scale: f32,
+    /// Per-region AMBIENT-fill multiplier (1.0 = the island base). `scene::advance_sky` scales the
+    /// global ambient brightness by this in daylight. Prior swamp/Blight darkness fixes all bumped
+    /// the SUN (lit side) + fog, but the dense vertical props (mangroves, snags, fortress timber)
+    /// read as black silhouettes off-noon because their SHADOW side is fed only by ambient — so the
+    /// marsh + mire still looked "too dark / everything shadowed" (player). This lifts the fill in
+    /// those regions only, rescuing the shadow side without washing the sun-keyed ground.
+    pub ambient_scale: f32,
 }
 
 impl AtmoSample {
@@ -106,6 +113,12 @@ impl AtmoSample {
             bloom_scale: match c.biome {
                 Biome::Swamp => 0.85,
                 Biome::Snow | Biome::Desert => 1.12,
+                _ => 1.0,
+            },
+            // Lift the swamp's shadow-side fill so its dense mangroves/snags stop crushing to black
+            // off-noon (the Blight sets its own, higher, in `blight_ambience`).
+            ambient_scale: match c.biome {
+                Biome::Swamp => 1.75,
                 _ => 1.0,
             },
         }
@@ -128,6 +141,8 @@ impl AtmoSample {
             fog_density,
             // Island base: neutral bloom. Callers that want a hotter glow (the Blight) bump it.
             bloom_scale: 1.0,
+            // Island base: neutral ambient. The Blight bumps it in `blight_ambience`.
+            ambient_scale: 1.0,
         }
     }
 }
@@ -684,15 +699,15 @@ fn spawn_chunks(
     mat: &Handle<StandardMaterial>,
     chunks: std::collections::HashMap<(i32, i32), ChunkBucket>,
 ) {
-    // Cover cuts out abruptly at 55 units — small ground cover (grass/flowers/mushrooms) is a tiny
-    // speck at range, so culling it closer trims overdraw + distant clutter with little visible loss
-    // (the cutoff sits inside the fog ramp, FOG_CLEAR ≈ 85 → FOG_FULL ≈ 190). An ABRUPT range (empty
+    // Cover cuts out abruptly at 38 units — small ground cover (grass/flowers/mushrooms) is a tiny
+    // speck at range, so culling it close trims overdraw + distant aliased clutter with little visible
+    // loss (the cutoff sits well inside the fog ramp, FOG_CLEAR ≈ 57). An ABRUPT range (empty
     // crossfade band, `is_abrupt()` true) is deliberate: a non-empty band routes the chunk through
     // the dithered-crossfade pipeline (per-fragment `discard`), which defeats early-z on these large
     // merged meshes. Collapsing both margins keeps it abrupt while preserving `use_aabb: true`.
     let cover_range = bevy::camera::visibility::VisibilityRange {
         start_margin: 0.0..0.0,   // always visible up close
-        end_margin: 55.0..55.0,   // abrupt cutoff at 55 world units (no dithered fade band)
+        end_margin: 38.0..38.0,   // abrupt cutoff at 38 world units (no dithered fade band)
         use_aabb: true,
     };
     for (key, bucket) in chunks {
@@ -786,10 +801,11 @@ pub fn scatter_region(
     // so the renderer auto-batches them into few draw calls.
     let mat = materials.add(StandardMaterial {
         base_color: Color::WHITE,
-        // Glossier + a touch more reflectance so props catch a soft sun/sky highlight
-        // (form-giving specular), instead of reading dead-matte. Tunable live in F1 → Render.
-        perceptual_roughness: 0.62,
-        reflectance: 0.5,
+        // Matte: the props (esp. thin grass blades) used to catch a bright specular glint that lit
+        // their edges into hard sharp highlights. High roughness + low reflectance kills that glint
+        // so foliage reads soft / sun-faded ("wypłowiałe") instead of crisp. Tunable live in F1 → Render.
+        perceptual_roughness: 0.92,
+        reflectance: 0.18,
         ..default()
     });
 

@@ -27,9 +27,14 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 use crate::palette::lin;
 
 // ── Grass palette ───────────────────────────────────────────────────────────────
-const TUFT_BASE: u32 = 0x246b2e; // deep shadowed blade root (#246b2e) — anchors the vertical gradient
-const TUFT_GREEN: u32 = 0x3aa044; // grass blade mid (#3aa044)
-const TUFT_TIP: u32 = 0x5fc060; // sunlit blade tip for the gradient clump
+// FADED + low-contrast: desaturated, sun-bleached greens so tufts read as soft washed-out foliage
+// ("wypłowiałe roślinki") rather than crisp saturated spikes. Centred near the island grass colour
+// (`worldmap::grass` = 0x6fb24c) but pulled toward grey so the blades blend into the turf; the
+// narrow root→tip band keeps the silhouette gentle, not sharp. Pairs with the now-matte scatter
+// material (no specular glint on the edges).
+const TUFT_BASE: u32 = 0x6a9a52; // blade root — muted, slightly darker so the tuft roots in
+const TUFT_GREEN: u32 = 0x7ba965; // blade mid — desaturated faded grass green
+const TUFT_TIP: u32 = 0x8fba7c; // blade tip — pale washed-out green (gentle, low-contrast)
 const GRASS_DRY: u32 = 0xb6a24e; // sun-dried straw blade (variety in a tuft)
 const SEED_HEAD: u32 = 0xd8c486; // pale seed-head spike on flowering grass
 

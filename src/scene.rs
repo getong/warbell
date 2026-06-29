@@ -263,6 +263,7 @@ fn track_biome_atmo(
             cur.ambient_brightness += (target.ambient_brightness - cur.ambient_brightness) * k;
             cur.fog_density += (target.fog_density - cur.fog_density) * k;
             cur.bloom_scale += (target.bloom_scale - cur.bloom_scale) * k;
+            cur.ambient_scale += (target.ambient_scale - cur.ambient_scale) * k;
         }
     }
 }
@@ -417,6 +418,12 @@ fn advance_sky(
     // sun/moon still key the contrast; this raises the floor so the shadow side isn't crushed.
     // (Computed from `day`/`night`, never read-back, so it can't compound frame-to-frame.)
     ambient.brightness = 285.0 - 20.0 * day + 65.0 * night;
+    // Per-biome shadow-side fill lift (swamp/Blight): their dense vertical props read as black
+    // silhouettes off-noon because only ambient feeds the shadow side. Scaled by `day` so it acts in
+    // daylight (where the crush is visible) and fades out at night (the moon-keyed look stays tuned).
+    if let Some(t) = tint {
+        ambient.brightness *= 1.0 + (t.ambient_scale - 1.0) * day;
+    }
     ambient.color = lerp_col(Color::srgb(0.50, 0.60, 0.95), Color::srgb(1.0, 0.95, 0.86), day);
     // Golden hour: as the sun skims the horizon, warm the ambient fill too, so the whole
     // scene catches the sunset glow instead of just the sky band.

@@ -48,16 +48,12 @@ const EYE_H: f32 = 0.7425;
 /// First-person eye height above the hero's feet — sits right at the helm/eye line. (Scaled ×1.5
 /// alongside the `HERO_SCALE` bump; an eye floating above the helm reads as "too tall" and drops the
 /// sword-hand off the bottom of frame.) Original 0.74 × 1.35. Verify with `FOREST_FP`.
-const FP_EYE_H: f32 = 0.999;
-/// First-person forward eye offset (world units along the look direction). Eyes sit at the FRONT
-/// of the head, not the body centre — this nudges the viewpoint toward what you're aiming at so a
-/// tree/ork at swing reach (`verbs::SWING_RANGE` = 1.9u) reads as reachable instead of "hug it".
-/// Kept SMALL: the sword hand only projects ~0.3u in front of the body, so too large an offset
-/// puts the eye on top of (or past) the weapon and it falls out of the forward frustum. The eye
-/// must stay BEHIND the sword-hand for the viewmodel to read. Slightly NEGATIVE: the eye sits a
-/// touch behind the body centre (the head is hidden in FP, so nothing clips) so the raised
-/// sword-arm has room to project forward into the lens instead of straddling it.
-const FP_FWD_OFF: f32 = -0.18;
+const FP_EYE_H: f32 = 1.32;
+/// First-person forward eye offset (world units along the look direction). Now that the whole hero
+/// is rendered in FP (no body cull), the eye must sit IN FRONT of the head — otherwise the camera
+/// is behind the body centre and you stare at your own back/helm. Push it past the head radius so
+/// you look OUT of the face, body behind the lens, weapon-arm projecting forward into view.
+const FP_FWD_OFF: f32 = 0.05;
 /// First-person look-pitch clamp (radians): how far you can crane up/down. Symmetric, unlike the
 /// third-person `MIN/MAX_PITCH` (which is camera *elevation*, always tilting the view downward).
 const FP_PITCH_LIMIT: f32 = 1.3;
@@ -173,15 +169,13 @@ pub fn toggle_first_person(
     }
 }
 
-/// First-person **viewmodel** visibility. The head would fill the lens, so in FP we hide the
-/// head + torso + legs but KEEP the arms, the shield, and the weapon (nested under the sword arm) —
-/// so a swing shows your sword and a block shows your shield. Restores everything in third person.
-/// Driven off `fp.blend` (the eased toggle), one frame behind the camera — imperceptible.
+/// First-person body visibility. FP renders the **whole hero** (so the hands don't flicker) except
+/// meshes flagged `fp_hide` — just the head, which would otherwise fill the lens as a black blob.
+/// Restores everything in third person. Driven off `fp.blend` (the eased toggle), one frame behind.
 pub fn fp_body_visibility(fp: Res<FirstPerson>, mut vis_q: Query<(&mut Visibility, &super::HeroMesh)>) {
     let fp_on = fp.blend > 0.5;
     for (mut vis, mesh) in &mut vis_q {
-        // Keep the arm/shield/sword meshes (`fp_keep`); drop the head/torso/hips/legs.
-        let want = if fp_on && !mesh.fp_keep { Visibility::Hidden } else { Visibility::Inherited };
+        let want = if fp_on && mesh.fp_hide { Visibility::Hidden } else { Visibility::Inherited };
         if *vis != want {
             *vis = want;
         }

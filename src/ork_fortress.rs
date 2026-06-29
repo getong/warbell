@@ -135,6 +135,10 @@ pub fn blight_ambience() -> BiomeAmbience {
     );
     // Hot-ember bloom: the burning fortress + torch-lit mire glow harder than anywhere else.
     atmo.bloom_scale = 1.55;
+    // Lift the shadow-side fill: the mire is packed with vertical timber/snags/fortress walls whose
+    // shadow side was crushing to black off-noon (player: "za ciemno, wszystko zacienione"). A touch
+    // higher than the swamp since the Blight props are denser + darker-toned.
+    atmo.ambient_scale = 1.85;
     BiomeAmbience { atmo, particle: ParticleKind::Ash }
 }
 

@@ -842,9 +842,13 @@ const GARRISON_MAX: usize = 8;
 /// over a few minutes, so clearing it out actually means something).
 const GARRISON_RESPAWN_DELAY: f32 = 18.0;
 /// Soldier hit points — sturdier than a single ork grunt is soft, so a lone hero must commit but a
-/// war party makes short work of them.
-const SOLDIER_HP: f32 = 120.0;
-const SOLDIER_DMG: f32 = 11.0;
+/// war party makes short work of them. (Was 120/11 — too soft, the garrison folded instantly.)
+const SOLDIER_HP: f32 = 220.0;
+const SOLDIER_DMG: f32 = 16.0;
+/// Bounty for cutting down a rival soldier — gold (scaled by the hero's bounty boon) + flat XP, on
+/// par with a tough ork so the skirmish actually rewards the hero. Read in `player::combat`.
+pub const SOLDIER_BOUNTY_GOLD: i64 = 12;
+pub const SOLDIER_BOUNTY_XP: i64 = 25;
 const SOLDIER_ATK_CD: f32 = 1.1;
 const SOLDIER_MELEE: f32 = 1.7;
 /// How near a foe must come before a soldier engages…

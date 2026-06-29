@@ -416,6 +416,7 @@ pub fn player_attack(
             Option<&mut Ork>,
             Option<&mut Animal>,
             Option<&mut crate::combat_fx::HitSquash>,
+            Option<&crate::rival::RivalSoldier>,
         ),
         (
             Or<(With<Ork>, With<Animal>, With<crate::boss::Boss>, With<crate::warlord::Warlord>, With<crate::rival::RivalSoldier>)>,
@@ -524,7 +525,7 @@ pub fn player_attack(
     // Direct-hit bookkeeping for the cleave pass (positions to splash from + who's already hit).
     let mut struck: Vec<Vec2> = Vec::new();
     let mut hit_ents: Vec<Entity> = Vec::new();
-    for (e, gt, mut hp, mut ork, animal, mut squash) in &mut targets {
+    for (e, gt, mut hp, mut ork, animal, mut squash, rival) in &mut targets {
         let p = gt.translation();
         let to = Vec2::new(p.x - origin.x, p.z - origin.y);
         let dist = to.length();
@@ -576,6 +577,9 @@ pub fn player_attack(
                 let prof = crate::verbs::animal_profile(an.species);
                 mods.publish_animal_kill(p, an.species);
                 ((prof.gold as f64 * bounty_mult).round() as i64, prof.xp)
+            } else if rival.is_some() {
+                // A felled rival soldier pays a tough-ork-tier bounty (gold scales with the boon).
+                ((crate::rival::SOLDIER_BOUNTY_GOLD as f64 * bounty_mult).round() as i64, crate::rival::SOLDIER_BOUNTY_XP)
             } else {
                 (0, 0)
             };
@@ -654,7 +658,7 @@ pub fn player_attack(
     if player.0.cleave > 0.0 && !struck.is_empty() {
         let splash = cleave_damage(dmg as f64, player.0.cleave) as f32;
         if splash > 0.0 {
-            for (e, gt, mut hp, ork, _animal, mut squash) in &mut targets {
+            for (e, gt, mut hp, ork, _animal, mut squash, _rival) in &mut targets {
                 if ork.is_none() || hit_ents.contains(&e) {
                     continue; // cleave only hits orks, and never the directly-struck ones twice
                 }
@@ -738,7 +742,7 @@ pub fn player_attack(
         // collateral mid-battle. If any ork is near the hero we're in a fight, so stay quiet; an
         // accidental bonk between sword-strokes shouldn't make the peasant quip over the screaming.
         const BATTLE_QUIET_R2: f32 = 14.0 * 14.0;
-        let in_battle = targets.iter().any(|(_, gt, _, ork, _, _)| {
+        let in_battle = targets.iter().any(|(_, gt, _, ork, _, _, _)| {
             ork.is_some() && {
                 let p = gt.translation();
                 Vec2::new(p.x - origin.x, p.z - origin.y).length_squared() < BATTLE_QUIET_R2

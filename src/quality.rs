@@ -242,7 +242,7 @@ pub fn preset_settings(quality: GraphicsQuality) -> GraphicsSettings {
             outline: false, // crisp toon edges off by default (user preference)
             god_rays: true,
             motion_blur: false,
-            render_scale: 1.0,
+            render_scale: 2.0, // SSAA ×2 — supersample for true edge-AA on the showcase preset
         },
         // Low: tuned for integrated GPUs — SSAO/bloom/DoF/outline off (each strips a whole pass),
         // 2 small shadow cascades, the cheap terrain lane, and a 0.6 render-scale (the big
@@ -615,19 +615,25 @@ fn apply_quality(
 /// machine), else the player's [`GraphicsSettings::render_scale`]. On a weak GPU the main 3D pass
 /// (rasterising the whole scene) IS the frame — a Radeon 840M iGPU spends ~30 ms in
 /// `main_opaque_pass_3d` alone at native res — so dropping below 1.0 is the dominant fragment lever.
+///
+/// Above 1.0 the main pass renders at a HIGHER resolution and is downsampled to the window
+/// (supersampling / SSAA) — the only true edge-AA we have for thin sub-pixel geometry (grass blades,
+/// flower petals) that the post-process SMAA can't catch. Heavy (cost ≈ scale²), so it rides the
+/// Ultra "showcase" preset only. Clamp 0.3..2.0.
 fn render_scale_for(settings: &GraphicsSettings) -> f32 {
     if let Some(v) =
         std::env::var("FOREST_RENDERSCALE").ok().and_then(|s| s.trim().parse::<f32>().ok())
     {
-        return v.clamp(0.3, 1.0);
+        return v.clamp(0.3, 2.0);
     }
-    settings.render_scale.clamp(0.3, 1.0)
+    settings.render_scale.clamp(0.3, 2.0)
 }
 
 /// Drive Bevy's [`MainPassResolutionOverride`] from the window size × the render-scale: the
-/// opaque/transparent/prepass render at the lower resolution (Bevy upscales the result; the cheap
-/// post passes — SMAA/tonemapping/UI — stay full-res), cutting the dominant fragment cost by ~scale²
-/// on fragment-bound GPUs. Self-gating via `Local` so it only touches the camera when the scale or
+/// opaque/transparent/prepass render at the scaled resolution (Bevy resamples the result to the
+/// window; the cheap post passes — SMAA/tonemapping/UI — stay full-res). Below 1.0 this cuts the
+/// dominant fragment cost by ~scale² on fragment-bound GPUs; above 1.0 it supersamples (SSAA) for
+/// true geometric edge-AA. Self-gating via `Local` so it only touches the camera when the scale or
 /// window size actually changes (re-inserting every frame would mark the camera `Changed`).
 fn apply_render_scale(
     settings: Res<GraphicsSettings>,
@@ -640,7 +646,8 @@ fn apply_render_scale(
     let Ok(win) = windows.single() else {
         return;
     };
-    let want = (scale < 0.999).then(|| {
+    // Override whenever the scale deviates from native (either direction); ==1.0 removes it.
+    let want = ((scale - 1.0).abs() > 0.001).then(|| {
         UVec2::new(
             (win.physical_width() as f32 * scale).round().max(64.0) as u32,
             (win.physical_height() as f32 * scale).round().max(64.0) as u32,

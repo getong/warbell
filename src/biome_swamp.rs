@@ -58,10 +58,14 @@ const TREE_SCALE: f32 = 1.7;
 // ── Swamp palette (murky, desaturated — deep olive greens + rotting browns) ──────────
 // Most parts also pass through `lin_scaled(c, v)`: v < 1 for the mud-dark waterline /
 // underside tones, v > 1 for the sunlit crowns, so each prop bakes its own shading.
-const MANGROVE_BARK: u32 = 0x3b2c20; // twisted near-black swamp-wood trunk
-const MANGROVE_BARK_DK: u32 = 0x281d14; // shadowed underside / drooping limbs
-const MANGROVE_ROOT: u32 = 0x322619; // buttress fins + stilt roots, a touch warmer
-const CANOPY_DARK: u32 = 0x2a4a2c; // deep swamp-green canopy body / underside
+// These trunk/canopy-dark tones were so close to black (≈0.02 linear) that the marsh + the
+// blight around the ork Hold read as a field of pure-black silhouettes against the lit ground
+// (player feedback: "za ciemno / wszystko zacienione"). Lifted ~50% so the wood reads as dark
+// rotten brown rather than a hole — the shaded mood stays, the props stop crushing to black.
+const MANGROVE_BARK: u32 = 0x5a4432; // twisted dark swamp-wood trunk (was 0x3b2c20 — near-black)
+const MANGROVE_BARK_DK: u32 = 0x423022; // shadowed underside / drooping limbs (was 0x281d14)
+const MANGROVE_ROOT: u32 = 0x4e3c28; // buttress fins + stilt roots, a touch warmer (was 0x322619)
+const CANOPY_DARK: u32 = 0x3a603c; // deep swamp-green canopy body / underside (was 0x2a4a2c)
 const CANOPY_MID: u32 = 0x37623a; // a slightly lighter canopy lobe
 const CANOPY_LIGHT: u32 = 0x4d7d46; // bright sunlit top lobes
 const HANGING_MOSS: u32 = 0x6f7e54; // grey-green Spanish-moss strands (pale sage)
@@ -69,7 +73,7 @@ const HANGING_MOSS: u32 = 0x6f7e54; // grey-green Spanish-moss strands (pale sag
 const STUMP_BARK: u32 = 0x4a3826; // rotten cypress stump bark
 const STUMP_TOP: u32 = 0x5f4a30; // damp cut-top wood (scaled way down = the rotten hollow)
 const STUMP_MOSS: u32 = 0x4d6e3a; // moss cushion on the stump
-const KNEE_WOOD: u32 = 0x42301f; // cypress-knee root knob
+const KNEE_WOOD: u32 = 0x5f462e; // cypress-knee root knob (lifted off near-black, was 0x42301f)
 
 const REED_STALK: u32 = 0x6b8a44; // marsh reed green (TS REED_MAT)
 const REED_STALK_DK: u32 = 0x4f6c34; // darker reed (TS REED_DARK_MAT)

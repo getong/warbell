@@ -71,11 +71,14 @@ pub struct HeroPart {
     pub joint: Joint,
 }
 
-/// A body **mesh leaf** (child of a joint). `fp_keep` meshes — the arms, shield and sword — stay
-/// visible in first-person; the rest (head/torso/hips/legs) are hidden by [`camera`].
+/// A body **mesh leaf** (child of a joint). The whole hero renders in first-person now (so the
+/// hands don't flicker), EXCEPT meshes flagged `fp_hide` — just the head, which would otherwise
+/// fill the lens as a black blob. Hidden in FP by [`camera::fp_body_visibility`].
 #[derive(Component)]
 pub struct HeroMesh {
     pub fp_keep: bool,
+    /// Hidden in first-person (the head only) so it doesn't block the camera.
+    pub fp_hide: bool,
 }
 
 /// The held weapon mesh leaf (under the right hand). Toggled `Visibility::Hidden` for weapon-free
@@ -456,6 +459,7 @@ fn spawn_hero(
 struct Leaf {
     mesh: Handle<Mesh>,
     fp_keep: bool,
+    fp_hide: bool,
     weapon: bool,
 }
 fn spawn_joint(
@@ -477,7 +481,7 @@ fn spawn_joint(
             Mesh3d(l.mesh),
             MeshMaterial3d(mat.clone()),
             Transform::default(),
-            HeroMesh { fp_keep: l.fp_keep },
+            HeroMesh { fp_keep: l.fp_keep, fp_hide: l.fp_hide },
         ));
         if l.weapon {
             le.insert(HeroWeapon);
@@ -500,8 +504,10 @@ pub(crate) fn spawn_hero_meshes(
 ) {
     use Joint::*;
     let p = |t: Vec3| Transform::from_translation(t);
-    let body = |mesh: Handle<Mesh>| Some(Leaf { mesh, fp_keep: false, weapon: false });
-    let arm = |mesh: Handle<Mesh>| Some(Leaf { mesh, fp_keep: true, weapon: false });
+    let body = |mesh: Handle<Mesh>| Some(Leaf { mesh, fp_keep: false, fp_hide: false, weapon: false });
+    let arm = |mesh: Handle<Mesh>| Some(Leaf { mesh, fp_keep: true, fp_hide: false, weapon: false });
+    // The head fills the lens in FP — hide just it (`fp_hide`), keep the rest of the body visible.
+    let head = |mesh: Handle<Mesh>| Some(Leaf { mesh, fp_keep: false, fp_hide: true, weapon: false });
     // The UPPER arms (shoulder meshes) sit right at the FP eye and balloon into two blobs that fill
     // the lens. Hide just those in first person (`fp_keep:false`) like the body. The FOREARMS stay
     // (`arm`, kept) so the sword/shield read as HELD in a hand — not levitating — posed low into the
@@ -521,7 +527,7 @@ pub(crate) fn spawn_hero_meshes(
     let hips = spawn_joint(commands, rig, Some(Hips), p(Vec3::new(0.0, Y_HIPS, 0.0)), mat, body(meshes.add(m.hips)));
     let torso = spawn_joint(commands, hips, Some(Torso), p(Vec3::new(0.0, O_TORSO, 0.0)), mat, body(meshes.add(m.torso)));
     let neck = spawn_joint(commands, torso, None, p(Vec3::new(0.0, O_NECK, 0.0)), mat, body(meshes.add(m.neck)));
-    spawn_joint(commands, neck, Some(Head), p(Vec3::new(0.0, O_HEAD, 0.0)), mat, body(meshes.add(m.head)));
+    spawn_joint(commands, neck, Some(Head), p(Vec3::new(0.0, O_HEAD, 0.0)), mat, head(meshes.add(m.head)));
 
     // Left arm + heater shield on the hand pivot (`anim` rewrites the shield pose every frame).
     let sh_l = spawn_joint(commands, torso, Some(ShoulderL), p(Vec3::new(-SHOULDER_DX, O_SHOULDER_Y, 0.01)), mat, upper(meshes.add(m.shoulder_l)));
@@ -541,7 +547,7 @@ pub(crate) fn spawn_hero_meshes(
     let sh_r = spawn_joint(commands, torso, Some(ShoulderR), p(Vec3::new(SHOULDER_DX, O_SHOULDER_Y, 0.01)), mat, upper(meshes.add(m.shoulder_r)));
     let el_r = spawn_joint(commands, sh_r, Some(ElbowR), p(Vec3::new(0.0, O_ELBOW, 0.0)), mat, arm(meshes.add(m.elbow_r)));
     let hand_r = spawn_joint(commands, el_r, None, p(Vec3::new(0.0, O_HAND, 0.0)), mat, None);
-    spawn_joint(commands, hand_r, Some(Sword), Transform::default(), mat, Some(Leaf { mesh: meshes.add(m.weapon), fp_keep: true, weapon: true }));
+    spawn_joint(commands, hand_r, Some(Sword), Transform::default(), mat, Some(Leaf { mesh: meshes.add(m.weapon), fp_keep: true, fp_hide: false, weapon: true }));
 
     // Legs: hip joint → knee → ankle (HH-derived; feet land on the ground).
     let hip_l = spawn_joint(commands, hips, Some(HipL), p(Vec3::new(-HIP_DX, O_HIP_Y, 0.0)), mat, body(meshes.add(m.hip_l)));
