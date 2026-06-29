@@ -4,8 +4,10 @@
 //! (per-joint flat-shaded vertex-coloured meshes) for `spawn_biped`. `skin`/`tunic`/`trouser` are
 //! passed in so the town keeps its per-villager colour variety; the rest are the studio's fixed hues.
 //!
-//! Tools ride the **right hand's `Sword` pivot** (built +Y like the hero/ork weapons so the shared
-//! rest rotation holds them carried); a belt pouch rides the **left hand's `Shield` pivot**.
+//! Each peasant carries ONLY the tool of his trade on the **right hand's `Sword` pivot** (built +Y
+//! like the hero/ork weapons so the shared rest rotation holds them carried): woodcutter → axe,
+//! farmer → hoe, miner → pickaxe, guard → sword; the unemployed go empty-handed. The off-hand
+//! (`Shield` pivot) is left empty — no belt pouch or other prop.
 //!
 //! Every part carries a [`Surf`] code (baked into the vertex-colour alpha by [`crate::creature::surf`])
 //! so the shared `CreatureMaterial` shader textures cloth/metal/skin correctly — without it every part
@@ -31,7 +33,7 @@ pub enum PeasantKind {
 
 // Fixed studio peasant hues (skin/tunic/trouser are caller-supplied for town variety).
 const LEATHER: u32 = 0x4e3b31; // gripColor
-const WOOD: u32 = 0xa3afc2; // trimColor (tool hafts)
+const WOOD: u32 = 0x6b4a2e; // wood brown (tool hafts — a real timber haft, not the old pale-grey trim)
 const IRON: u32 = 0xcfd3dc; // bladeColor (tools/helmet)
 const HAIR: u32 = 0x3a2418; // natural brown (studio reuses plumeColor, but that's our hero red)
 const DARK: u32 = 0x23160f; // eyes/mouth
@@ -50,6 +52,15 @@ const DESERT_CLOAK: u32 = 0xb1925a; // warm sand cloak
 const LIVERY_BLUE: u32 = 0x2f4a8a;
 const LIVERY_CRIMSON: u32 = 0x9a2420;
 const PLATE: u32 = 0xb9bec8; // brushed steel armour (a touch darker than the bright IRON tool blade)
+const DESERT_BRONZE: u32 = 0x8a6a34; // warm desert war-metal (conical war-helm, scimitar hilt)
+// The rival garrison's body armour is PALE SANDY plate (sun-bleached leather/scale), NOT heavy
+// cold steel like ours and NOT dark bronze — so the desert soldier reads "piaskowy" (sandy/light).
+const DESERT_ARMOR: u32 = 0xcab089; // sandy plate
+// Desert lower-body garb (rival workers) — a flowing thobe + loose linens + sandals, so the rival's
+// men read as a foreign desert people from head to toe, not "our peasant in a headscarf".
+const DESERT_ROBE: u32 = 0xcdb784; // sand thobe skirt (a shade lighter/warmer than the DESERT_CLOTH headwrap)
+const DESERT_PANT: u32 = 0xb8a06b; // loose linen trousers under the robe
+const DESERT_SANDAL: u32 = 0x6e5536; // bare-foot leather sandal
 
 fn v(x: f32, y: f32, z: f32) -> Vec3 {
     Vec3::new(x, y, z)
@@ -153,6 +164,14 @@ fn frustum_s(rt: f32, rb: f32, h: f32, scale: Vec3, off: Vec3, c: u32, s: Surf) 
 fn cone(r: f32, h: f32, off: Vec3, rot: Quat, scale: Vec3, c: u32, s: Surf) -> Mesh {
     tinted(Cone { radius: r, height: h }.mesh().build().scaled_by(scale).rotated_by(rot).translated_by(off), c, s)
 }
+/// Warm + deepen a skin hue toward a sun-tanned desert complexion (keep the red, drop green/blue),
+/// preserving the caller's per-NPC variety while making the rival's people read as a foreign people.
+fn tan_skin(c: u32) -> u32 {
+    let r = (((c >> 16) & 0xff) as f32 * 0.93).min(255.0) as u32;
+    let g = (((c >> 8) & 0xff) as f32 * 0.78).min(255.0) as u32;
+    let b = ((c & 0xff) as f32 * 0.62).min(255.0) as u32;
+    (r << 16) | (g << 8) | b
+}
 
 /// Build the per-joint peasant meshes for `kind` with the given body colours.
 pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u32, kid: bool, desert: bool) -> BipedMeshes {
@@ -166,36 +185,41 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
     let miner = kind == Miner;
     let guard = kind == Guard;
 
-    let hips = group(vec![
+    // Desert (rival) people are a foreign desert folk: sun-tanned skin and loose sand linens, not the
+    // player town's pale skin + brown trews. (Workers also get the full thobe + sandals below.)
+    let skin = if desert { tan_skin(skin) } else { skin };
+    let trouser = if desert { DESERT_PANT } else { trouser };
+
+    let mut hips_parts = vec![
         frustum(0.2, 0.17, 0.13, v(0.0, -0.06, 0.0), trouser, Surf::Cloth), // pelvis
         frustum(0.24, 0.22, 0.06, v(0.0, 0.03, 0.01), LEATHER, Surf::Cloth), // belt
         bx(0.055, 0.04, 0.025, v(0.0, 0.035, 0.225), IRON, Surf::Metal), // buckle
-    ]);
+    ];
+    if desert && !guard {
+        // A flowing thobe skirt flaring from the waist down over the thighs — the dominant exotic
+        // silhouette (the armoured guard wears his tabard instead, so robe is worker-only). Knee-length
+        // so the loose linen shins + sandals still show below. Embroidered dark hem band at the edge.
+        hips_parts.push(frustum(0.215, 0.33, 0.46, v(0.0, -0.22, 0.0), DESERT_ROBE, Surf::Cloth)); // robe skirt
+        hips_parts.push(frustum(0.335, 0.34, 0.05, v(0.0, -0.43, 0.0), DESERT_BAND, Surf::Cloth)); // hem band
+    }
+    let hips = group(hips_parts);
 
+    // A clean tunic: cone body + collar + hem + belt only. The old vest panel / diagonal shoulder
+    // strap / per-trade patches were removed — they piled up into visual clutter on the chest and
+    // read as "random junk". A worker's trade is now told by his TOOL + headgear (and the farmer's
+    // apron / desert cloak / guard plate below), not by chest decals.
     let mut torso_parts = vec![
         frustum_s(0.25, 0.2, 0.44, v(1.05, 1.0, 0.8), v(0.0, 0.14, 0.02), tunic, Surf::Cloth), // tunic
         frustum_s(0.14, 0.17, 0.045, v(1.05, 1.0, 0.8), v(0.0, 0.34, 0.04), LEATHER, Surf::Cloth), // collar
         frustum_s(0.23, 0.22, 0.04, v(1.08, 1.0, 0.82), v(0.0, -0.08, 0.02), LEATHER, Surf::Cloth), // hem
-        bxr(0.24, 0.34, 0.045, v(0.0, 0.14, 0.16), rx(0.08), LEATHER, Surf::Cloth), // vest
-        bxr(0.07, 0.42, 0.055, v(-0.09, 0.16, 0.17), rz(-0.35), LEATHER, Surf::Cloth), // shoulder strap
     ];
-    if woodcutter {
-        for x in [-0.08_f32, 0.06] {
-            torso_parts.push(bxr(0.025, 0.34, 0.026, v(x, 0.13, 0.2), rx(0.08), PATCH, Surf::Cloth));
-        }
-    }
-    if farmer {
+    if farmer && !desert {
+        // The apron is the farmer's clean trade mark (kept; the suspenders hold it up). Desert farmers
+        // skip it — their thobe + turban already mark them, and a European apron would clash.
         torso_parts.push(bxr(0.2, 0.32, 0.035, v(0.0, 0.08, 0.18), rx(0.08), PATCH, Surf::Cloth)); // apron
         for side in [-1.0_f32, 1.0] {
             torso_parts.push(bxr(0.035, 0.42, 0.035, v(side * 0.08, 0.17, 0.195), rz(side * 0.12), LEATHER, Surf::Cloth)); // suspender
         }
-    }
-    if unemployed {
-        torso_parts.push(bxr(0.095, 0.07, 0.03, v(0.08, 0.18, 0.2), rz(-0.18), PATCH, Surf::Cloth)); // chest patch
-        torso_parts.push(bxr(0.2, 0.045, 0.035, v(-0.03, -0.08, 0.16), rz(0.14), PATCH, Surf::Cloth)); // torn hem
-    }
-    if miner {
-        torso_parts.push(bxr(0.23, 0.12, 0.035, v(0.0, 0.22, 0.19), rx(0.08), DARK, Surf::Skin)); // dust panel
     }
     if desert {
         // A cloak draped down the back — a clear desert silhouette over whatever clothes are under it.
@@ -211,10 +235,15 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
         // tabard (blue = player militia, crimson = rival garrison). Unarmed peasants/workers never get
         // this, so the player can tell whom to cut down from whom to spare.
         let livery = if desert { LIVERY_CRIMSON } else { LIVERY_BLUE };
-        torso_parts.push(frustum_s(0.255, 0.215, 0.40, v(1.08, 1.0, 0.88), v(0.0, 0.16, 0.03), PLATE, Surf::Metal)); // breastplate
+        // Ours is cold STEEL plate; the rival's is PALE SANDY lamellar (sun-bleached leather/scale) so
+        // the desert soldier reads light and sandy, not a dark-bronze knight. Desert plate gets scale
+        // row lines too. The surface family is Cloth for the sandy leather (matte, not steel-shiny).
+        let armor = if desert { DESERT_ARMOR } else { PLATE };
+        let armor_surf = if desert { Surf::Cloth } else { Surf::Metal };
+        torso_parts.push(frustum_s(0.255, 0.215, 0.40, v(1.08, 1.0, 0.88), v(0.0, 0.16, 0.03), armor, armor_surf)); // breastplate
         torso_parts.push(bxr(0.21, 0.36, 0.03, v(0.0, 0.13, 0.2), rx(0.05), livery, Surf::Cloth)); // tabard front
         for side in [-1.0_f32, 1.0] {
-            torso_parts.push(bxr(0.14, 0.08, 0.18, v(side * 0.2, 0.31, 0.02), rz(side * -0.2), PLATE, Surf::Metal)); // pauldron
+            torso_parts.push(bxr(0.14, 0.08, 0.18, v(side * 0.2, 0.31, 0.02), rz(side * -0.2), armor, armor_surf)); // pauldron
         }
     }
     let torso = group(torso_parts);
@@ -235,13 +264,15 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
         head_parts.push(bxr(0.14, 0.07, 0.028, v(0.0, -0.035, 0.12), rx(0.15), HAIR, Surf::Cloth)); // beard (never on kids — they read as children)
     }
     if desert && !guard {
-        // Keffiyeh/turban — the rival WORKER's headgear (a soldier wears the steel helm below, so the
-        // armoured fighter still reads apart from the labourer under the shared desert palette).
-        head_parts.push(frustum(0.138, 0.118, 0.135, v(0.0, 0.155, 0.0), DESERT_CLOTH, Surf::Cloth)); // crown wrap
-        head_parts.push(frustum(0.144, 0.148, 0.038, v(0.0, 0.125, 0.0), DESERT_BAND, Surf::Cloth)); // agal cord
-        head_parts.push(bxr(0.24, 0.2, 0.03, v(0.0, 0.0, -0.12), rx(-0.12), DESERT_CLOTH, Surf::Cloth)); // back drape
+        // A fat WRAPPED TURBAN — the rival WORKER's headgear (a soldier wears the bronze war-helm below,
+        // so the armoured fighter still reads apart from the labourer under the shared desert palette).
+        // A rounded dome + a banded wrap fold + a side tuck-knot read clearly as a turban, not a cap.
+        head_parts.push(frustum(0.16, 0.135, 0.175, v(0.0, 0.16, 0.0), DESERT_CLOTH, Surf::Cloth)); // turban dome
+        head_parts.push(frustum(0.168, 0.166, 0.05, v(0.0, 0.12, 0.0), DESERT_BAND, Surf::Cloth)); // wrap fold band
+        head_parts.push(bxr(0.06, 0.07, 0.06, v(0.1, 0.255, -0.01), rz(-0.4), DESERT_CLOTH, Surf::Cloth)); // side tuck-knot
+        head_parts.push(bxr(0.26, 0.26, 0.03, v(0.0, -0.02, -0.13), rx(-0.12), DESERT_CLOTH, Surf::Cloth)); // long neck drape
         for side in [-1.0_f32, 1.0] {
-            head_parts.push(bxr(0.04, 0.2, 0.18, v(side * 0.125, 0.0, 0.0), Quat::IDENTITY, DESERT_CLOTH, Surf::Cloth)); // cheek flap
+            head_parts.push(bxr(0.04, 0.22, 0.18, v(side * 0.128, -0.01, 0.0), Quat::IDENTITY, DESERT_CLOTH, Surf::Cloth)); // cheek flap
         }
     } else if farmer {
         head_parts.push(frustum_s(0.2, 0.22, 0.022, v(1.15, 1.0, 0.82), v(0.0, 0.17, 0.0), STRAW, Surf::Cloth)); // brim
@@ -254,24 +285,14 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
         head_parts.push(bx(0.045, 0.04, 0.022, v(0.0, 0.18, 0.14), LAMP, Surf::Metal)); // lamp
         head_parts.push(bx(0.065, 0.055, 0.014, v(0.0, 0.18, 0.132), DARK, Surf::Skin)); // lamp frame
     } else if guard && desert {
-        // Rival garrison: a SARACEN war-look so the foreign soldier reads exotic at a glance — NOT
-        // the player militia's cold-steel helm (which made him read as one of our own). A WARM-BRONZE
-        // spiked war-helm sunk into a fat pale turban, with cheek-drapes and a DARK face-veil over the
-        // mouth. Warm bronze + dark veil give the contrast the pale-on-steel first cut lacked. The
-        // crimson tabard + plate below still mark him a fighter (vs the keffiyeh-only worker).
-        const BRONZE: u32 = 0x8a6a34; // warm desert war-metal (distinct from our cold PLATE/IRON steel)
-        head_parts.push(frustum(0.11, 0.125, 0.085, v(0.0, 0.16, 0.0), BRONZE, Surf::Metal)); // bronze skull-cap
-        head_parts.push(frustum(0.02, 0.092, 0.16, v(0.0, 0.27, 0.0), BRONZE, Surf::Metal)); // tall spike point
-        head_parts.push(bx(0.024, 0.05, 0.024, v(0.0, 0.38, 0.0), BRONZE, Surf::Metal)); // finial knob
-        // Pale turban wrapped fat around the helm base — the dominant desert silhouette.
-        head_parts.push(frustum(0.158, 0.16, 0.085, v(0.0, 0.11, 0.0), DESERT_CLOTH, Surf::Cloth)); // turban wrap
-        head_parts.push(frustum(0.15, 0.156, 0.03, v(0.0, 0.155, 0.0), DESERT_BAND, Surf::Cloth)); // wrap fold line
-        head_parts.push(bxr(0.24, 0.24, 0.03, v(0.0, -0.03, -0.12), rx(-0.12), DESERT_CLOTH, Surf::Cloth)); // back drape
-        for side in [-1.0_f32, 1.0] {
-            head_parts.push(bxr(0.035, 0.2, 0.18, v(side * 0.122, -0.02, -0.01), Quat::IDENTITY, DESERT_CLOTH, Surf::Cloth)); // cheek drape
-        }
-        // Dark face-veil across the lower face (mouth/chin), pushed clear in FRONT of the face plane.
-        head_parts.push(bxr(0.2, 0.1, 0.025, v(0.0, -0.04, 0.128), rx(0.1), DESERT_BAND, Surf::Cloth)); // face veil
+        // Rival garrison: a clean SARACEN conical war-helm so the foreign soldier reads exotic at a
+        // glance, distinct from the player militia's cold-steel helm. The earlier version stacked a
+        // thin spike + finial knob + fat turban + face-veil into a cluttered tower over a faceless
+        // head — pared back to ONE tapered bronze cone on a pale turban base band, face left visible.
+        let bronze = DESERT_BRONZE;
+        head_parts.push(frustum(0.14, 0.158, 0.095, v(0.0, 0.13, 0.0), DESERT_CLOTH, Surf::Cloth)); // turban base band
+        head_parts.push(cone(0.135, 0.27, v(0.0, 0.305, 0.0), Quat::IDENTITY, Vec3::ONE, bronze, Surf::Metal)); // conical war-helm
+        head_parts.push(bxr(0.22, 0.22, 0.03, v(0.0, -0.02, -0.12), rx(-0.12), DESERT_CLOTH, Surf::Cloth)); // light neck drape
     } else if guard {
         head_parts.push(frustum(0.125, 0.14, 0.11, v(0.0, 0.17, 0.0), PLATE, Surf::Metal)); // steel helm
         head_parts.push(bxr(0.04, 0.1, 0.16, v(0.0, 0.25, 0.0), Quat::IDENTITY, PLATE, Surf::Metal)); // helm crest ridge
@@ -303,15 +324,28 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
         group(p)
     };
     let knee = || {
-        group(vec![
-            frustum(0.09, 0.095, 0.40, v(0.0, -0.21, 0.0), trouser, Surf::Cloth), // shin (runs down to the ankle)
-            frustum(0.092, 0.1, 0.16, v(0.0, -0.35, 0.0), LEATHER, Surf::Cloth), // boot top wrapping the ankle
-        ])
+        let mut p = vec![frustum(0.09, 0.095, 0.40, v(0.0, -0.21, 0.0), trouser, Surf::Cloth)]; // shin (runs down to the ankle)
+        if desert {
+            p.push(frustum(0.095, 0.1, 0.06, v(0.0, -0.36, 0.0), DESERT_BAND, Surf::Cloth)); // bare-leg ankle wrap (no boot)
+        } else {
+            p.push(frustum(0.092, 0.1, 0.16, v(0.0, -0.35, 0.0), LEATHER, Surf::Cloth)); // boot top wrapping the ankle
+        }
+        group(p)
     };
     let boot_s = if miner { v(1.05, 1.12, 1.1) } else { Vec3::ONE };
-    // A proper boot that overlaps the shin (top ~0.195) so the lower leg reads as one piece, not a
-    // foot floating below a gap.
-    let foot = || group(vec![tinted(Cuboid::new(0.13, 0.14, 0.2).mesh().build().scaled_by(boot_s).translated_by(v(0.0, -0.025, 0.03)), LEATHER, Surf::Cloth)]);
+    // Boots for our folk; flat open sandals for the desert people (a thin sole + a toe strap), so even
+    // the feet read foreign. A proper boot overlaps the shin (top ~0.195) so the lower leg reads as one
+    // piece, not a foot floating below a gap.
+    let foot = || {
+        if desert {
+            group(vec![
+                tinted(Cuboid::new(0.125, 0.05, 0.24).mesh().build().translated_by(v(0.0, -0.05, 0.05)), DESERT_SANDAL, Surf::Cloth), // sole
+                bx(0.12, 0.05, 0.07, v(0.0, -0.005, 0.04), DESERT_BAND, Surf::Cloth), // toe strap
+            ])
+        } else {
+            group(vec![tinted(Cuboid::new(0.13, 0.14, 0.2).mesh().build().scaled_by(boot_s).translated_by(v(0.0, -0.025, 0.03)), LEATHER, Surf::Cloth)])
+        }
+    };
 
     // Tool on the right hand (built +Y in sword-local; the shared `Sword` rest rotation carries it).
     let weapon = if woodcutter {
@@ -335,22 +369,43 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
             frustum(0.032, 0.036, 0.08, v(0.0, 0.5, 0.0), IRON, Surf::Metal), // socket
             bxr(0.22, 0.045, 0.035, v(0.12, 0.5, 0.02), rz(0.55), IRON, Surf::Metal), // hoe blade
         ]))
-    } else if guard {
-        Some(group(vec![
-            cone(0.0, 0.04, v(0.0, 0.4, 0.0), Quat::IDENTITY, v(1.6, 1.0, 0.22), IRON, Surf::Metal), // blade (flat diamond)
-            bx(0.18, 0.04, 0.04, v(0.0, 0.06, 0.0), IRON, Surf::Metal), // guard
+    } else if guard && desert {
+        // The rival garrison carries a CURVED SCIMITAR (a saracen sabre), not our straight arming
+        // sword — segmented along a shallow arc with the cutting edge swept toward +X, bronze hilt.
+        let mut parts = vec![
+            bx(0.16, 0.05, 0.05, v(0.0, 0.08, 0.0), DESERT_BRONZE, Surf::Metal), // crossguard
             frustum(0.02, 0.018, 0.14, v(0.0, -0.03, 0.0), LEATHER, Surf::Cloth), // grip
-            bx(0.04, 0.04, 0.04, v(0.0, -0.11, 0.0), IRON, Surf::Metal), // pommel
+            bx(0.05, 0.05, 0.05, v(0.0, -0.11, 0.0), DESERT_BRONZE, Surf::Metal), // pommel
+        ];
+        // (width, height, offset, z-rotation) — precomputed arc segments (see commit note).
+        for (w, h, off, a) in [
+            (0.050_f32, 0.15_f32, v(0.007, 0.165, 0.0), -0.1125_f32),
+            (0.055, 0.15, v(0.036, 0.291, 0.0), -0.3375),
+            (0.060, 0.15, v(0.092, 0.407, 0.0), -0.5625),
+            (0.055, 0.15, v(0.173, 0.508, 0.0), -0.7875),
+        ] {
+            parts.push(bxr(w, h, 0.022, off, rz(a), IRON, Surf::Metal)); // blade segment
+        }
+        parts.push(cone(0.03, 0.14, v(0.266, 0.591, 0.0), rz(-0.95), v(1.7, 1.0, 0.73), IRON, Surf::Metal)); // swept point
+        Some(group(parts))
+    } else if guard {
+        // A REAL arming sword: a long flat blade tapering to a point above the crossguard — the old
+        // "blade" was a degenerate height-0.04 cone (radius 0), so the guard held a bare hilt stub.
+        Some(group(vec![
+            bx(0.06, 0.46, 0.024, v(0.0, 0.31, 0.0), IRON, Surf::Metal), // blade
+            cone(0.03, 0.12, v(0.0, 0.58, 0.0), Quat::IDENTITY, v(2.0, 1.0, 0.8), IRON, Surf::Metal), // point
+            bx(0.18, 0.045, 0.05, v(0.0, 0.06, 0.0), IRON, Surf::Metal), // crossguard
+            frustum(0.02, 0.018, 0.14, v(0.0, -0.03, 0.0), LEATHER, Surf::Cloth), // grip
+            bx(0.05, 0.05, 0.05, v(0.0, -0.11, 0.0), IRON, Surf::Metal), // pommel
         ]))
     } else {
         None // unemployed — empty handed
     };
 
-    // Belt pouch on the left hand (the studio peasant's "shield"-slot prop).
-    let shield = Some(group(vec![
-        bx(0.12, 0.16, 0.055, v(0.0, -0.06, 0.0), LEATHER, Surf::Cloth), // pouch body
-        bx(0.13, 0.055, 0.06, v(0.0, 0.035, 0.008), WOOD, Surf::Skin), // flap
-    ]));
+    // Left hand stays empty — a peasant carries ONLY the tool of his trade (axe / hoe / pick / sword),
+    // nothing in the off-hand. The old belt-pouch prop hung off every villager regardless of trade and
+    // read as a random item, so it's gone.
+    let shield = None;
 
     BipedMeshes {
         hips,
