@@ -138,7 +138,7 @@ fn fragment(
         ter_m += ter_noise_rot(wp * 1.7, 0.682, 0.731) * 0.30
                + ter_noise_rot(wp * 5.5, 0.292, 0.956) * 0.15;
     }
-    rgb *= 0.85 + ter_m * 0.30;
+    rgb *= 0.80 + ter_m * 0.42;
 
     // (2) large-scale analytic hue + value drift — the soft cloudy patches (cure for
     //     flat green): broad areas drift warm yellow-green ↔ cool deep-green + lighten.
@@ -175,17 +175,19 @@ fn fragment(
         //     Kept under ~0.4 mix so it's varied, not camo.
         let variety = forest.params2.z;
         // Worn sun-bleached dirt scuffs (bald spots / trodden paths) — warm + desaturated.
-        let worn = smoothstep(0.55, 0.86, ter_noise(wp * 0.020 + vec2<f32>(5.0, 9.0)));
-        rgb = mix(rgb, rgb * vec3<f32>(0.80, 0.70, 0.50), worn * 0.40 * green * variety);
+        // Lower thresholds widen each patch and stronger mixes raise the contrast between
+        // them, so the field reads as a genuinely varied meadow rather than one flat tone.
+        let worn = smoothstep(0.42, 0.78, ter_noise(wp * 0.020 + vec2<f32>(5.0, 9.0)));
+        rgb = mix(rgb, rgb * vec3<f32>(0.72, 0.60, 0.40), worn * 0.58 * green * variety);
         // Damp moss hollows — cool, rich, slightly darker green.
-        let moss = smoothstep(0.58, 0.90, ter_noise(wp * 0.040 + vec2<f32>(19.0, 2.0)));
-        rgb = mix(rgb, rgb * vec3<f32>(0.68, 0.92, 0.58), moss * 0.32 * green * variety);
+        let moss = smoothstep(0.46, 0.82, ter_noise(wp * 0.040 + vec2<f32>(19.0, 2.0)));
+        rgb = mix(rgb, rgb * vec3<f32>(0.60, 0.88, 0.50), moss * 0.50 * green * variety);
         // Sun-dried golden sweeps — drier grass catching the light (a brighter warm push).
-        let dry = smoothstep(0.60, 0.90, ter_noise(wp * 0.015 + vec2<f32>(33.0, 7.0)));
-        rgb = mix(rgb, rgb * vec3<f32>(1.14, 1.02, 0.62), dry * 0.28 * green * variety);
+        let dry = smoothstep(0.48, 0.84, ter_noise(wp * 0.015 + vec2<f32>(33.0, 7.0)));
+        rgb = mix(rgb, rgb * vec3<f32>(1.22, 1.04, 0.56), dry * 0.44 * green * variety);
         // Lush well-watered patches — deep saturated green.
-        let lush = smoothstep(0.62, 0.92, ter_noise(wp * 0.030 + vec2<f32>(2.0, 27.0)));
-        rgb = mix(rgb, rgb * vec3<f32>(0.74, 1.02, 0.70), lush * 0.26 * green * variety);
+        let lush = smoothstep(0.50, 0.86, ter_noise(wp * 0.030 + vec2<f32>(2.0, 27.0)));
+        rgb = mix(rgb, rgb * vec3<f32>(0.66, 1.04, 0.62), lush * 0.42 * green * variety);
     }
 
     pbr_input.material.base_color = vec4<f32>(max(rgb, vec3<f32>(0.0)), pbr_input.material.base_color.a);
@@ -213,7 +215,7 @@ fn fragment(
         let e = 0.18;
         let hx = terrain_h(wp + vec2<f32>(e, 0.0)) - terrain_h(wp - vec2<f32>(e, 0.0));
         let hz = terrain_h(wp + vec2<f32>(0.0, e)) - terrain_h(wp - vec2<f32>(0.0, e));
-        var n2 = normalize(gn + vec3<f32>(-hx, 0.0, -hz) * bump * topw);
+        var n2 = normalize(gn + vec3<f32>(-hx, 0.0, -hz) * bump * topw * 1.7);
 
         // Side-face rock relief on the terrace WALLS. The top relief above is an XZ height
         // field — meaningless across a near-vertical face (XZ barely moves down a wall), so
@@ -250,18 +252,20 @@ fn fragment(
         //    Top faces only (`topw`); value-only so it's safe on grass/dirt/snow with no hue
         //    cast; entirely inside the `bump` branch so it's free on Low (relief off there).
         let h0 = terrain_h(wp);
-        // (a) broad mound AO: darken the low ground BETWEEN clumps (hollows → ~0.7×).
-        let mound = smoothstep(0.18, 0.80, h0);
-        // (b) fine crease network: tight grooves like root/clump gaps. Own rotated lattices
-        //     (≈53°, 73°) so the creases never line up into an axis grid; higher-freq than the
-        //     mound field so they read as crisp near-camera detail, not broad shading.
-        let crease = ter_noise_rot(wp * 3.3, 0.60, 0.80) * 0.6
-                   + ter_noise_rot(wp * 6.7, 0.29, 0.957) * 0.4;
-        let groove = smoothstep(0.28, 0.74, crease);
-        // Deepest where a broad hollow AND a fine groove coincide; crowns of mounds catch a
-        // touch more light (sun-kissed tuft tips) so the relief pops both ways.
-        let ao = mix(0.68, 1.0, mound) * mix(0.80, 1.0, groove);
-        let crown = 1.0 + smoothstep(0.74, 1.0, h0) * 0.14;
+        // (a) broad mound AO: darken the low ground BETWEEN clumps. Wide range + a low floor
+        //     so hollows go genuinely deep (~0.46×), not a faint tint.
+        let mound = smoothstep(0.10, 0.82, h0);
+        // (b) crease network: three rotated octaves (≈36°/53°/73°) so the grooves are dense
+        //     and read at both the clump scale and crisp near-camera detail, never lining up
+        //     into an axis grid.
+        let crease = ter_noise_rot(wp * 1.7, 0.81, 0.59) * 0.34
+                   + ter_noise_rot(wp * 3.3, 0.60, 0.80) * 0.40
+                   + ter_noise_rot(wp * 6.7, 0.29, 0.957) * 0.26;
+        let groove = smoothstep(0.32, 0.70, crease);
+        // Deepest where a broad hollow AND a fine groove coincide; strong sun-kissed crowns on
+        // the mound tops so the relief pops both ways (bright peaks ↔ dark pits).
+        let ao = mix(0.46, 1.0, mound) * mix(0.62, 1.0, groove);
+        let crown = 1.0 + smoothstep(0.60, 1.0, h0) * 0.30;
         let shade = mix(1.0, ao * crown, topw);
         pbr_input.material.base_color = vec4<f32>(pbr_input.material.base_color.rgb * shade, pbr_input.material.base_color.a);
 
