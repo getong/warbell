@@ -239,6 +239,32 @@ fn fragment(
             let dk = mix(1.0, 0.82 + crev * 0.30, sidew);
             pbr_input.material.base_color = vec4<f32>(pbr_input.material.base_color.rgb * dk, pbr_input.material.base_color.a);
         }
+
+        // ── Cavity ambient occlusion — the depth cue normal-tilt alone CAN'T give, and the
+        //    single biggest reason a flat ground "fakes 3D". A tilted shading normal still
+        //    catches ambient from every direction, so under the bright sky-ambient here the
+        //    raised clumps read shaded-on-one-side but never DEEP. Baking soft self-shadow
+        //    into the hollows of the SAME height field (so albedo + relief agree) carves the
+        //    grooves the eye reads as real geometry — exactly what gives a photo-relief
+        //    root/dirt texture its depth, but procedural (no baked map, biome-agnostic).
+        //    Top faces only (`topw`); value-only so it's safe on grass/dirt/snow with no hue
+        //    cast; entirely inside the `bump` branch so it's free on Low (relief off there).
+        let h0 = terrain_h(wp);
+        // (a) broad mound AO: darken the low ground BETWEEN clumps (hollows → ~0.7×).
+        let mound = smoothstep(0.18, 0.80, h0);
+        // (b) fine crease network: tight grooves like root/clump gaps. Own rotated lattices
+        //     (≈53°, 73°) so the creases never line up into an axis grid; higher-freq than the
+        //     mound field so they read as crisp near-camera detail, not broad shading.
+        let crease = ter_noise_rot(wp * 3.3, 0.60, 0.80) * 0.6
+                   + ter_noise_rot(wp * 6.7, 0.29, 0.957) * 0.4;
+        let groove = smoothstep(0.28, 0.74, crease);
+        // Deepest where a broad hollow AND a fine groove coincide; crowns of mounds catch a
+        // touch more light (sun-kissed tuft tips) so the relief pops both ways.
+        let ao = mix(0.68, 1.0, mound) * mix(0.80, 1.0, groove);
+        let crown = 1.0 + smoothstep(0.74, 1.0, h0) * 0.14;
+        let shade = mix(1.0, ao * crown, topw);
+        pbr_input.material.base_color = vec4<f32>(pbr_input.material.base_color.rgb * shade, pbr_input.material.base_color.a);
+
         pbr_input.N = n2;
     }
 
