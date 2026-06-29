@@ -52,12 +52,10 @@ const DESERT_CLOAK: u32 = 0xb1925a; // warm sand cloak
 const LIVERY_BLUE: u32 = 0x2f4a8a;
 const LIVERY_CRIMSON: u32 = 0x9a2420;
 const PLATE: u32 = 0xb9bec8; // brushed steel armour (a touch darker than the bright IRON tool blade)
-const DESERT_BRONZE: u32 = 0x8a6a34; // warm desert war-metal (small accents: helm spike, scimitar hilt)
-const DESERT_BRONZE_DK: u32 = 0x5f4720; // shadowed bronze (groove/hem lines)
-// The rival garrison's body armour is PALE SANDY lamellar (sun-bleached leather/scale), NOT heavy
+const DESERT_BRONZE: u32 = 0x8a6a34; // warm desert war-metal (conical war-helm, scimitar hilt)
+// The rival garrison's body armour is PALE SANDY plate (sun-bleached leather/scale), NOT heavy
 // cold steel like ours and NOT dark bronze — so the desert soldier reads "piaskowy" (sandy/light).
-const DESERT_ARMOR: u32 = 0xcab089; // sandy lamellar plate
-const DESERT_ARMOR_DK: u32 = 0x90763f; // sand groove/scale-row line
+const DESERT_ARMOR: u32 = 0xcab089; // sandy plate
 // Desert lower-body garb (rival workers) — a flowing thobe + loose linens + sandals, so the rival's
 // men read as a foreign desert people from head to toe, not "our peasant in a headscarf".
 const DESERT_ROBE: u32 = 0xcdb784; // sand thobe skirt (a shade lighter/warmer than the DESERT_CLOTH headwrap)
@@ -243,11 +241,6 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
         let armor = if desert { DESERT_ARMOR } else { PLATE };
         let armor_surf = if desert { Surf::Cloth } else { Surf::Metal };
         torso_parts.push(frustum_s(0.255, 0.215, 0.40, v(1.08, 1.0, 0.88), v(0.0, 0.16, 0.03), armor, armor_surf)); // breastplate
-        if desert {
-            for y in [0.0_f32, 0.12, 0.24] {
-                torso_parts.push(frustum_s(0.262, 0.222, 0.018, v(1.09, 1.0, 0.9), v(0.0, y, 0.03), DESERT_ARMOR_DK, Surf::Cloth)); // lamellar row line
-            }
-        }
         torso_parts.push(bxr(0.21, 0.36, 0.03, v(0.0, 0.13, 0.2), rx(0.05), livery, Surf::Cloth)); // tabard front
         for side in [-1.0_f32, 1.0] {
             torso_parts.push(bxr(0.14, 0.08, 0.18, v(side * 0.2, 0.31, 0.02), rz(side * -0.2), armor, armor_surf)); // pauldron
@@ -292,24 +285,14 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
         head_parts.push(bx(0.045, 0.04, 0.022, v(0.0, 0.18, 0.14), LAMP, Surf::Metal)); // lamp
         head_parts.push(bx(0.065, 0.055, 0.014, v(0.0, 0.18, 0.132), DARK, Surf::Skin)); // lamp frame
     } else if guard && desert {
-        // Rival garrison: a SARACEN war-look so the foreign soldier reads exotic at a glance — NOT
-        // the player militia's cold-steel helm (which made him read as one of our own). A WARM-BRONZE
-        // spiked war-helm sunk into a fat pale turban, with cheek-drapes and a DARK face-veil over the
-        // mouth. Warm bronze + dark veil give the contrast the pale-on-steel first cut lacked. The
-        // crimson tabard + plate below still mark him a fighter (vs the keffiyeh-only worker).
+        // Rival garrison: a clean SARACEN conical war-helm so the foreign soldier reads exotic at a
+        // glance, distinct from the player militia's cold-steel helm. The earlier version stacked a
+        // thin spike + finial knob + fat turban + face-veil into a cluttered tower over a faceless
+        // head — pared back to ONE tapered bronze cone on a pale turban base band, face left visible.
         let bronze = DESERT_BRONZE;
-        head_parts.push(frustum(0.11, 0.125, 0.085, v(0.0, 0.16, 0.0), bronze, Surf::Metal)); // bronze skull-cap
-        head_parts.push(frustum(0.02, 0.092, 0.16, v(0.0, 0.27, 0.0), bronze, Surf::Metal)); // tall spike point
-        head_parts.push(bx(0.024, 0.05, 0.024, v(0.0, 0.38, 0.0), bronze, Surf::Metal)); // finial knob
-        // Pale turban wrapped fat around the helm base — the dominant desert silhouette.
-        head_parts.push(frustum(0.158, 0.16, 0.085, v(0.0, 0.11, 0.0), DESERT_CLOTH, Surf::Cloth)); // turban wrap
-        head_parts.push(frustum(0.15, 0.156, 0.03, v(0.0, 0.155, 0.0), DESERT_BAND, Surf::Cloth)); // wrap fold line
-        head_parts.push(bxr(0.24, 0.24, 0.03, v(0.0, -0.03, -0.12), rx(-0.12), DESERT_CLOTH, Surf::Cloth)); // back drape
-        for side in [-1.0_f32, 1.0] {
-            head_parts.push(bxr(0.035, 0.2, 0.18, v(side * 0.122, -0.02, -0.01), Quat::IDENTITY, DESERT_CLOTH, Surf::Cloth)); // cheek drape
-        }
-        // Dark face-veil across the lower face (mouth/chin), pushed clear in FRONT of the face plane.
-        head_parts.push(bxr(0.2, 0.1, 0.025, v(0.0, -0.04, 0.128), rx(0.1), DESERT_BAND, Surf::Cloth)); // face veil
+        head_parts.push(frustum(0.14, 0.158, 0.095, v(0.0, 0.13, 0.0), DESERT_CLOTH, Surf::Cloth)); // turban base band
+        head_parts.push(cone(0.135, 0.27, v(0.0, 0.305, 0.0), Quat::IDENTITY, Vec3::ONE, bronze, Surf::Metal)); // conical war-helm
+        head_parts.push(bxr(0.22, 0.22, 0.03, v(0.0, -0.02, -0.12), rx(-0.12), DESERT_CLOTH, Surf::Cloth)); // light neck drape
     } else if guard {
         head_parts.push(frustum(0.125, 0.14, 0.11, v(0.0, 0.17, 0.0), PLATE, Surf::Metal)); // steel helm
         head_parts.push(bxr(0.04, 0.1, 0.16, v(0.0, 0.25, 0.0), Quat::IDENTITY, PLATE, Surf::Metal)); // helm crest ridge
