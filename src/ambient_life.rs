@@ -21,7 +21,10 @@ use crate::player::HeroState;
 use crate::siege::GameTime;
 
 /// How many butterflies wander near the hero. Kept low — a few drifting specks, not a swarm.
-const BUTTERFLY_COUNT: usize = 7;
+const BUTTERFLY_COUNT: usize = 4;
+/// How fast a butterfly fades in/out (alpha units per second) as it enters/leaves green daytime
+/// country. Low → a soft ~1.5s dissolve, never a pop.
+const FADE_RATE: f32 = 0.7;
 /// Max horizontal distance (world units) a butterfly's territory drifts from the hero. Each holds a
 /// scattered spot in this radius and flutters locally around it — they don't all cluster underfoot.
 const TERRITORY_R: f32 = 11.0;
@@ -34,6 +37,11 @@ struct Butterfly {
     phase: f32,
     /// Stable scattered territory radius (3..TERRITORY_R), so each keeps its own patch of air.
     home_r: f32,
+    /// Current opacity 0..1, eased toward 1 when it should be out (day + green country) and 0 when
+    /// not, so it dissolves in/out instead of popping. Drives the wing/body material alpha.
+    fade: f32,
+    /// This butterfly's own [wing, hind, body] materials, so its alpha can be faded independently.
+    mats: [Handle<StandardMaterial>; 3],
 }
 
 /// A flapping wing child: `side` (−1 left / +1 right) and its rest rotation, about which the flap
@@ -90,7 +98,12 @@ fn spawn_butterfly(
         .spawn((
             Transform::from_xyz(0.0, -100.0, 0.0), // parked offscreen until first fly_ update
             Visibility::Hidden,
-            Butterfly { phase, home_r },
+            Butterfly {
+                phase,
+                home_r,
+                fade: 0.0, // dissolves in on its first day over green country
+                mats: [wing_mat.clone(), hind_mat.clone(), body_mat.clone()],
+            },
             bevy::light::NotShadowCaster,
         ))
         .with_children(|p| {
@@ -162,26 +175,30 @@ fn spawn_once(
     // under the unlit midday sun). Monarch orange, sulphur yellow, sky-blue, cabbage-white, dusky
     // rose, pale green.
     let wing_cols = [0xd9772b, 0xe6b829, 0x4f86c6, 0xe8e8ea, 0xcf6f86, 0x8fb45a];
-    // One shared dark body material for every butterfly.
-    let body_mat = mats.add(StandardMaterial {
-        base_color: crate::palette::srgb(0x241f19),
-        unlit: true,
-        ..default()
-    });
     for i in 0..BUTTERFLY_COUNT {
-        let c = crate::palette::srgb(wing_cols[i % wing_cols.len()]);
+        // Per-instance body material so each butterfly's alpha can fade independently. `Blend` so
+        // the dissolve in/out actually shows (see `fade_butterflies`); start fully transparent.
+        let body_mat = mats.add(StandardMaterial {
+            base_color: crate::palette::srgb(0x241f19).with_alpha(0.0),
+            unlit: true,
+            alpha_mode: AlphaMode::Blend,
+            ..default()
+        });
+        let c = crate::palette::srgb(wing_cols[i % wing_cols.len()]).with_alpha(0.0);
         let wing_mat = mats.add(StandardMaterial {
             base_color: c,
             unlit: true,
+            alpha_mode: AlphaMode::Blend,
             cull_mode: None, // two-sided so a wing shows from either face
             ..default()
         });
         // Hindwing a shade darker than the forewing → a hint of two-tone depth, less flat.
         let h = crate::palette::lin_scaled(wing_cols[i % wing_cols.len()], 0.7);
-        let hc = Color::linear_rgba(h[0], h[1], h[2], h[3]);
+        let hc = Color::linear_rgba(h[0], h[1], h[2], 0.0);
         let hind_mat = mats.add(StandardMaterial {
             base_color: hc,
             unlit: true,
+            alpha_mode: AlphaMode::Blend,
             cull_mode: None,
             ..default()
         });
@@ -198,18 +215,30 @@ fn fly_butterflies(
     time: Res<Time>,
     hero: Option<Res<HeroState>>,
     gt: Option<Res<GameTime>>,
-    mut q: Query<(&Butterfly, &mut Transform, &mut Visibility)>,
+    mut mats: ResMut<Assets<StandardMaterial>>,
+    mut q: Query<(&mut Butterfly, &mut Transform, &mut Visibility)>,
 ) {
     let (Some(hero), Some(gt)) = (hero, gt) else { return };
     let t = time.elapsed_secs_wrapped();
+    let dt = time.delta_secs();
     let hx = hero.pos.x;
     let hz = hero.pos.y;
     let here_green = crate::worldmap::is_grass_world(hx, hz)
         || crate::worldmap::tile_biome_world(hx, hz) == Some(crate::biome::Biome::Forest);
     let show = is_day(&gt) && here_green && hero.alive;
 
-    for (b, mut tf, mut vis) in &mut q {
-        if !show {
+    for (mut b, mut tf, mut vis) in &mut q {
+        // Ease opacity toward the target (1 out / 0 gone) so they dissolve in and out, never pop.
+        let target = if show { 1.0 } else { 0.0 };
+        b.fade += (target - b.fade).clamp(-FADE_RATE * dt, FADE_RATE * dt);
+        // Push the eased alpha into this butterfly's own wing/hind/body materials.
+        for h in &b.mats {
+            if let Some(mut m) = mats.get_mut(h) {
+                m.base_color.set_alpha(b.fade);
+            }
+        }
+        if b.fade <= 0.001 {
+            // Fully gone — hide to skip drawing, and don't bother moving it.
             *vis = Visibility::Hidden;
             continue;
         }
