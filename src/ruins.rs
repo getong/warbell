@@ -13,6 +13,7 @@
 use bevy::prelude::*;
 use bevy::mesh::VertexAttributeValues;
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
+use std::sync::OnceLock;
 
 use crate::palette::{lin, lin_scaled, DEAD_WOOD, DEAD_WOOD_DARK};
 
@@ -622,6 +623,75 @@ pub fn build_sunken_pyramid_mesh() -> Mesh {
 /// it on the FLATTEST footprint it can find, never on a slope or with an edge over the sea, so
 /// the set-piece sits cleanly on the ground instead of clipping through a terrace. Mirrors the
 /// wildlife/ore placement; called from `worldmap::build`.
+/// A chosen landmark spot, picked once from the TERRAIN (before scatter) so both the landmark
+/// placement here and the road network (`roads::build_curves`) can route to the same point.
+#[derive(Clone, Copy)]
+pub struct LandmarkSite {
+    pub biome: crate::biome::Biome,
+    /// World XZ.
+    pub pos: Vec2,
+    /// Ground Y at the spot, and the placed yaw.
+    pub y: f32,
+    pub yaw: f32,
+    /// Footprint height-spread of the chosen spot (0 = dead flat); kept for the uneven-spot warning.
+    pub spread: f32,
+}
+
+/// (biome, scale, footprint_radius) for each landmark. KEEP IN SYNC with the `specs` mesh table in
+/// [`populate_landmarks`] — same scale/foot_r per biome (that table also carries the mesh + box).
+const SITE_PARAMS: [(crate::biome::Biome, f32, f32); 5] = [
+    (crate::biome::Biome::Snow, 1.4, 1.0),
+    (crate::biome::Biome::Desert, 1.3, 2.0),
+    (crate::biome::Biome::Rocky, 1.3, 2.0),
+    (crate::biome::Biome::Forest, 1.2, 0.7),
+    (crate::biome::Biome::Swamp, 1.1, 0.8),
+];
+
+/// The five landmark spots, chosen once (flattest valid candidate per biome) and cached. Decoupled
+/// from `blockers` — those aren't populated this early (the road field bakes at the ground pass,
+/// long before scatter) — so spots shifted slightly vs. the old post-scatter search; the
+/// `LANDMARK_CLEAR_R` sweep fells any scatter that ends up under a landmark anyway. The fortress
+/// blob is excluded by radius (its forced-flat plateau would otherwise lure the swamp sentinel).
+pub fn landmark_sites() -> &'static [LandmarkSite] {
+    static SITES: OnceLock<Vec<LandmarkSite>> = OnceLock::new();
+    SITES.get_or_init(|| {
+        let mut rng: u32 = 0x1a2b_3c4d;
+        let mut out = Vec::new();
+        for (biome, scale, foot_r) in SITE_PARAMS {
+            let probe_r = foot_r * scale;
+            let mut best: Option<LandmarkSite> = None;
+            for _ in 0..4000 {
+                let x = crate::wildlife::rng_range(&mut rng, -crate::worldmap::GX + 6.0, crate::worldmap::GX - 6.0);
+                let z = crate::wildlife::rng_range(&mut rng, -crate::worldmap::GZ + 6.0, crate::worldmap::GZ - 6.0);
+                if crate::worldmap::biome_at_world(x, z) != Some(biome)
+                    || crate::worldmap::ground_at_world(x, z).is_none()
+                    || crate::camps::in_clearing(x, z)
+                    || crate::castle::in_footprint(x, z)
+                    || crate::rival::near_fort(x, z)
+                    || Vec2::new(x, z).distance(crate::ork_fortress::CENTRE) < 30.0
+                {
+                    continue;
+                }
+                // Reject any footprint that runs off-land / over water, then grade by flatness.
+                let Some(spread) = footprint_spread(x, z, probe_r) else { continue };
+                let y = crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
+                let yaw = crate::wildlife::rng_range(&mut rng, 0.0, TAU);
+                if best.map_or(true, |b| spread < b.spread) {
+                    best = Some(LandmarkSite { biome, pos: Vec2::new(x, z), y, yaw, spread });
+                }
+                if spread <= 0.01 {
+                    break; // dead flat — done
+                }
+            }
+            match best {
+                Some(s) => out.push(s),
+                None => info!("landmark: no spot found for {:?}", biome),
+            }
+        }
+        out
+    })
+}
+
 pub fn populate_landmarks(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -633,62 +703,36 @@ pub fn populate_landmarks(
     // oriented BOX (not a ≤1.0 circle) so wide set-pieces — the trilithon's standing stones, the
     // pyramid's broad base — actually block instead of letting you walk through their edges. The
     // half-extents (mesh-local, world-scaled below) hug each silhouette; footprint_radius is the
-    // flatness-probe reach so the whole base lands on level ground.
-    let specs: [(Biome, Mesh, f32, (f32, f32), f32); 5] = [
-        (Biome::Snow, build_frozen_spire_mesh(), 1.4, (0.7, 0.7), 1.0),
-        (Biome::Desert, build_sunken_pyramid_mesh(), 1.3, (1.15, 1.15), 2.0),
-        (Biome::Rocky, build_trilithon_mesh(), 1.3, (1.25, 0.55), 2.0), // wide arch, thin depth
-        (Biome::Forest, build_giant_dead_tree_mesh(), 1.2, (0.55, 0.55), 0.7),
-        (Biome::Swamp, build_swamp_sentinel_mesh(), 1.1, (0.65, 0.65), 0.8),
+    // flatness-probe reach (now lives in `SITE_PARAMS` — keep both in sync).
+    let specs: [(Biome, Mesh, f32, (f32, f32)); 5] = [
+        (Biome::Snow, build_frozen_spire_mesh(), 1.4, (0.7, 0.7)),
+        (Biome::Desert, build_sunken_pyramid_mesh(), 1.3, (1.15, 1.15)),
+        (Biome::Rocky, build_trilithon_mesh(), 1.3, (1.25, 0.55)), // wide arch, thin depth
+        (Biome::Forest, build_giant_dead_tree_mesh(), 1.2, (0.55, 0.55)),
+        (Biome::Swamp, build_swamp_sentinel_mesh(), 1.1, (0.65, 0.65)),
     ];
-    let mut rng: u32 = 0x1a2b_3c4d;
-    for (biome, mesh, scale, (box_hw, box_hd), foot_r) in specs {
+    // Spots are pre-chosen from the terrain (see `landmark_sites`); here we just plant the mesh.
+    for (biome, mesh, scale, (box_hw, box_hd)) in specs {
         let handle = meshes.add(mesh);
-        let probe_r = foot_r * scale;
-        // Best-of: keep the flattest candidate seen; take the first perfectly level one.
-        let mut best: Option<(f32, f32, f32, f32, f32)> = None; // (spread, x, z, y, yaw)
-        for _ in 0..4000 {
-            let x = crate::wildlife::rng_range(&mut rng, -crate::worldmap::GX + 6.0, crate::worldmap::GX - 6.0);
-            let z = crate::wildlife::rng_range(&mut rng, -crate::worldmap::GZ + 6.0, crate::worldmap::GZ - 6.0);
-            if crate::worldmap::biome_at_world(x, z) != Some(biome)
-                || crate::worldmap::ground_at_world(x, z).is_none()
-                || crate::blockers::is_blocked(x, z)
-                || crate::camps::in_clearing(x, z)
-                || crate::castle::in_footprint(x, z)
-                || crate::rival::near_fort(x, z)
-            {
-                continue;
-            }
-            // Reject any footprint that runs off-land / over water, then grade by flatness.
-            let Some(spread) = footprint_spread(x, z, probe_r) else { continue };
-            let y = crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
-            let yaw = crate::wildlife::rng_range(&mut rng, 0.0, TAU);
-            if best.map_or(true, |b| spread < b.0) {
-                best = Some((spread, x, z, y, yaw));
-            }
-            if spread <= 0.01 {
-                break; // dead flat — done
-            }
-        }
-        if let Some((spread, x, z, y, yaw)) = best {
-            let id = commands
-                .spawn((
-                    Mesh3d(handle.clone()),
-                    MeshMaterial3d(mat.clone()),
-                    Transform::from_xyz(x, y, z)
-                        .with_rotation(Quat::from_rotation_y(yaw))
-                        .with_scale(Vec3::splat(scale)),
-                    BiomeEntity,
-                ))
-                .id();
-            // Solid oriented box, scaled into world units + turned to match the placed mesh yaw.
-            crate::blockers::add_obb(x, z, box_hw * scale, box_hd * scale, yaw);
-            crate::landmarks::attach(commands, id, biome, Vec3::new(x, y, z), meshes, materials);
-            if spread > crate::worldmap::GROUND_STEP {
-                info!("landmark {:?}: best spot still uneven (spread {:.2})", biome, spread);
-            }
-        } else {
-            info!("landmark: no spot found for {:?}", biome);
+        let Some(s) = landmark_sites().iter().find(|s| s.biome == biome) else {
+            continue; // `landmark_sites` already logged the miss.
+        };
+        let (x, y, z, yaw) = (s.pos.x, s.y, s.pos.y, s.yaw);
+        let id = commands
+            .spawn((
+                Mesh3d(handle.clone()),
+                MeshMaterial3d(mat.clone()),
+                Transform::from_xyz(x, y, z)
+                    .with_rotation(Quat::from_rotation_y(yaw))
+                    .with_scale(Vec3::splat(scale)),
+                BiomeEntity,
+            ))
+            .id();
+        // Solid oriented box, scaled into world units + turned to match the placed mesh yaw.
+        crate::blockers::add_obb(x, z, box_hw * scale, box_hd * scale, yaw);
+        crate::landmarks::attach(commands, id, biome, Vec3::new(x, y, z), meshes, materials);
+        if s.spread > crate::worldmap::GROUND_STEP {
+            info!("landmark {:?}: best spot still uneven (spread {:.2})", biome, s.spread);
         }
     }
 }

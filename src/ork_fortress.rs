@@ -47,8 +47,9 @@ use crate::worldmap::{self, GX, GZ, MAP_SCALE};
 /// the original layout stays readable and the shift has one source.
 const BLIGHT_DZ: f32 = 53.0 * MAP_SCALE - 79.2;
 
-/// Fortress centre — the hold blob and the "inside the walls" tests key off this.
-const CENTRE: Vec2 = Vec2::new(12.0, 103.0 + BLIGHT_DZ);
+/// Fortress centre — the hold blob and the "inside the walls" tests key off this. Public so
+/// `ruins.rs` can keep landmarks clear of the hold.
+pub const CENTRE: Vec2 = Vec2::new(12.0, 103.0 + BLIGHT_DZ);
 /// Hold blob radii (wobbled ellipse around [`CENTRE`]) — the fortress's own landmass lobe.
 const BLOB_RX: f32 = 34.0;
 const BLOB_RZ: f32 = 30.0;

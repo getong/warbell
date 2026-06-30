@@ -127,6 +127,11 @@ fn spawn_clouds(
     mut meshes: ResMut<Assets<Mesh>>,
     mut mats: ResMut<Assets<StandardMaterial>>,
 ) {
+    // Capture aid: a top-down overview shot is blanketed by the cloud layer (32 large puffs at
+    // y≈42–80), so let a shot suppress them. No effect on normal play.
+    if std::env::var("FOREST_NOCLOUDS").is_ok() {
+        return;
+    }
     let cloud_mat = mats.add(StandardMaterial {
         base_color: Color::srgb(1.0, 1.0, 1.0),
         // Small white emissive keeps the shaded side bright (clouds, not grey rocks).

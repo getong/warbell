@@ -94,13 +94,27 @@ run-state: the player neither earns nor changes it. Therefore:
 This sidesteps the persist+reset obligation in CLAUDE.md by construction. (If a *future* feature
 lets the player carve/alter roads, that delta would need both — out of scope here.)
 
-## Module / plugin shape
+## Module / plugin shape (as built)
 
-- `src/roads.rs` becomes a `RoadsPlugin`:
-  - data: node list, edge list, curve builder, `RoadField` + sampler.
-  - `Startup` system `build_road_field` ordered **after** `worldmap::build`, inserting `RoadField`.
-  - a later `Startup`/post step for bridge emission (river-query dependent, isolated).
-- Consumers add a single field sample at their existing accept/reject/speed/cost sites.
+- `src/roads.rs` holds the node/edge graph, curve builder, and `RoadField` + sampler. The field is
+  built **lazily** behind a `OnceLock` on the first query (which lands during the world's ground
+  bake) — matching the existing `castle::gate_centers` / `camps::plan` pattern. **No `Startup`
+  plugin, no `main.rs` edit, no ordering against the in-flight river rework.**
+- Consumers add a single field sample at their existing sites: `worldmap::ground_color` (tint, via
+  the unchanged `road_strength`), `biome.rs` scatter (tree + cover reject via `on_road`),
+  `player::movement` (`speed_mult`).
+- **Bridges:** roads thread their river crossings through the *existing* `bridges::centers()` decks
+  rather than emitting new geometry — zero edits to `bridges.rs` river logic or river generation, so
+  it stays correct as the rivers are reworked. New-bridge emission stays out of scope.
+- **AI bias deferred:** core `pathfinding` is binary-passable only; per-cell road cost means
+  changing the parity-tested `crates/core` Grid trait + `find_path`. Not worth the risk for a
+  "nice-if" — the baked field makes it a one-line add later.
+- **`GROW_CUTOFF` = 0.12** (not 0.35): the cleared strip must match the *visible* tint (which shows
+  from strength ≈0.1). A higher cutoff left props growing on the tinted road fringe — swamp moss
+  discs read as "green circles on a broken road", and rock-biome paths cleared no visible corridor.
+- **`FOREST_NOCLOUDS`** capture gate added to `visual.rs` — a top-down overview is otherwise
+  blanketed by the cloud layer (32 puffs at y≈42–80). Pair with the existing `FOREST_NOBLUR` +
+  `FOREST_FOG` for a clean map shot.
 - Keep all forest-specific world geometry in `src/` (not `crates/core`) — it's not parity logic.
 
 ## Testing

@@ -19,11 +19,13 @@ const DECK_HALF_Z: f32 = 1.2;
 /// the sandy bank a little, it doesn't reach out over a long apron (shorter decks, set back from
 /// the water line onto firm shore rather than teetering at the very edge).
 const OVERHANG: f32 = 0.8;
-/// Min world-XZ gap between two bridges (so they don't cluster on one crossing).
-const MIN_SPACING: f32 = 9.0;
-/// At most this many bridges (four rivers now cross the island — each needs several crossings
-/// or the player/invaders detour absurdly far).
-const MAX_BRIDGES: usize = 20;
+/// Min world-XZ gap between two bridges (so they don't cluster on one crossing). Large — a
+/// meandering river doubles back on itself, so a small gap let decks bunch up a few units apart at
+/// odd angles; this keeps each crossing a single distinct landmark.
+const MIN_SPACING: f32 = 34.0;
+/// At most this many bridges (three rivers cross the island — roughly one crossing each, two on the
+/// longest; more just litters the banks with decks pointing every which way).
+const MAX_BRIDGES: usize = 5;
 /// Acceptable half-width of the channel being bridged (skip slivers + wide lake-like spans —
 /// a clean river crossing is a couple units across).
 const MIN_HALF: f32 = 0.6;
@@ -130,6 +132,13 @@ fn crossing_at(x: f32, z: f32) -> Option<Span> {
     if !(MIN_HALF..=MAX_HALF).contains(&half) {
         return None;
     }
+    // The deck CENTRE must actually be over water. `water_run` only measures the axis-aligned span,
+    // so on a narrow, meandering, diagonal channel the computed midpoint can fall just off the real
+    // (perpendicular-narrow) water — a deck there sits on dry land and a mover foots on the ground,
+    // not the planks. Reject those so every deck genuinely bridges water.
+    if !is_river_world(cx, cz) {
+        return None;
+    }
 
     // Useless-bridge gate: a real crossing has river running along the FLOW axis (perpendicular to
     // the deck) on BOTH sides. At a river head it just stops. Probe a short perpendicular window
@@ -204,6 +213,12 @@ fn span_at(wx: f32, wz: f32) -> Option<&'static Span> {
 /// Is `(wx, wz)` on a bridge deck? Consulted by `navgrid::standable` so A* can cross the river.
 pub fn is_on_bridge(wx: f32, wz: f32) -> bool {
     span_at(wx, wz).is_some()
+}
+
+/// World-XZ centres of every bridge deck. The road network threads its river crossings through
+/// these so a path lands on a real deck instead of plunging into the water (`roads::wander`).
+pub fn centers() -> Vec<Vec2> {
+    spans().iter().map(|s| Vec2::new(s.cx, s.cz)).collect()
 }
 
 /// Is `(wx, wz)` on or hugging a bridge deck (footprint padded by `pad`)? Placement code
@@ -338,7 +353,7 @@ mod tests {
     #[test]
     fn every_river_gets_a_bridge() {
         let s = spans();
-        assert!(s.len() >= 6, "expected a healthy bridge count, got {}", s.len());
+        assert!(s.len() >= 3, "expected at least one bridge per river, got {}", s.len());
         for (ri, river) in crate::worldmap::rivers_world().into_iter().enumerate() {
             let nearest = river
                 .iter()

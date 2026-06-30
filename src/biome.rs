@@ -933,7 +933,10 @@ pub fn scatter_region(
         while gz < hi {
             let cx = gx + 0.5 + r.range(-0.35, 0.35);
             let cz = gz + 0.5 + r.range(-0.35, 0.35);
-            if (river_guard && crate::water::on_river(cx, cz)) || !mask(cx, cz) {
+            if (river_guard && crate::water::on_river(cx, cz))
+                || !mask(cx, cz)
+                || crate::roads::on_road(cx, cz)
+            {
                 gz += 1.0;
                 continue;
             }
@@ -1047,7 +1050,10 @@ pub fn scatter_region(
                 for _ in 0..cover_count {
                     let x = gx + r.next();
                     let z = gz + r.next();
-                    if (river_guard && crate::water::on_river(x, z)) || !mask(x, z) {
+                    if (river_guard && crate::water::on_river(x, z))
+                        || !mask(x, z)
+                        || crate::roads::on_road(x, z)
+                    {
                         continue;
                     }
                     // Keep cover off trunks, walls, and landmark footprints (blockers register

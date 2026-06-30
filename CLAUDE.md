@@ -85,6 +85,18 @@ useless god/cloud-cam angles). Just drop the hero with `FOREST_HERO="x,z"`; tune
 **walking** shot (footsteps / dust kicks / anim) through the follow-cam. Reserve
 `FOREST_CAM` for deliberate god/overview framing only.
 
+**A HIGH god-cam to "see the whole island" washes out to flat white — don't fight it.** Three
+things compound at altitude and none is your bug: atmospheric **haze** fogs distant terrain to the
+sky colour (`FOREST_FOG="clear,full"`, bigger = thinner, only nibbles — it does NOT clear a
+whole-island view); the **cloud layer** sits ~y90 so a camera above it shoots cloud-tops; and
+**midday bloom** (`FOREST_TIME≈0.25–0.35`) blows the bright/snow areas white. To actually see
+terrain, frame **low + oblique** (camera height **~15–40**, close, looking near-flat along the
+ground — the orbit examples below use *height 14* on purpose); a near-top-down at y≈25 over one
+feature reads crisply. To verify a **spread-out** feature (rivers, biome layout), take **several
+low close shots at the known biome/feature coords** (below), one per region — NOT one doomed
+overview. For a true island-wide frame use the **orbit clip** (`FOREST_CLIP_ORBIT`, low height)
+and pick a frame; a single high static cam can't do it cleanly.
+
 ```powershell
 # player-perspective still (hero framed by the real follow-cam):
 $env:FOREST_SHOT="shot.png"; $env:FOREST_TPS="1"; $env:FOREST_HERO="-18,24"; cargo run

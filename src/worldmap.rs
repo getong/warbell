@@ -3,8 +3,9 @@
 //! coast, five biome blobs (snow NW, desert NE, rock E, forest SW, swamp S), a grass
 //! centre safe-zone (the castle spot), a grass frontier with scattered forest clumps and
 //! rolling terraced knolls, a beach ring backed by patchy coastal mountain ridges, three
-//! meandering rivers (each springing from a highland and draining to the sea) with soft sandy
-//! banks + one lake, and **terraced** stepped heights (flat tile-tops + cliff
+//! meandering rivers (each springing from a highland and draining to the sea, their banks
+//! projected onto the smooth channel edge — no tile-grid stairstep) + one lake, and **terraced**
+//! stepped heights (flat tile-tops + cliff
 //! faces; snow peak 10, rock peak 9). South of the old coast the grid extends into the
 //! **Blight** — the walkable ork-fortress mire (`TB::Blight`, shape owned by
 //! `ork_fortress.rs`) that gameplay treats as swamp (poison + slow).
@@ -467,17 +468,23 @@ struct RiverDef {
 // Sources sit just OUTSIDE the peak-region radius (so `in_mountain` doesn't suppress the spring)
 // and well clear of the castle safe-zone (so it isn't clipped to dry grass).
 const HOME_RIVERS: &[RiverDef] = &[
-    RiverDef { pts: &[(54.0, 43.0), (45.0, 53.0), (35.0, 63.0), (25.0, 72.0), (14.0, 80.0), (3.0, 87.0)], w_src: 0.7, w_mouth: 1.7 },
-    RiverDef { pts: &[(90.0, 82.0), (89.0, 90.0), (88.0, 98.0), (87.0, 106.0)], w_src: 0.8, w_mouth: 1.6 },
-    RiverDef { pts: &[(80.0, 34.0), (78.0, 24.0), (75.0, 14.0), (72.0, 5.0), (70.0, -3.0)], w_src: 0.6, w_mouth: 1.4 },
+    // Snowmelt — gathers in the forest SOUTH of the snow massif (clear of the peak) and runs west.
+    RiverDef { pts: &[(42.0, 60.0), (30.0, 68.0), (18.0, 76.0), (6.0, 84.0)], w_src: 0.42, w_mouth: 0.78 },
+    // Marsh river — west of the rock range (clear of it), draining south through the swamp.
+    RiverDef { pts: &[(72.0, 84.0), (74.0, 93.0), (76.0, 102.0), (78.0, 108.0)], w_src: 0.42, w_mouth: 0.72 },
+    // North brook — east frontier, clear of the rock range, to the north coast.
+    RiverDef { pts: &[(78.0, 33.0), (76.0, 24.0), (74.0, 14.0), (72.0, 5.0), (70.0, -3.0)], w_src: 0.4, w_mouth: 0.64 },
 ];
 
 // Ashlands — its own three courses off ITS highlands (rock massif W, snow drifts NE): a west
 // torrent off the charcoal massif to the west coast, a north seep, and an eastern drain.
 const ASH_RIVERS: &[RiverDef] = &[
-    RiverDef { pts: &[(46.0, 70.0), (34.0, 78.0), (22.0, 85.0), (10.0, 91.0)], w_src: 0.7, w_mouth: 1.6 },
-    RiverDef { pts: &[(96.0, 36.0), (98.0, 26.0), (101.0, 15.0), (104.0, 4.0)], w_src: 0.7, w_mouth: 1.5 },
-    RiverDef { pts: &[(78.0, 66.0), (84.0, 76.0), (90.0, 86.0), (96.0, 96.0)], w_src: 0.6, w_mouth: 1.4 },
+    // Clear of the W charcoal massif — drains south.
+    RiverDef { pts: &[(66.0, 72.0), (68.0, 82.0), (70.0, 92.0), (72.0, 101.0)], w_src: 0.35, w_mouth: 0.7 },
+    // Clear of the NE snow drifts — north to the coast.
+    RiverDef { pts: &[(80.0, 44.0), (78.0, 32.0), (76.0, 20.0), (74.0, 8.0), (72.0, -2.0)], w_src: 0.35, w_mouth: 0.66 },
+    // East drain.
+    RiverDef { pts: &[(78.0, 66.0), (84.0, 76.0), (90.0, 86.0), (96.0, 96.0)], w_src: 0.35, w_mouth: 0.62 },
 ];
 
 fn active_rivers() -> &'static [RiverDef] {
@@ -487,19 +494,25 @@ fn active_rivers() -> &'static [RiverDef] {
     }
 }
 
-/// Densely-sampled river centrelines for the active map: `(x, z, half_width)` per sample, with the
-/// organic meander already baked into the XZ. Memoised per map id (like the tile grid).
-fn river_points() -> Arc<Vec<(f32, f32, f32)>> {
-    static PTS: OnceLock<Mutex<HashMap<u8, Arc<Vec<(f32, f32, f32)>>>>> = OnceLock::new();
+/// Densely-sampled river centrelines for the active map plus a base-space bounding box (min x, min
+/// z, max x, max z, padded) for a cheap "nowhere near any river" early-out in [`river_sd`] — which
+/// the per-frame ground sampler now consults, so the box keeps it ~free away from water.
+struct RiverField {
+    pts: Vec<(f32, f32, f32)>,
+    bb: [f32; 4],
+}
+fn river_points() -> Arc<RiverField> {
+    static PTS: OnceLock<Mutex<HashMap<u8, Arc<RiverField>>>> = OnceLock::new();
     let cache = PTS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut guard = cache.lock().expect("river point cache poisoned");
     guard
         .entry(active_id())
         .or_insert_with(|| {
             let mut pts: Vec<(f32, f32, f32)> = Vec::new();
-            for def in active_rivers() {
+            for (ri, def) in active_rivers().iter().enumerate() {
                 let seg: Vec<f32> = def.pts.windows(2).map(|w| (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1)).collect();
                 let total: f32 = seg.iter().sum::<f32>().max(1e-3);
+                let seed = ri as f32 * 17.0 + 3.0; // decorrelate each river's wander/width noise
                 let mut acc = 0.0;
                 for (si, w) in def.pts.windows(2).enumerate() {
                     let (ax, az) = w[0];
@@ -514,15 +527,33 @@ fn river_points() -> Arc<Vec<(f32, f32, f32)>> {
                         let t = (along / total).clamp(0.0, 1.0);
                         let cx = ax + (bx - ax) * s;
                         let cz = az + (bz - az) * s;
-                        // Meander: two perpendicular sine bands whose sway grows downstream.
-                        let m = ((along * 0.17).sin() * 1.7 + (along * 0.063 + 1.3).sin() * 1.2) * (0.35 + t * 0.85);
-                        let half = def.w_src + (def.w_mouth - def.w_src) * t;
+                        // Organic MEANDER: value-noise (not a periodic sine — that read as a ruled,
+                        // regular wave) sways the centreline perpendicular to the flow, two octaves,
+                        // growing downstream. Marching-squares contours whatever shape this makes,
+                        // so the resulting bank is smooth no matter how the course wanders.
+                        let m1 = vnoise(along * 0.11 + seed, seed * 1.3) - 0.5;
+                        let m2 = vnoise(along * 0.26 + seed * 2.1, seed + 8.0) - 0.5;
+                        let m = (m1 * 7.0 + m2 * 3.0) * (0.5 + t * 0.6);
+                        // Organic WIDTH: the channel pinches and swells along its length instead of
+                        // being a constant-width canal — what made the banks read as parallel rulers.
+                        let wn = vnoise(along * 0.19 + seed * 1.7, seed + 4.0); // 0..1
+                        let base_half = def.w_src + (def.w_mouth - def.w_src) * t;
+                        let half = base_half * (0.74 + wn * 0.6);
                         pts.push((cx + perpx * m, cz + perpz * m, half));
                     }
                     acc += l;
                 }
             }
-            Arc::new(pts)
+            // Padded bbox: max half (~1.4) + edge noise (~0.4) + a margin.
+            let mut bb = [f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY];
+            for &(x, z, _) in &pts {
+                bb[0] = bb[0].min(x);
+                bb[1] = bb[1].min(z);
+                bb[2] = bb[2].max(x);
+                bb[3] = bb[3].max(z);
+            }
+            const PAD: f32 = 2.5;
+            Arc::new(RiverField { pts, bb: [bb[0] - PAD, bb[1] - PAD, bb[2] + PAD, bb[3] + PAD] })
         })
         .clone()
 }
@@ -532,24 +563,41 @@ fn river_points() -> Arc<Vec<(f32, f32, f32)>> {
 /// than a clean offset of the centreline. Does NOT apply the safe-zone / mountain guards — callers
 /// pair it with [`river_blocked`].
 fn river_sd(x: f32, z: f32) -> f32 {
+    let field = river_points();
+    // Cheap reject: far outside the rivers' bounding box → solidly land (skips the point scan, so
+    // the per-frame ground sampler pays almost nothing away from water).
+    if x < field.bb[0] || z < field.bb[1] || x > field.bb[2] || z > field.bb[3] {
+        return 5.0;
+    }
     let mut best = f32::INFINITY;
-    for &(rx, rz, half) in river_points().iter() {
+    for &(rx, rz, half) in &field.pts {
         let d = (x - rx).hypot(z - rz) - half;
         if d < best {
             best = d;
         }
     }
-    best - omottle(x, z, 1.3, 7.0) * 0.35
+    // Two octaves of smooth edge fray so the bank wiggles organically at two scales (the cut
+    // follows this exactly via marching-squares — it can't stairstep or spike, so the noise is
+    // free to be bold). Kept under the channel half-width so the river doesn't pinch shut.
+    best - omottle(x, z, 1.5, 7.0) * 0.28 - omottle(x, z, 3.4, 2.0) * 0.13
 }
 
 /// The castle safe-zone and the peak massifs carry no river (springs emerge below the peaks; the
 /// keep approach stays dry). Both `is_river` and the bank margin gate on this.
 fn river_blocked(x: f32, z: f32) -> bool {
-    dist_from_castle(x, z) < SAFE_R || in_mountain(x, z)
+    // The Blight (ork-fortress landmass) overrides the south coast in `classify` BEFORE `is_river`,
+    // so a river carved there is invisible (buried under trampled mud) and a bridge over it spans
+    // dry ground. Clip rivers out of it — a south-draining river just fades into the marsh at the
+    // Blight's edge, which is fine.
+    // Keep rivers a healthy margin OUT of the peak massifs (a wider keep-out than `in_mountain`'s
+    // terrain margin): a river clipping a steep mountain base left broken slivers + carved channels
+    // fighting the mountain heightfield (the "rivers in the mountains cause bugs" report).
+    let wob = 2.4 * (x * 0.4 + 1.1).sin() + 2.4 * (z * 0.36 - 0.7).cos();
+    let near_peak = active_map().regions.iter().any(|r| r.peak > 0 && (x - r.x).hypot(z - r.z) + wob < r.r + 5.0);
+    dist_from_castle(x, z) < SAFE_R
+        || near_peak
+        || crate::ork_fortress::blight_class_base(x, z).is_some()
 }
-/// Half-width (base units) of the sandy bank margin hugging each river — a soft sloped shore that
-/// eases the land into the water instead of dropping as a blocky step.
-const RIVER_BANK: f32 = 1.4;
 fn in_mountain(x: f32, z: f32) -> bool {
     let wob = 2.4 * (x * 0.4 + 1.1).sin() + 2.4 * (z * 0.36 - 0.7).cos();
     active_map().regions.iter().any(|r| r.peak > 0 && (x - r.x).hypot(z - r.z) + wob < r.r + 2.0)
@@ -712,19 +760,8 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
     if dc < SAFE_R + edge_fray(x, z).max(-4.0) {
         return Some((TB::Grass, 1));
     }
-    // River channel + its soft sandy bank. `river_sd` is the signed distance to the nearest
-    // river surface (negative = water): inside the channel carves to sea; a thin positive margin
-    // (`RIVER_BANK`) becomes a sandy shore so the land eases into the water instead of dropping a
-    // blocky step. Computed once and shared (the per-frame `is_river_world` callers recompute, but
-    // that's a single hero-position probe).
-    if !river_blocked(x, z) {
-        let sd = river_sd(x, z);
-        if sd < 0.0 {
-            return None;
-        }
-        if sd < RIVER_BANK {
-            return Some((TB::Sand, 1));
-        }
+    if is_river(x, z) {
+        return None;
     }
     if is_lake(x, z) {
         return None;
@@ -912,6 +949,28 @@ fn corner_top_y(cx: i32, cz: i32) -> Option<f32> {
     (n > 0).then(|| sum / n as f32)
 }
 
+/// Water field at a grid CORNER `(cx, cz)` (grid index → base XZ is `c / MAP_SCALE`) for the bank
+/// marching-squares: `(field, is_river)`. `field < 0` = water, `> 0` = land, `0` = shoreline.
+///  - off the island → SEA: a moderate negative (so a river-mouth cut follows the real land/water
+///    edge and doesn't paint ocean as phantom land), `is_river = false`;
+///  - safe-zone / mountains / Blight → land (`+1`), no river;
+///  - else the river signed distance, `is_river` when it's under the channel.
+/// The mesh only marching-squares a cell that has a RIVER corner, so a plain coast keeps its
+/// existing per-tile beach; at a river MOUTH the sea corners still read as water, so the cut is
+/// clean there.
+fn corner_water(cx: i32, cz: i32) -> (f32, bool) {
+    let bx = cx as f32 / MAP_SCALE;
+    let bz = cz as f32 / MAP_SCALE;
+    if !is_land_shape(bx, bz) {
+        return (-0.6, false); // sea
+    }
+    if river_blocked(bx, bz) {
+        return (1.0, false); // land, no river
+    }
+    let sd = river_sd(bx, bz);
+    (sd, sd < 0.0)
+}
+
 /// Smoothed surface Y at world `(wx, wz)` — bilinear blend of the containing tile's four smoothed
 /// corner heights. `None` over water / off the island (the containing tile is water). Every LAND
 /// tile contributes to all four of its OWN corners, so the four `corner_top_y` are always `Some`
@@ -921,6 +980,13 @@ fn corner_top_y(cx: i32, cz: i32) -> Option<f32> {
 fn smooth_surface_y(wx: f32, wz: f32) -> Option<f32> {
     let gx = wx + GX;
     let gz = wz + GZ;
+    // No footing over the real (sub-tile) river surface. The per-tile `tile_at` classifies by tile
+    // CENTRE, but the bank is rendered sub-tile via marching-squares — so a boundary tile is land by
+    // centre yet half water on screen. Reject the exact water area here (cheap: `river_sd` early-outs
+    // outside the rivers' bbox) so the hero/NPCs/scatter can't stand on the rendered-water half.
+    if is_river(gx / MAP_SCALE, gz / MAP_SCALE) {
+        return None;
+    }
     let ix = gx.floor() as i32;
     let iz = gz.floor() as i32;
     let (_, h) = tile_at(ix, iz)?;
@@ -1479,6 +1545,7 @@ fn bs_scatter_biome(biome: Biome, commands: &mut Commands, meshes: &mut Assets<M
                 here == Some(biome)
             };
             biome_match
+                && !is_river_world(x, z) // keep props off the (sub-tile) river surface
                 && !crate::camps::in_clearing(x, z)
                 && !crate::bridges::near_bridge(x, z, 1.0)
                 && !crate::ork_fortress::on_gate_approach(x, z)
@@ -1567,6 +1634,7 @@ fn bs_grass_cover(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: 
         false,
         &|x, z| {
             is_grass_world(x, z)
+                && !is_river_world(x, z) // keep cover off the (sub-tile) river surface
                 && !crate::castle::in_footprint(x, z)
                 && !crate::camps::in_clearing(x, z)
                 && !crate::town::near_build_plot(x, z)
@@ -1816,29 +1884,54 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
 
     for iz in iz0..iz1 {
         for ix in ix0..ix1 {
-            let Some((tb, h)) = tile_at(ix, iz) else { continue };
+            // River signed-distance at the four corners (a CORNER field; `< 0` = under the river).
+            // Bank tiles are cut by MARCHING SQUARES along the `= 0` contour, so the shoreline is a
+            // smooth sub-grid curve rather than the tile-grid staircase ("Minecraft squares").
+            let cwat = [
+                corner_water(ix, iz),
+                corner_water(ix + 1, iz),
+                corner_water(ix + 1, iz + 1),
+                corner_water(ix, iz + 1),
+            ];
+            let rs = [cwat[0].0, cwat[1].0, cwat[2].0, cwat[3].0];
+            let wetn = rs.iter().filter(|&&s| s < 0.0).count();
+            let has_river = cwat.iter().any(|c| c.1);
+            // A saddle (two DIAGONALLY-opposite wet corners) is ambiguous to contour; treat it as
+            // solid land — a sub-tile river pinch over-extends land a hair, but it never spikes.
+            let saddle = wetn == 2 && (rs[0] < 0.0) == (rs[2] < 0.0);
+            // Only RIVER cells (incl. the mouth, where sea corners also read as water) get the cut;
+            // a plain coast tile keeps the existing per-tile beach skirt below.
+            let cut = (1..=3).contains(&wetn) && !saddle && has_river;
+
+            // Render this cell iff it has land to show: a real land tile here, OR a river-water cell
+            // whose DRY corners form the far bank. Take the biome from the land tile (or nearest land
+            // neighbour) so colour, skirt tone, and the material-sheet routing are right.
+            let here = tile_at(ix, iz);
+            if wetn == 4 || (here.is_none() && !cut) {
+                continue; // fully under the river / open sea-lake with no bank here
+            }
+            let (tb, h) = here
+                .or_else(|| NB.iter().find_map(|&(dx, dz)| tile_at(ix + dx, iz + dz)))
+                .unwrap_or((TB::Grass, 1));
             if !keep(tb) {
                 continue;
             }
             let flat = (h - 1) as f32 * GROUND_STEP;
 
-            // ── Smoothed corner heights (mean of the LAND tiles meeting at each corner). Adjacent
-            //    tiles share their boundary corners, so neighbouring tops meet as ONE continuous
-            //    slope instead of a stepped vertical wall — this is what removes the blocky
-            //    Minecraft elevation look. The hero, NPCs and scatter all follow the SAME smoothed
-            //    surface (`ground_at_world` → `smooth_surface_y`), so nothing floats over or sinks
-            //    into the new sloped ground. (`unwrap_or(flat)` is a belt-and-braces fallback;
-            //    every land tile contributes to all four of its own corners, so these are `Some`.)
-            let cy00 = corner_top_y(ix, iz).unwrap_or(flat);
-            let cy10 = corner_top_y(ix + 1, iz).unwrap_or(flat);
-            let cy01 = corner_top_y(ix, iz + 1).unwrap_or(flat);
-            let cy11 = corner_top_y(ix + 1, iz + 1).unwrap_or(flat);
-            let wx = ix as f32 - GX;
-            let wz = iz as f32 - GZ;
-
-            // Per-corner normal from the heightfield gradient (central difference over neighbour
-            // corners) → shading rolls smoothly across tile seams, no per-facet crease. The `2.0`
-            // weights vertical vs. the 1-unit horizontal spacing of the corners on each side.
+            // Smoothed corner heights (mean of the LAND tiles at each corner) → continuous slopes,
+            // no stepped elevation walls. World-XZ corners + per-corner gradient normals + colours.
+            let cy = [
+                corner_top_y(ix, iz).unwrap_or(flat),
+                corner_top_y(ix + 1, iz).unwrap_or(flat),
+                corner_top_y(ix + 1, iz + 1).unwrap_or(flat),
+                corner_top_y(ix, iz + 1).unwrap_or(flat),
+            ];
+            let cxz = [
+                (ix as f32 - GX, iz as f32 - GZ),
+                (ix as f32 + 1.0 - GX, iz as f32 - GZ),
+                (ix as f32 + 1.0 - GX, iz as f32 + 1.0 - GZ),
+                (ix as f32 - GX, iz as f32 + 1.0 - GZ),
+            ];
             let cn = |cx: i32, cz: i32| {
                 let e = corner_top_y(cx + 1, cz).unwrap_or(flat);
                 let w = corner_top_y(cx - 1, cz).unwrap_or(flat);
@@ -1846,59 +1939,131 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
                 let n = corner_top_y(cx, cz - 1).unwrap_or(flat);
                 nrm3([w - e, 2.0, n - s])
             };
+            let cnn = [cn(ix, iz), cn(ix + 1, iz), cn(ix + 1, iz + 1), cn(ix, iz + 1)];
+            let col_at = |i: usize| ground_color((cxz[i].0 + GX) / MAP_SCALE, (cxz[i].1 + GZ) / MAP_SCALE);
 
-            // Per-corner blended colour. `c` samples in BASE/tile-index space; `cw` is the same in
-            // world XZ (tile index = world + G).
-            let c = |cx: f32, cz: f32| ground_color(cx / MAP_SCALE, cz / MAP_SCALE);
-            let cw = |x: f32, z: f32| c(x + GX, z + GZ);
-
-            // Continuous top: four corner heights + four gradient normals (full tile span — no
-            // inset/chamfer, since land seams now join through the shared corners themselves).
-            quadn(
-                [[wx, cy00, wz], [wx + 1.0, cy10, wz], [wx + 1.0, cy11, wz + 1.0], [wx, cy01, wz + 1.0]],
-                [cn(ix, iz), cn(ix + 1, iz), cn(ix + 1, iz + 1), cn(ix, iz + 1)],
-                [cw(wx, wz), cw(wx + 1.0, wz), cw(wx + 1.0, wz + 1.0), cw(wx, wz + 1.0)],
-                &mut indices, &mut positions, &mut normals, &mut colors,
-            );
-
-            // Shoreline skirt — ONLY where a tile edge meets water / off-map. Land–land seams need
-            // no wall (their tops already meet through shared corners), so inland terraces are gone:
-            // every elevation change inland is now a smooth slope. This drops the smoothed coast
-            // edge down to the sea so there's no hole at the shore. Grass coast shows exposed dirt;
-            // every other biome darkens its own top colour (the same palette the old walls used).
+            // Bank wall tone: grass shows exposed dirt; snow a cliff lip; else a darkened top.
             let top_col = ground_color((ix as f32 + 0.5) / MAP_SCALE, (iz as f32 + 0.5) / MAP_SCALE);
             let (wall_top, wall_bot) = if tb == TB::Grass {
                 let j = 0.82 + 0.32 * (noise_b(ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE) * 0.5 + 0.5);
                 let d = lin3(active_map().palette.dirt);
-                let t = [d[0] * j, d[1] * j, d[2] * j, 1.0];
-                let b = [d[0] * j * 0.68, d[1] * j * 0.64, d[2] * j * 0.60, 1.0];
-                (t, b)
+                ([d[0] * j, d[1] * j, d[2] * j, 1.0], [d[0] * j * 0.68, d[1] * j * 0.64, d[2] * j * 0.60, 1.0])
             } else if tb == TB::Snow {
                 let lip = lin3(active_map().palette.snow_cliff_lip);
                 let rock = lin3(active_map().palette.snow_cliff_rock);
                 ([lip[0], lip[1], lip[2], 1.0], [rock[0], rock[1], rock[2], 1.0])
             } else {
-                let t = [top_col[0] * 0.80, top_col[1] * 0.78, top_col[2] * 0.76, 1.0];
-                let b = [top_col[0] * 0.58, top_col[1] * 0.56, top_col[2] * 0.54, 1.0];
-                (t, b)
+                ([top_col[0] * 0.80, top_col[1] * 0.78, top_col[2] * 0.76, 1.0], [top_col[0] * 0.58, top_col[1] * 0.56, top_col[2] * 0.54, 1.0])
             };
-            for (dx, dz) in NB {
-                if tile_at(ix + dx, iz + dz).is_some() {
-                    continue; // land neighbour → tops already meet, no skirt
-                }
-                // The two boundary corners (at their smoothed heights) + the outward face normal.
-                let (x0, y0, z0, x1, y1, z1, n): (f32, f32, f32, f32, f32, f32, [f32; 3]) = match (dx, dz) {
-                    (1, 0) => (wx + 1.0, cy10, wz, wx + 1.0, cy11, wz + 1.0, [1.0, 0.0, 0.0]),
-                    (-1, 0) => (wx, cy01, wz + 1.0, wx, cy00, wz, [-1.0, 0.0, 0.0]),
-                    (0, 1) => (wx + 1.0, cy11, wz + 1.0, wx, cy01, wz + 1.0, [0.0, 0.0, 1.0]),
-                    _ => (wx, cy00, wz, wx + 1.0, cy10, wz, [0.0, 0.0, -1.0]),
-                };
-                quad(
-                    [[x0, y0, z0], [x1, y1, z1], [x1, SEA_Y, z1], [x0, SEA_Y, z0]],
-                    n,
-                    [wall_top, wall_top, wall_bot, wall_bot],
+
+            if !cut {
+                // Full land tile. Skirts drop to the sea ONLY toward non-river water (coast / lake /
+                // off-map); a river edge here is owned by the marching-squares neighbour, so skip it.
+                quadn(
+                    [[cxz[0].0, cy[0], cxz[0].1], [cxz[1].0, cy[1], cxz[1].1], [cxz[2].0, cy[2], cxz[2].1], [cxz[3].0, cy[3], cxz[3].1]],
+                    cnn,
+                    [col_at(0), col_at(1), col_at(2), col_at(3)],
                     &mut indices, &mut positions, &mut normals, &mut colors,
                 );
+                for (dx, dz) in NB {
+                    if tile_at(ix + dx, iz + dz).is_some() {
+                        continue; // land neighbour → tops meet, no skirt
+                    }
+                    if is_river((ix + dx) as f32 / MAP_SCALE, (iz + dz) as f32 / MAP_SCALE) {
+                        continue; // river edge → the marching-squares cell owns this bank
+                    }
+                    // Edge corner indices for this side (CCW corner order 0,1,2,3).
+                    let (a, b, n): (usize, usize, [f32; 3]) = match (dx, dz) {
+                        (1, 0) => (1, 2, [1.0, 0.0, 0.0]),
+                        (-1, 0) => (3, 0, [-1.0, 0.0, 0.0]),
+                        (0, 1) => (2, 3, [0.0, 0.0, 1.0]),
+                        _ => (0, 1, [0.0, 0.0, -1.0]),
+                    };
+                    quad(
+                        [[cxz[a].0, cy[a], cxz[a].1], [cxz[b].0, cy[b], cxz[b].1], [cxz[b].0, SEA_Y, cxz[b].1], [cxz[a].0, SEA_Y, cxz[a].1]],
+                        n,
+                        [wall_top, wall_top, wall_bot, wall_bot],
+                        &mut indices, &mut positions, &mut normals, &mut colors,
+                    );
+                }
+            } else {
+                // MARCHING SQUARES: the land-side polygon (rs >= 0), clipped to the contour, plus a
+                // bank wall along the cut edge. Edge crossings are interpolated to the exact `= 0`
+                // point, so the bank follows the river's smooth curve.
+                let mut pp: Vec<[f32; 3]> = Vec::new();
+                let mut pn: Vec<[f32; 3]> = Vec::new();
+                let mut pc: Vec<[f32; 4]> = Vec::new();
+                let mut pcross: Vec<bool> = Vec::new();
+                for a in 0..4 {
+                    let b = (a + 1) % 4;
+                    if rs[a] >= 0.0 {
+                        pp.push([cxz[a].0, cy[a], cxz[a].1]);
+                        pn.push(cnn[a]);
+                        pc.push(col_at(a));
+                        pcross.push(false);
+                    }
+                    if (rs[a] >= 0.0) != (rs[b] >= 0.0) {
+                        let t = rs[a] / (rs[a] - rs[b]); // zero-crossing fraction along edge a→b
+                        let x = cxz[a].0 + (cxz[b].0 - cxz[a].0) * t;
+                        let z = cxz[a].1 + (cxz[b].1 - cxz[a].1) * t;
+                        // The water-edge vertex sits at WATER LEVEL, not the land height. So the bank
+                        // tile slopes from its dry corners (full land height) DOWN to the waterline —
+                        // a gradual shore, not a vertical lip cut off like a ruler. (Adjacent cells
+                        // interpolate the same crossing on a shared edge, so the slope stays welded.)
+                        let y = SEA_Y + 0.06;
+                        let nrm = nrm3([
+                            cnn[a][0] + (cnn[b][0] - cnn[a][0]) * t,
+                            cnn[a][1] + (cnn[b][1] - cnn[a][1]) * t,
+                            cnn[a][2] + (cnn[b][2] - cnn[a][2]) * t,
+                        ]);
+                        pp.push([x, y, z]);
+                        pn.push(nrm);
+                        pc.push(ground_color((x + GX) / MAP_SCALE, (z + GZ) / MAP_SCALE));
+                        pcross.push(true);
+                    }
+                }
+                // Top: triangle-fan from vertex 0 (same CCW winding as the full quad → faces up).
+                if pp.len() >= 3 {
+                    let base = positions.len() as u32;
+                    for k in 0..pp.len() {
+                        positions.push(pp[k]);
+                        normals.push(pn[k]);
+                        colors.push(pc[k]);
+                    }
+                    for k in 1..pp.len() - 1 {
+                        indices.extend_from_slice(&[base, base + k as u32, base + k as u32 + 1]);
+                    }
+                }
+                // Bank wall along the cut edge (the consecutive pair of contour crossings). Normal
+                // points toward the water (the wet-corner centroid).
+                let (mut wcx, mut wcz, mut wnn) = (0.0_f32, 0.0_f32, 0.0_f32);
+                for a in 0..4 {
+                    if rs[a] < 0.0 {
+                        wcx += cxz[a].0;
+                        wcz += cxz[a].1;
+                        wnn += 1.0;
+                    }
+                }
+                wcx /= wnn.max(1.0);
+                wcz /= wnn.max(1.0);
+                let n = pp.len();
+                for i in 0..n {
+                    let j = (i + 1) % n;
+                    if pcross[i] && pcross[j] {
+                        let (x0, z0) = (pp[i][0], pp[i][2]);
+                        let (x1, z1) = (pp[j][0], pp[j][2]);
+                        let (mut nx, mut nz) = (wcx - (x0 + x1) * 0.5, wcz - (z0 + z1) * 0.5);
+                        let nl = (nx * nx + nz * nz).sqrt().max(1e-3);
+                        nx /= nl;
+                        nz /= nl;
+                        quad(
+                            [[x0, pp[i][1], z0], [x1, pp[j][1], z1], [x1, SEA_Y, z1], [x0, SEA_Y, z0]],
+                            [nx, 0.0, nz],
+                            [wall_top, wall_top, wall_bot, wall_bot],
+                            &mut indices, &mut positions, &mut normals, &mut colors,
+                        );
+                    }
+                }
             }
         }
     }

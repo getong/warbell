@@ -256,6 +256,8 @@ pub fn player_move(
         * player.0.move_speed_mult as f32
         * buffs.0.speed_mult(t as f64) as f32 // active Haste buff (1.0 = none)
         * if in_swamp { SWAMP_SLOW } else { 1.0 }
+        // Travelling by road is a little quicker than bushwhacking (baked road-field lookup).
+        * crate::roads::speed_mult(hero.pos.x, hero.pos.y)
         // Winding up a Heavy Strike commits you: slowed feet while the charge builds.
         * if hero.charge_t > super::combat::CHARGE_GRACE { super::combat::CHARGE_MOVE_MULT } else { 1.0 };
     let desired = if moving { Vec2::new(move_dir.x, move_dir.z) * want_speed } else { Vec2::ZERO };

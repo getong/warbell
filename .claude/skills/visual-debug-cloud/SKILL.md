@@ -83,6 +83,29 @@ Useful anchors for framing (castle at world origin, 1 tile = 1 unit):
 - Hero is small (~0.9u tall after `HERO_SCALE`); a camera ~1.5–2u away at y≈0.8–1.0
   looking at y≈0.45 fills the frame. Orks are ~1.3–1.6u; back off to 4–9u for a group.
 
+### Wide / overview shots — a high god-cam WASHES OUT; don't fight it
+
+A static `FOREST_CAM` raised up to "see the whole island" reliably renders a flat white/pale
+frame — three things compound at altitude and none is fixed by your change:
+- **Atmospheric haze** over the long view distance fogs distant terrain to the sky colour.
+  `FOREST_FOG="clear,full"` (bigger numbers = thinner) only nibbles at it — it does **not**
+  clear a whole-island view.
+- **The cloud layer** sits ~y90; a camera above it shoots cloud-tops, not ground.
+- **Midday bloom** (`FOREST_TIME≈0.25–0.35`) blows out the bright/snow areas to white.
+
+So to actually SEE terrain:
+- Frame **low and oblique** — camera height **~15–40u**, close to the subject, looking nearly
+  along the ground (the orbit-flyover examples in CLAUDE.md use *height 14* for a reason). A
+  near-top-down at y≈25 over a single feature reads crisply.
+- To verify a **spread-out** feature (rivers across the map, biome placement), take **several
+  low close shots at the known coords** — one per region — rather than one doomed overview.
+  Biome/feature world-XZ anchors are in CLAUDE.md.
+- If you genuinely need the island-wide framing (promo), use the **orbit clip**
+  (`FOREST_CLIP_ORBIT="cx,cy,cz,radius,height,deg"` with a *low* height) and pick a frame —
+  a single high static cam won't do it cleanly.
+- Always check the run log for `Screenshot saved` before trusting the PNG (cold-pipeline black
+  frame / crash → stale file), and re-run once if a frame looks wrong.
+
 ## 4. Verification workflow for model/visual changes
 
 1. `cargo check` + `cargo test -p tileworld_core` first — geometry mistakes (e.g. calling
