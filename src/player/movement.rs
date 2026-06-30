@@ -54,7 +54,7 @@ fn key_axis(keys: &ButtonInput<KeyCode>, pos: KeyCode, neg: KeyCode) -> f32 {
     (keys.pressed(pos) as i32 - keys.pressed(neg) as i32) as f32
 }
 
-fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
+pub(super) fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
     a + steer::wrap_pi(b - a) * t
 }
 
@@ -308,6 +308,9 @@ pub fn player_move(
         }
         // Steer toward the INPUT direction while pressing (hold the last facing through the slide). In
         // first person the *view* owns facing (set in `player_camera`) so attacks fire where you aim.
+        // This stays live DURING a swing — `player_attack` only *gently* nudges facing toward the
+        // locked foe (a soft aim-assist), and the player's own steer here always overpowers it, so it
+        // never feels like the game wrenches the body off where you're pointing.
         if moving && !fp.active {
             let want = move_dir.x.atan2(move_dir.z);
             hero.facing = lerp_angle(hero.facing, want, (dt * TURN_RATE).min(1.0));
