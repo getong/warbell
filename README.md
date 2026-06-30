@@ -11,7 +11,8 @@ Built in Rust on [**Bevy 0.18**](https://bevyengine.org).
 
 [**▶ Website**](https://miskibin.github.io/warbell/) · [**⬇ Download for Windows**](https://github.com/miskibin/warbell/releases/latest/download/Warbell-Setup.msi) · [**Changelog**](https://miskibin.github.io/warbell/changelog.html)
 
-<img src="site/screenshots/castle-after.png" width="800" alt="A fortified keep at dusk">
+
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/e54e45fd-5f4d-4230-bf76-b6040ae66cce" />
 
 </div>
 
