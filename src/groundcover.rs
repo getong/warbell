@@ -32,11 +32,16 @@ use crate::palette::lin;
 // (`worldmap::grass` = 0x6fb24c) but pulled toward grey so the blades blend into the turf; the
 // narrow root→tip band keeps the silhouette gentle, not sharp. Pairs with the now-matte scatter
 // material (no specular glint on the edges).
-const TUFT_BASE: u32 = 0x6a9a52; // blade root — muted, slightly darker so the tuft roots in
-const TUFT_GREEN: u32 = 0x7ba965; // blade mid — desaturated faded grass green
-const TUFT_TIP: u32 = 0x8fba7c; // blade tip — pale washed-out green (gentle, low-contrast)
-const GRASS_DRY: u32 = 0xb6a24e; // sun-dried straw blade (variety in a tuft)
-const SEED_HEAD: u32 = 0xd8c486; // pale seed-head spike on flowering grass
+// Centred ON the island grass tone (`worldmap::grass` ≈ 0x6fb24c) with a NARROW root→tip band, so
+// a tuft melts into the turf instead of standing off it as a bright spike. Pulling the tip down
+// (was 0x8fba7c, a pale yellow-green that "popped") and the whole band toward the ground colour is
+// what makes the grass read as part of the meadow — and the gentle value spread softens the hard
+// flat-facet self-shading that read as sharp little shadows on every blade.
+const TUFT_BASE: u32 = 0x5f8244; // blade root — darker, sinks into the turf
+const TUFT_GREEN: u32 = 0x6f9a57; // blade mid — sits right on the ground green
+const TUFT_TIP: u32 = 0x82ac6b; // blade tip — only a touch lighter than the ground (low-contrast)
+const GRASS_DRY: u32 = 0x9c8c4a; // sun-dried straw blade (muted, no bright pop)
+const SEED_HEAD: u32 = 0xbfae78; // pale seed-head spike on flowering grass (softened)
 
 // ── Fern palette ─────────────────────────────────────────────────────────────────
 const FERN_GREEN: u32 = 0x2f7e30; // deep fern frond green

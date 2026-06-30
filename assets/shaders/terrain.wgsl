@@ -245,16 +245,16 @@ fn fragment(
         // Lower thresholds widen each patch and stronger mixes raise the contrast between
         // them, so the field reads as a genuinely varied meadow rather than one flat tone.
         let worn = smoothstep(0.48, 0.82, ter_noise(wp * 0.020 + vec2<f32>(5.0, 9.0)));
-        rgb = mix(rgb, rgb * vec3<f32>(0.76, 0.65, 0.46), worn * 0.46 * green * variety);
+        rgb = mix(rgb, rgb * vec3<f32>(0.76, 0.65, 0.46), worn * 0.54 * green * variety);
         // Damp moss hollows — cool, rich, slightly darker green.
         let moss = smoothstep(0.52, 0.86, ter_noise(wp * 0.040 + vec2<f32>(19.0, 2.0)));
-        rgb = mix(rgb, rgb * vec3<f32>(0.66, 0.90, 0.56), moss * 0.40 * green * variety);
+        rgb = mix(rgb, rgb * vec3<f32>(0.66, 0.90, 0.56), moss * 0.44 * green * variety);
         // Sun-dried golden sweeps — drier grass catching the light (a brighter warm push).
         let dry = smoothstep(0.54, 0.87, ter_noise(wp * 0.015 + vec2<f32>(33.0, 7.0)));
-        rgb = mix(rgb, rgb * vec3<f32>(1.18, 1.04, 0.60), dry * 0.36 * green * variety);
+        rgb = mix(rgb, rgb * vec3<f32>(1.18, 1.04, 0.60), dry * 0.43 * green * variety);
         // Lush well-watered patches — deep saturated green.
         let lush = smoothstep(0.56, 0.89, ter_noise(wp * 0.030 + vec2<f32>(2.0, 27.0)));
-        rgb = mix(rgb, rgb * vec3<f32>(0.70, 1.03, 0.66), lush * 0.34 * green * variety);
+        rgb = mix(rgb, rgb * vec3<f32>(0.70, 1.03, 0.66), lush * 0.42 * green * variety);
 
         // ── Forest-floor debris baked into the texture (the "patyki + szare placki"): scattered
         //    twigs and bare-earth / lichen patches, so the floor reads littered EVERYWHERE, not
@@ -269,7 +269,7 @@ fn fragment(
         let soil = smoothstep(0.60, 0.78, ter_noise(wp * 0.06 + vec2<f32>(61.0, 13.0)));
         let soil_edge = soil * (0.70 + 0.30 * ter_noise(wp * 0.28 + vec2<f32>(7.0, 51.0)));
         let earth = vec3<f32>(0.45, 0.44, 0.41) * (0.90 + ter_m * 0.20);
-        rgb = mix(rgb, earth, soil_edge * 0.55 * debris_w);
+        rgb = mix(rgb, earth, soil_edge * 0.66 * debris_w);
         // (b) Scattered twigs (organic — warped/tapered/soft, see `twig_field`): a brown-bark
         //     pass + a sparser, greyer driftwood pass (offset seed so they don't coincide).
         //     Bark colour drifts dark↔mid down each stick (`.y`) so it's not a flat fill.

@@ -783,10 +783,85 @@ fn merge_props(props: Vec<PendingProp>) -> Option<Mesh> {
     Some(base)
 }
 
+// ── Ground "fertility" field — the cure for "vegetation doesn't match the ground". ───────────
+// The terrain shader (`terrain.wgsl`) paints the meadow as drifting patches: worn/bald trodden
+// dirt, damp moss hollows, sun-dried golden sweeps, lush well-watered green, and grey-tan bare-
+// earth blotches (the "szare placki"). But the cover scatterer rolled a FIXED per-tile chance
+// everywhere — a uniform salt-and-pepper carpet that ignored all of that. So the ground and the
+// plants read as two unrelated layers: lush flowers sat on bald dirt, bare turf on rich green.
+//
+// These helpers port the shader's low-freq value noise to the CPU EXACTLY (same `ter_hash` /
+// `ter_noise`, same world-XZ frequencies + offsets, same `fract = x - floor(x)`), so the cover
+// loop can thin the scatter on the very patches the albedo already paints bald and thicken it in
+// the lush hollows. Result: plants grow in drifts that sit ON the green, clearings open on the
+// trodden/tan patches — vegetation and ground finally agree, and the field reads varied (drifts
+// + clearings) instead of an even sprinkle. Match the WGSL or the drift won't land on its patch.
+fn fg_fract(v: f32) -> f32 {
+    v - v.floor()
+}
+
+fn ter_hash(px: f32, py: f32) -> f32 {
+    // WGSL: p3 = fract(vec3(p.x,p.y,p.x)*0.1031); p3 += dot(p3, p3.yzx+33.33); return fract((p3.x+p3.y)*p3.z)
+    let mut p = Vec3::new(fg_fract(px * 0.1031), fg_fract(py * 0.1031), fg_fract(px * 0.1031));
+    let d = p.dot(Vec3::new(p.y, p.z, p.x) + 33.33);
+    p += Vec3::splat(d);
+    fg_fract((p.x + p.y) * p.z)
+}
+
+fn ter_noise(px: f32, py: f32) -> f32 {
+    let (ix, iy) = (px.floor(), py.floor());
+    let (fx, fy) = (px - ix, py - iy);
+    let a = ter_hash(ix, iy);
+    let b = ter_hash(ix + 1.0, iy);
+    let c = ter_hash(ix, iy + 1.0);
+    let d = ter_hash(ix + 1.0, iy + 1.0);
+    // Quintic (C2) fade, matching the shader so patch edges line up.
+    let ux = fx * fx * fx * (fx * (fx * 6.0 - 15.0) + 10.0);
+    let uy = fy * fy * fy * (fy * (fy * 6.0 - 15.0) + 10.0);
+    a + (b - a) * ux + (c - a) * uy * (1.0 - ux) + (d - b) * ux * uy
+}
+
+fn fg_smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
+    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// What the ground is doing at a point, read off the SAME patch fields the terrain shader tints
+/// with — so the scatter echoes the painted ground instead of fighting it.
+pub struct GroundPatch {
+    /// 0 ≈ bald/worn/bare-soil (cover thins to bare), 1 ≈ lush hollow (dense, flowery). Drives
+    /// scatter DENSITY.
+    pub fertility: f32,
+    /// −1 ≈ sun-dried / trodden (grass + sun-flowers), +1 ≈ damp green hollow (ferns / clover /
+    /// mushrooms). Drives which SPECIES wins, so the plant matches the patch it grows on.
+    pub damp: f32,
+}
+
+/// Sample the meadow patches once and derive both density (fertility) and species lean (damp).
+/// Centred so the open turf stays well-covered and only the clearly worn/dry/bare patches open up.
+pub fn ground_patch(x: f32, z: f32) -> GroundPatch {
+    let worn = fg_smoothstep(0.48, 0.82, ter_noise(x * 0.020 + 5.0, z * 0.020 + 9.0));
+    let moss = fg_smoothstep(0.52, 0.86, ter_noise(x * 0.040 + 19.0, z * 0.040 + 2.0));
+    let dry = fg_smoothstep(0.54, 0.87, ter_noise(x * 0.015 + 33.0, z * 0.015 + 7.0));
+    let lush = fg_smoothstep(0.56, 0.89, ter_noise(x * 0.030 + 2.0, z * 0.030 + 27.0));
+    let soil = fg_smoothstep(0.60, 0.78, ter_noise(x * 0.06 + 61.0, z * 0.06 + 13.0));
+    GroundPatch {
+        // Lush/moss thicken the carpet; worn/dry thin it; the bare-soil blotch nearly clears it.
+        fertility: (0.74 + lush * 0.45 + moss * 0.26 - worn * 0.42 - dry * 0.24 - soil * 0.95).clamp(0.04, 1.0),
+        // Damp green hollows ↔ sun-dried/trodden sweeps.
+        damp: ((moss * 0.7 + lush * 0.5) - (dry * 0.8 + worn * 0.5)).clamp(-1.0, 1.0),
+    }
+}
+
 /// The grid scatter over `[lo, hi]²`. One roll per tile; classes consume cumulative
 /// probability slices (the rest stays empty). Trees are spacing-checked + wind-swayed.
 /// `mask(x,z)` gates placement (the world map uses it to keep each biome inside its
 /// wedge + off the paths); `river_guard` skips the sine river band when true.
+///
+/// `cover_affinity` is a per-ground-cover-class damp lean (same order/length as `cfg.cover`):
+/// `+` = the class wins in damp green hollows (ferns/clover/mushrooms), `-` = it wins on the
+/// dry/trodden sweeps (grass + sun-flowers). Empty → neutral (every class placed by its raw
+/// chance, biome-agnostic). Only the home meadow passes one; other biomes stay neutral.
 #[allow(clippy::too_many_arguments)]
 pub fn scatter_region(
     cfg: &BiomeConfig,
@@ -798,6 +873,7 @@ pub fn scatter_region(
     river_guard: bool,
     mask: &dyn Fn(f32, f32) -> bool,
     height_fn: &dyn Fn(f32, f32) -> f32,
+    cover_affinity: &[f32],
 ) {
     // One shared white vertex-colour material — every prop bakes its hue into the mesh,
     // so the renderer auto-batches them into few draw calls.
@@ -964,19 +1040,40 @@ pub fn scatter_region(
                     if (river_guard && crate::water::on_river(x, z)) || !mask(x, z) {
                         continue;
                     }
+                    let patch = ground_patch(x, z);
+                    // Density DRIFT: gate the spawn on the ground's own fertility so the cover
+                    // thins to bare on the worn/tan patches the albedo paints and clumps into
+                    // dense flowery drifts in the lush hollows. This is what makes vegetation
+                    // track the ground (and read as varied drifts, not an even sprinkle).
+                    if r.next() > patch.fertility {
+                        continue;
+                    }
                     let py = height_fn(x, z);
-                    let roll = r.next();
-                    let mut acc = 0.0;
-                    for c in &cover {
-                        acc += c.chance;
-                        if roll < acc {
-                            let vi = pick_weighted(&c.weights, r.next());
-                            let s = r.range(c.scale.0, c.scale.1);
-                            // Ground cover → the chunk's cover bucket (NotShadowCaster +
-                            // distance-fade, applied once per merged chunk in `spawn_chunks`).
-                            let rot = yaw(&mut r);
-                            queue(true, c.variants[vi].clone(), Vec3::new(x, py, z), rot, s);
-                            break;
+                    // Species LEAN by patch dampness: scale each class's chance by its affinity so
+                    // ferns/clover/mushrooms cluster in the damp green hollows and grass + sun-
+                    // flowers take the dry sweeps. We've already cleared the fertility gate, so
+                    // normalise (pick proportionally) → past the gate something always grows.
+                    let affinity = |i: usize| -> f32 {
+                        cover_affinity
+                            .get(i)
+                            .map(|a| (1.0 + a * patch.damp).max(0.05))
+                            .unwrap_or(1.0)
+                    };
+                    let total: f32 = cover.iter().enumerate().map(|(i, c)| c.chance * affinity(i)).sum();
+                    if total > 0.0 {
+                        let target = r.next() * total;
+                        let mut acc = 0.0;
+                        for (i, c) in cover.iter().enumerate() {
+                            acc += c.chance * affinity(i);
+                            if target < acc {
+                                let vi = pick_weighted(&c.weights, r.next());
+                                let s = r.range(c.scale.0, c.scale.1);
+                                // Ground cover → the chunk's cover bucket (NotShadowCaster +
+                                // distance-fade, applied once per merged chunk in `spawn_chunks`).
+                                let rot = yaw(&mut r);
+                                queue(true, c.variants[vi].clone(), Vec3::new(x, py, z), rot, s);
+                                break;
+                            }
                         }
                     }
                 }

@@ -1384,6 +1384,9 @@ fn bs_scatter_biome(biome: Biome, commands: &mut Commands, meshes: &mut Assets<M
                 && !crate::rival::near_fort(x, z)
         },
         &|x, z| tile_top_y_world(x, z),
+        // Biome cover classes differ per biome (an index-keyed lean would mis-assign), so the
+        // density drift still applies but species stay neutral here — only the home meadow leans.
+        &[],
     );
 }
 
@@ -1447,6 +1450,11 @@ fn bs_grass_cover(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: 
     let lo = -GX;
     let hi = GX;
     let grass_cfg = grass_config();
+    // Per-class damp lean, in `frontier_cover()` order [grass, clover, fern, flower, mushroom]:
+    // grass + sun-flowers (poppies/buttercups) take the dry/trodden sweeps, while ferns, clover
+    // and mushrooms cluster in the damp green hollows — so WHICH plant you see matches the patch
+    // it grows on. The reskin's dead-litter cover is one class, so it just ignores the lean.
+    let meadow_affinity: &[f32] = if active_id() == 0 { &[-0.6, 0.5, 0.9, -0.15, 1.0] } else { &[] };
     scatter_region(
         &grass_cfg,
         commands,
@@ -1463,6 +1471,7 @@ fn bs_grass_cover(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: 
                 && !crate::bridges::near_bridge(x, z, 1.0)
         },
         &|x, z| tile_top_y_world(x, z),
+        meadow_affinity,
     );
 }
 
