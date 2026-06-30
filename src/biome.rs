@@ -640,7 +640,14 @@ fn upload_classes(src: &[PropClass], meshes: &mut Assets<Mesh>) -> Vec<ClassHand
 /// Chunk edge length (world units / tiles) for the passive-prop merge. ~16×16 tiles per
 /// chunk keeps each merged mesh modestly sized (a few hundred small props) while collapsing
 /// the ~60k individual scatter entities down to ≈2 merged entities per occupied chunk.
-const CHUNK: f32 = 16.0;
+pub const COVER_CHUNK: f32 = 16.0;
+const CHUNK: f32 = COVER_CHUNK;
+
+/// Marker on a merged ground-cover chunk (grass tufts / flowers / clover). Lets
+/// `landmarks::clear_around_landmarks` strip cover that was scattered before the set-pieces
+/// were planted.
+#[derive(Component)]
+pub struct GroundCoverChunk;
 
 /// A passive prop queued for its chunk: its (already tinted, UV-stripped) mesh and the world
 /// transform to bake into the vertices. Accumulated, then merged per chunk in [`spawn_chunks`].
@@ -715,14 +722,17 @@ fn spawn_chunks(
     for (key, bucket) in chunks {
         let center = chunk_center(key);
         if let Some(mesh) = merge_props(bucket.cover).filter(|_| !no_grass()) {
-            commands.spawn((
+            let mut e = commands.spawn((
                 Mesh3d(meshes.add(mesh)),
                 MeshMaterial3d(mat.clone()),
                 Transform::from_translation(center),
                 bevy::light::NotShadowCaster,
-                cover_range.clone(),
+                GroundCoverChunk,
                 BiomeEntity,
             ));
+            if scatter_cull_enabled() {
+                e.insert(cover_range.clone());
+            }
         }
         if let Some(mesh) = merge_props(bucket.props) {
             let mut e = commands.spawn((
@@ -1038,6 +1048,11 @@ pub fn scatter_region(
                     let x = gx + r.next();
                     let z = gz + r.next();
                     if (river_guard && crate::water::on_river(x, z)) || !mask(x, z) {
+                        continue;
+                    }
+                    // Keep cover off trunks, walls, and landmark footprints (blockers register
+                    // during the same build; landmarks add theirs before this pass runs on Continue).
+                    if crate::blockers::any_within(x, z, 0.4) {
                         continue;
                     }
                     let patch = ground_patch(x, z);

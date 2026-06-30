@@ -324,7 +324,7 @@ impl Plugin for LandmarksPlugin {
             // up through any frame.
             .add_systems(Update, (sync_rune_hud, sync_rune_ring))
             // Fell trees crowding the landmarks once they've spawned (runs once, then idles).
-            .add_systems(Update, clear_trees_around_landmarks)
+            .add_systems(Update, clear_around_landmarks)
             .add_systems(
                 Update,
                 (track_total, discover, shrine, start_rune_trial, drive_rune_trial)
@@ -333,16 +333,17 @@ impl Plugin for LandmarksPlugin {
     }
 }
 
-/// Fell every tree within [`LANDMARK_CLEAR_R`] of a landmark, once, after the landmarks exist.
-/// Tree scatter (worldmap build phases 5–9) runs long before landmark placement (phase 23), so
-/// trees crowd right up to the set-pieces; this opens the ground around each so the landmark reads
-/// from afar and the rune-trial arena is clear. Despawns (not fells → no regrow entity) and lifts
-/// the trunk blocker. Runs once: idles until landmarks are present, clears, then never again
-/// (matches the in-process Continue/New-Game reset, which doesn't re-spawn landmarks).
-fn clear_trees_around_landmarks(
+/// Fell every tree and despawn merged ground-cover chunks within [`LANDMARK_CLEAR_R`] of a
+/// landmark, once, after the landmarks exist. Tree/cover scatter (worldmap build phases 5–9
+/// and 12) runs long before landmark placement (phase 23), so props crowd right up to the
+/// set-pieces; this opens the ground around each so flowers don't poke through the mesh and
+/// the rune-trial arena is clear. Cover chunks use a slightly wider radius (chunk half-extent)
+/// so a 16×16 merged mesh can't straddle the landmark with one corner still full of tufts.
+fn clear_around_landmarks(
     mut commands: Commands,
     landmarks: Query<&Transform, With<Landmark>>,
     trees: Query<(Entity, &Transform), With<crate::verbs::ChopTree>>,
+    cover: Query<(Entity, &Transform), With<crate::biome::GroundCoverChunk>>,
     mut done: Local<bool>,
 ) {
     if *done {
@@ -354,10 +355,18 @@ fn clear_trees_around_landmarks(
     }
     *done = true;
     let r2 = LANDMARK_CLEAR_R * LANDMARK_CLEAR_R;
+    let cover_r = LANDMARK_CLEAR_R + crate::biome::COVER_CHUNK * 0.75;
+    let cover_r2 = cover_r * cover_r;
     for (e, tf) in &trees {
         let p = Vec2::new(tf.translation.x, tf.translation.z);
         if centers.iter().any(|c| c.distance_squared(p) < r2) {
             crate::blockers::remove_at(p.x, p.y); // p.y is world Z
+            commands.entity(e).try_despawn();
+        }
+    }
+    for (e, tf) in &cover {
+        let p = Vec2::new(tf.translation.x, tf.translation.z);
+        if centers.iter().any(|c| c.distance_squared(p) < cover_r2) {
             commands.entity(e).try_despawn();
         }
     }
