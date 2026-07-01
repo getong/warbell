@@ -1,5 +1,4 @@
-//! **Loading veil.** A full-screen branded cover (pulsing gold dots + the WARBELL wordmark) that
-//! hides an unready frame. Two jobs:
+//! **Loading veil.** A full-screen branded cover that hides an unready frame. Two jobs:
 //!
 //! 1. **Boot** — the window opens a beat before fonts, the world mesh build, and the render
 //!    pipelines are ready, so for ~1 s the player would stare at a blank clear-colour frame. The
@@ -11,17 +10,26 @@
 //!
 //! So the veil is **persistent + re-raisable**: one node spawned at `Startup` (never despawned),
 //! driven by the [`Veil`] resource — `Display::None` while hidden, opaque while raised, fading in
-//! between. It's intentionally font-free for its always-visible part (a solid veil + dot pulse from
-//! plain `Node`s) so it renders on frame 0; the title text only appears once Cinzel loads.
+//! between.
+//!
+//! **The screen is a static graphic** (June 2026 rework): a pre-rendered in-game scene
+//! (`ui/loading_backdrop.png` — a foggy golden-morning forest with the knight) fills the frame,
+//! with the WARBELL wordmark + a warm-gold `LOADING` caption over a bottom scrim for legibility.
+//! There are deliberately **no animated elements** — no pulsing dots, no rotating tips, no growing
+//! progress bar. The only motion is the one-shot reveal fade when the world is ready. A near-black
+//! base colour sits behind the image so frame 0 (before the PNG streams in) is never a bright flash.
 
 use bevy::prelude::*;
 
 use crate::biome::WorldReady;
 use crate::ui::fonts::{label, UiFonts};
-use crate::ui::theme::{radius, rgb, GOLD, TEXT_DIM};
+use crate::ui::theme::{rgb, rgba, GOLD};
 
-/// Veil colour — warm near-black, same family as the panel chrome (`theme::PANEL`).
+/// Base colour behind the backdrop image — warm near-black, same family as the panel chrome
+/// (`theme::PANEL`). Only visible for the frame or two before the PNG finishes streaming in.
 const VEIL: Color = rgb(15, 11, 7);
+/// Warm gold that reads against the golden-mist backdrop for the caption line under the wordmark.
+const CAPTION: Color = rgba(244, 224, 178, 0.86);
 /// Above EVERYTHING — the title scrim is z 50, the HUD lower; nothing else claims this high.
 const Z: i32 = 10_000;
 /// How long the fully-branded screen lingers AFTER everything is ready, before it fades — gives the
@@ -32,26 +40,6 @@ const FADE_DUR: f32 = 0.45;
 /// Hard ceiling: reveal regardless after this long, so a missing/slow asset (or a stuck rebuild)
 /// can't trap the player on the veil forever.
 const MAX_WAIT: f32 = 8.0;
-/// Progress-bar track size (px). The fill grows left→right with the real world-build progress
-/// (`biome::BuildProgress`), so it's a genuine determinate loader, not a fake spinner.
-const BAR_W: f32 = 240.0;
-const BAR_H: f32 = 5.0;
-
-/// Loading-screen flavour lines — one is shown per load (boot + every in-process reset), rotated so
-/// repeat loads feel fresh. Kept short; each names a real mechanic so it doubles as a play tip. Edit
-/// freely; order is irrelevant (the shown line advances by one each raise, seeded per boot).
-const TIPS: &[&str] = &[
-    "Ring the war bell at dusk to march the whole town at your side.",
-    "Raise a shield with the right hand — it turns a berserker's charge.",
-    "Build farms and lumber camps by day; they feed the long nights.",
-    "Shamans hurl fire from afar. Close the distance or lose the keep.",
-    "Spend the day's gold at the War Table — upgrades carry the nights.",
-    "Repair the keep walls in daylight; by night they only crumble.",
-    "Forage at dawn. A hungry hero swings slow.",
-    "Every fallen heir is replaced, but the town remembers its dead.",
-    "Break the gate of Gnashfang Hold to end the Warlord's reign.",
-    "The Ashlands burn hotter — its orks hit harder than the home isle's.",
-];
 
 /// Drives the persistent veil node. Raised opaque (`alpha = 1`) at boot and on every in-process
 /// reset; reveals (fades to 0) once fonts + the world are ready, then sits dormant until re-raised.
@@ -68,20 +56,12 @@ pub(crate) struct Veil {
     ready_at: Option<f32>,
     /// `FOREST_LOADTEST`: hold the veil up forever so a `FOREST_SHOT` can frame it.
     hold: bool,
-    /// Index into [`TIPS`] of the line currently shown. Advances one step on each rising edge
-    /// (dormant → raised), so every load shows a fresh tip; seeded per boot in [`spawn_loading`].
-    tip: usize,
 }
 
 impl Veil {
     /// Raise the veil opaque, restarting its readiness wait. Callers that raise it to cover a
     /// rebuild should also clear [`WorldReady`] so the veil holds until the fresh world lands.
-    /// `raise` is called every frame a reset is pending, so the tip only advances on the rising
-    /// edge (when it was dormant) — otherwise it would flicker through the pool during the wait.
     pub(crate) fn raise(&mut self, now: f32) {
-        if !self.active {
-            self.tip = (self.tip + 1) % TIPS.len();
-        }
         self.active = true;
         self.alpha = 1.0;
         self.ready_at = None;
@@ -92,19 +72,15 @@ impl Veil {
 /// Root node of the veil.
 #[derive(Component)]
 struct VeilRoot;
-/// A text element of the veil (title / tip) whose colour we re-tint each frame for the fade.
+/// The full-screen backdrop image — its `color` tint alpha is faded on reveal.
+#[derive(Component)]
+struct VeilImage;
+/// The bottom legibility scrim — its background alpha is faded on reveal.
+#[derive(Component)]
+struct VeilScrim;
+/// A text element of the veil (wordmark / caption) whose colour we re-tint each frame for the fade.
 #[derive(Component)]
 struct LoadingText(Color);
-/// The rotating-tip line — its *content* is swapped from [`TIPS`] when the shown index changes
-/// (its colour fade is handled by [`LoadingText`], which it also carries).
-#[derive(Component)]
-struct TipText;
-/// The indeterminate progress-bar track (the dim rail).
-#[derive(Component)]
-struct ProgressTrack;
-/// The sweeping highlight inside the track — its `left` is animated each frame.
-#[derive(Component)]
-struct ProgressFill;
 
 pub struct LoadingPlugin;
 
@@ -125,27 +101,20 @@ fn load_test() -> bool {
     std::env::var("FOREST_LOADTEST").is_ok()
 }
 
-fn spawn_loading(mut commands: Commands, time: Res<Time>, fonts: Res<UiFonts>) {
+fn spawn_loading(mut commands: Commands, time: Res<Time>, assets: Res<AssetServer>, fonts: Res<UiFonts>) {
     let hold = load_test();
     // The capture harnesses want a clean first frame — boot with the veil dormant (but still
     // spawned, so a later reset under the harness could raise it). `FOREST_LOADTEST` overrides.
     let active = hold || !capturing();
-    // Seed which tip shows first off a wall-clock nibble so successive boots vary (the index then
-    // advances on each in-process raise). Logic-irrelevant, so non-deterministic is fine.
-    let tip = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos() as usize)
-        .unwrap_or(0)
-        % TIPS.len();
     commands.insert_resource(Veil {
         active,
         alpha: if active { 1.0 } else { 0.0 },
         spawned: time.elapsed_secs(),
         ready_at: None,
         hold,
-        tip,
     });
 
+    let a0 = if active { 1.0 } else { 0.0 };
     commands
         .spawn((
             Node {
@@ -154,71 +123,73 @@ fn spawn_loading(mut commands: Commands, time: Res<Time>, fonts: Res<UiFonts>) {
                 height: Val::Percent(100.0),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
-                row_gap: Val::Px(22.0),
+                // Branding sits low over the scene, above the bottom scrim.
+                justify_content: JustifyContent::FlexEnd,
+                padding: UiRect::bottom(Val::Px(72.0)),
+                row_gap: Val::Px(6.0),
                 // Hidden when dormant so it never eats clicks; `drive_veil` flips it on a raise.
                 display: if active { Display::Flex } else { Display::None },
                 ..default()
             },
-            BackgroundColor(VEIL.with_alpha(if active { 1.0 } else { 0.0 })),
+            // Near-black base behind the image so frame 0 (pre-stream) never flashes bright.
+            BackgroundColor(VEIL.with_alpha(a0)),
             GlobalZIndex(Z),
             VeilRoot,
         ))
         .with_children(|root| {
-            // Wordmark (Cinzel) — blank until the display font loads, which is ~when we reveal.
-            root.spawn((label(&fonts.display, "WARBELL", 72.0, GOLD), LoadingText(GOLD)));
-            // Rotating flavour line (its content set from `TIPS[tip]`, re-rolled per load).
-            root.spawn((label(&fonts.regular, TIPS[tip], 14.0, TEXT_DIM), LoadingText(TEXT_DIM), TipText));
-            // Determinate progress bar — a dim rail whose gold fill grows with the real world-build
-            // progress (`biome::BuildProgress`). Font-free, so it draws from frame 0.
+            // The static scene backdrop — a pre-rendered in-game frame that fills the screen.
+            // Positioned absolute so it underlaps the branding column without affecting its layout.
             root.spawn((
-                Node {
-                    width: Val::Px(BAR_W),
-                    height: Val::Px(BAR_H),
-                    margin: UiRect::top(Val::Px(10.0)),
-                    border_radius: radius(BAR_H * 0.5),
+                ImageNode {
+                    image: assets.load("ui/loading_backdrop.png"),
+                    color: Color::WHITE.with_alpha(a0),
+                    // Stretch to fill the frame (the source photo isn't exactly 16:9) so the
+                    // backdrop is full-bleed with no letterbox bars on any screen aspect.
+                    image_mode: bevy::ui::widget::NodeImageMode::Stretch,
                     ..default()
                 },
-                BackgroundColor(GOLD.with_alpha(0.14)),
-                ProgressTrack,
-            ))
-            .with_children(|track| {
-                track.spawn((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        width: Val::Px(0.0), // grown each frame to BAR_W * progress
-                        height: Val::Percent(100.0),
-                        border_radius: radius(BAR_H * 0.5),
-                        ..default()
-                    },
-                    BackgroundColor(GOLD),
-                    ProgressFill,
-                ));
-            });
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    ..default()
+                },
+                VeilImage,
+            ));
+            // Bottom legibility scrim — a dark band under the wordmark so gold text reads over the
+            // bright grass. Absolute so it doesn't push the branding column around.
+            root.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    bottom: Val::Px(0.0),
+                    width: Val::Percent(100.0),
+                    height: Val::Px(240.0),
+                    ..default()
+                },
+                BackgroundColor(rgba(10, 7, 4, 0.55 * a0)),
+                VeilScrim,
+            ));
+            // Wordmark (Cinzel) — blank until the display font loads, which is ~when we reveal.
+            root.spawn((label(&fonts.display, "WARBELL", 74.0, GOLD), LoadingText(GOLD)));
+            // Static caption — no rotating tips, no spinner. Just a steady "LOADING" line.
+            root.spawn((label(&fonts.regular, "LOADING…", 15.0, CAPTION), LoadingText(CAPTION)));
         });
 }
 
-/// Grow the progress fill to the real build progress, rotate the tip, decide when the cover can
-/// lift (fonts + world ready), fade, then go dormant. Never despawns the node — it persists so a
-/// later reset can raise it again.
+/// Decide when the cover can lift (fonts + world ready), fade it out, then go dormant. Never
+/// despawns the node — it persists so a later reset can raise it again. No per-frame animation
+/// beyond the one-shot reveal fade: the screen is a static graphic.
 #[allow(clippy::too_many_arguments)]
 fn drive_veil(
     time: Res<Time>,
     assets: Res<AssetServer>,
     fonts: Res<UiFonts>,
     world_ready: Res<WorldReady>,
-    progress: Res<crate::biome::BuildProgress>,
     mut veil: ResMut<Veil>,
     mut root_q: Query<(&mut Node, &mut BackgroundColor), With<VeilRoot>>,
-    mut fill_q: Query<(&mut Node, &mut BackgroundColor), (With<ProgressFill>, Without<VeilRoot>, Without<ProgressTrack>)>,
-    mut track_q: Query<&mut BackgroundColor, (With<ProgressTrack>, Without<VeilRoot>, Without<ProgressFill>)>,
+    mut image_q: Query<&mut ImageNode, With<VeilImage>>,
+    mut scrim_q: Query<&mut BackgroundColor, (With<VeilScrim>, Without<VeilRoot>)>,
     mut texts: Query<(&LoadingText, &mut TextColor)>,
-    mut tip_q: Query<&mut Text, With<TipText>>,
-    // Last tip index applied to the text node — so we only rewrite (and re-lay-out) it when it
-    // actually changes, never per-frame.
-    mut last_tip: Local<usize>,
-    // Eased displayed progress — glides up over the cheap phases, snaps to 0 when a build re-arms.
-    mut shown: Local<f32>,
 ) {
     let Ok((mut node, mut root_bg)) = root_q.single_mut() else { return };
     let now = time.elapsed_secs();
@@ -250,31 +221,12 @@ fn drive_veil(
     node.display = if alpha > 0.0 { Display::Flex } else { Display::None };
     root_bg.0 = VEIL.with_alpha(alpha);
 
-    // Grow the fill toward the real build progress. Ease up so the cheap phases (many fast frames)
-    // glide smoothly; snap straight to a lower target when a build re-arms (progress resets to 0)
-    // so the bar empties for the new load instead of draining slowly.
-    let target = progress.0;
-    if target < *shown {
-        *shown = target;
-    } else {
-        *shown += (target - *shown) * (dt * 6.0).min(1.0);
+    if let Ok(mut img) = image_q.single_mut() {
+        img.color = Color::WHITE.with_alpha(alpha);
     }
-    if let Ok((mut fill, mut fill_bg)) = fill_q.single_mut() {
-        fill.width = Val::Px(BAR_W * shown.clamp(0.0, 1.0));
-        fill_bg.0 = GOLD.with_alpha(alpha);
+    if let Ok(mut scrim_bg) = scrim_q.single_mut() {
+        scrim_bg.0 = rgba(10, 7, 4, 0.55 * alpha);
     }
-    if let Ok(mut track_bg) = track_q.single_mut() {
-        track_bg.0 = GOLD.with_alpha(0.14 * alpha);
-    }
-
-    // Swap the tip text only when the chosen line changed (re-layout is not free).
-    if *last_tip != veil.tip {
-        *last_tip = veil.tip;
-        if let Ok(mut text) = tip_q.single_mut() {
-            *text = Text::new(TIPS[veil.tip]);
-        }
-    }
-
     for (t, mut tc) in &mut texts {
         tc.0 = t.0.with_alpha(alpha);
     }
