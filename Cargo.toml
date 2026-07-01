@@ -3,7 +3,7 @@ members = ["crates/core"]
 
 [package]
 name = "tileworld_bevy_forest"
-version = "0.15.0"
+version = "0.16.0"
 edition = "2024"
 
 [dependencies]
@@ -53,7 +53,9 @@ opt-level = 3
 
 [profile.dev]
 opt-level = 1
-# Line-tables only (not full debuginfo): keeps backtraces with file:line but shrinks the PDB so
-# the link stays under MSVC's program-database size cap (full debuginfo trips LNK1140 now that the
-# codebase has grown). Capture/clip builds can drop this entirely with CARGO_PROFILE_DEV_DEBUG=0.
-debug = 1
+# No debuginfo: the codebase grew big enough that even line-tables-only (debug=1) trips MSVC's
+# program-database size cap (LNK1140: "limit exceeded for program database"). debug=0 skips the
+# PDB entirely so the link stays under the cap. Backtraces lose file:line — if you need them for a
+# debug session, temporarily set CARGO_PROFILE_DEV_DEBUG=1 and accept the (currently failing) link,
+# or split the binary. `split-debuginfo` doesn't help on windows-msvc (still one combined PDB).
+debug = 0
