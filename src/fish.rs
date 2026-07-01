@@ -4,8 +4,9 @@
 //! weather motes / fireflies / butterflies).
 //!
 //! Design (deliberately SUBTLE — barely-noticed life, a flick of silver, not an aquarium):
-//! - A tiny fixed pool follows the hero, but each fish is pinned to a **water** spot near him
-//!   (river / lake / coastal sea). Away from water they dissolve out, exactly like the
+//! - A tiny fixed pool follows the hero, but each fish is pinned to a real **open-water body** near
+//!   him — the lake or the open sea only (`worldmap::is_open_water_world`), NOT rivers or the marsh
+//!   puddles that thread the swamp. Away from open water they dissolve out, exactly like the
 //!   butterflies vanish off green country.
 //! - Swimming, a fish sits a hair BELOW the translucent surface — a soft gliding shadow at ~half
 //!   alpha, tail swishing — so it reads as life under the water, not a card floating on it.
@@ -38,6 +39,9 @@ const FADE_RATE: f32 = 0.9;
 const LEAP_DUR: f32 = 1.15;
 /// Peak height (world units) a leap clears above the surface.
 const LEAP_H: f32 = 0.72;
+/// How far (world units) a leap glides forward across its arc. Kept short so the whole arc stays
+/// inside the water body (the landing point is water-checked before a leap is allowed).
+const LEAP_TRAVEL: f32 = 1.4;
 /// How many probe samples we spiral out from the hero looking for a water home each reseat.
 const WATER_SAMPLES: usize = 28;
 
@@ -222,11 +226,13 @@ fn spawn_once(
     }
 }
 
-/// True where there's open water (river / lake / coastal sea): `ground_at_world` returns `None`
-/// over every water surface (and off-map, but we only ever probe within `TERRITORY_R` of the hero).
+/// True ONLY over a real standing-water body — the lake or the open sea. Explicitly NOT rivers
+/// (the marsh brooks that thread the swamp) or land, so fish never spawn in / leap out of a
+/// narrow channel and clip through the bank. (`ground_at_world` is `None` over rivers too, which is
+/// exactly the trap the old check fell into.)
 #[inline]
 fn is_water(x: f32, z: f32) -> bool {
-    crate::worldmap::ground_at_world(x, z).is_none()
+    crate::worldmap::is_open_water_world(x, z)
 }
 
 /// Spiral out from the hero and return the first water spot found (biased by `phase` so each fish
@@ -297,10 +303,16 @@ fn swim_fish(
         *vis = Visibility::Visible;
 
         let p = f.phase;
-        // Local patrol: small lazy loops around the home spot (kept tight so it stays over water).
-        let swim = 1.4;
-        let lx = f.home.x + (t * 0.6 + p).cos() * swim + (t * 0.31 + p * 2.0).sin() * 0.5;
-        let lz = f.home.y + (t * 0.6 + p).sin() * swim + (t * 0.27 + p * 1.5).cos() * 0.5;
+        // Local patrol: small lazy loops around the home spot. If a loop would carry the fish off
+        // the water body (small lakes are tight), fall back to the home spot so it never wanders
+        // onto land and sinks through the bank.
+        let swim = 1.1;
+        let mut lx = f.home.x + (t * 0.6 + p).cos() * swim + (t * 0.31 + p * 2.0).sin() * 0.4;
+        let mut lz = f.home.y + (t * 0.6 + p).sin() * swim + (t * 0.27 + p * 1.5).cos() * 0.4;
+        if !is_water(lx, lz) {
+            lx = f.home.x;
+            lz = f.home.y;
+        }
 
         // Leap timing: while swimming, count down; when it hits zero (and the fish is well faded-in
         // over live water), take off along the current heading.
@@ -315,14 +327,35 @@ fn swim_fish(
         } else {
             f.leap_cd -= dt;
             if f.leap_cd <= 0.0 && f.fade > 0.6 && show {
-                f.leaping = true;
-                f.leap_t = 0.0;
-                // Freeze the launch point + heading: the arc flies from where the fish is now, along
-                // its swim direction, so there's no snap back to `home` at take-off.
-                f.leap_from = Vec2::new(tf.translation.x, tf.translation.z);
-                let dx = lx - tf.translation.x;
-                let dz = lz - tf.translation.z;
-                f.leap_dir = if dx.abs() + dz.abs() > 1e-4 { dx.atan2(dz) } else { p };
+                let from = Vec2::new(tf.translation.x, tf.translation.z);
+                // Candidate headings: along the swim direction first, then a few fanned + inward
+                // (toward home) fallbacks. Take the first whose landing point is still open water so
+                // the whole arc stays over the pond/sea and never lands on the bank.
+                let swim_dir = {
+                    let d = Vec2::new(lx, lz) - from;
+                    if d.length_squared() > 1e-6 { d.y.atan2(d.x) } else { p }
+                };
+                let to_home = {
+                    let d = f.home - from;
+                    if d.length_squared() > 1e-6 { d.y.atan2(d.x) } else { p }
+                };
+                let dir = [swim_dir, to_home, swim_dir + 1.2, swim_dir - 1.2, to_home + 0.6]
+                    .into_iter()
+                    .find(|&a| {
+                        let land = from + Vec2::new(a.cos(), a.sin()) * LEAP_TRAVEL;
+                        is_water(land.x, land.y)
+                    });
+                match dir {
+                    Some(a) => {
+                        f.leaping = true;
+                        f.leap_t = 0.0;
+                        f.leap_from = from;
+                        // Store yaw in the same convention `swim_fish` uses for facing (atan2(x, z)).
+                        f.leap_dir = a.cos().atan2(a.sin());
+                    }
+                    // Boxed in against the shore — skip this breach, try again shortly.
+                    None => f.leap_cd = 1.2,
+                }
             }
         }
 
@@ -330,7 +363,7 @@ fn swim_fish(
             // Parabolic breach: rise-and-fall height, plus a little forward travel along the heading.
             let s = f.leap_t;
             let h = (s * core::f32::consts::PI).sin() * LEAP_H; // 0 → peak → 0
-            let travel = s * 2.2; // glides forward across the arc
+            let travel = s * LEAP_TRAVEL; // glides forward across the arc
             let x = f.leap_from.x + f.leap_dir.sin() * travel;
             let z = f.leap_from.y + f.leap_dir.cos() * travel;
             // Nose-up on the way out, nose-down on the way down.

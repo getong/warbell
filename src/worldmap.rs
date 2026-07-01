@@ -1085,6 +1085,27 @@ pub fn is_river_world(wx: f32, wz: f32) -> bool {
     is_river((wx + GX) / MAP_SCALE, (wz + GZ) / MAP_SCALE)
 }
 
+/// True ONLY over a real standing-water body — the deliberate **lake** or the open **sea** off the
+/// island. Deliberately EXCLUDES rivers (narrow carved channels, incl. the marsh streams that thread
+/// the swamp) and all land: `ground_at_world` returns `None` over rivers too, so ambient water life
+/// (`fish`) that keyed off "no ground" spawned in the marsh brooks and clipped through the bank.
+/// This is the predicate to gate anything that should live in open water, not any wet tile.
+pub fn is_open_water_world(wx: f32, wz: f32) -> bool {
+    // The rival fort force-flattens its plateau to dry land (see `is_river_world`); never water.
+    if crate::rival::fort_flat_zone(wx, wz) {
+        return false;
+    }
+    let bx = (wx + GX) / MAP_SCALE;
+    let bz = (wz + GZ) / MAP_SCALE;
+    // The inland lake.
+    if is_lake(bx, bz) {
+        return true;
+    }
+    // Open sea: off the island ellipse and not the walkable Blight fortress landmass (which extends
+    // past the old coast — mirrors the sea test in `corner_water`).
+    !is_land_shape(bx, bz) && crate::ork_fortress::blight_class_base(bx, bz).is_none()
+}
+
 // ── Blended ground colour ───────────────────────────────────────────────────────
 fn lin3(hex: u32) -> [f32; 3] {
     let l = lin(hex);
