@@ -392,6 +392,15 @@ footer .sm{font-size:13px;opacity:.6;letter-spacing:.03em}
   body{padding-bottom:78px}          /* room for the sticky bar */
   .lb{padding-bottom:78px}
 }
+/* changelog: on phones the nested left indent (log + timeline + card + li)
+   stole ~25% of the width, squeezing the text column to ~half. Tighten it. */
+@media(max-width:640px){
+  .log{padding-left:12px;padding-right:12px}
+  .rel{padding-left:16px}
+  .rel-card{padding-left:16px;padding-right:16px}
+  .rel-card li{padding-left:16px}
+  .rel-card li::before{left:2px}
+}
 @media(max-width:560px){
   .stats-grid{grid-template-columns:repeat(2,1fr);gap:30px 16px}
   .biomes-grid{grid-template-columns:1fr}
@@ -401,6 +410,10 @@ footer .sm{font-size:13px;opacity:.6;letter-spacing:.03em}
   .controls dl{grid-template-columns:1fr;gap:4px 0}
   .controls dt{margin-top:14px}
   .hero{min-height:92svh}
+  .log{padding-left:10px;padding-right:10px}
+  .rel{padding-left:14px}
+  .rel-card{padding-left:14px;padding-right:14px}
+  .rel-card li{padding-left:14px}
 }
 
 @media(prefers-reduced-motion:reduce){
