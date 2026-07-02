@@ -424,51 +424,121 @@ fn build_dead() -> Mesh {
 // tiers from a wide skirt to a sharp point, each tier's base overhanging the one above so the
 // boughs read as drooping serrated layers. ~2.1u tall (towers well over the broadleaf).
 fn build_pine() -> Mesh {
+    // 2026-07, third rework, matched to the player's reference render: the pine is NOT stacked
+    // cones at all — it's whorls of INDIVIDUAL flat feather-boughs around a chunky faceted bark
+    // trunk, with air between the blades. Each bough is a hand-built tent-ridged blade (pointed
+    // root and tip, widest ~40% out, top face lit green / underside shadow green), pitched
+    // gently downward and scattered around the ring with yaw/length jitter. A small hanging
+    // pine cone finishes it.
     let bark = lin(TREE_TRUNK);
-    // Slim visible trunk under the boughs + a shallow root flare gripping the ground.
-    let mut parts = vec![tinted(trunk_part(0.07, 0.10, 0.5, 6, Vec3::new(0.0, 0.25, 0.0)), bark)];
-    parts.extend(root_flare(0.10, 3, 0.12, bark, 0.8));
+    let bark_dark = lin(0x5a3c24);
+    let mut seed: u32 = 0xC0FFEE;
 
-    // FIVE fat, deeply-nested bough tiers (2026-07 rework — the old eight slim evenly-tapered
-    // cones read as a child's-drawing "choinka": visible gaps between thin regular triangles).
-    // Each tier is now chunky (height ≈ radius), overlaps the one below by ~a third so the
-    // silhouette never opens a gap to the trunk, the radii taper NON-linearly (the second tier
-    // bellies out past the first — real spruces bulge low), and every tier carries a slightly
-    // wider, shallow drooping SKIRT cone under its base in the darker tone, so the rim reads as
-    // sagging bough tips rather than a clean triangle edge. res 7 (odd) + yaw jitter + a small
-    // tilt per tier keep the facets from ever lining up into that mechanical look.
-    // (base_y, radius, height, tilt-x, tilt-z, yaw, tone)
-    let tiers: [(f32, f32, f32, f32, f32, f32, u32); 5] = [
-        (0.24, 0.58, 0.56, 0.04, -0.03, 0.0, FOLIAGE_DARK),
-        (0.58, 0.63, 0.58, -0.05, 0.02, 0.9, FOLIAGE_DARK),
-        (0.98, 0.50, 0.54, 0.03, 0.05, 1.9, FOLIAGE_MID),
-        (1.36, 0.37, 0.50, -0.04, -0.03, 2.7, FOLIAGE_MID),
-        (1.72, 0.25, 0.44, 0.02, 0.03, 3.4, FOLIAGE_LIGHT),
+    // Chunky visible trunk: two ruffled tapered segments (irregular bark chunks) + a slim
+    // hidden spine carrying the upper whorls, over the shared root flare.
+    let mut parts = vec![
+        tinted(ruffled(trunk_part(0.13, 0.20, 0.5, 7, Vec3::new(0.0, 0.25, 0.0)), 3, 0.26), bark),
+        tinted(ruffled(trunk_part(0.09, 0.13, 0.6, 7, Vec3::new(0.0, 0.78, 0.0)), 11, 0.20), bark_dark),
+        tinted(trunk_part(0.045, 0.085, 1.1, 6, Vec3::new(0.0, 1.55, 0.0)), bark),
     ];
-    for (i, (base_y, r, h, tx, tz, yaw, c)) in tiers.into_iter().enumerate() {
-        // The drooping skirt: a shallow, slightly wider cone hung under the tier base with its
-        // APEX DOWN (flipped), so its visible outer surface faces down-and-out — the facet-shading
-        // bake then paints it as the shadowed underside of a sagging bough. (An upright skirt cone
-        // faces up-out and bakes BRIGHT — it read as odd pale rings between tiers, verified.)
-        let skirt = Cone { radius: r * 1.12, height: 0.2 }
-            .mesh()
-            .resolution(9)
-            .build()
-            .rotated_by(Quat::from_euler(EulerRot::XYZ, std::f32::consts::PI + tx, yaw + 0.4, tz))
-            .translated_by(Vec3::new(0.0, base_y - 0.03, 0.0));
-        parts.push(tinted(ruffled(skirt, 31 + i as u32 * 7, 0.20), lin(FOLIAGE_DARK)));
-        let m = Cone { radius: r, height: h }
-            .mesh()
-            .resolution(9)
-            .build()
-            .rotated_by(Quat::from_euler(EulerRot::XYZ, tx, yaw, tz))
-            .translated_by(Vec3::new(0.0, h * 0.5 + base_y, 0.0));
-        parts.push(tinted(ruffled(m, 113 + i as u32 * 13, 0.20), lin(c)));
+    parts.extend(root_flare(0.19, 4, 0.15, bark, 1.0));
+
+    // Whorls bottom→top: (y, bough length, half-width, count, downward pitch). DENSE — eight
+    // closely-spaced rings with wide leafy blades, so the trunk only shows at the base and the
+    // crown reads full with just slivers of air between the feathers (the reference look).
+    let whorls: [(f32, f32, f32, usize, f32); 8] = [
+        (0.55, 0.95, 0.200, 9, 0.40),
+        (0.78, 0.88, 0.190, 8, 0.36),
+        (1.00, 0.78, 0.175, 8, 0.32),
+        (1.22, 0.68, 0.160, 7, 0.28),
+        (1.44, 0.57, 0.145, 7, 0.25),
+        (1.64, 0.46, 0.130, 6, 0.22),
+        (1.83, 0.35, 0.110, 5, 0.18),
+        (2.00, 0.24, 0.090, 4, 0.15),
+    ];
+    for (wi, (y, len, w, n, pitch)) in whorls.into_iter().enumerate() {
+        let ring_yaw = prand(&mut seed) * std::f32::consts::TAU;
+        for i in 0..n {
+            let yaw = ring_yaw
+                + i as f32 / n as f32 * std::f32::consts::TAU
+                + (prand(&mut seed) - 0.5) * 0.45;
+            let l = len * (0.9 + prand(&mut seed) * 0.22);
+            let p = pitch + (prand(&mut seed) - 0.5) * 0.10;
+            // Alternate the top tone slightly so neighbouring blades never read as clones.
+            // Deep spruce greens — the facet-shading bake brightens every up-facing blade, so
+            // these are authored ~a shade darker than the target render tone.
+            let top = if (i + wi) % 2 == 0 { 0x4f7d3c } else { 0x467238 };
+            let bough = pine_bough(l, w, lin(top), lin(0x315427), &mut seed)
+                .rotated_by(Quat::from_rotation_y(yaw) * Quat::from_rotation_x(p))
+                .translated_by(Vec3::new(0.0, y, 0.0));
+            parts.push(bough);
+        }
     }
-    // The sunlit leader spike capping the spire (~2.4u total — towers over the broadleaves).
-    parts.push(tinted(ruffled(cone_at(0.11, 0.34, 2.05, 7, Vec3::ZERO), 9, 0.25), lin(FOLIAGE_LIGHT)));
+
+    // Leader: a sharp faceted tip spike capping the spire.
+    parts.push(tinted(cone_at(0.075, 0.40, 2.10, 6, Vec3::ZERO), lin(0x4f7d3c)));
+
+    // The hanging pine cone (the reference's charming accent): a small squashed brown ico.
+    let cone_fruit = Sphere::new(0.075)
+        .mesh()
+        .ico(1)
+        .expect("ico detail in range")
+        .scaled_by(Vec3::new(0.8, 1.35, 0.8))
+        .translated_by(Vec3::new(0.26, 1.34, 0.12));
+    parts.push(tinted(cone_fruit, lin(0x6e4a2a)));
 
     merged(parts)
+}
+
+/// One flat pine bough: a tent-ridged feather blade along +Z — pointed at the root and tip,
+/// widest ~40% out, a low spine ridge on top, a slight tip sag. Built as a triangle soup
+/// (positions duplicated per face) so the top faces carry the lit tone and the underside the
+/// shadow tone in one mesh; `flat_shaded` recomputes the real facet normals later.
+fn pine_bough(len: f32, w: f32, top: [f32; 4], under: [f32; 4], seed: &mut u32) -> Mesh {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::mesh::PrimitiveTopology;
+
+    let sag = -(0.03 + prand(seed) * 0.06) * len;
+    let ww = w * (0.85 + prand(seed) * 0.35);
+    let v0 = [0.0, 0.02, 0.0]; // root, at the trunk axis
+    let vl = [-ww, -0.02, 0.42 * len];
+    let vr = [ww, -0.02, 0.42 * len];
+    let vs = [0.0, 0.055, 0.40 * len]; // spine ridge
+    let vt = [0.0, sag, len]; // tip
+    // Top faces (CCW from above) then the flat underside (CCW from below).
+    let tris: [([f32; 3], [f32; 3], [f32; 3], [f32; 4]); 6] = [
+        (v0, vl, vs, top),
+        (v0, vs, vr, top),
+        (vl, vt, vs, top),
+        (vs, vt, vr, top),
+        (v0, vr, vt, under),
+        (v0, vt, vl, under),
+    ];
+    let mut pos: Vec<[f32; 3]> = Vec::with_capacity(18);
+    let mut col: Vec<[f32; 4]> = Vec::with_capacity(18);
+    for (a, b, c, tone) in tris {
+        pos.extend([a, b, c]);
+        col.extend([tone; 3]);
+    }
+    let n = pos.len();
+    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 1.0, 0.0]; n])
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0, 0.0]; n])
+        .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, col)
+        // MUST be indexed: `Mesh::merge` into the (indexed) trunk primitives appends vertices
+        // but only copies INDICES — an unindexed soup merges in silently invisible (verified:
+        // the whole crown vanished, leaving a bare trunk).
+        .with_inserted_indices(bevy::mesh::Indices::U32((0..n as u32).collect()))
+}
+
+/// Tiny deterministic rng ([0,1)) for the bough jitter (mulberry32 step).
+fn prand(s: &mut u32) -> f32 {
+    *s = s.wrapping_add(0x6d2b_79f5);
+    let mut t = *s;
+    t = (t ^ (t >> 15)).wrapping_mul(t | 1);
+    t ^= t.wrapping_add((t ^ (t >> 7)).wrapping_mul(t | 61));
+    (t ^ (t >> 14)) as f32 / 4_294_967_296.0
 }
 
 /// Organic "ruffle" for conifer boughs: deterministically jitter a mesh's vertices, scaled by
