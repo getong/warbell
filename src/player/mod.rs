@@ -411,17 +411,16 @@ fn spawn_hero(
     let mat = crate::creature::make_hero_material(&mut materials);
     commands.insert_resource(HeroMaterial(mat.clone()));
 
-    // Spawn just outside the north gate, facing into the courtyard (+Z toward origin).
-    let gate = crate::castle::gate_centers()[0];
     // Debug/screenshot hook: `FOREST_HERO="x,z"` drops the hero at a world XZ (e.g. deep in a
     // biome region) so a capture shows that biome's reactive atmosphere/weather.
     let staged = std::env::var("FOREST_HERO").ok().and_then(|s| {
         let v: Vec<f32> = s.split(',').filter_map(|p| p.trim().parse().ok()).collect();
         (v.len() == 2).then(|| Vec2::new(v[0], v[1]))
     });
-    let pos = staged.unwrap_or(Vec2::new(gate.x, gate.y - 3.0));
+    let (home, home_facing) = spawn_point();
+    let pos = staged.unwrap_or(home);
     let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
-    let facing = 0.0_f32;
+    let facing = if staged.is_some() { 0.0 } else { home_facing };
 
     let root = commands
         .spawn((
@@ -622,6 +621,17 @@ fn reskin_hero(
 /// exits game-over here: the wipe is harmless then, as `savegame::apply_pending_load` immediately
 /// overwrites the progression from the save while this revival of the hero entity stands). Never
 /// on un-pause.
+/// The hero's home spawn: the meadow's forest edge (west-southwest of the castle), beside the
+/// rest campfire — a new run opens walking IN from the treeline with the castle framed across
+/// the meadow (2026-07; previously just outside the north gate at `gate - 3`). Returns
+/// `(world XZ, facing)`; the facing aims at the keep so the opening frame reads immediately.
+pub fn spawn_point() -> (Vec2, f32) {
+    let pos = Vec2::new(-26.0, 18.0);
+    // Yaw 0 faces +Z; aim at the castle at the origin.
+    let facing = (-pos.x).atan2(-pos.y);
+    (pos, facing)
+}
+
 fn reset_player(
     mut player: ResMut<PlayerRes>,
     siege: Option<Res<crate::siege::Siege>>,
@@ -636,13 +646,12 @@ fn reset_player(
         player.0.hp = player.0.max_hp;
     }
     let Ok((mut hero, mut tf, mut hh)) = hero_q.single_mut() else { return };
-    let gate = crate::castle::gate_centers()[0];
-    let pos = Vec2::new(gate.x, gate.y - 3.0);
+    let (pos, facing) = spawn_point();
     let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
     *hero = Hero {
         pos,
         y,
-        facing: 0.0,
+        facing,
         vel: Vec2::ZERO,
         vel_y: 0.0,
         on_ground: true,
@@ -666,7 +675,7 @@ fn reset_player(
         soft_pos: None,
     };
     tf.translation = Vec3::new(pos.x, y, pos.y);
-    tf.rotation = Quat::from_rotation_y(0.0);
+    tf.rotation = Quat::from_rotation_y(facing);
     tf.scale = Vec3::splat(HERO_SCALE);
     *hh = HeroHealth::default();
 }

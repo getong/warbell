@@ -17,6 +17,7 @@
 mod aftermath;
 mod ambient_life;
 mod atmospherics;
+mod meadow;
 mod audio;
 mod banner;
 mod biped;
@@ -269,6 +270,9 @@ fn main() {
         // Cinematic atmospherics post pass (height fog + sun in-scatter + cloud light patches).
         // Toggled per-preset alongside god-rays in quality.rs; same custom-post-pass family.
         .add_plugins(atmospherics::AtmosphericsPlugin)
+        // Castle-meadow dressing (props spawned by worldmap::build_step phase 29; this plugin
+        // only runs the campfire rest-heal).
+        .add_plugins(meadow::MeadowPlugin)
         // Last-of-the-line alert (heir-count stinger + persistent banner). Standalone: the tuples
         // above are at the `Plugins` arity-15 cap.
         .add_plugins(succession_alert::SuccessionAlertPlugin)

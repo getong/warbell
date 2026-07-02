@@ -81,9 +81,10 @@ pub fn populate(
 ) {
     let mesh = meshes.add(dummy_mesh());
     let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.95, ..default() });
-    // A single practice pell off to one side of the keep's southern courtyard (the muster yard),
-    // clear of the gate lanes — one is enough to learn the swing without cluttering the bailey.
-    const SPOTS: [(f32, f32); 1] = [(-4.5, 6.0)];
+    // One pell off to the side of the keep's southern courtyard (the muster yard), plus one by
+    // the meadow rest-campfire next to the hero spawn (2026-07) — the first thing a new player
+    // can whack, three steps from where they wake up. Both clear of the gate lanes.
+    const SPOTS: [(f32, f32); 2] = [(-4.5, 6.0), (-19.0, 12.5)];
     for (i, (x, z)) in SPOTS.into_iter().enumerate() {
         let y = crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
         // A little yaw variety so the row isn't mechanical.

@@ -88,7 +88,11 @@ pub struct OrbitCam {
 impl Default for OrbitCam {
     fn default() -> Self {
         OrbitCam {
-            azimuth: std::f32::consts::PI * 0.85,
+            // Boot the orbit looking the way the hero faces (over his shoulder, at the castle):
+            // view dir = -(sin az, cos az) so az = facing + π. The old hand-tuned 0.85π matched
+            // the retired north-gate spawn; deriving from `spawn_point` keeps the opening frame
+            // on the keep if the spawn ever moves again.
+            azimuth: crate::player::spawn_point().1 + std::f32::consts::PI,
             pitch: 0.42,
             dist: 4.2,
             locked: false,

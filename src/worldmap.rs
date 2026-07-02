@@ -1451,12 +1451,11 @@ pub fn build_step(
         26 => crate::bridges::populate(commands, meshes, std_mats),
         27 => crate::distant_isles::build(commands, meshes, std_mats),
         28 => crate::rival::build(commands, meshes, images, std_mats),
-        // 29 was bs_swamp_pools — flat 2-D teal water DISCS laid on the marsh floor. Removed: they
-        // read as ugly "plates". A later attempt at real CARVED marsh pools was also dropped — a
-        // small pool is tiny, so the water shader foams the whole thing white (another pale plate).
-        // The swamp reads wet from the algae ground tint + reeds; standing water is left to the
-        // rivers + the deliberate lake, which are big enough to render as real water.
-        29 => {}
+        // (29 was bs_swamp_pools — flat teal water discs, removed: read as ugly "plates"; real
+        // carved pools also dropped — too small, the water shader foamed them solid white.)
+        // Now: the castle-meadow dressing (hay corner, beehives, rest campfire, tree clumps) —
+        // fills the bald safe-zone clearing. After the castle/plots so its placement rules hold.
+        29 => crate::meadow::build(commands, meshes, std_mats),
         _ => {}
     }
 }
