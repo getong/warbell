@@ -426,35 +426,47 @@ fn build_dead() -> Mesh {
 fn build_pine() -> Mesh {
     let bark = lin(TREE_TRUNK);
     // Slim visible trunk under the boughs + a shallow root flare gripping the ground.
-    let mut parts = vec![tinted(trunk_part(0.06, 0.085, 0.5, 6, Vec3::new(0.0, 0.25, 0.0)), bark)];
-    parts.extend(root_flare(0.085, 3, 0.11, bark, 0.8));
+    let mut parts = vec![tinted(trunk_part(0.07, 0.10, 0.5, 6, Vec3::new(0.0, 0.25, 0.0)), bark)];
+    parts.extend(root_flare(0.10, 3, 0.12, bark, 0.8));
 
-    // EIGHT slender overlapping bough tiers (reference spruce), narrowly tapering to a sharp
-    // point, dark shadowed skirt → sunlit crown. res 6 → bold hexagonal facets, and each wide
-    // tier base overhangs the slimmer cone above it, so the rim of each layer pokes out as a
-    // drooping serrated bough edge instead of one smooth triangle. Slight yaw jitter so the
-    // facets never line up vertically. (base_y, radius, height, xz-nudge, yaw, tone)
-    let tiers: [(f32, f32, f32, Vec3, f32, u32); 8] = [
-        (0.30, 0.52, 0.40, Vec3::new(0.02, 0.0, -0.02), 0.0, FOLIAGE_DARK),
-        (0.48, 0.47, 0.40, Vec3::new(-0.03, 0.0, 0.02), 0.5, FOLIAGE_DARK),
-        (0.66, 0.42, 0.40, Vec3::new(0.02, 0.0, 0.03), 1.0, FOLIAGE_MID),
-        (0.86, 0.36, 0.40, Vec3::new(-0.02, 0.0, -0.02), 1.5, FOLIAGE_MID),
-        (1.06, 0.30, 0.38, Vec3::new(0.02, 0.0, 0.02), 2.0, FOLIAGE_MID),
-        (1.28, 0.24, 0.36, Vec3::new(-0.02, 0.0, -0.01), 2.5, FOLIAGE_LIGHT),
-        (1.50, 0.18, 0.34, Vec3::new(0.01, 0.0, 0.01), 3.0, FOLIAGE_LIGHT),
-        (1.72, 0.12, 0.30, Vec3::new(0.0, 0.0, 0.0), 3.5, FOLIAGE_LIGHT),
+    // FIVE fat, deeply-nested bough tiers (2026-07 rework — the old eight slim evenly-tapered
+    // cones read as a child's-drawing "choinka": visible gaps between thin regular triangles).
+    // Each tier is now chunky (height ≈ radius), overlaps the one below by ~a third so the
+    // silhouette never opens a gap to the trunk, the radii taper NON-linearly (the second tier
+    // bellies out past the first — real spruces bulge low), and every tier carries a slightly
+    // wider, shallow drooping SKIRT cone under its base in the darker tone, so the rim reads as
+    // sagging bough tips rather than a clean triangle edge. res 7 (odd) + yaw jitter + a small
+    // tilt per tier keep the facets from ever lining up into that mechanical look.
+    // (base_y, radius, height, tilt-x, tilt-z, yaw, tone)
+    let tiers: [(f32, f32, f32, f32, f32, f32, u32); 5] = [
+        (0.24, 0.58, 0.56, 0.04, -0.03, 0.0, FOLIAGE_DARK),
+        (0.58, 0.63, 0.58, -0.05, 0.02, 0.9, FOLIAGE_DARK),
+        (0.98, 0.50, 0.54, 0.03, 0.05, 1.9, FOLIAGE_MID),
+        (1.36, 0.37, 0.50, -0.04, -0.03, 2.7, FOLIAGE_MID),
+        (1.72, 0.25, 0.44, 0.02, 0.03, 3.4, FOLIAGE_LIGHT),
     ];
-    for (base_y, r, h, nudge, yaw, c) in tiers {
+    for (base_y, r, h, tx, tz, yaw, c) in tiers {
+        // The drooping skirt: a shallow, slightly wider cone hung under the tier base with its
+        // APEX DOWN (flipped), so its visible outer surface faces down-and-out — the facet-shading
+        // bake then paints it as the shadowed underside of a sagging bough. (An upright skirt cone
+        // faces up-out and bakes BRIGHT — it read as odd pale rings between tiers, verified.)
+        let skirt = Cone { radius: r * 1.12, height: 0.2 }
+            .mesh()
+            .resolution(7)
+            .build()
+            .rotated_by(Quat::from_euler(EulerRot::XYZ, std::f32::consts::PI + tx, yaw + 0.4, tz))
+            .translated_by(Vec3::new(0.0, base_y - 0.03, 0.0));
+        parts.push(tinted(skirt, lin(FOLIAGE_DARK)));
         let m = Cone { radius: r, height: h }
             .mesh()
-            .resolution(6)
+            .resolution(7)
             .build()
-            .rotated_by(Quat::from_rotation_y(yaw))
-            .translated_by(Vec3::new(nudge.x, h * 0.5 + base_y, nudge.z));
+            .rotated_by(Quat::from_euler(EulerRot::XYZ, tx, yaw, tz))
+            .translated_by(Vec3::new(0.0, h * 0.5 + base_y, 0.0));
         parts.push(tinted(m, lin(c)));
     }
-    // The sunlit leader spike capping the spire (~2.1u total — towers over the broadleaves).
-    parts.push(tinted(cone_at(0.09, 0.28, 1.92, 6, Vec3::ZERO), lin(FOLIAGE_LIGHT)));
+    // The sunlit leader spike capping the spire (~2.4u total — towers over the broadleaves).
+    parts.push(tinted(cone_at(0.11, 0.34, 2.05, 7, Vec3::ZERO), lin(FOLIAGE_LIGHT)));
 
     merged(parts)
 }

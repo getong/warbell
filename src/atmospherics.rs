@@ -86,9 +86,9 @@ impl Default for Atmospherics {
         Self {
             world_from_clip: Mat4::IDENTITY,
             cam_pos: Vec3::ZERO,
-            // 0.015 (was 0.018 at first landing): visibility around the castle meadow read a
-            // touch too short — the haze should layer the forest, not curtain the bailey.
-            density: 0.015,
+            // 0.012 (was 0.018 → 0.015): eased twice on player feedback — forward visibility
+            // kept reading short. The haze should layer the forest, not curtain the view.
+            density: 0.012,
             sun_dir: Vec3::Y,
             height_falloff: 0.07,
             fog_color: Vec3::new(0.85, 0.80, 0.66),
@@ -101,7 +101,7 @@ impl Default for Atmospherics {
             cloud_scale: 0.018,
             noise_strength: 0.40,
             fog_start: 13.0,
-            fog_max: 0.88,
+            fog_max: 0.84,
             fade: 0.0, // starts off; the driver raises it with daylight
             base_height: 0.0,
             _pad: 0.0,
