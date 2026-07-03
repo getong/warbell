@@ -10,7 +10,7 @@
 //! the `Dying` fade exactly like an ork. The boon flags live on the parity `Player` struct
 //! (`tileworld_core::player`); the leveling math is forest-side (a canonical divergence).
 
-mod models;
+pub(crate) mod models; // pub(crate): the standalone viewer (`FOREST_VIEW=boss:*`) builds wardens too
 
 use bevy::prelude::*;
 
