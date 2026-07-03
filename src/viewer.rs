@@ -381,6 +381,31 @@ fn spawn_model(
             commands.entity(root).insert(crate::quadruped::QuadDrive::new(species));
             crate::quadruped::spawn_quad(commands, root, mat, species, h);
         }
+        // A biome-warden boss (static rest pose — torso + limb parts at their pivots, at the real
+        // root scale). `FOREST_VIEW=boss:forest|snow|rocky|desert|swamp` picks the warden.
+        s if s.starts_with("boss") || s.starts_with("warden") => {
+            use crate::biome::Biome;
+            let biome = match s.rsplit(':').next() {
+                Some("snow") | Some("balwan") => Biome::Snow,
+                Some("rocky") | Some("golem") => Biome::Rocky,
+                Some("desert") | Some("revenant") => Biome::Desert,
+                Some("swamp") | Some("hag") => Biome::Swamp,
+                _ => Biome::Forest,
+            };
+            let spec = crate::boss::models::build(biome);
+            let scale = crate::boss::models::root_scale(biome);
+            commands.entity(root).insert(Transform::from_scale(Vec3::splat(scale)));
+            commands.entity(root).with_children(|p| {
+                p.spawn((Mesh3d(meshes.add(spec.torso)), MeshMaterial3d(mat.clone()), Transform::default()));
+                for part in spec.parts {
+                    p.spawn((
+                        Mesh3d(meshes.add(part.mesh)),
+                        MeshMaterial3d(mat.clone()),
+                        Transform::from_translation(part.pivot),
+                    ));
+                }
+            });
+        }
         // Isolated 1:1 transcription of the three.js previs knight (static rest pose).
         "knight2" => crate::previs_knight::spawn(commands, root, meshes, mat.clone()),
         _ => {
