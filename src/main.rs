@@ -119,6 +119,7 @@ mod visual;
 mod viewer;
 mod warlord;
 mod water;
+mod wayside;
 mod wildlife;
 mod wind;
 mod window_icon;

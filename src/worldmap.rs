@@ -1572,7 +1572,17 @@ pub(crate) fn ground_color(x: f32, z: f32) -> [f32; 4] {
         // the road pops against the crags; other biomes keep the softer authored tint.
         let rocky = matches!(tile_biome_world(wx, wz), Some(Biome::Rocky));
         let (road_col, road_blend) = if rocky { (0xba9057u32, 0.95) } else { (p.road_dirt, 0.85) };
-        col = mix3(col, lin3(road_col), road_s * road_blend);
+        // Readability rework (map-character overhaul pass 2): a road reads via its EDGE, not a
+        // linear smear. The old `road_s * blend` faded the tint out over the whole falloff, which
+        // is exactly why the paths "melted into the biome". Now: a full-strength packed CORE with
+        // a hard-ish shoulder (smoothstep over the falloff), plus a faint worn VERGE halo just
+        // outside the shoulder — grass thinning toward the road, like a real trodden margin.
+        // (Wheel ruts are NOT painted here: ~0.5u grooves are far below the 1-unit vertex-colour
+        // resolution — they live in the fragment-resolution rut mask the terrain shader samples,
+        // see `roads::bake_rut_mask` + `terrain.wgsl`.)
+        let core_w = smoothstep(0.30, 0.55, road_s);
+        let verge_w = smoothstep(0.02, 0.14, road_s) * (1.0 - smoothstep(0.18, 0.34, road_s));
+        col = mix3(col, lin3(road_col), (verge_w * 0.28 + core_w * road_blend).min(1.0));
     }
     let yard_s = crate::castle::yard_strength(wx, wz);
     if yard_s > 0.0 {
@@ -1593,10 +1603,16 @@ const SHORE_MAX: f32 = 8.0;
 /// scene depth can't measure shallowness; this baked field is the only source.
 /// Returns the image plus the world→UV mapping (`xy` = min corner, `zw` = 1/extent).
 fn bake_shore_distance(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
-    const W: usize = 288; // covers world x ∈ [-144, 144] (island reaches ±~128 at 1.8 scale)
-    const H: usize = 384; // covers world z ∈ [-192, 192] (island ±~95 + the Blight to ~+174)
-    let min_x = -(W as f32) / 2.0;
-    let min_z = -(H as f32) / 2.0;
+    // Derived from the grid (was hardcoded 288×384 for MAP_SCALE 1.8 — at 2.2 the island reaches
+    // world x ±~156 and the Blight z ~+240, past the old cover, which silently cut the water
+    // shader's foam/shallows off at the fringes). +2·16 texels of open-sea margin all round so
+    // the distance field ramps fully out to SHORE_MAX before clamp-to-edge takes over.
+    let w: usize = COLS as usize + 32; // covers world x ∈ [−GX−16, COLS−GX+16]
+    let h: usize = ROWS as usize + 32; // covers world z ∈ [−GZ−16, ROWS−GZ+16]
+    let min_x = -GX - 16.0;
+    let min_z = -GZ - 16.0;
+    #[allow(non_snake_case)]
+    let (W, H) = (w, h);
     let idx = |x: usize, z: usize| z * W + x;
 
     // Land mask → two-pass 8-neighbour chamfer distance transform (≈Euclidean).
@@ -1668,7 +1684,7 @@ pub struct BuildState {
 }
 
 /// Number of phases [`build_step`] walks through. The loading veil maps its progress bar onto this.
-pub const BUILD_STEPS: u32 = 30;
+pub const BUILD_STEPS: u32 = 31;
 
 /// Build the whole world in ONE call (terrain → scatter → castle → fortress → …). Used by the
 /// capture harnesses (`FOREST_SHOT`/`FOREST_CLIP`), which want the world up on frame 0. The normal
@@ -1748,6 +1764,9 @@ pub fn build_step(
         // Now: the castle-meadow dressing (hay corner, beehives, rest campfire, tree clumps) —
         // fills the bald safe-zone clearing. After the castle/plots so its placement rules hold.
         29 => crate::meadow::build(commands, meshes, std_mats),
+        // Wayside furniture (map-character overhaul pass 2): junction signposts + roadside
+        // cairns/fences/shrines. Last — its placement rejects everything the earlier phases own.
+        30 => crate::wayside::populate(commands, meshes, std_mats),
         _ => {}
     }
 }
@@ -1767,7 +1786,7 @@ fn bs_grass_sheet(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &m
         grain: 0.72,
         streak: 0.5,
     };
-    let ground_mat = crate::terrain::make_material(&grass_detail, 1.0, images, terrain_mats);
+    let ground_mat = crate::terrain::make_material(&grass_detail, 1.0, Some(rut_mask_image(images)), images, terrain_mats);
     spawn_terrain_sheet(commands, meshes, ground_mat, |tb| tb != TB::Blight && tb != TB::Swamp && tb != TB::Lava);
 }
 
@@ -1787,7 +1806,7 @@ fn bs_swamp_sheet(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &m
     // Roughness 0.82 read as DRY matte muck — the single biggest reason the marsh didn't look wet.
     // Dropped to 0.40 so the low (overcast) sun + sky throw a broad damp specular sheen across the
     // bog, reading as standing water / wet mud rather than dry dirt (player: "bardziej mokre bagno").
-    let swamp_mat = crate::terrain::make_material(&swamp_detail, 0.40, images, terrain_mats);
+    let swamp_mat = crate::terrain::make_material(&swamp_detail, 0.40, Some(rut_mask_image(images)), images, terrain_mats);
     spawn_terrain_sheet(commands, meshes, swamp_mat, |tb| tb == TB::Swamp);
 }
 
@@ -1804,7 +1823,7 @@ fn bs_blight_sheet(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &
         grain: 0.88,
         streak: 0.55,
     };
-    let blight_mat = crate::terrain::make_material(&blight_detail, 0.97, images, terrain_mats);
+    let blight_mat = crate::terrain::make_material(&blight_detail, 0.97, Some(rut_mask_image(images)), images, terrain_mats);
     spawn_terrain_sheet(commands, meshes, blight_mat, |tb| tb == TB::Blight);
 }
 
@@ -1825,8 +1844,35 @@ fn bs_lava_sheet(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &mu
         grain: 0.80,
         streak: 0.40,
     };
-    let lava_mat = crate::terrain::make_material(&lava_detail, 0.90, images, terrain_mats);
+    let lava_mat = crate::terrain::make_material(&lava_detail, 0.90, Some(rut_mask_image(images)), images, terrain_mats);
     spawn_terrain_sheet(commands, meshes, lava_mat, |tb| tb == TB::Lava);
+}
+
+/// The cart-wheel-rut mask (fragment-resolution road grooves, `roads::bake_rut_mask`) as a GPU
+/// image + world→UV region, baked once per process (the road network itself is process-cached)
+/// and shared by all terrain sheets.
+fn rut_mask_image(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
+    static CACHE: Mutex<Option<(Handle<Image>, Vec4)>> = Mutex::new(None);
+    let mut c = CACHE.lock().expect("rut mask cache poisoned");
+    if let Some(v) = c.as_ref() {
+        return v.clone();
+    }
+    let (data, w, h, region) = crate::roads::bake_rut_mask();
+    let mut img = Image::new(
+        Extent3d { width: w as u32, height: h as u32, depth_or_array_layers: 1 },
+        TextureDimension::D2,
+        data,
+        TextureFormat::R8Unorm,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    img.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        mag_filter: ImageFilterMode::Linear,
+        min_filter: ImageFilterMode::Linear,
+        ..default()
+    });
+    let v = (images.add(img), region);
+    *c = Some(v.clone());
+    v
 }
 
 /// The sea plane + shore-distance bake + background sailboats, then plan the ork camps (BEFORE

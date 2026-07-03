@@ -35,6 +35,10 @@ pub struct ForestParams {
     /// `quality::apply_quality` (startup + every Settings toggle), so the ground relief
     /// reacts live to the graphics preset. `make_material` seeds the High defaults.
     pub params2: Vec4,
+    /// World→UV mapping for the wheel-rut mask (`roads::bake_rut_mask`): `xy` = world min
+    /// corner, `zw` = 1/extent. `zw == 0` disables the lookup (single-biome viewer ground /
+    /// ground test have no roads).
+    pub rut_region: Vec4,
 }
 
 #[derive(Asset, AsBindGroup, Clone, TypePath, Debug)]
@@ -44,6 +48,11 @@ pub struct ForestExtension {
     #[texture(101)]
     #[sampler(102)]
     pub detail: Handle<Image>,
+    /// Fragment-resolution cart-wheel-rut mask (R8) — twin grooves beside artery centrelines,
+    /// far below the terrain's 1u vertex-colour resolution, so they must be a texture.
+    #[texture(103)]
+    #[sampler(104)]
+    pub rut: Handle<Image>,
 }
 
 impl MaterialExtension for ForestExtension {
@@ -63,14 +72,28 @@ impl Plugin for TerrainPlugin {
 
 /// Build a terrain `ExtendedMaterial` for a detail spec + roughness (the detail texture
 /// is baked here). Used by the single-biome ground AND the world map's per-wedge ground.
+/// `rut` carries the world-map wheel-rut mask (`worldmap` bakes it once per build); `None`
+/// (viewer / ground test — no roads) binds a 1×1 dummy and zeroes the region, which disables
+/// the shader lookup.
 pub fn make_material(
     detail: &GroundDetail,
     roughness: f32,
+    rut: Option<(Handle<Image>, Vec4)>,
     images: &mut Assets<Image>,
     mats: &mut Assets<TerrainMaterial>,
 ) -> Handle<TerrainMaterial> {
     let (detail_img, mean) = detail_image(detail);
     let detail_h = images.add(detail_img);
+    let (rut_h, rut_region) = rut.unwrap_or_else(|| {
+        let img = Image::new(
+            bevy::render::render_resource::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            bevy::render::render_resource::TextureDimension::D2,
+            vec![0u8],
+            bevy::render::render_resource::TextureFormat::R8Unorm,
+            bevy::asset::RenderAssetUsages::RENDER_WORLD,
+        );
+        (images.add(img), Vec4::ZERO)
+    });
     mats.add(ExtendedMaterial {
         base: StandardMaterial {
             base_color: Color::WHITE, // vertex colour carries the hue
@@ -84,8 +107,10 @@ pub fn make_material(
                 // High-preset defaults; apply_quality overrides on the first Update frame
                 // (after the Startup world build) and on every preset toggle.
                 params2: Vec4::new(1.0, 1.0, 1.0, 0.0),
+                rut_region,
             },
             detail: detail_h,
+            rut: rut_h,
         },
     })
 }

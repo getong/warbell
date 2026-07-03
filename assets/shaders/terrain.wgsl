@@ -23,11 +23,17 @@ struct ForestParams {
     params: vec4<f32>,
     // x=bump_strength, y=quality (0=Low,1=High,2=Ultra), z=macro_variety, w=reserved
     params2: vec4<f32>,
+    // Wheel-rut mask world→UV mapping: xy = world min corner, zw = 1/extent (0 = disabled).
+    rut_region: vec4<f32>,
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> forest: ForestParams;
 @group(#{MATERIAL_BIND_GROUP}) @binding(101) var detail_tex: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(102) var detail_samp: sampler;
+// Cart-wheel-rut mask (R8, `roads::bake_rut_mask`): twin grooves beside artery centrelines.
+// Fragment-resolution because ~0.5u grooves are far below the 1u vertex-colour grid.
+@group(#{MATERIAL_BIND_GROUP}) @binding(103) var rut_tex: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(104) var rut_samp: sampler;
 
 // 2D value-noise hash. The original `fract(sin(p.x*127.1 + p.y*311.7)*43758)` is effectively
 // a 1D hash of the dot product `p·(127.1,311.7)`, so cells along that fixed diagonal get
@@ -214,6 +220,22 @@ fn fragment(
     let ter_hue = ter_noise(wp * 0.028 + vec2<f32>(11.0, 11.0));
     rgb += (ter_big - 0.5) * variation * vec3<f32>(0.10, 0.09, -0.05) * green;
     rgb *= 1.0 + (ter_hue - 0.5) * variation * 0.40;
+
+    // (2b) cart-wheel ruts (map-character overhaul pass 2): twin darker grooves pressed either
+    // side of every road artery, from the baked fragment-resolution mask. A textureSample must
+    // stay in UNIFORM control flow, so sample unconditionally (the 1×1 dummy + zero region make
+    // this a no-op on roadless grounds); a broken-wear noise keeps the grooves from reading as
+    // two ruler lines.
+    let rut_uv = (wp - forest.rut_region.xy) * forest.rut_region.zw;
+    let rut_in = f32(forest.rut_region.z > 0.0
+        && rut_uv.x > 0.0 && rut_uv.x < 1.0 && rut_uv.y > 0.0 && rut_uv.y < 1.0);
+    let rut = textureSample(rut_tex, rut_samp, rut_uv).r * rut_in;
+    let rut_wear = 0.65 + 0.35 * ter_noise(wp * 0.9 + vec2<f32>(31.0, 7.0));
+    // 0.55: tuned by A/B shots — 0.22 and even 0.38 drowned under the ±0.17 ground mottle +
+    // midday haze/bloom (verification: "ruts invisible"); a 1.0 debug pass proved the sampling
+    // chain and read as mud trenches. 0.55·wear ≈ 0.36–0.55 darkening keeps two legible worn
+    // grooves without going black.
+    rgb *= 1.0 - 0.55 * rut * rut_wear;
 
     // (3)+(4) only on High/Ultra — same coherent `params2.y` lane as the fine mottle above.
     // (3) is a TEXTURE tap + a domain-warp noise pair (the single most expensive ground op) and

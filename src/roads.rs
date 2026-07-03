@@ -15,7 +15,7 @@
 //!
 //! Design: `docs/superpowers/specs/2026-06-30-organic-road-network-design.md`.
 
-use crate::worldmap::{ground_at_world, is_river_world, GX, GZ, MAP_SCALE};
+use crate::worldmap::{ground_at_world, is_river_world};
 use bevy::prelude::*;
 use std::sync::OnceLock;
 
@@ -134,6 +134,68 @@ impl RoadField {
     }
 }
 
+// ── Wheel-rut texture bake (map-character overhaul pass 2) ─────────────────────────
+/// Twin cart-wheel grooves pressed either side of every ARTERY centreline: distance of each rut
+/// from the centreline and its half-width (world units). Rendered per-FRAGMENT via a baked
+/// texture the terrain shader samples — the ~0.5u grooves are far below the terrain mesh's
+/// 1-unit vertex-colour resolution, so painting them into vertex colours (or the 0.6u strength
+/// field) just aliases them away.
+const RUT_D: f32 = 0.72;
+const RUT_W: f32 = 0.34;
+/// Rut-texture resolution (world units per texel).
+const RUT_CELL: f32 = 0.35;
+
+/// Bake the rut mask: R8 texel data + the world→UV mapping (`xy` = min corner, `zw` = 1/extent),
+/// same contract as `worldmap::bake_shore_distance`. Consumed by `terrain::make_material`.
+pub fn bake_rut_mask() -> (Vec<u8>, usize, usize, Vec4) {
+    let curves = network();
+    let mut lo = Vec2::splat(f32::MAX);
+    let mut hi = Vec2::splat(f32::MIN);
+    for (c, _) in curves {
+        for p in c {
+            lo = lo.min(*p);
+            hi = hi.max(*p);
+        }
+    }
+    let pad = RUT_D + RUT_W + 1.0;
+    lo -= pad;
+    hi += pad;
+    let w = (((hi.x - lo.x) / RUT_CELL).ceil() as usize) + 1;
+    let h = (((hi.y - lo.y) / RUT_CELL).ceil() as usize) + 1;
+    let mut grid = vec![0.0_f32; w * h];
+    for (c, half) in curves {
+        if *half < HALF_W - 0.01 {
+            continue; // cart arteries only — footpaths and mountain trails carry no wheel ruts
+        }
+        for win in c.windows(2) {
+            let (p0, p1) = (win[0], win[1]);
+            let steps = (p0.distance(p1) / (RUT_CELL * 0.7)).ceil().max(1.0) as usize;
+            for s in 0..=steps {
+                let pt = p0.lerp(p1, s as f32 / steps as f32);
+                let r = RUT_D + RUT_W;
+                let minx = (((pt.x - r - lo.x) / RUT_CELL).floor() as i32).max(0);
+                let maxx = (((pt.x + r - lo.x) / RUT_CELL).ceil() as i32).min(w as i32 - 1);
+                let minz = (((pt.y - r - lo.y) / RUT_CELL).floor() as i32).max(0);
+                let maxz = (((pt.y + r - lo.y) / RUT_CELL).ceil() as i32).min(h as i32 - 1);
+                for cz in minz..=maxz {
+                    for cx in minx..=maxx {
+                        let tc = Vec2::new(lo.x + cx as f32 * RUT_CELL, lo.y + cz as f32 * RUT_CELL);
+                        let d = tc.distance(pt);
+                        let rs = 1.0 - ((d - RUT_D).abs() / RUT_W).min(1.0);
+                        let i = cz as usize * w + cx as usize;
+                        if rs > grid[i] {
+                            grid[i] = rs;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let data: Vec<u8> = grid.iter().map(|v| (v.clamp(0.0, 1.0) * 255.0) as u8).collect();
+    let region = Vec4::new(lo.x, lo.y, 1.0 / (w as f32 * RUT_CELL), 1.0 / (h as f32 * RUT_CELL));
+    (data, w, h, region)
+}
+
 /// The built network — `(centreline, half_width)` per curve — cached for the process. BOTH the
 /// rasterised strength field AND bridge placement derive from this, so they agree on where roads
 /// run (a deck only lands where an artery actually crosses a river).
@@ -194,6 +256,33 @@ pub fn road_strength(wx: f32, wz: f32) -> f32 {
 /// scatter pass calls this to keep trees / props / ground-cover off the roads.
 pub fn on_road(wx: f32, wz: f32) -> bool {
     field().sample(wx, wz) > GROW_CUTOFF
+}
+
+/// World-space junction points of the road network — the forks where a spur leaves an artery and
+/// the trunk/ring endpoints at the biome anchors. `wayside::populate` plants a signpost at each.
+/// (Collected as `build_curves` runs; touching [`network`] first guarantees they're baked.)
+pub fn junctions() -> Vec<Vec2> {
+    let _ = network();
+    JUNCTIONS.lock().expect("junctions poisoned").clone()
+}
+static JUNCTIONS: std::sync::Mutex<Vec<Vec2>> = std::sync::Mutex::new(Vec::new());
+
+/// Record a junction (dedup within 8u; skip the castle's own yard — the gates have their own
+/// dressing). Called only from within the one-time `build_curves` bake.
+fn note_junction(p: Vec2) {
+    if p.length() < 28.0 {
+        return;
+    }
+    let mut j = JUNCTIONS.lock().expect("junctions poisoned");
+    if j.iter().all(|q| q.distance(p) > 8.0) {
+        j.push(p);
+    }
+}
+
+/// The full centreline network for wayside furniture placement: every ARTERY polyline (wide
+/// routes only — furniture on capillary footpaths reads as clutter).
+pub fn artery_polylines() -> Vec<Vec<Vec2>> {
+    network().iter().filter(|(_, half)| *half >= HALF_W - 0.01).map(|(c, _)| c.clone()).collect()
 }
 
 /// Is `(wx, wz)` on OR within `pad` of a path? Probes the centre + four cardinal offsets, so a WIDE
@@ -330,7 +419,9 @@ fn build_curves() -> Vec<(Vec<Vec2>, f32)> {
             .iter()
             .min_by(|a, b| a.distance(*t).partial_cmp(&b.distance(*t)).unwrap())
             .unwrap();
-        curves.push(wander(gate, crate::worldmap::biome_road_target(i), seed ^ (i as u32).wrapping_mul(0x9E37_79B9)));
+        let target = crate::worldmap::biome_road_target(i);
+        note_junction(target);
+        curves.push(avoid_clearings(wander(gate, target, seed ^ (i as u32).wrapping_mul(0x9E37_79B9))));
     }
 
     // Ring: connect biome centres to their angular neighbours so you can circle the island.
@@ -344,7 +435,9 @@ fn build_curves() -> Vec<(Vec<Vec2>, f32)> {
         let (ib, cb) = ring[(i + 1) % ring.len()];
         let a = crate::worldmap::biome_ring_node(ia, cb);
         let b = crate::worldmap::biome_ring_node(ib, ca);
-        curves.push(wander(a, b, seed ^ (0x00B5_0000 + i as u32)));
+        note_junction(a);
+        note_junction(b);
+        curves.push(avoid_clearings(wander(a, b, seed ^ (0x00B5_0000 + i as u32))));
     }
 
     // Fortress + rival keep: reached as a SPUR off the NEAREST existing road, NOT a separate gate
@@ -359,7 +452,8 @@ fn build_curves() -> Vec<(Vec<Vec2>, f32)> {
                 .iter()
                 .min_by(|a, b| a.distance(t).partial_cmp(&b.distance(t)).unwrap())
                 .unwrap();
-            curves.push(wander(near, t, seed ^ (0x00A0_0000 + k as u32)));
+            note_junction(near);
+            curves.push(avoid_clearings(wander(near, t, seed ^ (0x00A0_0000 + k as u32))));
         }
     }
 
@@ -372,7 +466,8 @@ fn build_curves() -> Vec<(Vec<Vec2>, f32)> {
             .iter()
             .min_by(|a, b| a.distance(site.pos).partial_cmp(&b.distance(site.pos)).unwrap())
             .unwrap();
-        curves.push(wander(near, site.pos, seed ^ (0x00C0_0000 + k as u32)));
+        note_junction(near);
+        curves.push(avoid_clearings(wander(near, site.pos, seed ^ (0x00C0_0000 + k as u32))));
     }
 
     // Spurs: shortest connections from the network to nearby camps, capped to stay organic-not-busy.
@@ -392,12 +487,17 @@ fn build_curves() -> Vec<(Vec<Vec2>, f32)> {
         if k >= SPUR_CAP || d > SPUR_MAX_LEN {
             break; // sorted ascending — once one is too far, the rest are too.
         }
+        note_junction(near);
+        // NB: no `avoid_clearings` here — the camp IS the destination; the spur is supposed to
+        // end inside its clearing.
         curves.push(wander(near, camp, seed ^ (0x0077_0000 + k as u32)));
     }
 
     // Everything built so far is an ARTERY (wide). Now sprout the thin capillary layer off them,
-    // then tag widths and return the combined typed list.
-    let caps = sprout_capillaries(&curves, seed ^ 0x0CA9_F00D);
+    // then tag widths and return the combined typed list. Capillaries that blunder into a camp
+    // clearing are dropped outright (they're space-fillers; no detour is worth it).
+    let mut caps = sprout_capillaries(&curves, seed ^ 0x0CA9_F00D);
+    caps.retain(|c| !polyline_hits_clearing(c));
     let mut out: Vec<(Vec<Vec2>, f32)> = curves.into_iter().map(|c| (c, HALF_W)).collect();
     out.extend(caps.into_iter().map(|c| (c, CAP_HALF_W)));
     // Pass trails LAST and deliberately outside the spur/capillary source net: the mesa ramp
@@ -470,6 +570,56 @@ fn cap_branch(rng: &mut Rng, pt: Vec2, dir: Vec2, seed: u32, salt: u32) -> Optio
     Some((poly, end))
 }
 
+/// Does any point of the polyline fall inside an ork-camp clearing?
+fn polyline_hits_clearing(c: &[Vec2]) -> bool {
+    c.windows(2).any(|w| {
+        let steps = (w[0].distance(w[1]) / 0.8).ceil().max(1.0) as usize;
+        (0..=steps).any(|s| {
+            let p = w[0].lerp(w[1], s as f32 / steps as f32);
+            crate::camps::in_clearing(p.x, p.y)
+        })
+    })
+}
+
+/// Detour a through-route around ork-camp clearings — a trunk/ring road must never run THROUGH
+/// a camp (the "obóz orków literalnie na drodze" report): for each stretch of the polyline that
+/// crosses a clearing, insert a waypoint pushed perpendicular clear of it. A couple of fixpoint
+/// rounds handle a detour that clips a second clearing. (Camp SPURS skip this — the camp is
+/// their destination.) Safe to call inside `build_curves`: `camps::plan` never queries roads.
+fn avoid_clearings(mut c: Vec<Vec2>) -> Vec<Vec2> {
+    for _ in 0..4 {
+        let mut fix: Option<(usize, Vec2)> = None;
+        'scan: for (i, w) in c.windows(2).enumerate() {
+            let steps = (w[0].distance(w[1]) / 0.8).ceil().max(1.0) as usize;
+            let mut run: Vec<Vec2> = Vec::new();
+            for s in 0..=steps {
+                let p = w[0].lerp(w[1], s as f32 / steps as f32);
+                if crate::camps::in_clearing(p.x, p.y) {
+                    run.push(p);
+                }
+            }
+            if run.is_empty() {
+                continue;
+            }
+            let mid = run.iter().fold(Vec2::ZERO, |a, &b| a + b) / run.len() as f32;
+            let dir = (w[1] - w[0]).normalize_or_zero();
+            let perp = Vec2::new(-dir.y, dir.x);
+            for side in [1.0_f32, -1.0] {
+                let q = mid + perp * 7.5 * side; // > CLEAR_HALF·√2 + shoulder
+                if !crate::camps::in_clearing(q.x, q.y) && ground_at_world(q.x, q.y).is_some() {
+                    fix = Some((i + 1, q));
+                    break 'scan;
+                }
+            }
+        }
+        match fix {
+            Some((i, q)) => c.insert(i, q),
+            None => break,
+        }
+    }
+    c
+}
+
 /// Rasterise every curve into the strength grid (the one-time expensive step).
 fn build_field() -> RoadField {
     let curves = network();
@@ -534,5 +684,49 @@ mod tests {
         assert!(centre > 0.9, "centre {centre}");
         assert!(edge < centre && edge > 0.0, "edge {edge}");
         assert!(off.abs() < 1e-6, "off {off}");
+    }
+
+    /// The baked rut mask must groove BESIDE artery centrelines, not on them — and the
+    /// world→UV region mapping the shader uses must land those texels. Samples the mask
+    /// exactly the way `terrain.wgsl` does (uv → texel), at real artery points ±RUT_D.
+    #[test]
+    fn rut_mask_grooves_sit_beside_arteries() {
+        let (data, w, h, region) = bake_rut_mask();
+        assert_eq!(data.len(), w * h);
+        let strong = data.iter().filter(|&&v| v > 200).count();
+        assert!(strong > 1000, "expected long rut grooves, got {strong} strong texels");
+        // Shader-equivalent lookup: uv = (wp - region.xy) * region.zw, texel = uv * dims.
+        let sample = |wp: Vec2| -> u8 {
+            let u = (wp.x - region.x) * region.z;
+            let v = (wp.y - region.y) * region.w;
+            if !(0.0..1.0).contains(&u) || !(0.0..1.0).contains(&v) {
+                return 0;
+            }
+            let x = ((u * w as f32) as usize).min(w - 1);
+            let z = ((v * h as f32) as usize).min(h - 1);
+            data[z * w + x]
+        };
+        // Walk a long artery; at points along it the groove (±RUT_D perpendicular) must be
+        // strong and the exact centreline weak.
+        let arteries = artery_polylines();
+        let poly = arteries.iter().max_by_key(|p| p.len()).expect("arteries exist");
+        let (mut hits, mut probes) = (0, 0);
+        for win in poly.windows(2).step_by(4) {
+            let d = win[1] - win[0];
+            if d.length() < 0.5 {
+                continue;
+            }
+            let mid = (win[0] + win[1]) * 0.5;
+            let perp = Vec2::new(-d.y, d.x).normalize();
+            probes += 1;
+            if sample(mid + perp * RUT_D).max(sample(mid - perp * RUT_D)) > 150 {
+                hits += 1;
+            }
+        }
+        assert!(probes > 5, "artery too short to probe");
+        assert!(
+            hits * 10 >= probes * 8,
+            "grooves missing beside the artery: {hits}/{probes} probes hit (mapping broken?)"
+        );
     }
 }

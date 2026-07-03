@@ -43,7 +43,7 @@ fn spawn_test_plane(
         grain: 0.72,
         streak: 0.5,
     };
-    let mat = make_material(&detail, 1.0, &mut images, &mut mats);
+    let mat = make_material(&detail, 1.0, None, &mut images, &mut mats);
 
     // Float a TESSELLATED plane over an open grass area at real world XZ, but high above the
     // world so a top-down camera frames only it. Two things must match the real island so the
