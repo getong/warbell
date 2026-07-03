@@ -66,8 +66,8 @@ pub(crate) const DASH_TIME: f32 = 0.16;
 /// longer, farther tumble, priced accordingly.)
 pub(crate) const ROLL_TIME: f32 = 0.5;
 /// World units the roll covers (clipped early at walls/cliffs — see the path walk in
-/// [`player_roll`]).
-const ROLL_DIST: f32 = 3.4;
+/// [`player_roll`]). Playtest: 3.4 still read short — a roll should clearly reposition you.
+const ROLL_DIST: f32 = 4.0;
 /// Stamina spent per roll (same pool as block/arts — you can't roll-spam AND hold a guard).
 /// Raised from 25: at 25 the roll was a near-free escape; ~2½ rolls now drain a level-1 pool.
 const ROLL_STAMINA: f32 = 38.0;
@@ -159,15 +159,14 @@ pub fn player_roll(
         *next_test = time.elapsed_secs() + 1.8;
     }
 
-    // Dive along the live move input; with none, a backward dive AWAY from the facing (still
-    // eyeing the foe — the classic create-space dodge). The test loop always dives forward.
+    // Dive along the live move input; with none, a plain FORWARD roll along the facing (playtest:
+    // the old default backward dive was unintuitive — Alt should just roll where you're headed).
+    // The backward tumble (eyes kept on the foe) fires only when the dive runs AWAY from the
+    // facing while the combat stance holds you square to a target.
     let input = move_input(&keys, cam_q.single().ok());
     let facing_fwd = Vec2::new(hero.facing.sin(), hero.facing.cos());
-    let (dir, back) = match (input, test_fire) {
-        (Some(d), _) => (d, false),
-        (None, true) => (facing_fwd, false),
-        (None, false) => (-facing_fwd, true),
-    };
+    let dir = input.unwrap_or(facing_fwd);
+    let back = hero.stance_amt > 0.5 && dir.dot(facing_fwd) < -0.3;
 
     // Walk the path in steps: every sample must have footing within one terrace class of the
     // last (no tumbling off a cliff / into water) and stay clear of solid props — the roll stops
@@ -192,7 +191,7 @@ pub fn player_roll(
     hero.roll_to = to;
     hero.roll_t = 0.0;
     hero.roll_back = back;
-    // A forward roll faces its travel; the backward dive keeps eyes on the foe.
+    // A forward roll faces its travel; the backward (in-stance) dive keeps eyes on the foe.
     if !back {
         hero.facing = dir.x.atan2(dir.y);
     }

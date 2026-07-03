@@ -294,6 +294,38 @@ pub(crate) fn stance_loco_pose(t: f32, wp: f32, m: f32, run: f32, back: f32, twi
     p
 }
 
+/// **Combat-guard overlay** — while the stance holds, the knight actually LOOKS ready to fight:
+/// weight dropped into bent knees, torso crouched a touch forward, the shield raised into a
+/// half-guard and the blade carried UP at the ready instead of trailing at rest (which also stops
+/// the arms doing their casual walk-swing mid-fight). Blended over idle/walk/run by `amt`
+/// (`hero.stance_amt`), so leaving combat melts back to the relaxed carry — and coming out of a
+/// roll/attack flows straight into this ready pose. Attack/block/roll clips own their joints
+/// wholesale past this point, so the overlay only colours locomotion.
+fn guard_overlay(p: &mut Pose, amt: f32) {
+    let a = amt.clamp(0.0, 1.0);
+    if a <= 0.001 {
+        return;
+    }
+    // Weight drops: hips sink + tip forward slightly, knees take the bend, thighs sit back.
+    if let Some(t) = p.hips.t {
+        p.hips.t = Some(t - Vec3::new(0.0, 0.045 * a, 0.0));
+    }
+    p.hips.r = e3(0.05 * a, 0.0, 0.0) * p.hips.r;
+    p.torso.r = e3(0.09 * a, 0.0, 0.0) * p.torso.r;
+    p.knee_l.r = p.knee_l.r * rx(0.22 * a);
+    p.knee_r.r = p.knee_r.r * rx(0.20 * a);
+    p.hip_l.r = p.hip_l.r * rx(-0.11 * a);
+    p.hip_r.r = p.hip_r.r * rx(-0.10 * a);
+    // Sword arm to a mid guard — forearm raised, blade angled up-forward at the ready.
+    p.sh_r = p.sh_r.lerp(Jp::r(e3(-0.35, -0.1, 0.28)), a);
+    p.el_r = p.el_r.lerp(Jp::r(rx(-1.15)), a);
+    p.sword = p.sword.lerp(Jp::r(e3(1.15, 0.25, -0.1)), a);
+    // Shield swings from the edge-on carry into a forward half-guard.
+    p.sh_l = p.sh_l.lerp(Jp::r(e3(-0.45, 0.1, -0.35)), a);
+    p.el_l = p.el_l.lerp(Jp::r(rx(-1.05)), a);
+    p.shield = p.shield.lerp(Jp { t: Some(Vec3::new(-0.02, -0.02, 0.12)), r: e3(0.7, -0.8, 0.0) }, a);
+}
+
 fn blend_t(a: Option<Vec3>, b: Option<Vec3>, s: f32) -> Option<Vec3> {
     match (a, b) {
         (Some(x), Some(y)) => Some(x.lerp(y, s)),
@@ -892,15 +924,21 @@ pub fn hero_anim(
     // forward leap. (Priority: victory › attack › jump › block-blended locomotion.)
     let moving = hero.moving_amt.clamp(0.0, 1.0);
     // Combat stance feeds two extra locomotion axes (backpedal blend + pelvis-vs-torso twist);
-    // both are 0 out of the stance, where this reduces exactly to the plain `loco_pose`.
-    let loco = stance_loco_pose(
-        now,
-        hero.walk_phase,
-        moving,
-        hero.run_amt.clamp(0.0, 1.0),
-        hero.back_amt,
-        hero.strafe_twist,
-    );
+    // both are 0 out of the stance, where this reduces exactly to the plain `loco_pose`. The
+    // guard overlay then colours ALL stance locomotion (idle/walk/run) into the ready-to-fight
+    // carry — knees bent, shield up, blade at the ready.
+    let loco = {
+        let mut p = stance_loco_pose(
+            now,
+            hero.walk_phase,
+            moving,
+            hero.run_amt.clamp(0.0, 1.0),
+            hero.back_amt,
+            hero.strafe_twist,
+        );
+        guard_overlay(&mut p, hero.stance_amt);
+        p
+    };
     let pose = if hero.victory {
         victory_pose(now)
     } else if hero.roll_t >= 0.0 {

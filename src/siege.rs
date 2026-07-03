@@ -1001,7 +1001,9 @@ fn invader_brain(
         // Guards/keep/buildings are never token-gated — the circle is for the hero fight only.
         o.holding = false;
         let mut hold_pt: Option<Vec2> = None;
-        if chase_hero && !o.shaman && !frenzied {
+        // The token contest only starts inside CLAIM_RANGE — a far invader approaches freely
+        // (see the starvation note in `melee_ring`: far claimers used to soak both tokens).
+        if chase_hero && !o.shaman && !frenzied && hero_d <= crate::melee_ring::CLAIM_RANGE {
             let engaged = ring.try_claim(e, rnow);
             if !engaged && hero_d < crate::melee_ring::HOLD_ENGAGE {
                 o.holding = true;

@@ -27,13 +27,18 @@ use std::collections::HashMap;
 pub const RING_R: f32 = 2.9;
 /// An ork closer to the hero than this without a token peels back out to the ring.
 pub const HOLD_ENGAGE: f32 = RING_R + 1.6;
+/// Tokens are claimed only INSIDE this range of the hero. Critical: a distant ork still marching
+/// in must NOT claim (or hold) a token — early versions let far pathing orks soak both tokens,
+/// expire them, rest, re-claim… while the orks actually AT the ring stood waiting forever (the
+/// "nobody attacks me, they can't decide" bug). Approach is token-free; the contest starts here.
+pub const CLAIM_RANGE: f32 = 4.5;
 /// Simultaneous melee attackers allowed on the hero. (Difficulty could scale this later —
 /// research: Arkham/AC run 1, DOOM runs more per-type; 2 reads busy without mobbing.)
 pub const MELEE_CAP: usize = 2;
 /// Max seconds a token is held before it's forcibly rotated to the next waiter.
 pub const TOKEN_TIME: f32 = 2.6;
 /// Per-ork rest after releasing a token, so the same two don't monopolise the fight.
-pub const REST_TIME: f32 = 1.4;
+pub const REST_TIME: f32 = 1.0;
 /// Waiting orks prowl the ring at this fraction of their charge speed.
 pub const HOLD_SPEED: f32 = 0.55;
 

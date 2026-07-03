@@ -357,10 +357,15 @@ fn ork_brain(
         if see_hero {
             o.brawl_target = None;
             // Melee ring: only token holders press the hero — the rest prowl the waiting circle
-            // (slowed in Hunt below). Shamans cast from their own stand-off ring and a frenzied
-            // berserker is the exempt relentless elite (see `melee_ring`).
-            let engaged = o.shaman || frenzied || ring.try_claim(self_e, time.elapsed_secs());
-            o.holding = !engaged && o.pos.distance(hero.pos) < crate::melee_ring::HOLD_ENGAGE;
+            // (slowed in Hunt below). The token contest only starts inside CLAIM_RANGE (a far ork
+            // approaches freely — see the starvation note in `melee_ring`); shamans cast from
+            // their own stand-off ring and a frenzied berserker is the exempt relentless elite.
+            let d_hero = o.pos.distance(hero.pos);
+            let engaged = o.shaman
+                || frenzied
+                || d_hero > crate::melee_ring::CLAIM_RANGE
+                || ring.try_claim(self_e, time.elapsed_secs());
+            o.holding = !engaged && d_hero < crate::melee_ring::HOLD_ENGAGE;
             if o.holding {
                 o.target = crate::melee_ring::hold_point(self_e, hero.pos, o.pos);
                 o.mode = OrkMode::Hunt; // prowl toward the orbiting ring point

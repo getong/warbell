@@ -693,32 +693,25 @@ pub fn player_attack(
     hero.attack_t += dt;
     let phase = hero.attack_t / hero.attack_dur;
 
-    // ── Attack magnetism: glide onto the committed foe across the wind-up ──
-    // Spend the budget armed at swing start, halting at sword's length of the live soft target, a
-    // wall, or a terrace lip (the same step rule the walk obeys, so the glide can't go anywhere
-    // the hero couldn't walk).
+    // ── Attack magnetism: STEP onto the committed foe across the wind-up ──
+    // The budget armed at swing start is spent by INJECTING VELOCITY, not by teleporting the
+    // root: `player_move` integrates it next frame through the normal locomotion (collision,
+    // step rules, gait/`moving_amt`, footsteps), so the close reads as the hero lunging a real
+    // stride into the blow — legs driving — instead of a magic slide on frozen feet.
     if hero.lunge_left > 0.0 {
         let arrived =
             phase >= LUNGE_END_PHASE || hero.soft_pos.is_some_and(|tp| tp.distance(hero.pos) <= LUNGE_STOP);
         if arrived {
             hero.lunge_left = 0.0;
         } else {
-            let step = (LUNGE_SPEED * dt).min(hero.lunge_left);
             let dir = Vec2::new(hero.facing.sin(), hero.facing.cos());
-            let n = hero.pos + dir * step;
-            let r = super::movement::PLAYER_R;
-            if super::movement::hero_can_step(n.x, n.y, r, hero.y) && !crate::blockers::any_within(n.x, n.y, r) {
-                hero.pos = n;
-                hero.lunge_left -= step;
-            } else {
-                hero.lunge_left = 0.0; // something solid in the way — the blade lands from here
-            }
+            let speed = LUNGE_SPEED.min(hero.lunge_left / dt.max(1e-3));
+            hero.vel = dir * speed;
+            hero.lunge_left -= speed * dt;
         }
     }
-    // Keep the render in step with this frame's glide + aim-lean (movement wrote the pre-swing
-    // pose earlier in the chain; without this the body lags the logic by a frame mid-lunge).
-    hero_tf.translation.x = hero.pos.x;
-    hero_tf.translation.z = hero.pos.y;
+    // Keep the aim-lean rendered this frame (movement wrote the pre-lean yaw earlier in the
+    // chain; without this the body lags the lock-lean by a frame mid-swing).
     hero_tf.rotation = Quat::from_rotation_y(hero.facing);
 
     if phase >= 1.0 {
