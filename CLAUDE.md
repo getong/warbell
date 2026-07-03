@@ -207,7 +207,7 @@ Two related map systems share the ground pipeline in `biome.rs`:
   (declarative ground/atmosphere/scatter/particles) + optional `landmarks()`. Keys **1–5** swap a
   single 32×32 biome patch at runtime (despawns everything tagged `BiomeEntity`, rebuilds).
 - **`worldmap.rs`** — the actual playable island: generated at base
-  resolution scaled up by `MAP_SCALE = 1.8` (→ `COLS 259 × ROWS 295`). Elliptical island, five
+  resolution scaled up by `MAP_SCALE = 2.2` (→ `COLS 316 × ROWS 360`). Elliptical island, five
   biome blobs, grass safe-zone (castle), four rivers + lake, coastal mountain ridges, rolling
   terraced knolls, plateaus. `classify` force-flattens grass under every town build plot (and
   chest/cover placement rejects `town::near_build_plot`) so nothing occupies a future building's

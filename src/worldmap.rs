@@ -39,11 +39,14 @@ use crate::water::{WaterExt, WaterMaterial, WaterParams};
 // ── Map dimensions ───────────────────────────────────────────────────────────────
 /// Map enlargement vs the original base island (more tiles → more land + props).
 /// Bumped 1.5 → 1.8 (a clean +20% on every axis), then 1.8 → 2.0 to give the strongholds (esp.
-/// the desert rival, jammed against the north coast) more room. The two world-coord-authored
+/// the desert rival, jammed against the north coast) more room, then 2.0 → 2.2 (map-character
+/// overhaul pass 0) so the biomes keep real interior once the fixed-world-size claims (warden
+/// glade r16, rival plateau r30, fortress apron) are subtracted. The two world-coord-authored
 /// landmarks scale with it automatically: `ork_fortress::BLIGHT_DZ` and `rival::RIVAL_CENTRE` are
 /// both derived from `MAP_SCALE`, so bumping it keeps the ork gate on the south coast and the
-/// rival fort in the desert with no hand-tuning.
-pub const MAP_SCALE: f32 = 2.0;
+/// rival fort in the desert with no hand-tuning. (The warden `boss::region_center` world coords
+/// are hand-authored but sit well inside their biomes at 2.2 — verified.)
+pub const MAP_SCALE: f32 = 2.2;
 // The GRID is the enlarged resolution; GENERATION still runs in *base* space — the grid
 // loop samples `classify(ix / MAP_SCALE, …)`, so the island shape is identical, just
 // drawn over more tiles. `CX/CZ` stay the BASE centre used by all the generation math;
@@ -51,28 +54,28 @@ pub const MAP_SCALE: f32 = 2.0;
 // derive from MAP_SCALE so bumping the scale stays self-consistent.
 const BASE_COLS: f32 = 144.0; // original (pre-enlargement) grid width
 const BASE_ROWS: f32 = 164.0; // 108 original island rows + 56 southern Blight extension
-pub const COLS: i32 = (BASE_COLS * MAP_SCALE) as i32; // 259 at 1.8
+pub const COLS: i32 = (BASE_COLS * MAP_SCALE) as i32; // 316 at 2.2
 /// Rows: the original island (108 base rows) PLUS the southern **Blight** extension —
 /// the walkable ork-fortress landmass (`ork_fortress::blight_class_base`). Everything
 /// north of the old south edge is the original map, just denser; the Blight grows south.
-pub const ROWS: i32 = (BASE_ROWS * MAP_SCALE) as i32; // 295 at 1.8
+pub const ROWS: i32 = (BASE_ROWS * MAP_SCALE) as i32; // 360 at 2.2
 const CX: f32 = BASE_COLS / 2.0; // 72 — base generation centre
 const CZ: f32 = 54.0; // original island half-height (108/2)
 /// Grid centre (enlarged) — world placement recentres the map onto the origin here.
 pub const GX: f32 = COLS as f32 / 2.0;
 /// NOT `ROWS/2`: the castle stays at the origin (= island centre), so GZ is pinned to the
 /// ORIGINAL island's half-height scaled, and the Blight extension grows `ROWS` southward only.
-pub const GZ: f32 = CZ * MAP_SCALE; // 97.2 at 1.8
+pub const GZ: f32 = CZ * MAP_SCALE; // 118.8 at 2.2
 const ISLAND_RX: f32 = 71.0;
 const ISLAND_RZ: f32 = 53.0;
 const ISLAND_EXP: f32 = 2.6;
 // Castle safe-zone radius in BASE space (forced flat grass, no biome scatter). `classify` runs in
-// base space, so the WORLD radius is `SAFE_R * MAP_SCALE` (≈32.4 at MAP_SCALE 2.0). Trimmed from
-// 18.0 — bumping MAP_SCALE 1.8→2.0 silently grew the *world* safe-zone ~11% (this is base-space, so
-// it scales with the map); 16.2 restores the pre-bump world size so the biome-free ring round the
-// castle isn't oversized. Town build plots flatten themselves (`near_build_plot`), so this doesn't
-// gate their footing.
-pub const SAFE_R: f32 = 16.2;
+// base space, so the WORLD radius is `SAFE_R * MAP_SCALE` (≈32.4 at MAP_SCALE 2.2). Trimmed from
+// 18.0 → 16.2 → 14.7 across the 1.8 → 2.0 → 2.2 scale bumps: this is base-space, so each bump
+// silently grows the *world* safe-zone ~10%; the trims keep the biome-free ring round the castle
+// at its tuned ~32.4-unit world size. Town build plots flatten themselves (`near_build_plot`),
+// so this doesn't gate their footing.
+pub const SAFE_R: f32 = 14.7;
 pub const GROUND_STEP: f32 = 0.5; // world-Y per height class
 const SEA_Y: f32 = -0.4;
 /// Colour-blend half-width (tiles) at biome edges.
@@ -237,14 +240,17 @@ const REGIONS: [Region; 6] = [
     // biome by far) — `terrace_inland` relaxes the inland faces to ≤1-class steps so the nav-grid
     // still climbs the taller bulk; the seaward coastal band stays sheer, reading as cliff peaks.
     Region { x: 116.0, z: 57.0, r: 34.0, biome: TB::Rock, peak: 18 },
-    Region { x: 32.0, z: 80.0, r: 34.0, biome: TB::Forest, peak: 0 }, // SW forest
-    Region { x: 72.0, z: 92.0, r: 26.0, biome: TB::Swamp, peak: 0 }, // S swamp
+    // SW forest + S swamp: r +2/+3 (pass 0, map-character overhaul) — the two most
+    // "nothing left once you subtract the claims" biomes get extra interior on top of the
+    // MAP_SCALE 2.2 bump. Snow/desert radii stay (their shared seam is already tuned tight).
+    Region { x: 32.0, z: 80.0, r: 36.0, biome: TB::Forest, peak: 0 }, // SW forest
+    Region { x: 72.0, z: 92.0, r: 29.0, biome: TB::Swamp, peak: 0 }, // S swamp
     // Eastern marsh arm: fills the open grass strip that ran between the S swamp and the
     // rocky mine range (world x +30…+66, z +15…+60), so the marsh laps right up to the
     // foot of the mines instead of leaving a grass corridor. Rock's mountain priority in
     // `region_at` auto-clips the east edge (the mines stay rock), and the castle safe-ring
     // forces grass at the centre, so this only eats the in-between grass.
-    Region { x: 102.0, z: 78.0, r: 22.0, biome: TB::Swamp, peak: 0 },
+    Region { x: 102.0, z: 78.0, r: 24.0, biome: TB::Swamp, peak: 0 },
 ];
 
 struct Plateau {
