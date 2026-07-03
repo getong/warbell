@@ -54,10 +54,15 @@ const SHIELD_GAIT_T: Vec3 = Vec3::new(-0.1, -0.05, 0.15);
 fn shield_gait_r() -> Quat {
     e3(0.12, -1.45, 0.0)
 }
-/// Sword rest X-rotation — held tip up-forward "at the ready" (was 2.2 = pointing down). Shared by
-/// the rest pose AND the attacks' wind-start / recovery-end so idle⇄attack stays smooth.
-pub(crate) const SWORD_REST_X: f32 = 1.2;
-fn sword_rest_r() -> Quat {
+/// Sword rest X-rotation — a relaxed forward-down carry (~22° below horizontal). 1.2 ("tip
+/// up-forward at the ready") held the blade near-horizontal out of a hanging fist, so the grip
+/// buried itself in the vambrace and the blade visibly pierced the wrist; ~1.95 runs the grip
+/// through the fist at a natural angle (pommel up behind the wrist, blade clear of the arm)
+/// without reaching the studio's full 2.2 straight-down (which risks ground-clipping on the walk
+/// backswing). Shared by the rest pose AND the attacks' wind-start / recovery-end so idle⇄attack
+/// stays smooth.
+pub(crate) const SWORD_REST_X: f32 = 1.95;
+pub(crate) fn sword_rest_r() -> Quat {
     e3(SWORD_REST_X, 0.3, 0.0)
 }
 
