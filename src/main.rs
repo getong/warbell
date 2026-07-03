@@ -117,6 +117,7 @@ mod vignettes;
 mod bog;
 mod poi;
 mod villagers;
+mod vista;
 mod visual;
 mod viewer;
 mod warlord;
@@ -199,6 +200,7 @@ fn main() {
         ))
         .add_plugins(bog::BogPlugin) // swamp-pool will-o'-wisp hover anim (dressing spawned at build)
         .add_plugins(poi::PoiPlugin) // micro-POI flags: fortress smoke column + wheeling crows
+        .add_plugins(vista::VistaPlugin) // waterfall foam/mist animation
         .add_plugins(ambient_life::AmbientLifePlugin) // daytime butterflies + sky bird flock (visual charm)
         .add_plugins(fish::FishPlugin) // fish that glide under water near the hero + occasionally leap
         .add_plugins((

@@ -77,7 +77,7 @@ const ISLAND_EXP: f32 = 2.6;
 // so this doesn't gate their footing.
 pub const SAFE_R: f32 = 14.7;
 pub const GROUND_STEP: f32 = 0.5; // world-Y per height class
-const SEA_Y: f32 = -0.4;
+pub const SEA_Y: f32 = -0.4;
 /// Colour-blend half-width (tiles) at biome edges.
 const BLEND: f32 = 4.5;
 
@@ -714,6 +714,32 @@ const POOL_BLOBS: [(f32, f32, f32, f32); 6] = [
 /// carve the fight arena into islands (warden `region_center` (0,57), GLADE_R 16 + roam 13).
 const POOL_WARDEN_KEEPOUT: f32 = 22.0;
 
+/// The WATERFALL's plunge stream (map-character overhaul pass 5), BASE space: a carved water
+/// capsule from the rock mesa's SW tier-wall foot down to the lake edge. The mesa wall stands
+/// ~12 base units back from the lake shore across a dry shelf (measured), so without this the
+/// falls poured onto grass; the stream turns the plunge into real connected water. Authored
+/// (like the lake) at the verified wall site — world ≈(60.3, 32.6). `vista::populate` stands
+/// the cascade at its head.
+const WATERFALL_STREAM: ((f32, f32), (f32, f32), f32) = ((99.4, 68.8), (94.2, 77.6), 1.1);
+
+/// Signed distance (base units, negative = water) to the waterfall plunge-stream capsule.
+fn stream_sd(x: f32, z: f32) -> f32 {
+    let ((ax, az), (bx, bz), half) = WATERFALL_STREAM;
+    let (abx, abz) = (bx - ax, bz - az);
+    let t = (((x - ax) * abx + (z - az) * abz) / (abx * abx + abz * abz)).clamp(0.0, 1.0);
+    let (px, pz) = (ax + abx * t, az + abz * t);
+    (x - px).hypot(z - pz) - half + noise_a(x * 0.5, z * 0.5) * 0.25
+}
+
+/// The cascade anchor for `vista` (world space): the stream's head at the mesa wall foot, and
+/// the flow direction (head → lake).
+pub fn waterfall_site_world() -> (Vec2, Vec2) {
+    let ((ax, az), (bx, bz), _) = WATERFALL_STREAM;
+    let head = Vec2::new(ax * MAP_SCALE - GX, az * MAP_SCALE - GZ);
+    let mouth = Vec2::new(bx * MAP_SCALE - GX, bz * MAP_SCALE - GZ);
+    (head, (mouth - head).normalize())
+}
+
 /// Signed distance (approx base units; negative = water) to the swamp bog-pool blobs, or +INF
 /// away from them. Self-contained (region + warden + Blight gating INSIDE) so `classify`,
 /// `corner_water` and `smooth_surface_y` all see the same shoreline.
@@ -754,11 +780,18 @@ fn pool_sd(x: f32, z: f32) -> f32 {
     best + noise_a(x * 0.45, z * 0.45) * 0.9
 }
 
-fn is_pool(x: f32, z: f32) -> bool {
-    pool_sd(x, z) < 0.0
+/// Full "still water" field: the swamp bog pools PLUS the waterfall plunge stream. Every
+/// consumer (carve, corner shore, footing, murk mask, boardwalks) reads this combined field.
+fn pool_or_stream_sd(x: f32, z: f32) -> f32 {
+    pool_sd(x, z).min(stream_sd(x, z))
 }
 
-/// World-space pool test (scatter / roads / bridges / dressing all query in world coords).
+fn is_pool(x: f32, z: f32) -> bool {
+    pool_or_stream_sd(x, z) < 0.0
+}
+
+/// World-space still-water test — bog pools + the waterfall plunge stream (scatter / roads /
+/// bridges / the murk mask all query in world coords).
 pub fn is_pool_world(wx: f32, wz: f32) -> bool {
     is_pool((wx + GX) / MAP_SCALE, (wz + GZ) / MAP_SCALE)
 }
@@ -1148,6 +1181,11 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
     if is_lake(x, z) {
         return None;
     }
+    // Still-water carve: the swamp bog pools + the waterfall plunge stream. (Early, like the
+    // lake — the stream crosses the ROCK region's apron, which the swamp branch never sees.)
+    if is_pool(x, z) {
+        return None;
+    }
     let d = dist_from_coast(x, z) as f32;
     let beach_w =
         1.0 + (1.0 + (x * 0.6 + z * 0.42 + 2.1).sin() * 0.8 + (x * 1.25 - z * 0.95 + 0.4).sin() * 0.6).max(0.0);
@@ -1209,10 +1247,8 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
         // (class 2) only away from the water. Heights key on the SAME `pool_sd` the carve
         // uses, so shores, mud and rises read as one geography.
         if reg.biome == TB::Swamp {
+            // (Water itself is carved by the early still-water check above.)
             let sd = pool_sd(x, z);
-            if sd < 0.0 {
-                return None; // carved to standing water (the sea plane shows through)
-            }
             let fine = noise_b(x * 0.5 + 1.3, z * 0.5);
             let h = if sd > 2.5 && fine > 0.7 { 2 } else { 1 };
             return Some((TB::Swamp, h));
@@ -1414,7 +1450,7 @@ fn corner_water(cx: i32, cz: i32) -> (f32, bool) {
     // a smooth shore for the lake AND the swamp bog pools too, not just rivers. The lake/pools
     // aren't gated by `river_blocked` (that's a river-only keep-out); they carry their own gating.
     let river = if river_blocked(bx, bz) { f32::INFINITY } else { river_sd(bx, bz) };
-    let sd = river.min(lake_sd(bx, bz)).min(pool_sd(bx, bz));
+    let sd = river.min(lake_sd(bx, bz)).min(pool_or_stream_sd(bx, bz));
     (sd, sd < 0.0)
 }
 
@@ -1836,7 +1872,7 @@ pub struct BuildState {
 }
 
 /// Number of phases [`build_step`] walks through. The loading veil maps its progress bar onto this.
-pub const BUILD_STEPS: u32 = 33;
+pub const BUILD_STEPS: u32 = 34;
 
 /// Build the whole world in ONE call (terrain → scatter → castle → fortress → …). Used by the
 /// capture harnesses (`FOREST_SHOT`/`FOREST_CLIP`), which want the world up on frame 0. The normal
@@ -1925,6 +1961,8 @@ pub fn build_step(
         // Micro-POIs + flags (pass 4): story set-pieces along the arteries, the gallows on the
         // Gnashfang approach, smoke + crows over the Hold, farmland around the castle.
         32 => crate::poi::populate(commands, meshes, std_mats),
+        // Vista pass (pass 5): the lake waterfall off the mesa wall + three framed overlooks.
+        33 => crate::vista::populate(commands, meshes, std_mats),
         _ => {}
     }
 }
