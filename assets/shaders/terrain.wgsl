@@ -390,6 +390,19 @@ fn fragment(
         pbr_input.N = n2;
     }
 
+    // ── Wet ground (marsh) — the vertex-colour ALPHA carries a per-vertex wetness (0 = dry … 1 =
+    //    standing bog), which `worldmap::ground_color` feathers over the biome BLEND band. Lower the
+    //    roughness toward a damp sheen by it, so the marsh catches a broad specular highlight AND the
+    //    wet look blends smoothly across the swamp↔grass boundary instead of switching per material
+    //    sheet (the tile-square "kwadraty" a player saw where the swamp begins). Every terrain sheet
+    //    runs this identically, so a shared boundary vertex resolves the SAME roughness from either
+    //    side — no seam. A no-op (wet≈0) on all dry ground, so grass/sand/snow are unaffected.
+    let wet = clamp(pbr_input.material.base_color.a, 0.0, 1.0);
+    if wet > 0.001 {
+        let rw = pbr_input.material.perceptual_roughness;
+        pbr_input.material.perceptual_roughness = mix(rw, 0.40, wet);
+    }
+
     // Ultra grass sheen: drop roughness a touch on green ground so the sun throws a lush,
     // slightly specular highlight across the new relief. Subtle; green-gated.
     if forest.params2.y >= 2.0 {

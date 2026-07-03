@@ -1689,12 +1689,22 @@ pub(crate) fn ground_color(x: f32, z: f32) -> [f32; 4] {
     col = mix3(col, lin3(p.grass_dry), smoothstep(0.4, 1.5, p2) * 0.18);
     col = mix3(col, lin3(p.grass_gold), smoothstep(0.85, 1.6, p3) * 0.10);
     let wob = 2.4 * (x * 0.4 + 1.1).sin() + 2.4 * (z * 0.36 - 0.7).cos();
+    // Per-vertex WETNESS, carried out in the vertex-colour ALPHA (0 = dry ground, 1 = standing bog).
+    // The terrain shader lowers roughness by this, so the marsh's wet sheen FEATHERS across the
+    // swamp↔grass edge over the SAME `BLEND` band the colour already blends over — instead of the
+    // sheen switching hard per material sheet (grass sheet 1.0 vs the old swamp sheet 0.40), which
+    // staircased the boundary into the visible tile "kwadraty" a player reported. Only the Swamp
+    // biome is wet; Blight/Lava stay matte (their sheets sit near grass roughness).
+    let mut wet = 0.0f32;
     for reg in active_map().regions {
         let fray = if reg.peak > 0 { 0.0 } else { edge_fray(x, z) };
         let d = (x - reg.x).hypot(z - reg.z) + wob + fray;
         let edge = reg.r - d; // >0 inside
         let w = smoothstep(-BLEND, BLEND, edge);
         col = mix3(col, biome_col_at(reg.biome, x, z), w);
+        if reg.biome == TB::Swamp {
+            wet = wet.max(w);
+        }
     }
     // The Blight blends in by its own shape (it's not a `Region` — the landmass lives in
     // `ork_fortress.rs`): the south-swamp green smears into the trampled mud over `BLEND`.
@@ -1752,7 +1762,7 @@ pub(crate) fn ground_color(x: f32, z: f32) -> [f32; 4] {
     if yard_s > 0.0 {
         col = mix3(col, lin3(0x52391f), yard_s * 0.92);
     }
-    [col[0], col[1], col[2], 1.0]
+    [col[0], col[1], col[2], wet.clamp(0.0, 1.0)]
 }
 
 // ── Shore-distance field (water shader foam / shallows) ─────────────────────────
@@ -1999,10 +2009,14 @@ fn bs_swamp_sheet(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &m
         grain: 0.7,
         streak: 0.6,
     };
-    // Roughness 0.82 read as DRY matte muck — the single biggest reason the marsh didn't look wet.
-    // Dropped to 0.40 so the low (overcast) sun + sky throw a broad damp specular sheen across the
-    // bog, reading as standing water / wet mud rather than dry dirt (player: "bardziej mokre bagno").
-    let swamp_mat = crate::terrain::make_material(&swamp_detail, 0.40, Some(rut_mask_image(images)), images, terrain_mats);
+    // Base roughness is now MATTE 1.0 — the same as the grass sheet — on purpose. The wet bog sheen
+    // no longer lives in this sheet's constant roughness (which staircased the swamp↔grass boundary,
+    // since the grass sheet stayed 1.0 and the step fell exactly on the tile edges — player: visible
+    // "kwadraty"). Instead the shader lowers roughness per-fragment by the vertex-colour ALPHA wetness
+    // that `ground_color` feathers over the biome BLEND band, so both sheets resolve the SAME
+    // roughness at a shared boundary vertex → no seam, while the marsh interior (alpha≈1) still reads
+    // as the wet ~0.40-roughness muck it did before (player: "bardziej mokre bagno").
+    let swamp_mat = crate::terrain::make_material(&swamp_detail, 1.0, Some(rut_mask_image(images)), images, terrain_mats);
     spawn_terrain_sheet(commands, meshes, swamp_mat, |tb| tb == TB::Swamp);
 }
 
