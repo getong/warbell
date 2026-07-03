@@ -91,7 +91,7 @@ the `apt-get` line in a **SessionStart hook** (see the `session-start-hook` skil
 ### Screenshot harness (how to verify visuals — the Bevy window can't be captured externally)
 
 ```powershell
-$env:FOREST_SHOT="shot.png"; cargo run      # warms up (≥120 frames AND ≥6s so cold pipelines/IBL settle), saves PNG, exits
+$env:FOREST_SHOT="shot.png"; cargo run      # warms up (≥240 frames AND ≥10s so cold pipelines/shaders/IBL settle; FOREST_SHOT_WARMUP=<secs> raises the floor), saves PNG, exits
 ```
 
 **For player-perspective / game-feel shots use `FOREST_TPS=1`, NOT a hand-placed `FOREST_CAM`.**

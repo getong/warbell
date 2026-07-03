@@ -67,16 +67,24 @@ fn drive_shot(
     mut exit: MessageWriter<AppExit>,
 ) {
     clock.frame += 1;
-    // Take the shot once the scene has actually WARMED: ≥120 rendered frames AND ≥6 s wall-clock.
-    // The wall-clock floor is load-bearing on a COLD run — the first frame stalls several seconds
-    // compiling every render pipeline (and the IBL / atmosphere LUTs take a few frames to settle),
-    // and a bare frame count elapses while the GPU is still warming, so the grab races an unfinished
-    // scene and captures BLACK. (On a warm run 6 s ≈ a few hundred frames; the extra latency is
-    // fine for a verification shot.) Spawn the screenshot exactly once. We exit on file-existence
-    // below, so FIRST ensure the parent dir exists AND delete any stale PNG already at this path —
-    // otherwise a leftover from a prior run trips the exit guard on this very frame (before the
-    // async readback lands) and the harness exits leaving the OLD image in place.
-    if !clock.shot && clock.frame >= 120 && time.elapsed_secs() >= 6.0 {
+    // Take the shot once the scene has actually WARMED: ≥240 rendered frames AND ≥10 s wall-clock
+    // (raised from 120/6 s — user report: shaders sometimes still hadn't finished compiling at
+    // grab time, so shots captured with missing materials). `FOREST_SHOT_WARMUP=<secs>` raises
+    // the wall-clock floor further for pathological cases. The wall-clock floor is load-bearing
+    // on a COLD run — the first frame stalls several seconds compiling every render pipeline
+    // (and the IBL / atmosphere LUTs take a few frames to settle), and a bare frame count
+    // elapses while the GPU is still warming, so the grab races an unfinished scene and captures
+    // BLACK or shader-less patches. (On a warm run the extra latency is fine for a verification
+    // shot.) Spawn the screenshot exactly once. We exit on file-existence below, so FIRST ensure
+    // the parent dir exists AND delete any stale PNG already at this path — otherwise a leftover
+    // from a prior run trips the exit guard on this very frame (before the async readback lands)
+    // and the harness exits leaving the OLD image in place.
+    let min_secs = std::env::var("FOREST_SHOT_WARMUP")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok())
+        .unwrap_or(0.0)
+        .max(10.0);
+    if !clock.shot && clock.frame >= 240 && time.elapsed_secs() >= min_secs {
         if let Some(parent) = std::path::Path::new(&path.0).parent().filter(|p| !p.as_os_str().is_empty()) {
             let _ = std::fs::create_dir_all(parent);
         }
