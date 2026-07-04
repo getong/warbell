@@ -26,8 +26,8 @@ Built in Rust on [**Bevy 0.18**](https://bevyengine.org).
 
 |  |  |  |
 |---|---|---|
-| ![Orks storm the keep at night](site/screenshots/orks-night.png) | ![A forest glade](site/screenshots/forest-glade.png) | ![Gnashfang Hold, the ork stronghold](site/screenshots/ork-temple.png) |
-| ![The rock highlands at night](site/screenshots/mountains.png) | ![Clashing with the desert rival](site/screenshots/rival-castle.png) | ![Villagers mining the desert](site/screenshots/desert-miners.png) |
+| ![The keep and village at the island's heart](site/screenshots/town-center.png) | ![Orks storm the keep at night](site/screenshots/orks-night.png) | ![The drowned swamp](site/screenshots/swamp.png) |
+| ![The snowbound pinewood](site/screenshots/snow.png) | ![The desert and the rival keep](site/screenshots/desert.png) | ![Gnashfang Hold, the ork stronghold](site/screenshots/ork-temple.png) |
 
 ## Controls
 
