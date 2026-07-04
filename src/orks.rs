@@ -1386,6 +1386,12 @@ pub struct Armory {
     tmpl: Vec<((OrkVariant, Faction), Template)>,
     eye_mesh: Handle<Mesh>,
     eye_mat: Handle<StandardMaterial>, // glowing eyes stay a plain emissive StandardMaterial
+    /// War-torch strapped over a bearer's shoulder (shaft + lashing + pitch head; vertex-coloured
+    /// so it rides the shared skin material and flashes with the body on a hit).
+    torch_mesh: Handle<Mesh>,
+    /// Teardrop torch flame — emissive `StandardMaterial` like the eyes, so bloom catches it.
+    flame_mesh: Handle<Mesh>,
+    flame_mat: Handle<StandardMaterial>,
 }
 
 impl Armory {
@@ -1419,7 +1425,23 @@ impl Armory {
             unlit: true,
             ..default()
         });
-        Armory { mat, tmpl, eye_mesh, eye_mat }
+        // War-torch (authored torch-local, +Y up the shaft; the flame/light are children of the
+        // shaft entity so they inherit its shoulder tilt). See `spawn_inner`'s torch-bearer block.
+        let torch_mesh = meshes.add(group(vec![
+            cyl(0.035, 0.95, v(0.0, 0.475, 0.0), Quat::IDENTITY, lin(0x4a2a16)), // shaft
+            cyl(0.052, 0.09, v(0.0, 0.20, 0.0), Quat::IDENTITY, lin(0x2e1f12)), // leather lashing
+            frustum(0.078, 0.048, 0.17, v(0.0, 0.99, 0.0), Quat::IDENTITY, lin(0x241408)), // pitch-soaked head
+        ]));
+        let flame_mesh =
+            meshes.add(Mesh::from(Sphere::new(0.105).mesh().ico(1).unwrap()).scaled_by(Vec3::new(1.0, 1.55, 1.0)));
+        // Matches the fire family (`firelight` embers / castle flames): warm base, strong emissive.
+        let flame_mat = materials.add(StandardMaterial {
+            base_color: Color::srgb(1.0, 0.55, 0.22),
+            emissive: LinearRgba::rgb(5.0, 1.9, 0.35),
+            unlit: true,
+            ..default()
+        });
+        Armory { mat, tmpl, eye_mesh, eye_mat, torch_mesh, flame_mesh, flame_mat }
     }
 
     fn template(&self, variant: OrkVariant, faction: Faction) -> &Template {
@@ -1545,6 +1567,43 @@ impl Armory {
                 p.spawn((Mesh3d(self.eye_mesh.clone()), MeshMaterial3d(self.eye_mat.clone()), Transform::from_translation(off), OrkEye));
             }
         });
+        // Torch-bearers: ~a third of the melee line (grunts/berserkers — scouts sneak, shamans
+        // already glow) marches with a lit war-torch strapped over the shoulder. This is the night
+        // siege's READABILITY fix: capture footage showed the horde as black cutouts against the
+        // moon-dark ground, so the bearers carry their own warm light into the fight (and read as
+        // a river of fire on the horizon from the walls). Seed-hashed, NOT `rng`-drawn, so the
+        // existing spawn rng sequence (phase/facing/timer/heal_cd) is untouched.
+        let torch_bearer = matches!(variant, OrkVariant::Grunt | OrkVariant::Berserker)
+            && (seed.wrapping_mul(2654435761) >> 7) % 100 < 35;
+        if torch_bearer {
+            commands.entity(root).with_children(|p| {
+                // Root-local shoulder mount, raked back so the flame rides high behind the head.
+                // Root scale ≈ 1 (BASE_SCALE × variant × BIPED_SIZE_FIX), so these are ~world units.
+                p.spawn((
+                    Mesh3d(self.torch_mesh.clone()),
+                    MeshMaterial3d(self.mat.clone()),
+                    Transform {
+                        translation: Vec3::new(-0.16, 0.72, -0.22),
+                        rotation: xyz(-0.38, 0.0, -0.12),
+                        scale: Vec3::ONE,
+                    },
+                ))
+                .with_children(|t| {
+                    // Flame + flicker-light at the shaft tip (shaft-local, inherits the rake).
+                    // The light rides `firelight`'s shared flicker/ember systems, so a marching
+                    // bearer trails sparks at night for free. Emissive `StandardMaterial` — the
+                    // hurt-flash skin-clone only touches `CreatureMaterial` children, so no
+                    // `OrkEye` guard is needed here.
+                    t.spawn((
+                        Mesh3d(self.flame_mesh.clone()),
+                        MeshMaterial3d(self.flame_mat.clone()),
+                        Transform::from_translation(Vec3::new(0.0, 1.12, 0.0)),
+                        bevy::light::NotShadowCaster,
+                        crate::firelight::held_torch_light(phase * 3.7),
+                    ));
+                });
+            });
+        }
         root
     }
 
