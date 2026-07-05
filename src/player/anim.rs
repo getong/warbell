@@ -1050,19 +1050,28 @@ pub fn hero_anim(
                 let elbow = part.joint == Joint::ElbowR;
                 if let Some((Some((sh, el)), _)) = gesture {
                     rot = if elbow { el } else { sh };
-                } else if attack.is_none() && hero.charge_t <= CHARGE_GRACE && fp_amt > 0.0 {
-                    // First-person sword viewmodel, two carries blended by `fp_ready`: out of
-                    // combat a calm LOW carry (arm hanging easy at the side, the resting blade's
-                    // tip just grazing the bottom-right frame corner — out of the way, per the
-                    // design); in combat the Skyrim-style READY (hilt low bottom-right, blade
-                    // angled up-and-inward). Breath/bob/sway keep both alive, damped in the low
-                    // carry so the idle arm doesn't wave across the frame edge.
+                } else if fp_amt > 0.0 {
+                    // First-person sword ARM. The eye sits AT the chest, so the third-person
+                    // clips (whose swings/braces orbit the chest) land ON the lens — the arm is
+                    // therefore ALWAYS viewmodel-driven in FP. Two carries blended by `fp_ready`:
+                    // out of combat a calm LOW carry (arm hanging easy, the resting blade's tip
+                    // just grazing the bottom-right corner); in combat the Skyrim-style READY.
+                    // An attack layers a compact wind→punch envelope on top (the blade's sweep
+                    // itself plays on the Sword joint below). Breath/bob/sway keep it alive.
+                    let (back, fwd) = match &attack {
+                        Some((Phase::Wind, p)) => (*p, 0.0),
+                        Some((Phase::Strike, p)) => (1.0 - *p, *p),
+                        Some((Phase::Recovery, p)) => (0.0, 1.0 - *p),
+                        None => (0.0, 0.0),
+                    };
                     let target = if elbow {
-                        rx(lerp(-0.35, -1.30, fp_ready) + fp_bob_v * 0.6)
+                        rx(lerp(-0.35, -1.30, fp_ready) - 0.30 * back + 0.75 * fwd + fp_bob_v * 0.6)
                     } else {
                         e3(
-                            lerp(0.10, -0.70, fp_ready) + fp_breath + fp_bob_v,
-                            -(fp_sway + fp_bob_l) * lerp(0.5, 1.0, fp_ready) - 0.35 * fp_ready,
+                            lerp(0.10, -0.70, fp_ready) - 0.25 * back + 0.15 * fwd + fp_breath + fp_bob_v,
+                            -(fp_sway + fp_bob_l) * lerp(0.5, 1.0, fp_ready) - 0.35 * fp_ready
+                                - 0.20 * back
+                                + 0.25 * fwd,
                             lerp(0.12, 0.10, fp_ready),
                         )
                     };
@@ -1073,7 +1082,9 @@ pub fn hero_anim(
                 // FP ready: blade diagonal up-inward toward frame centre (Skyrim ready stance).
                 // X≈1.30 rises the hilt from the corner; Y sweeps the blade toward upper-centre.
                 // Scaled by `fp_ready` so the low carry keeps the rest tilt (blade forward-down,
-                // tip at the corner). Attack/block/charge own it otherwise.
+                // tip at the corner). Attack/block/charge keep the CLIP's wrist rotation — with
+                // the hand pinned by the FP arm above, the clip's big sword sweeps read as the
+                // FP slash arcs.
                 if attack.is_none() && block_amt < 0.5 && hero.charge_t <= CHARGE_GRACE && fp_amt > 0.0 {
                     let ready = e3(1.30 + fp_bob_v * 0.5, -(0.60 + fp_sway), 0.15);
                     rot = rot.slerp(ready, fp_amt * fp_ready);
@@ -1083,19 +1094,20 @@ pub fn hero_anim(
                 let elbow = part.joint == Joint::ElbowL;
                 if let Some((_, Some((sh, el)))) = gesture {
                     rot = if elbow { el } else { sh };
-                } else if attack.is_none() && block_amt < 0.5 && fp_amt > 0.0 {
-                    // First-person shield viewmodel (mirror of the sword arm): the low carry hangs
-                    // the shield edge-on beside the thigh (out of frame bar a sliver in the
-                    // bottom-left corner); ready raises the forearm so it rides the corner as a
-                    // guard. Skipped while blocking — `defend_pose` braces the shield flat in
-                    // front, which should win.
+                } else if fp_amt > 0.0 {
+                    // First-person shield ARM (always viewmodel-driven in FP — see the sword arm
+                    // note): the low carry hangs the shield edge-on beside the thigh (out of
+                    // frame bar a sliver in the bottom-left corner); ready raises the forearm to
+                    // ride the corner as a guard; a raised guard (`block_amt`) BRACES it up into
+                    // the lower-left of frame, where the pose's face-on Shield rotation turns the
+                    // plate to the camera.
                     let target = if elbow {
-                        rx(lerp(-0.55, -1.25, fp_ready) + fp_bob_v * 0.6)
+                        rx(lerp(lerp(-0.55, -1.25, fp_ready), -1.50, block_amt) + fp_bob_v * 0.6)
                     } else {
                         e3(
-                            lerp(0.10, -1.05, fp_ready) + fp_breath + fp_bob_v,
+                            lerp(lerp(0.10, -1.05, fp_ready), -1.15, block_amt) + fp_breath + fp_bob_v,
                             -(fp_sway - fp_bob_l) * lerp(0.5, 1.0, fp_ready) - 0.15 * fp_ready,
-                            lerp(-0.12, -0.05, fp_ready),
+                            lerp(lerp(-0.12, -0.05, fp_ready), -0.02, block_amt),
                         )
                     };
                     rot = rot.slerp(target, fp_amt);

@@ -98,12 +98,23 @@ pub fn fp_debug_dump(
     fp: Res<camera::FirstPerson>,
     cam: Query<&GlobalTransform, With<Camera3d>>,
     parts: Query<(&HeroPart, &GlobalTransform)>,
+    hero_q: Query<(&Hero, &HeroHealth)>,
     mut next: Local<f32>,
 ) {
     if std::env::var("FOREST_FPDBG").is_err() || fp.blend < 0.9 || time.elapsed_secs() < *next {
         return;
     }
     *next = time.elapsed_secs() + 2.0;
+    if let Ok((hero, hh)) = hero_q.single() {
+        info!(
+            "FPDBG state threats={} combat_in={:.1} attacking={} blocking={} blend={:.2}",
+            hero.threats,
+            hero.combat_until - time.elapsed_secs(),
+            hero.attacking,
+            hh.blocking,
+            fp.blend
+        );
+    }
     let Ok(cam_gt) = cam.single() else { return };
     let inv = cam_gt.affine().inverse();
     for (p, gt) in &parts {
