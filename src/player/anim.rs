@@ -947,6 +947,20 @@ pub fn hero_anim(
     *fp_ready += ((if fp_want_ready { 1.0 } else { 0.0 }) - *fp_ready) * (dt * fp_ready_rate).min(1.0);
     let fp_ready = fp_ready.clamp(0.0, 1.0);
 
+    // FP attack envelope, shared by the sword arm and wrist: `back` coils through the wind (and
+    // through a held Heavy-Strike charge), `fwd` punches through the strike and eases out across
+    // the recovery.
+    let (fp_atk_back, fp_atk_fwd) = if hero.charge_t > CHARGE_GRACE && attack.is_none() {
+        (1.0, 0.0)
+    } else {
+        match &attack {
+            Some((Phase::Wind, p)) => (*p, 0.0),
+            Some((Phase::Strike, p)) => (1.0 - *p, *p),
+            Some((Phase::Recovery, p)) => (0.0, 1.0 - *p),
+            None => (0.0, 0.0),
+        }
+    };
+
     let (fp_breath, fp_bob_v, fp_bob_l, fp_sway) = if fp_amt > 0.0 {
         let breath = (now * 3.1).sin() * 0.018; // ~0.5 Hz idle heave
         // Vertical pump at 2× stride (one dip per footfall), light lateral sway at 1×; a touch
@@ -1058,12 +1072,7 @@ pub fn hero_anim(
                     // just grazing the bottom-right corner); in combat the Skyrim-style READY.
                     // An attack layers a compact wind→punch envelope on top (the blade's sweep
                     // itself plays on the Sword joint below). Breath/bob/sway keep it alive.
-                    let (back, fwd) = match &attack {
-                        Some((Phase::Wind, p)) => (*p, 0.0),
-                        Some((Phase::Strike, p)) => (1.0 - *p, *p),
-                        Some((Phase::Recovery, p)) => (0.0, 1.0 - *p),
-                        None => (0.0, 0.0),
-                    };
+                    let (back, fwd) = (fp_atk_back, fp_atk_fwd);
                     let target = if elbow {
                         rx(lerp(-0.35, -1.05, fp_ready) - 0.30 * back + 0.75 * fwd + fp_bob_v * 0.6)
                     } else {
@@ -1079,17 +1088,24 @@ pub fn hero_anim(
                 }
             }
             Joint::Sword => {
-                // FP ready: blade angled up-forward from the bottom-right hilt toward frame
-                // centre (Skyrim ready stance). NB the FP arm tilts the HAND frame back, so the
-                // wrist X here is far smaller than the pose-space intuition suggests — tuned
-                // against the FPDBG camera-space blade probes, not by eye. A raised guard tucks
-                // the blade back down to the rest carry (out of frame — the shield is the story).
-                // Attack/charge keep the CLIP's wrist rotation — with the hand pinned by the FP
-                // arm above, the clip's big sword sweeps read as the FP slash arcs.
-                if attack.is_none() && hero.charge_t <= CHARGE_GRACE && fp_amt > 0.0 {
-                    let ready = e3(0.35 + fp_bob_v * 0.5, -(0.60 + fp_sway), 0.15);
-                    let target = ready.slerp(e3(1.95, 0.30, 0.0), block_amt);
-                    rot = rot.slerp(target, fp_amt * fp_ready.max(block_amt));
+                // FP wrist — fully viewmodel-owned in first person: the FP arm tilts the HAND
+                // frame so far back that EVERY pose-space wrist angle (rest 1.95, the clips'
+                // sweeps) points the blade up at / behind the lens. These angles are SOLVED from
+                // the FPDBG camera-space probes (reconstruct the hand basis, invert the desired
+                // camera-space blade line back to joint-local Euler), not eyeballed:
+                // - ready: blade up-forward from the bottom-right hilt toward frame centre
+                // - attack: the envelope cocks it back-right through the wind, sweeps it across
+                //   toward centre-down through the strike (the arm punch carries the hilt)
+                // - guard: tucked down-forward-right, out of frame — the shield is the story.
+                if fp_amt > 0.0 {
+                    let combat = e3(
+                        2.68 - 0.70 * fp_atk_back + 0.55 * fp_atk_fwd + fp_bob_v * 0.5,
+                        -(0.60 + fp_sway + 0.35 * fp_atk_back - 0.65 * fp_atk_fwd),
+                        -0.44,
+                    );
+                    let target = combat.slerp(e3(-2.42, -0.60, -0.33), block_amt);
+                    let w = if attack.is_some() { fp_amt } else { fp_amt * fp_ready.max(block_amt) };
+                    rot = rot.slerp(target, w);
                 }
             }
             Joint::ShoulderL | Joint::ElbowL => {
@@ -1104,10 +1120,10 @@ pub fn hero_anim(
                     // the lower-left of frame, where the pose's face-on Shield rotation turns the
                     // plate to the camera.
                     let target = if elbow {
-                        rx(lerp(lerp(-0.55, -0.90, fp_ready), -1.20, block_amt) + fp_bob_v * 0.6)
+                        rx(lerp(lerp(-0.55, -1.00, fp_ready), -1.20, block_amt) + fp_bob_v * 0.6)
                     } else {
                         e3(
-                            lerp(lerp(0.10, -0.50, fp_ready), -0.75, block_amt) + fp_breath + fp_bob_v,
+                            lerp(lerp(0.10, -0.55, fp_ready), -0.75, block_amt) + fp_breath + fp_bob_v,
                             -(fp_sway - fp_bob_l) * lerp(0.5, 1.0, fp_ready) - 0.15 * fp_ready,
                             lerp(lerp(-0.12, -0.05, fp_ready), -0.02, block_amt),
                         )
@@ -1115,10 +1131,15 @@ pub fn hero_anim(
                     rot = rot.slerp(target, fp_amt);
                 }
             }
-            // NB: no FP override on Joint::Shield — the rest carry keeps the shield edge-on along
-            // the forearm. Tilting it "open" here showed its BACK/strap side whenever the stride
-            // threw it into frame (the "holds the shield backwards" bug); the block pose is where
-            // the face turns to the camera deliberately.
+            Joint::Shield => {
+                // FP block: turn the plate's FACE to the camera, low in frame — the pose-space
+                // defend brace (rx(π/2)) shows its BACK through the FP hand frame. Solved from
+                // the FPDBG probes like the sword wrist. Out of block, no override — the rest
+                // carry keeps the shield edge-on along the forearm (a subtle corner sliver).
+                if fp_amt > 0.0 && block_amt > 0.001 {
+                    rot = rot.slerp(e3(-0.98, -0.02, 0.17), fp_amt * block_amt);
+                }
+            }
             _ => {}
         }
 
