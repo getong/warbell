@@ -1138,7 +1138,8 @@ pub fn hero_anim(
                 // the FPDBG probes like the sword wrist. Out of block, no override — the rest
                 // carry keeps the shield edge-on along the forearm (a subtle corner sliver).
                 if fp_amt > 0.0 && block_amt > 0.001 {
-                    rot = rot.slerp(e3(-0.98, -0.02, 0.17), fp_amt * block_amt);
+                    // Z carries a π roll — the other solution branch held the heater point-UP.
+                    rot = rot.slerp(e3(-0.98, -0.02, -2.97), fp_amt * block_amt);
                 }
             }
             _ => {}
