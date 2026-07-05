@@ -1061,7 +1061,7 @@ fn chamfer_box(w: f32, h: f32, d: f32, e: f32) -> Mesh {
     m
 }
 fn cham(w: f32, h: f32, d: f32) -> f32 {
-    (w.min(h).min(d) * 0.26).clamp(0.01, 0.05)
+    (w.min(h).min(d) * 0.32).clamp(0.01, 0.07)
 }
 fn bx(w: f32, h: f32, d: f32, off: Vec3, c: [f32; 4]) -> Mesh {
     tinted(chamfer_box(w, h, d, cham(w, h, d)).translated_by(off), c)
@@ -1073,7 +1073,7 @@ fn cone(r: f32, h: f32, off: Vec3, rot: Quat, c: [f32; 4]) -> Mesh {
     tinted(Cone { radius: r, height: h }.mesh().build().rotated_by(rot).translated_by(off), c)
 }
 fn cyl(r: f32, h: f32, off: Vec3, rot: Quat, c: [f32; 4]) -> Mesh {
-    tinted(Cylinder::new(r, h).mesh().resolution(7).build().rotated_by(rot).translated_by(off), c)
+    tinted(Cylinder::new(r, h).mesh().resolution(12).build().rotated_by(rot).translated_by(off), c)
 }
 fn orb(r: f32, off: Vec3, c: [f32; 4]) -> Mesh {
     tinted(Sphere::new(r).mesh().ico(2).unwrap().translated_by(off), c)
@@ -1086,7 +1086,7 @@ fn baked(m: Mesh, rot: Quat, off: Vec3) -> Mesh {
 
 /// Tapered cylinder (three.js `CylinderGeometry(rt,rb,h)`) — for the studio-rig ork limbs/torso.
 fn frustum(rt: f32, rb: f32, h: f32, off: Vec3, rot: Quat, c: [f32; 4]) -> Mesh {
-    tinted(ConicalFrustum { radius_top: rt, radius_bottom: rb, height: h }.mesh().resolution(6).build().rotated_by(rot).translated_by(off), c)
+    tinted(ConicalFrustum { radius_top: rt, radius_bottom: rb, height: h }.mesh().resolution(12).build().rotated_by(rot).translated_by(off), c)
 }
 /// scale → rotate → translate → tint (three.js `T*R*S`), for parts that need a non-uniform scale.
 fn part(mut m: Mesh, scale: Vec3, rot: Quat, off: Vec3, c: [f32; 4]) -> Mesh {
@@ -1123,7 +1123,7 @@ pub(crate) fn ork_biped_meshes(variant: OrkVariant, faction: Faction) -> crate::
         bxr(0.22, 0.22, 0.05, v(0.0, -0.1, 0.14), rx(0.15), cloth), // loin flap
     ]);
     let torso = group(vec![
-        part(ConicalFrustum { radius_top: 0.30, radius_bottom: 0.27, height: 0.44 }.mesh().resolution(6).build(), v(1.15, 1.0, 1.0), rx(0.08), v(0.0, 0.14, 0.02), skin), // chest (broad but not a slab — arms attach at the edge)
+        part(ConicalFrustum { radius_top: 0.30, radius_bottom: 0.27, height: 0.44 }.mesh().resolution(12).build(), v(1.15, 1.0, 1.0), rx(0.08), v(0.0, 0.14, 0.02), skin), // chest (broad but not a slab — arms attach at the edge)
         bxr(0.4, 0.06, 0.06, v(0.0, 0.22, 0.15), rx(0.1), leather), // chest strap
         bxr(0.34, 0.32, 0.06, v(0.0, 0.12, -0.15), rx(-0.08), leather), // back panel
         // ── restored variety: lighter underbelly + faction war-paint + a bone-tooth trophy necklace
@@ -1174,8 +1174,8 @@ pub(crate) fn ork_biped_meshes(variant: OrkVariant, faction: Faction) -> crate::
     let head = group(head_parts);
     let shoulder = |sign: f32| {
         group(vec![
-            part(Sphere::new(0.16).mesh().ico(1).unwrap(), v(1.2, 0.8, 1.1), rz(sign * 0.25), v(sign * 0.02, 0.04, 0.0), leather), // pad
-            part(Sphere::new(0.15).mesh().ico(1).unwrap(), v(1.05, 0.45, 1.05), Quat::IDENTITY, v(0.0, 0.07, 0.0), dark), // fur trim collar
+            part(Sphere::new(0.16).mesh().ico(2).unwrap(), v(1.2, 0.8, 1.1), rz(sign * 0.25), v(sign * 0.02, 0.04, 0.0), leather), // pad
+            part(Sphere::new(0.15).mesh().ico(2).unwrap(), v(1.05, 0.45, 1.05), Quat::IDENTITY, v(0.0, 0.07, 0.0), dark), // fur trim collar
             frustum(0.17, 0.15, 0.28, v(0.0, -0.14, 0.0), Quat::IDENTITY, skin), // bicep (thick)
         ])
     };
