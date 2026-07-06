@@ -302,7 +302,8 @@ const GUARD_SPEED: f32 = 2.9; // a touch quicker so the muster keeps pace with t
 const GUARD_ATTACK_CD: f32 = 1.0;
 /// An archer engages from this far out — well past the melee scrum, inside the wall-to-field
 /// sightlines, and comfortably under the shaman's own cast range × its threat.
-const BOW_RANGE: f32 = 16.0;
+/// `pub(crate)`: the rival's desert bowmen (`rival.rs`) fight at the same range.
+pub(crate) const BOW_RANGE: f32 = 16.0;
 /// Full draw-and-loose clip length (seconds) — the arrow releases at `anim::BOW_RELEASE_P` of it.
 /// `pub(crate)`: the keep-roof sentries (`defenses.rs`) time their shots off the same clip.
 pub(crate) const BOW_SHOT_SECS: f32 = 1.15;
@@ -315,7 +316,8 @@ fn archer_damage(tier: u32) -> f32 {
     guard_damage(tier) * 1.5
 }
 /// A bow release is heard from farther than a sword clash (a sharp twang carries).
-const BOW_SFX_RADIUS: f32 = 22.0;
+/// `pub(crate)`: the rival's bowmen (`rival.rs`) gate their loose cue on the same earshot.
+pub(crate) const BOW_SFX_RADIUS: f32 = 22.0;
 /// A passive townsperson's self-defence swing: weak (a hoe, an axe haft) but real. −30% off the old 6.
 const NPC_DEFEND_DMG: f32 = 4.2;
 const NPC_DEFEND_CD: f32 = 1.2;
@@ -522,8 +524,10 @@ fn reset_rescues(mut r: ResMut<RescuedCamps>) {
 /// spawn seed (a stable hash, not live RNG), so the militia's sword/bow mix holds at ~2:1 across
 /// deaths, regrowth and Continue (bodies are never saved — the population count is — so a
 /// seed-derived trait is the save-proof way to keep the ratio).
+/// `pub(crate)`: the rival's garrison/raid spawns (`rival.rs`) apply the same one-in-three split,
+/// so both towns' militaries keep the same sword/bow mix.
 const BOWMAN_RATIO: u32 = 3; // one in this many
-fn is_bowman(seed: u32) -> bool {
+pub(crate) fn is_bowman(seed: u32) -> bool {
     let mut s = seed ^ 0xA11C_0BE5;
     next_u32(&mut s) % BOWMAN_RATIO == 0
 }
@@ -571,6 +575,27 @@ pub fn spawn_rival_soldier(
     // textured-sandstone fort no longer carries on its own.
     let kind = Kind::Guard { skin: SKIN[(seed as usize) % SKIN.len()], tunic: 0xbf9a55 }; // desert garb
     let root = spawn(commands, meshes, &mat, kind, home, pos, 2.6, 2.0, SCALE, seed, true); // desert = keffiyeh + cloak
+    commands.entity(root).remove::<(Guard, NpcHp, Townsfolk)>();
+    root
+}
+
+/// Spawn a **rival** bowman body for `rival.rs` — the desert-garbed mirror of the town's longbow
+/// archer (`Kind::Archer` + `desert=true` → sand headwrap, crimson fletchings, longbow + quiver).
+/// Like [`spawn_rival_soldier`], the town-pool identity is stripped; the [`Archer`] marker +
+/// `Role::Archer` are KEPT so `villager_drive` plays the draw-and-loose clip off the `atk_anim`
+/// the rival brain stamps. The caller (`rival.rs`) adds `RivalSoldier`/`RivalBow`/`Health` and its
+/// own ranged combat brain.
+pub fn spawn_rival_archer(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
+    home: Vec2,
+    pos: Vec2,
+    seed: u32,
+) -> Entity {
+    let mat = crate::creature::make_creature_material(creature_mats);
+    let kind = Kind::Archer { skin: SKIN[(seed as usize) % SKIN.len()], tunic: 0xbf9a55 }; // desert garb
+    let root = spawn(commands, meshes, &mat, kind, home, pos, 2.6, 2.0, SCALE, seed, true);
     commands.entity(root).remove::<(Guard, NpcHp, Townsfolk)>();
     root
 }
@@ -1658,6 +1683,7 @@ fn guard_combat(
                             target: te,
                             shooter: self_e,
                             damage: arrow_dmg,
+                            rival: false,
                         });
                         // The string's twang — earshot-gated like the melee clash, but carries farther.
                         if hero_pos.is_some_and(|hp| v.pos.distance(hp) < BOW_SFX_RADIUS) {

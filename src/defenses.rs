@@ -280,6 +280,7 @@ fn keep_archer_shots(
                     target: te,
                     shooter: self_e,
                     damage: d.profile.damage as f32 * DMG_SCALE,
+                    rival: false,
                 });
             }
         } else {

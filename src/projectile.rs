@@ -214,6 +214,11 @@ pub struct ArrowSpawn {
     /// The archer, so a struck beast enrages at the right assailant.
     pub shooter: Entity,
     pub damage: f32,
+    /// Loosed by the RIVAL's desert bowmen (`rival.rs`): the shaft carries crimson fletchings and
+    /// hits the OTHER side — the hero (via `PendingHeroDamage`, so a raised shield blocks it like a
+    /// shaman bolt) and the player's townsfolk (via the `NpcDamage` channel, like a rival blade) —
+    /// instead of the friendly arrows' ork/predator/rival hostile set.
+    pub rival: bool,
 }
 
 #[derive(Resource, Default)]
@@ -229,6 +234,8 @@ struct Arrow {
     ttl: f32,
     /// `elapsed_secs` when it hit the ground; `< 0` while still flying.
     stuck_at: f32,
+    /// A rival bowman's shaft — hits the hero/townsfolk instead of the hostile set (see [`ArrowSpawn::rival`]).
+    rival: bool,
 }
 
 /// Shared arrow mesh (one merged flat-shaded shaft, vertex-coloured) + plain white material,
@@ -237,6 +244,8 @@ struct Arrow {
 #[derive(Resource)]
 struct ArrowAssets {
     mesh: Handle<Mesh>,
+    /// The rival bowmen's shaft — same build, crimson vanes (their faction dye).
+    mesh_rival: Handle<Mesh>,
     mat: Handle<StandardMaterial>,
 }
 
@@ -251,25 +260,30 @@ fn setup_arrow_assets(
         m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![lin(c); n]);
         m
     };
-    // Same kit palette as the archer model (`peasant_model.rs`): yew shaft, iron point, blue vanes.
-    let mut m = tint(Cuboid::new(0.045, 0.045, 0.68).mesh().build(), 0x4f3c26); // shaft
-    let head = tint(
-        Cone { radius: 0.045, height: 0.13 }
-            .mesh()
-            .build()
-            .rotated_by(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)) // +Y point → -Z
-            .translated_by(Vec3::new(0.0, 0.0, -0.38)),
-        0xcfd3dc,
-    );
-    let vane_a = tint(Cuboid::new(0.13, 0.02, 0.16).mesh().build().translated_by(Vec3::new(0.0, 0.0, 0.27)), 0x3f5f9e);
-    let vane_b = tint(Cuboid::new(0.02, 0.13, 0.16).mesh().build().translated_by(Vec3::new(0.0, 0.0, 0.27)), 0x3f5f9e);
-    for part in [head, vane_a, vane_b] {
-        m.merge(&part).expect("arrow parts share attributes");
-    }
-    m.duplicate_vertices();
-    m.compute_flat_normals();
+    // Same kit palette as the archer model (`peasant_model.rs`): yew shaft, iron point, faction-dyed
+    // vanes (militia blue FLETCH / the rival's crimson DESERT_FLETCH — keep in sync with that file).
+    let build = |vane: u32| -> Mesh {
+        let mut m = tint(Cuboid::new(0.045, 0.045, 0.68).mesh().build(), 0x4f3c26); // shaft
+        let head = tint(
+            Cone { radius: 0.045, height: 0.13 }
+                .mesh()
+                .build()
+                .rotated_by(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)) // +Y point → -Z
+                .translated_by(Vec3::new(0.0, 0.0, -0.38)),
+            0xcfd3dc,
+        );
+        let vane_a = tint(Cuboid::new(0.13, 0.02, 0.16).mesh().build().translated_by(Vec3::new(0.0, 0.0, 0.27)), vane);
+        let vane_b = tint(Cuboid::new(0.02, 0.13, 0.16).mesh().build().translated_by(Vec3::new(0.0, 0.0, 0.27)), vane);
+        for part in [head, vane_a, vane_b] {
+            m.merge(&part).expect("arrow parts share attributes");
+        }
+        m.duplicate_vertices();
+        m.compute_flat_normals();
+        m
+    };
     commands.insert_resource(ArrowAssets {
-        mesh: meshes.add(m),
+        mesh: meshes.add(build(0x3f5f9e)),
+        mesh_rival: meshes.add(build(0xc23a2e)),
         mat: materials.add(StandardMaterial::default()), // white; colour rides the vertices
     });
 }
@@ -281,11 +295,12 @@ fn spawn_queued_arrows(
 ) {
     for s in spawns.0.drain(..) {
         let vel = arrow_launch(s.from, s.aim, ARROW_SPEED, ARROW_GRAV);
+        let mesh = if s.rival { assets.mesh_rival.clone() } else { assets.mesh.clone() };
         commands.spawn((
-            Mesh3d(assets.mesh.clone()),
+            Mesh3d(mesh),
             MeshMaterial3d(assets.mat.clone()),
             Transform::from_translation(s.from).looking_to(vel.normalize_or_zero(), Vec3::Y),
-            Arrow { vel, damage: s.damage, target: s.target, shooter: s.shooter, ttl: ARROW_TTL, stuck_at: -1.0 },
+            Arrow { vel, damage: s.damage, target: s.target, shooter: s.shooter, ttl: ARROW_TTL, stuck_at: -1.0, rival: s.rival },
             BiomeEntity,
         ));
     }
@@ -294,10 +309,15 @@ fn spawn_queued_arrows(
 /// Fly every arrow along its ballistic arc, point-first: hit the aimed foe (or any hostile the
 /// shaft happens to pass through), damage its `Health` exactly like a guard's sword blow — kill →
 /// death-fade toppling along the shaft's line, struck beast → enrage at the archer — or stick in
-/// the turf on a miss and fade after a beat.
+/// the turf on a miss and fade after a beat. A RIVAL bowman's shaft flies the same arc but hits
+/// the other side: the hero (blockable `PendingHeroDamage`, like a shaman bolt) and the player's
+/// townsfolk (the `NpcDamage` channel, like a rival blade).
 #[allow(clippy::type_complexity)]
 fn step_arrows(
     time: Res<Time>,
+    hero: Res<HeroState>,
+    mut pending: ResMut<PendingHeroDamage>,
+    mut npc_dmg: ResMut<crate::villagers::NpcDamage>,
     mut commands: Commands,
     mut kills: MessageWriter<crate::verbs::AnimalKilled>,
     mut arrows: Query<(Entity, &mut Arrow, &mut Transform)>,
@@ -314,6 +334,12 @@ fn step_arrows(
             Without<Arrow>,
             Without<crate::dying::Dying>,
         ),
+    >,
+    // The RIVAL arrows' targets — the player's town pool (guards + workers; damage goes through
+    // the NpcDamage channel, so their NpcHp/fight-back plumbing reacts like to any rival blade).
+    folk: Query<
+        (Entity, &Transform),
+        (With<crate::villagers::Townsfolk>, Without<Arrow>, Without<crate::dying::Dying>),
     >,
 ) {
     let dt = time.delta_secs().min(0.05);
@@ -332,43 +358,83 @@ fn step_arrows(
         let dir = a.vel.normalize_or_zero();
         tf.look_to(dir, Vec3::Y);
 
-        // Hit test: the aimed target gets the full radius; any other hostile the shaft passes
-        // through connects on a slightly tighter one (a volley into a horde lands *somewhere*).
-        let mut hit: Option<Entity> = None;
-        if let Ok((te, ttf, ..)) = hostiles.get(a.target) {
-            if (ttf.translation + Vec3::Y).distance(tf.translation) < ARROW_HIT_RADIUS {
-                hit = Some(te);
+        // A rival shaft tests OUR side (hero chest + townsfolk) and never the hostile set — the
+        // rival doesn't fight the orks, and its own garrison must not catch friendly fire.
+        if a.rival {
+            let mut struck = false;
+            let hero_chest = Vec3::new(hero.pos.x, hero.y + 1.0, hero.pos.y);
+            if hero.alive && hero_chest.distance(tf.translation) < ARROW_HIT_RADIUS {
+                pending.0 += a.damage;
+                pending.1 = Vec2::new(dir.x, dir.z).normalize_or_zero(); // directional hit-shake
+                struck = true;
             }
-        }
-        if hit.is_none() {
-            for (he, htf, ..) in hostiles.iter() {
-                if (htf.translation + Vec3::Y).distance(tf.translation) < ARROW_HIT_RADIUS * 0.8 {
-                    hit = Some(he);
-                    break;
+            if !struck {
+                // Aimed townsperson gets the full radius; any other a slightly tighter one.
+                let mut hit: Option<Entity> = None;
+                if let Ok((te, ttf)) = folk.get(a.target) {
+                    if (ttf.translation + Vec3::Y).distance(tf.translation) < ARROW_HIT_RADIUS {
+                        hit = Some(te);
+                    }
+                }
+                if hit.is_none() {
+                    for (fe, ftf) in folk.iter() {
+                        if (ftf.translation + Vec3::Y).distance(tf.translation) < ARROW_HIT_RADIUS * 0.8 {
+                            hit = Some(fe);
+                            break;
+                        }
+                    }
+                }
+                if let Some(fe) = hit {
+                    // `attacker: Some(shooter)` so a struck worker fights back against the bowman
+                    // like it does any rival blade (`npc_fight_back`).
+                    npc_dmg.0.push(crate::villagers::NpcHit { victim: fe, amount: a.damage, attacker: Some(a.shooter) });
+                    struck = true;
                 }
             }
-        }
-        if let Some(he) = hit {
-            if let Ok((_, htf, mut hp, animal)) = hostiles.get_mut(he) {
-                if hp.hp > 0.0 {
-                    hp.hp -= a.damage;
-                    // Light struck-feedback (no camera punch — it's not the hero's blow): the
-                    // target blinks + squashes so a landed shaft visibly *thuds* home.
-                    commands.entity(he).try_insert(crate::combat_fx::HurtFlash::new(now, 0.4));
-                    commands.entity(he).try_insert(crate::combat_fx::HitSquash::new(now, 0.09, false));
-                    if hp.hp <= 0.0 {
-                        // Topple the kill along the shaft's line — it falls the way it was shot.
-                        crate::dying::begin_dying_struck(&mut commands, he, now, Vec2::new(dir.x, dir.z), false);
-                        if let Some(an) = animal {
-                            kills.write(crate::verbs::AnimalKilled { at: htf.translation, species: an.species });
-                        }
-                    } else if animal.is_some() {
-                        commands.entity(he).try_insert(crate::wildlife::Struck { by: Some(a.shooter) });
+            if struck {
+                commands.entity(arrow_e).try_despawn();
+                continue;
+            }
+            // Miss → fall through to the shared ground-stick below.
+        } else {
+            // Hit test: the aimed target gets the full radius; any other hostile the shaft passes
+            // through connects on a slightly tighter one (a volley into a horde lands *somewhere*).
+            let mut hit: Option<Entity> = None;
+            if let Ok((te, ttf, ..)) = hostiles.get(a.target) {
+                if (ttf.translation + Vec3::Y).distance(tf.translation) < ARROW_HIT_RADIUS {
+                    hit = Some(te);
+                }
+            }
+            if hit.is_none() {
+                for (he, htf, ..) in hostiles.iter() {
+                    if (htf.translation + Vec3::Y).distance(tf.translation) < ARROW_HIT_RADIUS * 0.8 {
+                        hit = Some(he);
+                        break;
                     }
                 }
             }
-            commands.entity(arrow_e).try_despawn();
-            continue;
+            if let Some(he) = hit {
+                if let Ok((_, htf, mut hp, animal)) = hostiles.get_mut(he) {
+                    if hp.hp > 0.0 {
+                        hp.hp -= a.damage;
+                        // Light struck-feedback (no camera punch — it's not the hero's blow): the
+                        // target blinks + squashes so a landed shaft visibly *thuds* home.
+                        commands.entity(he).try_insert(crate::combat_fx::HurtFlash::new(now, 0.4));
+                        commands.entity(he).try_insert(crate::combat_fx::HitSquash::new(now, 0.09, false));
+                        if hp.hp <= 0.0 {
+                            // Topple the kill along the shaft's line — it falls the way it was shot.
+                            crate::dying::begin_dying_struck(&mut commands, he, now, Vec2::new(dir.x, dir.z), false);
+                            if let Some(an) = animal {
+                                kills.write(crate::verbs::AnimalKilled { at: htf.translation, species: an.species });
+                            }
+                        } else if animal.is_some() {
+                            commands.entity(he).try_insert(crate::wildlife::Struck { by: Some(a.shooter) });
+                        }
+                    }
+                }
+                commands.entity(arrow_e).try_despawn();
+                continue;
+            }
         }
 
         // Ground: plant the shaft point-first where it lands and let it fade out.
