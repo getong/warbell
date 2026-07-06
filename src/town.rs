@@ -11,7 +11,7 @@
 //! stay ungated. Numbers live in `town_store` (test-gated).
 
 use bevy::prelude::*;
-use tileworld_core::town_store::{BuildKind, Cost, PopEvent, Town, POP_PER_HOUSE};
+use tileworld_core::town_store::{BuildKind, Cost, MAX_HOUSES, PopEvent, Town, POP_PER_HOUSE};
 
 use crate::castle::{Mats, VillageMats, M};
 use crate::combat_fx::FloatReq;
@@ -870,14 +870,15 @@ fn demo_work_setup(
     *done = true;
     bank.0.add_wood(4000.0);
     bank.0.add_stone(4000.0);
-    const PLAN: [BuildKind; 8] = [
+    const PLAN: [BuildKind; 12] = [
         BuildKind::Lumber, BuildKind::Mine, BuildKind::Lumber, BuildKind::Farm,
         BuildKind::Mine, BuildKind::Lumber, BuildKind::Farm, BuildKind::Mine,
+        BuildKind::Lumber, BuildKind::Farm, BuildKind::Mine, BuildKind::Farm,
     ];
     for (i, k) in PLAN.iter().enumerate() {
         raise_plot(i, *k, &mut town, &mut bank, &mut commands, &mut meshes, &mats.0, &spots);
     }
-    for _ in 0..6 {
+    for _ in 0..MAX_HOUSES {
         town.0.build_house(&mut bank.0); // dwellings raise the pop cap → more workers staff the yards
     }
     // The workforce: producers staff from the idle `Townsfolk` (guard) pool — without bodies the
@@ -885,7 +886,7 @@ fn demo_work_setup(
     // source of truth (`sync_population_bodies` reconciles bodies to it and culls strays — direct
     // guard spawns get reaped right back to `population`), so raise the number and let the sync
     // grow the bodies; auto-assign then staffs farms first, lumber/mine after.
-    town.0.population = 14;
+    town.0.population = town.0.pop_cap(); // MAX_HOUSES × POP_PER_HOUSE = full 24-strong town
 }
 
 /// Raise one producer building on plot `i` (build + spawn its mesh).

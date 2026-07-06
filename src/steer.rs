@@ -142,7 +142,11 @@ pub fn advance(
 /// (segmented `Instant` timing inside `wildlife::animal_brain`, after gating the predator/prey
 /// search itself turned out to be a near-zero-cost no-op) as ~99% of the wildlife brain's real
 /// per-frame cost. Wholly wasted on an actor nobody's near enough to see clip through a rock.
-/// Always "succeeds" (never boxed-in) since there's no obstacle test to fail.
+/// Never boxed-in (no obstacle-fan to fail), but it DOES keep a single centre-footing gate: the
+/// step is refused if the new centre has no footing (open water / void). Without it a far animal
+/// walks straight onto a carved river — the render then has no ground to sit on and falls back to
+/// its stale Y, so it visibly FLOATS over the water ("bears floating next to rivers"). One
+/// `footing()` sample per frame, vs the ~80 the full `advance` fan costs, so LOD savings stand.
 pub fn advance_direct(pos: Vec2, facing: f32, goal: Vec2, step_dist: f32, max_turn_dt: f32) -> Step {
     let to = goal - pos;
     let dist = to.length();
@@ -152,5 +156,11 @@ pub fn advance_direct(pos: Vec2, facing: f32, goal: Vec2, step_dist: f32, max_tu
     let want = to.x.atan2(to.y);
     let new_facing = facing + wrap_pi(want - facing).clamp(-max_turn_dt, max_turn_dt);
     let fdir = Vec2::new(new_facing.sin(), new_facing.cos());
-    Step { facing: new_facing, pos: pos + fdir * step_dist, moving: true }
+    let np = pos + fdir * step_dist;
+    // Only step where there's ground to stand on; else pivot in place (turn toward goal, don't move).
+    if footing(np.x, np.y).is_some() {
+        Step { facing: new_facing, pos: np, moving: true }
+    } else {
+        Step { facing: new_facing, pos, moving: false }
+    }
 }

@@ -941,6 +941,17 @@ fn valid(place: Place, x: f32, z: f32, min_r: f32) -> bool {
         && place_ok(place, x, z)
 }
 
+/// True if `(x,z)` sits comfortably INSIDE its biome, not on the fray: the point AND four probes
+/// `r` out in the cardinal directions all satisfy `place`. Used to keep a herd anchor off the
+/// biome edge, so e.g. a desert herd reads as "in the desert" instead of straddling the grass
+/// transition. Relaxed (skipped) once anchor sampling is starved, so tight biomes still fill.
+fn interior_ok(place: Place, x: f32, z: f32, r: f32) -> bool {
+    place_ok(place, x, z)
+        && [(r, 0.0), (-r, 0.0), (0.0, r), (0.0, -r)]
+            .iter()
+            .all(|(dx, dz)| place_ok(place, x + dx, z + dz))
+}
+
 /// Minimum anchor distance from the castle for a species: a predator keeps its whole wander
 /// circle outside the town sanctuary; grazers only stay off the forced-grass safe-zone (deer at
 /// the walls are charming, wolves at the walls eat the peasants).
@@ -1070,22 +1081,43 @@ pub fn populate(
         let mut placed = 0u32;
         let mut attempts = 0u32;
         let attempt_cap = plan.count * 300 + 600;
+        // Spread herd anchors across the biome instead of clumping (2 anchors of 3 camels used to
+        // land as two tight 3-stacks in a huge desert — reading as "all in one spot"). Keep each
+        // new anchor a herd-scale apart from the others AND — unless the biome is too tight to
+        // satisfy it — well inside the biome interior (off the fray). Both constraints RELAX once
+        // we're past half the attempt budget, so small/awkward biomes still populate.
+        let sep = (plan.wander_r * 2.0).max(20.0);
+        let interior_r = plan.wander_r * 0.6;
+        let mut anchors: Vec<Vec2> = Vec::new();
         while placed < plan.count && attempts < attempt_cap {
             attempts += 1;
+            let relaxed = attempts > attempt_cap / 2;
             // Reject-sample a valid herd anchor inside the island.
             let ax = rng_range(&mut rng, -worldmap::GX + 5.0, worldmap::GX - 5.0);
             let az = rng_range(&mut rng, -worldmap::GZ + 5.0, worldmap::GZ - 5.0);
             if !valid(plan.place, ax, az, anchor_min_r(&plan)) {
                 continue;
             }
+            if !relaxed {
+                // Off the biome edge, and spread from the herds already placed.
+                if !interior_ok(plan.place, ax, az, interior_r)
+                    || anchors.iter().any(|a| a.distance(Vec2::new(ax, az)) < sep)
+                {
+                    continue;
+                }
+            }
+            anchors.push(Vec2::new(ax, az));
             let home = Vec2::new(ax, az);
+            // Herd spread: scale the jitter to the wander radius so a herd looks like a herd, not
+            // a stack of animals on one tile (the old fixed ±3 kept every member near-coincident).
+            let herd_r = (plan.wander_r * 0.4).clamp(3.0, 7.0);
             let want = plan.cluster.min(plan.count - placed);
             for _ in 0..want {
                 // Jitter each member around the anchor onto valid ground.
                 let mut pos = None;
                 for _ in 0..14 {
-                    let jx = ax + rng_range(&mut rng, -3.0, 3.0);
-                    let jz = az + rng_range(&mut rng, -3.0, 3.0);
+                    let jx = ax + rng_range(&mut rng, -herd_r, herd_r);
+                    let jz = az + rng_range(&mut rng, -herd_r, herd_r);
                     if valid(plan.place, jx, jz, anchor_min_r(&plan)) {
                         pos = Some((jx, jz));
                         break;

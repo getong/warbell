@@ -480,10 +480,22 @@ impl Default for Siege {
             wave_index: -1,
             spawned: 0,
             prep_seconds_left: PREP_DURATION,
-            difficulty: Difficulty::Normal,
+            difficulty: env_difficulty().unwrap_or(Difficulty::Normal),
             timers: WaveTimers::default(),
             skip_requested: false,
         }
+    }
+}
+
+/// `FOREST_DIFF=easy|normal|hard` boot-time difficulty override (staging/profiling knob — real
+/// play changes difficulty in-game with `G`). Read on every `Siege::default()` call (Startup +
+/// New Game reset), so it takes effect the moment a fresh run starts.
+fn env_difficulty() -> Option<Difficulty> {
+    match std::env::var("FOREST_DIFF").ok()?.trim().to_ascii_lowercase().as_str() {
+        "easy" => Some(Difficulty::Easy),
+        "normal" => Some(Difficulty::Normal),
+        "hard" => Some(Difficulty::Hard),
+        _ => None,
     }
 }
 

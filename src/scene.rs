@@ -487,13 +487,14 @@ fn advance_sky(
         .ok()
         .and_then(|s| s.trim().parse::<f32>().ok())
         .unwrap_or(0.15);
-    // Grade cut + camera exposure eased day 11.0 → night 10.3 (higher ev100 = darker, so this
+    // Grade cut + camera exposure eased day 10.85 → night 10.4 (higher ev100 = darker, so this
     // lifts the PBR-lit scene slightly after dark — the moody read still comes from the grade cut).
     for (mut g, mut e, _) in &mut cam_fx_q {
         g.global.exposure = -night * night_stops;
         // Day base 10.85 (was 11.0) — 2026-07 cinematic pass: the airy high-key reference read
         // needed the day scene lifted ~0.15 stop (the atmospherics haze eats a little light).
-        e.ev100 = 10.85 - night * (10.85 - 10.3);
+        // Night ev100 10.3 → 10.4 (higher ev100 = darker): night read a touch too light.
+        e.ev100 = 10.85 - night * (10.85 - 10.4);
     }
 
     // Bloom: the camera's halo/glow, driven per-region + per-time so emissive things (fire,

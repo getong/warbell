@@ -43,6 +43,9 @@ const COMBO_WINDOW: f32 = 0.9;
 const COMBO_DUR: [f32; 3] = [1.0, 0.86, 0.78];
 /// Per-step damage multiplier — the chain rewards staying on the offense.
 const COMBO_DMG: [f64; 3] = [1.0, 1.12, 1.28];
+/// Global scale on the hero's outgoing melee damage — a flat −25% playtest nerf
+/// (applied to the cone/dummy/crit damage `base`, on top of weapons/crit/combo/buffs).
+const HERO_OUTGOING_DMG_MUL: f64 = 0.75;
 
 // ── Attack magnetism (gap-closer) ──
 // A swing that starts with the committed target a step or two out of reach GLIDES the hero onto
@@ -749,8 +752,11 @@ pub fn player_attack(
     let dmg_mul = crate::siege::mods_for(diff).hero_dmg_mul as f64;
     // Combo steps 2/3 hit harder (variant == combo step for light swings; a Heavy skips it).
     let combo_mult = if hero.heavy { 1.0 } else { COMBO_DMG[hero.attack_variant.min(2) as usize] };
-    let base =
-        (player.0.attack_damage + mods.weapon_bonus()) * mods.power_mult(now) * dmg_mul * combo_mult;
+    let base = (player.0.attack_damage + mods.weapon_bonus())
+        * mods.power_mult(now)
+        * dmg_mul
+        * combo_mult
+        * HERO_OUTGOING_DMG_MUL;
     // Broadcast the cone so ore/dummies share this swing (non-crit damage).
     mods.publish_swing(origin, fwd, base.round() as f32);
     // A charged Heavy is a GUARANTEED crit at ×HEAVY_MULT; a RIPOSTE (the counter-thrust a timed
