@@ -601,7 +601,28 @@ const PROP_TINTS: [[f32; 3]; 3] = [
     [0.87, 0.92, 0.90], // cooler + darker
 ];
 
-fn upload_classes(src: &[PropClass], meshes: &mut Assets<Mesh>) -> Vec<ClassHandles> {
+/// Bake each vertex's LOCAL height (its Y in the raw mesh, before the scatter transform stacks
+/// terrain elevation on top) into COLOR.a, so the ground-cover wind shader (`foliage_wind.rs`)
+/// can weight the sway by height above the planted base. Called only on cover meshes (they route
+/// onto the wind material); RGB is untouched and `.a` is unused by the opaque prop material, so
+/// it's harmless. Runs on the raw variant mesh where the base still sits at y = 0.
+fn bake_sway_height(mesh: &mut Mesh) {
+    use bevy::mesh::VertexAttributeValues as V;
+    // Snapshot the local Ys under an immutable borrow before mutating the colour buffer.
+    let ys: Vec<f32> = match mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
+        Some(V::Float32x3(p)) => p.iter().map(|v| v[1]).collect(),
+        _ => return,
+    };
+    if let Some(V::Float32x4(cols)) = mesh.attribute_mut(Mesh::ATTRIBUTE_COLOR) {
+        for (c, y) in cols.iter_mut().zip(&ys) {
+            // Local height in world units (blades are sub-1u), clamped to the [0,1] the u8 colour
+            // channel stores. 0 = planted base → no sway; ~tip → full sway.
+            c[3] = y.clamp(0.0, 1.0);
+        }
+    }
+}
+
+fn upload_classes(src: &[PropClass], meshes: &mut Assets<Mesh>, is_cover: bool) -> Vec<ClassHandles> {
     src.iter()
         .map(|c| {
             let n = c.variants.len() * PROP_TINTS.len();
@@ -625,6 +646,11 @@ fn upload_classes(src: &[PropClass], meshes: &mut Assets<Mesh>) -> Vec<ClassHand
                     // UVs are dead weight in a merged chunk anyway.
                     let mut mesh = crate::trees::tint_mesh(m.clone(), t);
                     mesh.remove_attribute(Mesh::ATTRIBUTE_UV_0);
+                    // Ground cover rides the wind material — stamp each blade's local height into
+                    // COLOR.a so the vertex shader knows how far above the base it is.
+                    if is_cover {
+                        bake_sway_height(&mut mesh);
+                    }
                     variants.push(mesh);
                     weights.push(*w / PROP_TINTS.len() as f32);
                     if c.tree {
@@ -914,8 +940,8 @@ pub fn scatter_region(
         ..default()
     });
 
-    let classes = upload_classes(&cfg.classes, meshes);
-    let cover = upload_classes(&cfg.cover, meshes);
+    let classes = upload_classes(&cfg.classes, meshes, false);
+    let cover = upload_classes(&cfg.cover, meshes, true);
 
     // First non-tree class → the "too close" fallback for trees (forest drops a bush).
     let fallback: Option<&ClassHandles> = classes.iter().find(|c| !c.tree);

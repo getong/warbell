@@ -57,6 +57,7 @@ mod economy;
 mod tree_ui;
 mod firelight;
 mod fish;
+mod foliage_wind;
 mod footstep_fx;
 mod game_state;
 mod godrays;
@@ -199,6 +200,7 @@ fn main() {
             decor::DecorPlugin, // firefly bob system (decor itself spawned per-biome)
             dof::DofPlugin,     // custom CoC bokeh depth-of-field post pass (player-focused)
         ))
+        .add_plugins(foliage_wind::FoliageWindPlugin) // GPU wind-sway material, swapped onto ground-cover chunks
         .add_plugins(bog::BogPlugin) // swamp-pool will-o'-wisp hover anim (dressing spawned at build)
         .add_plugins(poi::PoiPlugin) // micro-POI flags: fortress smoke column + wheeling crows
         .add_plugins(vista::VistaPlugin) // waterfall foam/mist animation
