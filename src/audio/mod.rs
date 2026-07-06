@@ -60,8 +60,10 @@ pub enum AudioCue {
     Sweep,
     /// The hero's Ground-Slam warden art — a heavy stone-fist impact (random of two takes).
     Slam,
-    /// Hero's blow lands → impact (heavier on a kill).
-    Impact { kill: bool },
+    /// Hero's blow lands → impact (heavier on a kill). `crit` = the swing was a critical (a rolled
+    /// crit, a charged Heavy, or a riposte — one flag per swing, from `player::combat`): the impact
+    /// swaps to the dedicated crit take so a crit is *heard*, not just seen.
+    Impact { kill: bool, crit: bool },
     /// A hit was actually absorbed by the raised shield (wood/steel knock).
     Block,
     /// One footstep; `landing` = the louder touchdown step after a jump/fall.
@@ -96,9 +98,10 @@ pub enum AudioCue {
     /// so the player *hears* the militia fighting nearby. Emitted only for skirmishes close to the
     /// hero (a small earshot) so the whole battlefield doesn't clatter at once.
     GuardStrike(Vec3),
-    /// A town archer LOOSES an arrow, at the bow's world position — the swing whoosh pitched
-    /// sharply up so it reads as a string twang + shaft whip. Earshot-gated by the emitter
-    /// (`villagers::guard_combat`) like the guard clash, but from farther (a twang carries).
+    /// An archer LOOSES an arrow, at the bow's world position — the sampled bowstring snap + shaft
+    /// whip (`bow-shot.ogg`). Earshot-gated by the emitters (the town archers in
+    /// `villagers::guard_combat`, the rival's desert bowmen in `rival.rs`) like the guard clash,
+    /// but from farther (a twang carries).
     BowShot(Vec3),
     /// One metallic chip on a pick-swing against an ore boulder (sampled `var-1`/`var-3`
     /// clips, pitch-jittered). Distinct from the `OreShatter` synth sting on the breaking blow.
@@ -528,7 +531,7 @@ fn detect_hero_remarks(
     // Drain the cue stream every frame; note a kill if a connecting blow finished something.
     let mut killed = false;
     for c in cues.read() {
-        if matches!(c, AudioCue::Impact { kill: true }) {
+        if matches!(c, AudioCue::Impact { kill: true, .. }) {
             killed = true;
         }
     }

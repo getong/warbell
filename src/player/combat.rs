@@ -1042,12 +1042,13 @@ pub fn player_attack(
         juice.hitstop.remaining = juice.hitstop.remaining.max(HITSTOP_HIT);
     }
 
-    // One sting for the whole swing: impact on a connect (heavier on a kill), else the empty-
+    // One sting for the whole swing: impact on a connect (heavier on a kill, the dedicated crit
+    // take on a crit — same swing-wide `crit` flag as the juice tiers above), else the empty-
     // swing whoosh. Never stacked — a connecting hit never also plays the whoosh.
     if killed_any {
-        cues.write(AudioCue::Impact { kill: true });
+        cues.write(AudioCue::Impact { kill: true, crit });
     } else if hit_any {
-        cues.write(AudioCue::Impact { kill: false });
+        cues.write(AudioCue::Impact { kill: false, crit });
     } else {
         cues.write(AudioCue::Swing);
     }
