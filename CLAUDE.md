@@ -149,6 +149,7 @@ Env hooks that stage a scene for a shot (combine with `FOREST_SHOT` **or** `FORE
 | `FOREST_MUSTER=1` | rally the whole town into the **war party** at boot (as if pressing `K`) so a shot frames the muster; pair with `FOREST_DEMO=work` (stages a 14-pop town) for a full host (`villagers.rs::stage_muster`) |
 | `FOREST_ORKLINE="x,z"` | park one ork of each variant in an idle line at a world XZ (model close-ups) |
 | `FOREST_ARCHERS=<n>` | retrain the whole standing militia as **longbow archers** at boot (`villagers.rs::stage_archers`); numeric `n ≥ 2` also raises `town.population` to `n` so a whole squad grows in to retrain. Pair with `FOREST_MUSTER`+`FOREST_HERO` to park a volleying rank anywhere, `FOREST_ORKLINE` for live targets, or `FOREST_WAVE` for a defended siege. (`FOREST_VIEW=peasant:archer` + `FOREST_VIEW_ANIM=bow` previews the model / draw-loose clip in the viewer.) |
+| `FOREST_CAGETEST="x,z"` | park the prisoner-cage rescue's before/after states side by side at a world XZ: a CLOSED cage of real seated peasant captives + an OPENED emptied one 5.5u further +X (`camps::spawn_cage`); both doors face +X, so frame from the east. Film the actual door-swing + walk-out with `FOREST_DEMO=rescue` + `FOREST_CLIP` instead |
 | `FOREST_BREACH=1` | auto-break the Hold gate on the first sim frame so a shot/clip films the woken garrison + the Warlord boss without a keypress (`ork_fortress::stage_breach`); pair with `FOREST_HERO`/`FOREST_CAM` inside the walls |
 | `FOREST_RIVAL=<n>` | instantly raise `n` buildings in the **rival stronghold** (the desert AI opponent, `rival.rs`) so a shot frames a grown rival town instead of waiting out its economy (default: fill the bailey); the rival keep/walls/garrison spawn regardless. Frame it at world ≈`(54, -72)` (NE desert) |
 | `FOREST_TREELINE="x,z"` | park one of each `TreeKind` (broadleaf/birch/pine/poplar/autumn/dead/stump) in a 2× row at a world XZ (tree-model close-ups, `trees.rs`) |
@@ -329,11 +330,20 @@ reads it to drop a beaten warden). `Lives.heirs` mirrors `town.population`, so i
   view-model knobs: `fp_keep` in `player/mod.rs::spawn_hero_meshes` picks which limb meshes survive
   FP (hide the **upper-arm** meshes — they balloon at the eye — but KEEP the forearm so the weapon
   has a hand and doesn't levitate); `camera::fp_body_visibility` applies it; the FP arm/sword/shield
-  poses are the `fp_amt` overrides in `anim::hero_anim`; the eye sits at `FP_EYE_H`/`FP_FWD_OFF` in
-  `player/camera.rs`; and the main-camera **near-plane** (`scene.rs::setup_camera`, `near: 0.04`) is
-  lowered so the close-held weapon doesn't slice the near-plane (that slicing was the walk-time
-  "flicker"). NB: FP melee inherently puts the enemy in your face — no view-model trick fixes that;
-  third-person is the design's combat view.
+  poses live in `anim::hero_anim` (July 2026 rework): the arms are **always viewmodel-driven in FP**
+  (the eye sits AT the chest, so third-person clips orbit the lens itself — never let them play on
+  the FP arms), a `fp_ready` weight keeps the gear in a low carry at the frame edges out of combat
+  and draws it up when a threat is near / attacking / blocking, and the whole arm chains are
+  **handedness-MIRRORED** in FP (the studio rig renders its "R" joints on the viewer's left;
+  translations flip X, rotations conjugate `(x,-y,-z)`) so the sword reads bottom-right / shield
+  bottom-left. The FP wrist/shield angles were **solved from `FOREST_FPDBG=1` camera-space probes,
+  not eyeballed** — pose-space intuition is useless through the tilted FP hand frame, so tune
+  against the probe vectors (NB: FPDBG needs `FOREST_SHOT` too — without the shot harness the app
+  idles on the start screen and the probes read the menu camera). The eye sits at
+  `FP_EYE_H`/`FP_FWD_OFF` in `player/camera.rs`; and the main-camera **near-plane**
+  (`scene.rs::setup_camera`, `near: 0.04`) is lowered so the close-held weapon doesn't slice the
+  near-plane (that slicing was the walk-time "flicker"). NB: FP melee inherently puts the enemy in
+  your face — no view-model trick fixes that; third-person is the design's combat view.
 - **Capture-harness flakes — confirm the `Screenshot saved` log line, and retry before debugging.**
   A `FOREST_SHOT` run can emit a junk frame that is NOT a code bug: a **black** frame (cold pipeline,
   see the bevy-0.19 note) or an **overview/god-cam** frame (the follow-cam hadn't engaged yet under

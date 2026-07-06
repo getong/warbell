@@ -147,7 +147,7 @@ fn chamfer_box(w: f32, h: f32, d: f32, e: f32) -> Mesh {
     m
 }
 fn cham(w: f32, h: f32, d: f32) -> f32 {
-    (w.min(h).min(d) * 0.26).clamp(0.008, 0.04)
+    (w.min(h).min(d) * 0.32).clamp(0.008, 0.06)
 }
 fn group(parts: Vec<Mesh>) -> Mesh {
     let mut it = parts.into_iter();
@@ -166,10 +166,10 @@ fn bxr(w: f32, h: f32, d: f32, off: Vec3, rot: Quat, c: u32, s: Surf) -> Mesh {
     tinted(chamfer_box(w, h, d, cham(w, h, d)).rotated_by(rot).translated_by(off), c, s)
 }
 fn frustum(rt: f32, rb: f32, h: f32, off: Vec3, c: u32, s: Surf) -> Mesh {
-    tinted(ConicalFrustum { radius_top: rt, radius_bottom: rb, height: h }.mesh().resolution(6).build().translated_by(off), c, s)
+    tinted(ConicalFrustum { radius_top: rt, radius_bottom: rb, height: h }.mesh().resolution(12).build().translated_by(off), c, s)
 }
 fn frustum_s(rt: f32, rb: f32, h: f32, scale: Vec3, off: Vec3, c: u32, s: Surf) -> Mesh {
-    tinted(ConicalFrustum { radius_top: rt, radius_bottom: rb, height: h }.mesh().resolution(6).build().scaled_by(scale).translated_by(off), c, s)
+    tinted(ConicalFrustum { radius_top: rt, radius_bottom: rb, height: h }.mesh().resolution(12).build().scaled_by(scale).translated_by(off), c, s)
 }
 fn frustum_r(rt: f32, rb: f32, h: f32, off: Vec3, rot: Quat, c: u32, s: Surf) -> Mesh {
     tinted(ConicalFrustum { radius_top: rt, radius_bottom: rb, height: h }.mesh().resolution(6).build().rotated_by(rot).translated_by(off), c, s)
@@ -386,11 +386,11 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
     let foot = || {
         if desert {
             group(vec![
-                tinted(Cuboid::new(0.125, 0.05, 0.24).mesh().build().translated_by(v(0.0, -0.05, 0.05)), DESERT_SANDAL, Surf::Cloth), // sole
+                tinted(chamfer_box(0.125, 0.05, 0.24, cham(0.125, 0.05, 0.24)).translated_by(v(0.0, -0.05, 0.05)), DESERT_SANDAL, Surf::Cloth), // sole
                 bx(0.12, 0.05, 0.07, v(0.0, -0.005, 0.04), DESERT_BAND, Surf::Cloth), // toe strap
             ])
         } else {
-            group(vec![tinted(Cuboid::new(0.13, 0.14, 0.2).mesh().build().scaled_by(boot_s).translated_by(v(0.0, -0.025, 0.03)), LEATHER, Surf::Cloth)])
+            group(vec![tinted(chamfer_box(0.13, 0.14, 0.2, cham(0.13, 0.14, 0.2)).scaled_by(boot_s).translated_by(v(0.0, -0.025, 0.03)), LEATHER, Surf::Cloth)])
         }
     };
 
