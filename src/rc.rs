@@ -354,21 +354,27 @@ fn run_op(op: &Value, virt: &mut Time<Virtual>, mode: &GameMode, rts: &mut RcRts
                 err("try_place refused (funds?)".into())
             }
         }
-        // {"op":"train","unit":"Swordsman","count":2} — enqueue at the first built player barracks.
+        // {"op":"train","unit":"Swordsman","count":4} — enqueue across ALL built player barracks,
+        // round-robin, so multiple barracks train in parallel.
         "train" => {
             let Some(kind) = op.get("unit").and_then(|v| v.as_str()).and_then(parse_unit) else {
                 return err("bad unit (Swordsman|Archer)".into());
             };
-            let n = op.get("count").and_then(|v| v.as_u64()).unwrap_or(1).min(6);
-            let Some(b) = bldg_q.iter().find(|(_, b, s, _, _, has_q)| {
-                b.kind == crate::rts::BuildingKind::Barracks && b.built && **s == Side::Player && *has_q
-            }) else {
+            let n = op.get("count").and_then(|v| v.as_u64()).unwrap_or(1).min(12);
+            let halls: Vec<Entity> = bldg_q
+                .iter()
+                .filter(|(_, b, s, _, _, has_q)| {
+                    b.kind == crate::rts::BuildingKind::Barracks && b.built && **s == Side::Player && *has_q
+                })
+                .map(|(e, ..)| e)
+                .collect();
+            if halls.is_empty() {
                 return err("no built player barracks".into());
-            };
-            for _ in 0..n {
-                trains.write(TrainOrder { building: b.0, kind });
             }
-            ok(json!({"unit": format!("{kind:?}"), "count": n}))
+            for i in 0..n as usize {
+                trains.write(TrainOrder { building: halls[i % halls.len()], kind });
+            }
+            ok(json!({"unit": format!("{kind:?}"), "count": n, "barracks": halls.len()}))
         }
         // {"op":"order","select":"soldiers"|"workers"|"all"|["<id>",...],
         //  "type":"move"|"attack_move" (+x,z) | "attack"|"harvest" (+"target":"<id>")}

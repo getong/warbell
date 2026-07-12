@@ -177,23 +177,30 @@ fn consume_train_orders(
         (Without<Converting>, Without<Dying>),
     >,
 ) {
+    // Bevy applies `Converting`/spend as DEFERRED commands, so the `workers` query and `converting`
+    // count don't update between orders in this same frame. Track picks + per-barracks commits
+    // locally so a BATCH of orders (RC/AI/rapid HUD clicks) converts N DISTINCT workers, not the
+    // same nearest one N times (the bug that made batched training yield ~1 soldier).
+    let mut picked: std::collections::HashSet<Entity> = std::collections::HashSet::new();
+    let mut committed: HashMap<Entity, usize> = HashMap::new();
     for ord in orders.read() {
         let Ok((b, side, btf, tq)) = barracks.get(ord.building) else { continue };
         if b.kind != BuildingKind::Barracks || !b.built {
             continue;
         }
-        // Queue depth counts both the FIFO and the workers already walking in to this barracks.
+        // Queue depth counts the FIFO, workers already walking in, AND anything committed this frame.
         let inflight = converting.iter().filter(|c| c.barracks == ord.building).count();
-        if tq.queue.len() + inflight >= TRAIN_QUEUE_DEPTH {
+        let this_frame = *committed.get(&ord.building).unwrap_or(&0);
+        if tq.queue.len() + inflight + this_frame >= TRAIN_QUEUE_DEPTH {
             continue;
         }
         let bpos = Vec2::new(btf.translation.x, btf.translation.z);
-        // Pick the nearest worker of this side, **preferring an idle one** (no Assigned): sort by
-        // (is_bonded, distance) so any idle worker outranks every bonded one, and only if there are
-        // none idle do we conscript the nearest bonded worker off its job.
+        // Pick the nearest worker of this side NOT already picked this frame, **preferring an idle
+        // one** (no Assigned): sort by (is_bonded, distance) so any idle worker outranks every bonded
+        // one, and only if there are none idle do we conscript the nearest bonded worker off its job.
         let pick = workers
             .iter()
-            .filter(|(_, u, s, _, _)| u.kind == UnitKind::Worker && *s == side)
+            .filter(|(e, u, s, _, _)| u.kind == UnitKind::Worker && *s == side && !picked.contains(e))
             .min_by(|a, c| {
                 let key = |w: &(Entity, &RtsUnit, &Side, &Transform, Option<&Assigned>)| {
                     let d = Vec2::new(w.3.translation.x, w.3.translation.z).distance_squared(bpos);
@@ -221,6 +228,8 @@ fn consume_train_orders(
             MoveTo { goal: bpos, fight: false },
             crate::navgrid::NavPath::default(),
         ));
+        picked.insert(we);
+        *committed.entry(ord.building).or_insert(0) += 1;
     }
 }
 
