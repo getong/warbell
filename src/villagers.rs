@@ -601,6 +601,34 @@ pub fn spawn_rival_archer(
     root
 }
 
+/// Spawn a **player-militia** soldier body for the RTS skirmish (`rts::units`) at `pos`: the
+/// campaign guard biped (`Kind::Guard`) or longbow archer (`Kind::Archer`) in the town's militia
+/// colours. The player-side mirror of [`spawn_rival_soldier`]/[`spawn_rival_archer`] — non-desert,
+/// and with the town-pool identity (`Guard`/`NpcHp`/`Townsfolk`) stripped so `guard_combat` never
+/// drives it; the RTS combat brain (`rts::units`) does. The archer body KEEPS its `Archer` +
+/// `Role::Archer` so `villager_drive` plays the draw-and-loose clip off the `atk_anim` the RTS
+/// brain stamps. The caller adds `RtsUnit`/`Side`/`Health`/`NavPath`/`SceneActor` + strips
+/// `BiomeEntity`, exactly like the RTS worker bodies.
+pub fn spawn_rts_militia(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
+    archer: bool,
+    pos: Vec2,
+    seed: u32,
+) -> Entity {
+    let mat = crate::creature::make_creature_material(creature_mats);
+    let skin = SKIN[(seed as usize) % SKIN.len()];
+    let kind = if archer {
+        Kind::Archer { skin, tunic: TUNIC[2] }
+    } else {
+        Kind::Guard { skin, tunic: TUNIC[1] }
+    };
+    let root = spawn(commands, meshes, &mat, kind, pos, pos, 2.7, 1.4, SCALE, seed, false);
+    commands.entity(root).remove::<(Guard, NpcHp, Townsfolk)>();
+    root
+}
+
 /// Spawn a **rival** worker body for `rival.rs` — a desert-garbed tradesman (farmer / woodcutter /
 /// miner) in the same keffiyeh + cloak as the soldiers, carrying their trade's tool. Reuses the town
 /// worker MODEL (`Kind::Worker` → the studio peasant) but, like the soldier, gains NONE of the

@@ -148,9 +148,17 @@ fn spawn_starting_halls(
     if !world_ready.0 {
         return; // ground not generated yet — ground_at_world would return the fallback 0.0
     }
+    // Staging aid: `FOREST_RTS_RICH=1` fattens BOTH starting banks ×20 (still mirrored-fair) so a
+    // harness shot/clip can film the AI's build-out and attack waves without real-economy waits.
+    let rich = if std::env::var("FOREST_RTS_RICH").is_ok() { 20.0 } else { 1.0 };
     for &side in &[Side::Player, Side::Rival] {
         spawn_hall(&mut commands, &assets, side, base_of(side));
-        *banks.side_mut(side) = starting_bank();
+        let mut bank = starting_bank();
+        bank.wood *= rich;
+        bank.stone *= rich;
+        bank.gold *= rich;
+        bank.food *= rich;
+        *banks.side_mut(side) = bank;
         pop.0[side.ix()].count = 0;
         pop.0[side.ix()].cap = HALL_POP;
     }

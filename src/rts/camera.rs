@@ -70,6 +70,15 @@ pub struct RtsCamFocus {
 
 impl Default for RtsCamFocus {
     fn default() -> Self {
+        // Capture aid: `FOREST_RTS_CAM="x,z[,zoom]"` opens the camera elsewhere (e.g. framing the
+        // rival base for a harness shot). Normal play always opens over the player's base.
+        if let Ok(s) = std::env::var("FOREST_RTS_CAM") {
+            let p: Vec<f32> = s.split(',').filter_map(|v| v.trim().parse().ok()).collect();
+            if p.len() >= 2 {
+                let zoom = p.get(2).copied().unwrap_or(ZOOM_DEFAULT).clamp(ZOOM_MIN, ZOOM_MAX);
+                return RtsCamFocus { pos: Vec2::new(p[0], p[1]), zoom };
+            }
+        }
         RtsCamFocus { pos: super::PLAYER_BASE, zoom: ZOOM_DEFAULT }
     }
 }

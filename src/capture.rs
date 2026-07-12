@@ -28,6 +28,10 @@ struct ShotPath(String);
 struct ShotClock {
     frame: u32,
     shot: bool,
+    /// Frame the screenshot was requested on — the readback safety cap counts from HERE, not from
+    /// boot, or a long `FOREST_SHOT_WARMUP` (request at frame ≫ cap) exits the app the same frame
+    /// as the request and the async readback lands on a despawned window ("Unknown window", no PNG).
+    shot_at: u32,
 }
 
 impl Plugin for CapturePlugin {
@@ -91,12 +95,14 @@ fn drive_shot(
         let _ = std::fs::remove_file(&path.0);
         commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path.0.clone()));
         clock.shot = true;
+        clock.shot_at = clock.frame;
     }
     // The shot is an async GPU readback: `save_to_disk` (and the PNG write) only fire once the
     // `ScreenshotCaptured` observer lands, a few frames AFTER the request. So once requested, keep
-    // rendering until the (freshly-written) file exists on disk, or a hard safety cap, THEN exit —
-    // a fixed-frame exit would race the readback and write no PNG.
-    if clock.shot && (std::path::Path::new(&path.0).exists() || clock.frame > 2000) {
+    // rendering until the (freshly-written) file exists on disk, or a hard safety cap (counted
+    // from the REQUEST frame — see `shot_at`), THEN exit — a fixed-frame exit would race the
+    // readback and write no PNG.
+    if clock.shot && (std::path::Path::new(&path.0).exists() || clock.frame > clock.shot_at + 1800) {
         exit.write(AppExit::Success);
     }
 }
