@@ -20,7 +20,7 @@ use bevy::window::PrimaryWindow;
 
 use crate::dying::Dying;
 use crate::game_state::{AppState, Modal};
-use crate::navgrid::{path_to, NavPath};
+use crate::navgrid::{path_to_budget, NavPath};
 use crate::rts::pick;
 use crate::rts::{Deposit, Order, Placing, RtsBuilding, RtsOrder, RtsUnit, Selected, Side, UnitKind};
 use crate::steer;
@@ -70,6 +70,11 @@ const BODY_R: f32 = 0.35;
 const ARRIVE: f32 = 0.6;
 /// Beyond this range, follow the cached A* `NavPath`; within it, cheap direct steer (no path churn).
 const PATH_RANGE: f32 = 4.0;
+/// A* node budget for the RTS mover. The default `NAV_MAX_NODES` (8400) is sized for the ~40-tile
+/// keep march and **exhausts → empty on cross-arena trips** (its own doc says so) — the two bases sit
+/// ~80 tiles apart diagonally, so an "attack the enemy base" order drained the budget, got an empty
+/// path, and the army stalled boxed in by its own buildings. This budget covers a full arena crossing.
+const RTS_NAV_BUDGET: u32 = 60_000;
 /// Max facing slew (rad/s) — snappier than villagers (RTS units pivot briskly).
 const MAX_TURN: f32 = 6.0;
 /// Phyllotaxis group fan-out: slot `n` sits at radius `SPREAD·√n`, angle `n·GOLDEN` around the goal
@@ -269,7 +274,7 @@ fn rts_move_units(
                 || now >= path.next_replan
                 || path.goal_cached.distance(goal) > 2.0
             {
-                path.waypoints = path_to(pos, goal);
+                path.waypoints = path_to_budget(pos, goal, RTS_NAV_BUDGET);
                 path.cursor = 0;
                 path.goal_cached = goal;
                 // Stagger replans so a group order doesn't A* everyone on one frame.
