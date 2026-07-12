@@ -786,7 +786,7 @@ fn spawn_start_screen(
                     anim_btn(AnimKind::Rise, 0.37, 0.7),
                 ))
                 .with_children(|b| {
-                    b.spawn(label(&fonts.extrabold, "POTYCZKA", 19.0, INK));
+                    b.spawn(label(&fonts.extrabold, "SKIRMISH", 19.0, INK));
                     b.spawn(label(&fonts.semibold, "SKIRMISH · RTS", 11.0, KICKER));
                 });
                 // Difficulty selector.
@@ -1131,8 +1131,8 @@ fn spawn_pause_screen(
                 // Skirmish has no save/load and no in-process campaign reset — the mode is chosen at
                 // boot, so both a fresh skirmish and a return to the campaign menu are exe relaunches
                 // (handled in `pause_click`). Reuse the Restart / Main Menu markers for the routing.
-                pause_btn(c, &fonts.extrabold, "NOWA POTYCZKA", PauseRestartBtn, (), 0.11);
-                pause_btn(c, &fonts.extrabold, "MENU GŁÓWNE", PauseMenuBtn, (), 0.14);
+                pause_btn(c, &fonts.extrabold, "NEW SKIRMISH", PauseRestartBtn, (), 0.11);
+                pause_btn(c, &fonts.extrabold, "MAIN MENU", PauseMenuBtn, (), 0.14);
             } else {
                 // Save the current run on demand. Disabled (dim) during a night assault.
                 if can_save {
@@ -1273,9 +1273,9 @@ fn spawn_gameover_screen(
     };
     let (title, col) = if skirmish {
         if won {
-            ("ZWYCIĘSTWO", rgb(255, 231, 154))
+            ("VICTORY", rgb(255, 231, 154))
         } else {
-            ("PORAŻKA", rgb(255, 106, 90))
+            ("DEFEAT", rgb(255, 106, 90))
         }
     } else if won {
         ("VICTORY", rgb(255, 231, 154))
@@ -1284,7 +1284,7 @@ fn spawn_gameover_screen(
     };
     // Subtitle: campaign shows the hero's stats; skirmish states which hall was razed.
     let stats = if skirmish {
-        if won { "Wrogi ratusz zburzony".to_string() } else { "Twój ratusz padł".to_string() }
+        if won { "Enemy town hall destroyed".to_string() } else { "Your town hall fell".to_string() }
     } else {
         player.map(|p| format!("Level {}     Gold {}", p.0.level, p.0.gold)).unwrap_or_default()
     };
@@ -1333,7 +1333,7 @@ fn spawn_gameover_screen(
         ))
         .with_children(|b| {
             let txt = if skirmish {
-                "ZAGRAJ PONOWNIE"
+                "PLAY AGAIN"
             } else if can_continue {
                 "NEW GAME"
             } else {
@@ -1366,7 +1366,7 @@ fn spawn_gameover_screen(
             anim_btn(AnimKind::FloatUp, 0.5, 0.5),
         ))
         .with_children(|b| {
-            b.spawn(label(&fonts.bold, if skirmish { "MENU GŁÓWNE" } else { "MAIN MENU" }, 13.0, GOLD));
+            b.spawn(label(&fonts.bold, "MAIN MENU", 13.0, GOLD));
         });
     });
 }

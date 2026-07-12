@@ -9,8 +9,8 @@
 //!
 //! Two responsibilities:
 //!  1. `rts_camera_boot` — the *configure-once* work, made idempotent/self-healing: swap the
-//!     projection to iso `Orthographic` (once), and strip the perspective-tuned post passes
-//!     (DoF + god-rays) which don't belong in a top-down view.
+//!     projection to iso `Orthographic` (once), and strip the passes that don't belong in a clean
+//!     top-down view (DoF + god-rays, plus distance fog + atmospherics haze).
 //!  2. `rts_drive_camera` — per-frame input (WASD pan, edge-pan, wheel zoom) → `RtsCamFocus`, then
 //!     glide the camera into the fixed iso pose over the (terrain-riding) focus point.
 
@@ -22,6 +22,7 @@ use bevy::window::PrimaryWindow;
 use crate::dof::Dof;
 use crate::game_state::AppState;
 use crate::godrays::GodRays;
+use bevy::pbr::DistanceFog;
 
 // ── fixed iso framing (spec §3) — never rotates in the POC (R is reserved for build rotation) ──
 /// Iso yaw: the view spins 45° off the world axes so the arena reads as a diamond.
@@ -111,9 +112,19 @@ impl Plugin for RtsCameraPlugin {
 ///   change makes `apply_quality` re-add them, this strips them again next frame (self-healing).
 fn rts_camera_boot(
     mut commands: Commands,
-    mut cam: Query<(Entity, &mut Projection, Has<Dof>, Has<GodRays>), With<Camera3d>>,
+    mut cam: Query<
+        (
+            Entity,
+            &mut Projection,
+            Has<Dof>,
+            Has<GodRays>,
+            Has<DistanceFog>,
+            Has<crate::atmospherics::Atmospherics>,
+        ),
+        With<Camera3d>,
+    >,
 ) {
-    let Ok((e, mut proj, has_dof, has_rays)) = cam.single_mut() else {
+    let Ok((e, mut proj, has_dof, has_rays, has_fog, has_atmo)) = cam.single_mut() else {
         return;
     };
 
@@ -124,13 +135,25 @@ fn rts_camera_boot(
         });
     }
 
-    if has_dof || has_rays {
+    // Strip the perspective/atmosphere passes that muddy a top-down RTS read: DoF + god-rays (as
+    // before) plus the distance **fog** and the analytic atmospherics haze — the player asked for a
+    // clean, crisp skirmish view. Removing a post/fog component from a live view is the SAFE
+    // direction (re-inserting is what trips the wgpu crash); this system is self-healing so it
+    // re-strips whatever `apply_quality` re-adds. Killing `DistanceFog` also silences the
+    // atmospherics driver (its query requires `&DistanceFog`).
+    if has_dof || has_rays || has_fog || has_atmo {
         let mut ec = commands.entity(e);
         if has_dof {
             ec.remove::<Dof>();
         }
         if has_rays {
             ec.remove::<GodRays>();
+        }
+        if has_fog {
+            ec.remove::<DistanceFog>();
+        }
+        if has_atmo {
+            ec.remove::<crate::atmospherics::Atmospherics>();
         }
     }
 }

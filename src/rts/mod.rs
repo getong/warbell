@@ -148,9 +148,11 @@ impl RtsBanks {
     }
 }
 
-/// Starting stock per side (spec §2).
+/// Starting stock per side. Bumped well above spec §2's (50/30/20/30) so the player can lay down a
+/// handful of buildings immediately instead of waiting on the economy — enough for ~two houses, a
+/// sawmill, a farm, a barracks and a mine off the bat.
 pub fn starting_bank() -> RtsBank {
-    RtsBank { wood: 50.0, stone: 30.0, gold: 20.0, food: 30.0 }
+    RtsBank { wood: 250.0, stone: 150.0, gold: 120.0, food: 120.0 }
 }
 
 // ---------------------------------------------------------------- population
@@ -202,7 +204,7 @@ pub struct BuildingDef {
 pub const BUILDINGS: [BuildingDef; 7] = [
     BuildingDef {
         kind: BuildingKind::TownHall,
-        name: "Ratusz",
+        name: "Town Hall",
         footprint: 4,
         cost: Cost { wood: 0.0, stone: 0.0, gold: 0.0, food: 0.0 },
         build_secs: 0.0,
@@ -210,7 +212,7 @@ pub const BUILDINGS: [BuildingDef; 7] = [
     },
     BuildingDef {
         kind: BuildingKind::House,
-        name: "Dom",
+        name: "House",
         footprint: 2,
         cost: Cost::wood(20.0),
         build_secs: 8.0,
@@ -218,7 +220,7 @@ pub const BUILDINGS: [BuildingDef; 7] = [
     },
     BuildingDef {
         kind: BuildingKind::Sawmill,
-        name: "Tartak",
+        name: "Sawmill",
         footprint: 3,
         cost: Cost::wood(25.0),
         build_secs: 10.0,
@@ -226,7 +228,7 @@ pub const BUILDINGS: [BuildingDef; 7] = [
     },
     BuildingDef {
         kind: BuildingKind::Quarry,
-        name: "Kamieniołom",
+        name: "Quarry",
         footprint: 3,
         cost: Cost::wood(30.0),
         build_secs: 12.0,
@@ -234,7 +236,7 @@ pub const BUILDINGS: [BuildingDef; 7] = [
     },
     BuildingDef {
         kind: BuildingKind::GoldMine,
-        name: "Kopalnia złota",
+        name: "Gold Mine",
         footprint: 3,
         cost: Cost { wood: 30.0, stone: 10.0, gold: 0.0, food: 0.0 },
         build_secs: 14.0,
@@ -242,7 +244,7 @@ pub const BUILDINGS: [BuildingDef; 7] = [
     },
     BuildingDef {
         kind: BuildingKind::Farm,
-        name: "Farma",
+        name: "Farm",
         footprint: 3,
         cost: Cost::wood(15.0),
         build_secs: 8.0,
@@ -250,7 +252,7 @@ pub const BUILDINGS: [BuildingDef; 7] = [
     },
     BuildingDef {
         kind: BuildingKind::Barracks,
-        name: "Koszary",
+        name: "Barracks",
         footprint: 4,
         cost: Cost { wood: 40.0, stone: 20.0, gold: 0.0, food: 0.0 },
         build_secs: 20.0,

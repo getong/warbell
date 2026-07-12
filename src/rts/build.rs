@@ -244,8 +244,13 @@ fn ghost_placement(
     };
     let snapped = Vec2::new(gp.x.round(), gp.y.round());
 
-    // (Re)spawn the ghost body when the kind changes.
-    if ghost.kind != Some(kind) {
+    // (Re)spawn the ghost body when the kind changes. `just_armed` = this is the very frame the
+    // build-strip button armed `Placing`. The button click and the ghost's confirm-click both read
+    // the SAME `just_pressed(Left)` this frame, so without this guard the arming click also lands
+    // the building instantly (at the ground point under the HUD button) — the player never gets to
+    // choose a spot. Skip placing on the arming frame; the next click confirms.
+    let just_armed = ghost.kind != Some(kind);
+    if just_armed {
         clear_ghost(&mut commands, &mut ghost);
         ghost.root = Some(spawn_ghost(&mut commands, &assets, kind));
         ghost.kind = Some(kind);
@@ -271,7 +276,8 @@ fn ghost_placement(
         );
     }
 
-    if mouse.just_pressed(MouseButton::Left)
+    if !just_armed
+        && mouse.just_pressed(MouseButton::Left)
         && valid
         && try_place(&mut commands, &assets, &mut banks, &deposits, kind, Side::Player, snapped, ghost.rot_steps)
     {

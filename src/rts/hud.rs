@@ -202,11 +202,11 @@ fn spawn_top_bar(commands: &mut Commands, fonts: &UiFonts, atlas: &IconAtlas) {
                 shadow_hud(),
             ))
             .with_children(|row| {
-                row.spawn(label(&fonts.display, "Potyczka", 13.0, rgba(224, 168, 74, 0.9)));
-                res_cell(row, fonts, atlas, "stat:wood", WOOD_COL, "50", ResKind::Wood);
-                res_cell(row, fonts, atlas, "stat:stone", STONE, "30", ResKind::Stone);
-                res_cell(row, fonts, atlas, "stat:gold", GOLD, "20", ResKind::Gold);
-                res_cell(row, fonts, atlas, "stat:food", FOOD_COL, "30", ResKind::Food);
+                row.spawn(label(&fonts.display, "Skirmish", 13.0, rgba(224, 168, 74, 0.9)));
+                res_cell(row, fonts, atlas, "stat:wood", WOOD_COL, "250", ResKind::Wood);
+                res_cell(row, fonts, atlas, "stat:stone", STONE, "150", ResKind::Stone);
+                res_cell(row, fonts, atlas, "stat:gold", GOLD, "120", ResKind::Gold);
+                res_cell(row, fonts, atlas, "stat:food", FOOD_COL, "120", ResKind::Food);
                 res_cell(row, fonts, atlas, "stat:pop", POP_COL, "0/6", ResKind::Pop);
             });
         });
@@ -257,7 +257,7 @@ fn spawn_build_strip(commands: &mut Commands, fonts: &UiFonts, atlas: &IconAtlas
             bevy::ui::FocusPolicy::Pass,
         ))
         .with_children(|col| {
-            col.spawn(label(&fonts.display, "Budowa", 12.0, GOLD));
+            col.spawn(label(&fonts.display, "Build", 12.0, GOLD));
             for kind in PLACEABLE {
                 let def = building_def(kind);
                 col.spawn((
@@ -365,8 +365,8 @@ fn spawn_selection_panels(commands: &mut Commands, fonts: &UiFonts) {
                     ..default()
                 })
                 .with_children(|r| {
-                    train_button(r, fonts, UnitKind::Swordsman, "Miecznik");
-                    train_button(r, fonts, UnitKind::Archer, "Łucznik");
+                    train_button(r, fonts, UnitKind::Swordsman, "Swordsman");
+                    train_button(r, fonts, UnitKind::Archer, "Archer");
                 });
                 // Queue slots.
                 s.spawn(Node {
@@ -566,8 +566,10 @@ fn build_strip_click(
             placing.0 = None; // clicking the armed building again disarms
         } else if banks.side(Side::Player).can_afford(&building_def(btn.0).cost) {
             placing.0 = Some(btn.0);
+            // Hint the controls — the ghost follows the cursor; the player picks the spot.
+            notice.push("Move to a spot · click to place · R rotate · right-click cancel", time.elapsed_secs_f64());
         } else {
-            notice.push("Za mało surowców", time.elapsed_secs_f64());
+            notice.push("Not enough resources", time.elapsed_secs_f64());
         }
     }
 }
@@ -715,12 +717,12 @@ fn update_building_panel(
     }
 }
 
-/// Short glyph for a queued soldier kind (Miecznik / Łucznik / Robotnik).
+/// Short glyph for a queued soldier kind (Worker / Swordsman / Archer).
 fn unit_glyph(kind: UnitKind) -> &'static str {
     match kind {
-        UnitKind::Worker => "R",
-        UnitKind::Swordsman => "M",
-        UnitKind::Archer => "Ł",
+        UnitKind::Worker => "W",
+        UnitKind::Swordsman => "S",
+        UnitKind::Archer => "A",
     }
 }
 
@@ -772,12 +774,12 @@ fn train_click(
         }
         let now = time.elapsed_secs_f64();
         if !banks.side(Side::Player).can_afford(&train_cost(tb.0)) {
-            notice.push("Za mało surowców", now);
+            notice.push("Not enough resources", now);
             continue;
         }
         let ps = pop.0[Side::Player.ix()];
         if ps.count >= ps.cap {
-            notice.push("Limit populacji", now);
+            notice.push("Population limit", now);
             continue;
         }
         orders.write(TrainOrder { building: b, kind: tb.0 });
