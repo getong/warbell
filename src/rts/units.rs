@@ -6,10 +6,13 @@
 //! and `blockers::wall_between` for archer line-of-sight.
 //!
 //! ## Training (Stronghold "convert a peasant" flow, spec §7)
-//! A `TrainOrder` (from the HUD or the AI) spends the cost NOW and walks one **idle** worker of that
-//! side to the barracks (`Converting`). On arrival the worker BODY despawns (population is unchanged —
-//! a worker became a soldier) and the kind is pushed onto the barracks `TrainQueue`; the queue driver
-//! then births the soldier at the barracks edge after `TRAIN_SECS`.
+//! A `TrainOrder` (from the HUD or the AI) spends the cost NOW and walks one worker of that side to
+//! the barracks (`Converting`). It **prefers an idle worker**, but falls back to conscripting one off
+//! its economy job (releasing its `Staffed` bond) when none is idle — otherwise a healthy economy,
+//! which bonds every idle worker to a producer (`workers::claim_workers`), would leave zero idle
+//! workers and the barracks would silently never train (the bug the RC playtest surfaced). On arrival
+//! the worker BODY despawns (population is unchanged — a worker became a soldier) and the kind is
+//! pushed onto the barracks `TrainQueue`; the queue driver births the soldier after `TRAIN_SECS`.
 //!
 //! ## Combat (both sides, symmetric)
 //! `index_targets` snapshots every live RtsUnit + RtsBuilding into a shared `TargetIndex` once a
@@ -91,11 +94,11 @@ impl Plugin for RtsUnitsPlugin {
 
 // ── components ──────────────────────────────────────────────────────────────────────────
 
-/// A worker walking to a barracks to be trained into `kind`. Its economy state is already cleared
-/// (idle workers only) — [`drive_converting`] re-strips any re-claim each frame, then on arrival
-/// despawns the body and enqueues the soldier.
+/// A worker walking to a barracks to be trained into `kind`. Its economy bond is stripped when it's
+/// conscripted; [`drive_converting`] re-strips any re-claim each frame, then on arrival despawns the
+/// body and enqueues the soldier. `pub(crate)` so `workers::claim_workers` can exclude it.
 #[derive(Component)]
-struct Converting {
+pub(crate) struct Converting {
     barracks: Entity,
     kind: UnitKind,
 }
@@ -160,15 +163,18 @@ fn index_targets(
 
 // ── training: order → convert an idle worker ─────────────────────────────────────────────
 
+#[allow(clippy::type_complexity)]
 fn consume_train_orders(
     mut orders: MessageReader<TrainOrder>,
     mut commands: Commands,
     mut banks: ResMut<RtsBanks>,
     barracks: Query<(&RtsBuilding, &Side, &Transform, &TrainQueue)>,
     converting: Query<&Converting>,
+    // Include BONDED workers (Option<&Assigned>) so training can conscript one when none is idle —
+    // a healthy economy bonds every idle worker to a producer, so an idle-only pick silently starved.
     workers: Query<
-        (Entity, &RtsUnit, &Side, &Transform),
-        (Without<Assigned>, Without<Converting>, Without<Dying>),
+        (Entity, &RtsUnit, &Side, &Transform, Option<&Assigned>),
+        (Without<Converting>, Without<Dying>),
     >,
 ) {
     for ord in orders.read() {
@@ -182,28 +188,39 @@ fn consume_train_orders(
             continue;
         }
         let bpos = Vec2::new(btf.translation.x, btf.translation.z);
-        // Nearest idle worker of this side.
+        // Pick the nearest worker of this side, **preferring an idle one** (no Assigned): sort by
+        // (is_bonded, distance) so any idle worker outranks every bonded one, and only if there are
+        // none idle do we conscript the nearest bonded worker off its job.
         let pick = workers
             .iter()
-            .filter(|(_, u, s, _)| u.kind == UnitKind::Worker && *s == side)
+            .filter(|(_, u, s, _, _)| u.kind == UnitKind::Worker && *s == side)
             .min_by(|a, c| {
-                let da = Vec2::new(a.3.translation.x, a.3.translation.z).distance_squared(bpos);
-                let dc = Vec2::new(c.3.translation.x, c.3.translation.z).distance_squared(bpos);
-                da.partial_cmp(&dc).unwrap_or(std::cmp::Ordering::Equal)
+                let key = |w: &(Entity, &RtsUnit, &Side, &Transform, Option<&Assigned>)| {
+                    let d = Vec2::new(w.3.translation.x, w.3.translation.z).distance_squared(bpos);
+                    (w.4.is_some(), d) // idle (false) sorts before bonded (true)
+                };
+                let (ab, ad) = key(a);
+                let (cb, cd) = key(c);
+                ab.cmp(&cb).then(ad.partial_cmp(&cd).unwrap_or(std::cmp::Ordering::Equal))
             })
-            .map(|(e, _, _, _)| e);
-        let Some(we) = pick else { continue };
+            .map(|(e, _, _, _, assigned)| (e, assigned.map(|a| a.building)));
+        let Some((we, bonded_to)) = pick else { continue };
         // Spend all-or-nothing NOW (on enqueue); bail without converting if short.
         if !banks.side_mut(*side).spend(&train_cost(ord.kind)) {
             continue;
+        }
+        // Conscript: release any economy bond (both ends) so the producer re-claims a fresh worker
+        // and `drive_converting` isn't fighting the haul loop over this body.
+        if let Some(bldg) = bonded_to {
+            commands.entity(bldg).try_remove::<Staffed>();
+            commands.entity(we).try_remove::<Assigned>();
+            commands.entity(we).try_remove::<crate::rts::workers::Haul>();
         }
         commands.entity(we).try_insert((
             Converting { barracks: ord.building, kind: ord.kind },
             MoveTo { goal: bpos, fight: false },
             crate::navgrid::NavPath::default(),
         ));
-        // Idle workers carry no Assigned, so there's no Staffed bond to clear here; drive_converting
-        // scrubs any re-claim that lands mid-walk.
     }
 }
 

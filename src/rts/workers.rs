@@ -91,9 +91,10 @@ struct Fleeing {
     until: f32,
 }
 
-/// The generic haul state machine carried by a bonded worker.
+/// The generic haul state machine carried by a bonded worker. `pub(crate)` so the training pipeline
+/// (`units::consume_train_orders`) can strip it when it conscripts a bonded worker.
 #[derive(Component)]
-struct Haul {
+pub(crate) struct Haul {
     phase: Phase,
     timer: f32,
     /// Visible carried-load child mesh, despawned on banking / interruption.
@@ -195,7 +196,7 @@ fn init_carry_assets(
 /// Spawn one worker body for `side` at `pos`: the campaign peasant for the player, the desert
 /// worker for the rival, plus the RTS unit bundle. Both bodies carry `SceneActor` to keep the
 /// campaign wander brain off them.
-fn spawn_worker_body(
+pub(crate) fn spawn_worker_body(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
@@ -274,7 +275,9 @@ fn claim_workers(
     buildings: Query<(Entity, &RtsBuilding, &Side, &Transform), Without<Staffed>>,
     workers: Query<
         (Entity, &RtsUnit, &Side, &Transform),
-        (Without<Assigned>, Without<crate::dying::Dying>, Without<Fleeing>),
+        // Exclude Converting workers (walking to a barracks to be trained) — claiming one to a
+        // producer would tug-of-war its MoveTo against `drive_converting` and it'd never arrive.
+        (Without<Assigned>, Without<crate::dying::Dying>, Without<Fleeing>, Without<crate::rts::units::Converting>),
     >,
 ) {
     let idle: Vec<(Entity, Side, Vec2)> = workers
