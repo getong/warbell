@@ -70,9 +70,21 @@ struct BuildStripBtn(BuildingKind);
 struct SelUnitPanel;
 #[derive(Component)]
 struct SelBldgPanel;
-/// A rebuilt-each-frame unit-count chip inside [`SelUnitPanel`].
+/// A rebuilt-each-frame unit-count chip inside [`SelUnitRowsHost`].
 #[derive(Component)]
 struct SelUnitRow;
+/// The child of [`SelUnitPanel`] the count chips are rebuilt into (kept separate from the persistent
+/// command buttons so a per-frame rebuild doesn't wipe them).
+#[derive(Component)]
+struct SelUnitRowsHost;
+
+/// A persistent command button in the unit panel (Stop / Attack-move). Its click halts or arms the
+/// selected units — the panel now says both *what* is selected and *what it can do*.
+#[derive(Component, Clone, Copy, PartialEq)]
+enum CmdBtn {
+    Stop,
+    AttackMove,
+}
 
 /// The building panel's `Text` nodes (one query, matched by variant).
 #[derive(Component, Clone, Copy)]
@@ -133,6 +145,7 @@ impl Plugin for RtsHudPlugin {
                 update_building_panel,
                 update_train_buttons,
                 train_click,
+                cmd_button_click,
             )
                 .run_if(in_skirmish),
         );
@@ -292,28 +305,51 @@ fn spawn_build_strip(commands: &mut Commands, fonts: &UiFonts, atlas: &IconAtlas
         });
 }
 
-/// Bottom-left selection panels (both start hidden; `sync_selection_mode` toggles `display`).
+/// Selection panels, parked to the RIGHT of the minimap (bottom-left is the minimap now) so they
+/// never overlap it. Both start hidden; `sync_selection_mode` toggles `display`.
 fn spawn_selection_panels(commands: &mut Commands, fonts: &UiFonts) {
-    // ── unit summary (rebuilt each frame) ──
-    commands.spawn((
-        Node {
-            position_type: PositionType::Absolute,
-            bottom: Val::Px(18.0),
-            left: Val::Px(18.0),
-            display: Display::None,
-            flex_direction: FlexDirection::Row,
-            align_items: AlignItems::Center,
-            column_gap: Val::Px(14.0),
-            padding: UiRect::axes(Val::Px(14.0), Val::Px(9.0)),
-            border: border(2.0),
-            border_radius: radius(R_PANEL),
-            ..default()
-        },
-        widgets::card_paint(),
-        GlobalZIndex(60),
-        bevy::ui::FocusPolicy::Pass,
-        SelUnitPanel,
-    ));
+    // ── unit summary + command buttons ──
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                bottom: Val::Px(18.0),
+                left: Val::Px(200.0), // clear of the bottom-left minimap
+                display: Display::None,
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(8.0),
+                padding: UiRect::axes(Val::Px(14.0), Val::Px(9.0)),
+                border: border(2.0),
+                border_radius: radius(R_PANEL),
+                ..default()
+            },
+            widgets::card_paint(),
+            GlobalZIndex(60),
+            SelUnitPanel,
+        ))
+        .with_children(|panel| {
+            // Count chips (rebuilt each frame by `update_unit_summary` into this host).
+            panel.spawn((
+                Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(14.0),
+                    ..default()
+                },
+                SelUnitRowsHost,
+            ));
+            // Command buttons — Stop halts the selection, Attack arms attack-move (like F).
+            panel
+                .spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    column_gap: Val::Px(7.0),
+                    ..default()
+                })
+                .with_children(|row| {
+                    cmd_button(row, fonts, CmdBtn::Stop, "Stop");
+                    cmd_button(row, fonts, CmdBtn::AttackMove, "Attack");
+                });
+        });
 
     // ── single-building panel (persistent nodes, driven live) ──
     commands
@@ -321,7 +357,7 @@ fn spawn_selection_panels(commands: &mut Commands, fonts: &UiFonts) {
             Node {
                 position_type: PositionType::Absolute,
                 bottom: Val::Px(18.0),
-                left: Val::Px(18.0),
+                left: Val::Px(200.0), // clear of the bottom-left minimap
                 display: Display::None,
                 width: Val::Px(232.0),
                 flex_direction: FlexDirection::Column,
@@ -403,6 +439,28 @@ fn spawn_selection_panels(commands: &mut Commands, fonts: &UiFonts) {
 }
 
 /// A single train button (label + cost chips), carrying its [`TrainBtn`] kind.
+/// A small command button (Stop / Attack) in the unit panel.
+fn cmd_button(p: &mut RelatedSpawnerCommands<ChildOf>, fonts: &UiFonts, cmd: CmdBtn, name: &str) {
+    p.spawn((
+        Button,
+        Interaction::default(),
+        Node {
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+            border: border(2.0),
+            border_radius: radius(R_CARD),
+            ..default()
+        },
+        BackgroundColor(BTN_BG),
+        BorderColor::all(BORDER_SOFT),
+        cmd,
+    ))
+    .with_children(|b| {
+        b.spawn(label(&fonts.semibold, name, 13.0, Color::WHITE));
+    });
+}
+
 fn train_button(
     p: &mut RelatedSpawnerCommands<ChildOf>,
     fonts: &UiFonts,
@@ -574,6 +632,30 @@ fn build_strip_click(
     }
 }
 
+/// Command-button clicks: Stop halts every selected unit (drops its move + attack orders); Attack
+/// arms attack-move (the `F` latch) for the next click.
+fn cmd_button_click(
+    mut commands: Commands,
+    mut attack: ResMut<crate::rts::command::AttackMove>,
+    q: Query<(&Interaction, &CmdBtn), Changed<Interaction>>,
+    selected: Query<Entity, (With<Selected>, With<RtsUnit>)>,
+) {
+    for (interaction, cmd) in &q {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        match cmd {
+            CmdBtn::Stop => {
+                for e in &selected {
+                    commands.entity(e).try_remove::<crate::rts::command::MoveTo>();
+                    commands.entity(e).try_remove::<crate::rts::command::AttackTarget>();
+                }
+            }
+            CmdBtn::AttackMove => attack.0 = true,
+        }
+    }
+}
+
 // ── selection panel ───────────────────────────────────────────────────────────────────────────
 
 /// Decide what the selection panel shows this frame and toggle the two panels' visibility. Units
@@ -617,7 +699,7 @@ fn update_unit_summary(
     fonts: Res<UiFonts>,
     mut commands: Commands,
     units: Query<&RtsUnit, With<Selected>>,
-    root_q: Query<Entity, With<SelUnitPanel>>,
+    root_q: Query<Entity, With<SelUnitRowsHost>>,
     rows_q: Query<Entity, With<SelUnitRow>>,
 ) {
     if sel.mode != SelMode::Units {
