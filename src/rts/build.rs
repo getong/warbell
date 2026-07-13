@@ -83,9 +83,14 @@ impl Plugin for RtsBuildPlugin {
 /// a `&RtsBuildAssets` to [`try_place`].
 #[derive(Resource)]
 pub struct RtsBuildAssets {
-    building: HashMap<(BuildingKind, Side), Vec<Handle<Mesh>>>,
+    /// Per building kind: the part meshes + which `M` material each uses. Both sides share these —
+    /// friend/foe is read off the ground ring + minimap, not the building's hue.
+    building: HashMap<BuildingKind, Vec<(Handle<Mesh>, M)>>,
     scaffold: HashMap<u32, Handle<Mesh>>,
-    /// Opaque white — reads vertex `ATTRIBUTE_COLOR`; every real building part uses it.
+    /// The campaign's procedurally-TEXTURED village material set (`M` → shingle/plaster/stone/…) —
+    /// the same one the castle + town producers use, so RTS buildings finally look textured.
+    mats: crate::castle::Mats,
+    /// Opaque white reading vertex `ATTRIBUTE_COLOR` — used only for the timber scaffold frame.
     solid: Handle<StandardMaterial>,
     /// Translucent unlit — the ghost silhouette; its `base_color` is retinted green/red per frame.
     ghost_body: Handle<StandardMaterial>,
@@ -94,16 +99,22 @@ pub struct RtsBuildAssets {
 fn setup_build_assets(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut mats: ResMut<Assets<StandardMaterial>>,
+    mut std_mats: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
-    let solid = mats.add(StandardMaterial {
+    // Build the campaign's textured village materials here (skirmish never runs the castle phase
+    // that normally creates them), and share the resource so any other RTS system can reuse it.
+    let village = crate::castle::build_mats(&mut images, &mut std_mats);
+    commands.insert_resource(crate::castle::VillageMats(village.clone()));
+
+    let solid = std_mats.add(StandardMaterial {
         base_color: Color::WHITE,
         perceptual_roughness: 0.9,
         cull_mode: None,
         double_sided: true,
         ..default()
     });
-    let ghost_body = mats.add(StandardMaterial {
+    let ghost_body = std_mats.add(StandardMaterial {
         base_color: Color::srgba(0.3, 1.0, 0.35, 0.5),
         alpha_mode: AlphaMode::Blend,
         unlit: true,
@@ -114,11 +125,9 @@ fn setup_build_assets(
 
     let mut building = HashMap::new();
     for &kind in &ALL_KINDS {
-        for &side in &[Side::Player, Side::Rival] {
-            let handles: Vec<Handle<Mesh>> =
-                building_meshes(kind, side).into_iter().map(|m| meshes.add(m)).collect();
-            building.insert((kind, side), handles);
-        }
+        let parts: Vec<(Handle<Mesh>, M)> =
+            building_meshes(kind).into_iter().map(|(mesh, m)| (meshes.add(mesh), m)).collect();
+        building.insert(kind, parts);
     }
 
     let mut scaffold = HashMap::new();
@@ -126,7 +135,7 @@ fn setup_build_assets(
         scaffold.insert(fp, meshes.add(scaffold_frame(fp)));
     }
 
-    commands.insert_resource(RtsBuildAssets { building, scaffold, solid, ghost_body });
+    commands.insert_resource(RtsBuildAssets { building, scaffold, mats: village, solid, ghost_body });
 }
 
 // ────────────────────────────────────────────────────────────── pre-built halls
@@ -169,7 +178,7 @@ fn spawn_starting_halls(
 fn spawn_hall(commands: &mut Commands, assets: &RtsBuildAssets, side: Side, pos: Vec2) {
     let def = building_def(BuildingKind::TownHall);
     let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
-    let handles = assets.building.get(&(BuildingKind::TownHall, side)).cloned().unwrap_or_default();
+    let handles = assets.building.get(&BuildingKind::TownHall).cloned().unwrap_or_default();
     let root = commands
         .spawn((
             Transform::from_xyz(pos.x, y, pos.y),
@@ -180,8 +189,8 @@ fn spawn_hall(commands: &mut Commands, assets: &RtsBuildAssets, side: Side, pos:
         ))
         .id();
     commands.entity(root).with_children(|p| {
-        for h in &handles {
-            p.spawn((Mesh3d(h.clone()), MeshMaterial3d(assets.solid.clone()), Transform::default()));
+        for (h, m) in &handles {
+            p.spawn((Mesh3d(h.clone()), MeshMaterial3d(assets.mats.get(*m)), Transform::default()));
         }
     });
     let hx = footprint_half(def.footprint);
@@ -298,9 +307,9 @@ fn clear_ghost(commands: &mut Commands, ghost: &mut GhostState) {
 
 fn spawn_ghost(commands: &mut Commands, assets: &RtsBuildAssets, kind: BuildingKind) -> Entity {
     let root = commands.spawn((Transform::default(), Visibility::Visible)).id();
-    let handles = assets.building.get(&(kind, Side::Player)).cloned().unwrap_or_default();
+    let handles = assets.building.get(&kind).cloned().unwrap_or_default();
     commands.entity(root).with_children(|p| {
-        for h in &handles {
+        for (h, _m) in &handles {
             p.spawn((Mesh3d(h.clone()), MeshMaterial3d(assets.ghost_body.clone()), Transform::default()));
         }
     });
@@ -406,7 +415,7 @@ fn spawn_scaffold(
     let def = building_def(kind);
     let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
     let yaw = rot_steps as f32 * FRAC_PI_2;
-    let handles = assets.building.get(&(kind, side)).cloned().unwrap_or_default();
+    let handles = assets.building.get(&kind).cloned().unwrap_or_default();
 
     // The growing building: its parent Y-scale animates 0.12 → 1.0 (bases sit at y=0, so it rises
     // out of the ground). Health is present from spawn — attackable mid-build.
@@ -422,8 +431,8 @@ fn spawn_scaffold(
         ))
         .id();
     commands.entity(root).with_children(|p| {
-        for h in &handles {
-            p.spawn((Mesh3d(h.clone()), MeshMaterial3d(assets.solid.clone()), Transform::default()));
+        for (h, m) in &handles {
+            p.spawn((Mesh3d(h.clone()), MeshMaterial3d(assets.mats.get(*m)), Transform::default()));
         }
     });
 
@@ -605,54 +614,29 @@ fn pal(player: u32, rival: u32, side: Side) -> [f32; 4] {
     lin(if side == Side::Rival { rival } else { player })
 }
 
-/// The final render meshes for a `(kind, side)`. Producer kinds reuse the campaign `town_meshes`
-/// parts (each part tinted from its `M` slot → its own child); the three authored kinds merge to a
-/// single faceted mesh.
-fn building_meshes(kind: BuildingKind, side: Side) -> Vec<Mesh> {
+/// The textured part meshes for a building kind — each part carries the campaign `M` material slot
+/// it renders with (the spawn systems attach the real textured material via `VillageMats`). Both
+/// sides share these; friend/foe is the ground ring's job.
+fn building_meshes(kind: BuildingKind) -> Vec<(Mesh, M)> {
     match kind {
-        BuildingKind::TownHall => vec![weathered(merged_flat(townhall_parts(side)))],
-        BuildingKind::Barracks => vec![weathered(merged_flat(barracks_parts(side)))],
-        BuildingKind::House => vec![weathered(merged_flat(house_parts(side)))],
-        _ => producer_parts(kind)
-            .into_iter()
-            .map(|(mesh, m)| {
-                let mut c = m_lin(m, side);
-                // Gold Mine: warm-gold the quarried stone so it reads as a gold vein, not a quarry.
-                if kind == BuildingKind::GoldMine && is_stoneish(m) {
-                    c = lin(0xd9a441);
-                }
-                tinted(mesh, c)
-            })
-            .collect(),
+        BuildingKind::TownHall => townhall_parts(),
+        BuildingKind::Barracks => barracks_parts(),
+        BuildingKind::House => house_parts(),
+        // Gold Mine reuses the quarry model but swaps its stone slots for the gold-vein metal so it
+        // reads as a gold seam, not a grey quarry.
+        BuildingKind::GoldMine => {
+            producer_parts(kind).into_iter().map(|(mesh, m)| (mesh, goldify(m))).collect()
+        }
+        _ => producer_parts(kind),
     }
 }
 
-/// Fake weathering on a finished, flat-shaded building mesh — since the game has no image textures,
-/// this hand-shades the flat vertex colours to read like aged stone/timber: an ambient-occlusion
-/// darkening toward the ground (recesses + the base sit in shadow) plus a fine per-vertex mottle. It
-/// modulates the existing `ATTRIBUTE_COLOR` in place, so it costs nothing at render time.
-fn weathered(mut m: Mesh) -> Mesh {
-    let Some(pos) = m.attribute(Mesh::ATTRIBUTE_POSITION).and_then(|a| a.as_float3()).map(|v| v.to_vec())
-    else {
-        return m;
-    };
-    if let Some(bevy::render::mesh::VertexAttributeValues::Float32x4(cols)) =
-        m.attribute_mut(Mesh::ATTRIBUTE_COLOR)
-    {
-        for (i, c) in cols.iter_mut().enumerate() {
-            let p = pos[i];
-            // AO-ish: 0.62 at the ground, easing to 1.0 by ~2.6u up.
-            let ao = 0.62 + 0.38 * (p[1] / 2.6).clamp(0.0, 1.0);
-            // Deterministic surface mottle from a position hash (±6%).
-            let h = ((p[0] * 12.99 + p[1] * 78.23 + p[2] * 37.71).sin() * 43758.55).fract();
-            let mottle = 0.94 + 0.12 * h;
-            let f = ao * mottle;
-            c[0] *= f;
-            c[1] *= f;
-            c[2] *= f;
-        }
+/// Remap a stone `M` slot to the gold-vein metal (for the Gold Mine's ore).
+fn goldify(m: M) -> M {
+    match m {
+        M::Stone | M::DarkStone | M::LightStone | M::HouseStone => M::Gold,
+        other => other,
     }
-    m
 }
 
 fn producer_parts(kind: BuildingKind) -> Vec<(Mesh, M)> {
@@ -662,46 +646,6 @@ fn producer_parts(kind: BuildingKind) -> Vec<(Mesh, M)> {
         BuildingKind::Quarry | BuildingKind::GoldMine => crate::town_meshes::mine_parts(),
         _ => vec![],
     }
-}
-
-fn is_stoneish(m: M) -> bool {
-    matches!(m, M::Stone | M::DarkStone | M::LightStone | M::HouseStone)
-}
-
-/// Linear colour for a campaign `M` material slot, with the Rival's desert twist (stone→sandstone,
-/// timber→pale desert wood, roof→ochre, soil→dune). Exhaustive so a new `M` variant won't silently
-/// fall through to a wrong hue.
-fn m_lin(m: M, side: Side) -> [f32; 4] {
-    let (p, r) = match m {
-        M::Stone => (0x8a8b95, 0xc2a878),
-        M::DarkStone => (0x6a6b73, 0xa8895c),
-        M::LightStone => (0x9da1ac, 0xd8c39a),
-        M::HouseStone => (0x86868e, 0xc2a878),
-        M::Plaster => (0xd3b78b, 0xdcc596),
-        M::Wood => (0x3a2618, 0x6b4a2a),
-        M::Beam => (0x5a3a22, 0x7a5a34),
-        M::Roof => (0x7a2f28, 0x9c5a2e),
-        M::HouseRoof => (0x6b3322, 0x9c5a2e),
-        M::HouseRoof2 => (0x6e6256, 0x8a6a44),
-        M::Thatch => (0xb89b4f, 0xcbb26a),
-        M::Iron => (0x6a6e72, 0x6a6e72),
-        M::Parchment => (0xe6d9b5, 0xe6d9b5),
-        M::Soil => (0x6b4a2a, 0x9c7a4a),
-        M::Cobble => (0x8b8a86, 0xbfae8a),
-        M::Packed => (0x6e5436, 0x9c7a4a),
-        M::Straw => (0xcaa84e, 0xd8bf6a),
-        M::Hen => (0xe7e2d6, 0xe7e2d6),
-        M::Banner => (0x2f5fa6, 0xb0402a),
-        M::Bronze => (0xb9892f, 0xc79a3a),
-        M::BronzeDark => (0x7c5a1e, 0x8a6420),
-        M::Crop => (0x8fae4a, 0xb7a24a),
-        M::Slit => (0x23242a, 0x2a2620),
-        M::Gold => (0xe0b04a, 0xe0b04a),
-        M::Window => (0xffd58c, 0xffd58c),
-        M::Flame => (0xff7a2a, 0xff7a2a),
-        M::Ember => (0xff5a1e, 0xff5a1e),
-    };
-    pal(p, r, side)
 }
 
 /// A tiny timber scaffold frame ringing the footprint (corner posts + two rail courses). Cached per
@@ -730,46 +674,38 @@ fn scaffold_frame(footprint: u32) -> Mesh {
 
 /// A banded wooden barrel (cuboid — all building parts must share the Cuboid/Cone attribute set to
 /// merge, so no Cylinder here).
-fn barrel(x: f32, z: f32) -> Vec<Mesh> {
-    let wood = lin(0x7a5326);
-    let band = lin(0x2a1c10);
+fn barrel(x: f32, z: f32) -> Vec<(Mesh, M)> {
     vec![
-        tinted(cuboid(0.36, 0.52, 0.36, x, 0.26, z), wood),
-        tinted(cuboid(0.4, 0.06, 0.4, x, 0.15, z), band),
-        tinted(cuboid(0.4, 0.06, 0.4, x, 0.4, z), band),
+        (cuboid(0.36, 0.52, 0.36, x, 0.26, z), M::Wood),
+        (cuboid(0.4, 0.06, 0.4, x, 0.15, z), M::Beam),
+        (cuboid(0.4, 0.06, 0.4, x, 0.4, z), M::Beam),
     ]
 }
 
 /// A small stack of two crates.
-fn crate_stack(x: f32, z: f32) -> Vec<Mesh> {
-    let w = lin(0x8a6a3a);
-    let e = lin(0x53381d);
+fn crate_stack(x: f32, z: f32) -> Vec<(Mesh, M)> {
     vec![
-        tinted(cuboid(0.5, 0.5, 0.5, x, 0.25, z), w),
-        tinted(cuboid(0.54, 0.06, 0.54, x, 0.25, z), e), // mid band
-        tinted(cuboid(0.4, 0.4, 0.4, x + 0.13, 0.7, z - 0.1), w),
+        (cuboid(0.5, 0.5, 0.5, x, 0.25, z), M::Wood),
+        (cuboid(0.54, 0.06, 0.54, x, 0.25, z), M::Beam), // mid band
+        (cuboid(0.4, 0.4, 0.4, x + 0.13, 0.7, z - 0.1), M::Wood),
     ]
 }
 
 /// A tied straw bale.
-fn hay_bale(x: f32, z: f32) -> Vec<Mesh> {
-    let straw = lin(0xcaa84e);
-    let tie = lin(0x9a7a34);
+fn hay_bale(x: f32, z: f32) -> Vec<(Mesh, M)> {
     vec![
-        tinted(cuboid(0.72, 0.44, 0.46, x, 0.22, z), straw),
-        tinted(cuboid(0.74, 0.07, 0.1, x, 0.22, z - 0.13), tie),
-        tinted(cuboid(0.74, 0.07, 0.1, x, 0.22, z + 0.13), tie),
+        (cuboid(0.72, 0.44, 0.46, x, 0.22, z), M::Straw),
+        (cuboid(0.74, 0.07, 0.1, x, 0.22, z - 0.13), M::Beam),
+        (cuboid(0.74, 0.07, 0.1, x, 0.22, z + 0.13), M::Beam),
     ]
 }
 
 /// A stack of split logs (running along X) with pale cut ends.
-fn woodpile(x: f32, z: f32) -> Vec<Mesh> {
-    let log = lin(0x6b4a2a);
-    let cut = lin(0xc8a86a);
+fn woodpile(x: f32, z: f32) -> Vec<(Mesh, M)> {
     let mut v = Vec::new();
     for (dz, dy) in [(-0.15_f32, 0.14_f32), (0.15, 0.14), (0.0, 0.35)] {
-        v.push(tinted(cuboid(0.9, 0.22, 0.22, x, dy, z + dz), log));
-        v.push(tinted(cuboid(0.05, 0.2, 0.2, x - 0.45, dy, z + dz), cut));
+        v.push((cuboid(0.9, 0.22, 0.22, x, dy, z + dz), M::Wood));
+        v.push((cuboid(0.05, 0.2, 0.2, x - 0.45, dy, z + dz), M::LightStone)); // pale cut end
     }
     v
 }
@@ -777,55 +713,46 @@ fn woodpile(x: f32, z: f32) -> Vec<Mesh> {
 /// **Town Hall** (footprint 4×4): a compact keep — a broad stone block under a timber upper storey
 /// and a pyramidal roof, with corner merlons, a warm-glowing door + windows, a side banner, a corner
 /// watchtower, crenellations, and a settlement's worth of clutter (barrels / crates / hay / a well).
-fn townhall_parts(side: Side) -> Vec<Mesh> {
-    let stone = pal(0x8a8b95, 0xc2a878, side);
-    let dark = pal(0x6a6b73, 0xa8895c, side);
-    let timber = pal(0x5a3a22, 0x7a5a34, side);
-    let roof = pal(0x7a2f28, 0x9c5a2e, side);
-    let gold = lin(0xe0b04a);
-    let door = lin(0x23242a);
-    let glow = lin(0xffd58c);
-    let banner = pal(0x2f5fa6, 0xb0402a, side);
-
-    let mut v: Vec<Mesh> = Vec::new();
+fn townhall_parts() -> Vec<(Mesh, M)> {
+    let mut v: Vec<(Mesh, M)> = Vec::new();
     // Footing skirt + stone block (top at 1.75).
-    v.push(tinted(cuboid(2.9, 0.25, 2.9, 0.0, 0.125, 0.0), dark));
-    v.push(tinted(cuboid(2.6, 1.5, 2.6, 0.0, 1.0, 0.0), stone));
+    v.push((cuboid(2.9, 0.25, 2.9, 0.0, 0.125, 0.0), M::DarkStone));
+    v.push((cuboid(2.6, 1.5, 2.6, 0.0, 1.0, 0.0), M::Stone));
     // Corner merlons ringing the stone top.
     for (sx, sz) in [(-1.05, -1.05), (1.05, -1.05), (-1.05, 1.05), (1.05, 1.05)] {
-        v.push(tinted(cuboid(0.36, 0.4, 0.36, sx, 1.95, sz), stone));
+        v.push((cuboid(0.36, 0.4, 0.36, sx, 1.95, sz), M::Stone));
     }
     // Timber upper storey (top at 2.6) + pyramid roof (apex 3.7).
-    v.push(tinted(cuboid(2.1, 0.85, 2.1, 0.0, 2.175, 0.0), timber));
-    v.push(tinted(pyramid(1.7, 1.1, 2.6), roof));
+    v.push((cuboid(2.1, 0.85, 2.1, 0.0, 2.175, 0.0), M::Beam));
+    v.push((pyramid(1.7, 1.1, 2.6), M::Roof));
     // Gold finial cube + banner pole & cloth.
-    v.push(tinted(cuboid(0.24, 0.24, 0.24, 0.0, 3.8, 0.0), gold));
-    v.push(tinted(cuboid(0.08, 1.2, 0.08, 0.0, 4.3, 0.0), timber));
-    v.push(tinted(cuboid(0.55, 0.36, 0.05, 0.31, 4.6, 0.0), banner));
+    v.push((cuboid(0.24, 0.24, 0.24, 0.0, 3.8, 0.0), M::Gold));
+    v.push((cuboid(0.08, 1.2, 0.08, 0.0, 4.3, 0.0), M::Beam));
+    v.push((cuboid(0.55, 0.36, 0.05, 0.31, 4.6, 0.0), M::Banner));
     // Door (+Z) + flanking windows.
-    v.push(tinted(cuboid(0.7, 0.9, 0.08, 0.0, 0.7, 1.31), door));
+    v.push((cuboid(0.7, 0.9, 0.08, 0.0, 0.7, 1.31), M::Slit));
     for sx in [-0.8, 0.8] {
-        v.push(tinted(cuboid(0.3, 0.4, 0.06, sx, 1.15, 1.32), glow));
+        v.push((cuboid(0.3, 0.4, 0.06, sx, 1.15, 1.32), M::Window));
     }
     // Crenellations ringing the stone block top (between the corner merlons).
     for sx in [-0.5_f32, 0.0, 0.5] {
         for sz in [-1.3_f32, 1.3] {
-            v.push(tinted(cuboid(0.3, 0.28, 0.18, sx, 1.89, sz), stone));
+            v.push((cuboid(0.3, 0.28, 0.18, sx, 1.89, sz), M::Stone));
         }
     }
     for sz in [-0.5_f32, 0.0, 0.5] {
         for sx in [-1.3_f32, 1.3] {
-            v.push(tinted(cuboid(0.18, 0.28, 0.3, sx, 1.89, sz), stone));
+            v.push((cuboid(0.18, 0.28, 0.3, sx, 1.89, sz), M::Stone));
         }
     }
     // Corner watchtower (−X −Z corner): a taller stone shaft with its own conical roof + a slit.
     let (tx, tz) = (-1.35, -1.35);
-    v.push(tinted(cuboid(0.95, 3.2, 0.95, tx, 1.6, tz), stone));
+    v.push((cuboid(0.95, 3.2, 0.95, tx, 1.6, tz), M::Stone));
     for (dx, dz) in [(-0.42_f32, -0.42_f32), (0.42, -0.42), (-0.42, 0.42), (0.42, 0.42)] {
-        v.push(tinted(cuboid(0.22, 0.3, 0.22, tx + dx, 3.3, tz + dz), stone)); // tower merlons
+        v.push((cuboid(0.22, 0.3, 0.22, tx + dx, 3.3, tz + dz), M::Stone)); // tower merlons
     }
-    v.push(tinted(pyramid(0.72, 0.85, 3.35), roof));
-    v.push(tinted(cuboid(0.12, 0.5, 0.06, tx, 2.4, tz + 0.5), door)); // slit
+    v.push((pyramid(0.72, 0.85, 3.35), M::Roof));
+    v.push((cuboid(0.12, 0.5, 0.06, tx, 2.4, tz + 0.5), M::Slit)); // slit
     // Clutter around the base (kept inside the 4×4 footprint, off the +Z door lane).
     v.extend(barrel(1.55, 1.4));
     v.extend(barrel(1.85, 1.05));
@@ -836,75 +763,65 @@ fn townhall_parts(side: Side) -> Vec<Mesh> {
 }
 
 /// A small stone draw-well prop (square stone ring + two posts + a beam + a little roof).
-fn well_prop(x: f32, z: f32) -> Vec<Mesh> {
-    let stone = lin(0x8a8b95);
-    let wood = lin(0x5a3a22);
-    let water = lin(0x2a4a5a);
+fn well_prop(x: f32, z: f32) -> Vec<(Mesh, M)> {
     vec![
-        tinted(cuboid(0.8, 0.5, 0.8, x, 0.25, z), stone),
-        tinted(cuboid(0.6, 0.08, 0.6, x, 0.5, z), water),
-        tinted(cuboid(0.08, 1.0, 0.08, x - 0.42, 0.5, z), wood),
-        tinted(cuboid(0.08, 1.0, 0.08, x + 0.42, 0.5, z), wood),
-        tinted(cuboid(0.06, 0.06, 0.95, x, 1.0, z), wood), // ridge beam
-        tinted(cuboid(0.95, 0.1, 0.7, x, 1.1, z), wood),   // flat roof plate
+        (cuboid(0.8, 0.5, 0.8, x, 0.25, z), M::Stone),
+        (cuboid(0.6, 0.08, 0.6, x, 0.5, z), M::Slit), // dark water
+        (cuboid(0.08, 1.0, 0.08, x - 0.42, 0.5, z), M::Wood),
+        (cuboid(0.08, 1.0, 0.08, x + 0.42, 0.5, z), M::Wood),
+        (cuboid(0.06, 0.06, 0.95, x, 1.0, z), M::Beam), // ridge beam
+        (cuboid(0.95, 0.1, 0.7, x, 1.1, z), M::Wood),   // flat roof plate
     ]
 }
 
 /// **Barracks** (footprint 4×4): a long timber hall under a peaked roof, with a fronting door and a
 /// weapon rack of iron shafts in the yard.
-fn barracks_parts(side: Side) -> Vec<Mesh> {
-    let plank = pal(0x3a2618, 0x6b4a2a, side);
-    let timber = pal(0x5a3a22, 0x7a5a34, side);
-    let roof = pal(0x6b3322, 0x9c5a2e, side);
-    let iron = lin(0x6a6e72);
-    let door = lin(0x23242a);
-    let banner = pal(0x2f5fa6, 0xb0402a, side);
-
-    let mut v: Vec<Mesh> = Vec::new();
+fn barracks_parts() -> Vec<(Mesh, M)> {
+    let mut v: Vec<(Mesh, M)> = Vec::new();
     // Long plank hall on the −X half of the plot (yard on +X, like the campaign producers).
-    v.push(tinted(cuboid(3.4, 1.2, 1.8, -0.2, 0.6, 0.0), plank));
+    v.push((cuboid(3.4, 1.2, 1.8, -0.2, 0.6, 0.0), M::Wood));
     for (sx, sz) in [(-1.9, -0.9), (1.5, -0.9), (-1.9, 0.9), (1.5, 0.9)] {
-        v.push(tinted(cuboid(0.14, 1.3, 0.14, sx, 0.65, sz), timber));
+        v.push((cuboid(0.14, 1.3, 0.14, sx, 0.65, sz), M::Beam));
     }
     // Peaked roof: two slabs tilted about X meeting at the ridge.
     let a = 0.5;
-    v.push(tinted(
+    v.push((
         Mesh::from(Cuboid::new(3.7, 0.12, 1.25))
             .rotated_by(Quat::from_rotation_x(a))
             .translated_by(Vec3::new(-0.2, 1.5, 0.45)),
-        roof,
+        M::HouseRoof,
     ));
-    v.push(tinted(
+    v.push((
         Mesh::from(Cuboid::new(3.7, 0.12, 1.25))
             .rotated_by(Quat::from_rotation_x(-a))
             .translated_by(Vec3::new(-0.2, 1.5, -0.45)),
-        roof,
+        M::HouseRoof,
     ));
     // Door (+Z front) + a side banner.
-    v.push(tinted(cuboid(0.7, 0.9, 0.08, -0.2, 0.45, 0.91), door));
-    v.push(tinted(cuboid(0.42, 0.32, 0.05, -1.9, 1.5, 0.0), banner));
+    v.push((cuboid(0.7, 0.9, 0.08, -0.2, 0.45, 0.91), M::Slit));
+    v.push((cuboid(0.42, 0.32, 0.05, -1.9, 1.5, 0.0), M::Banner));
     // Weapon rack in the +X yard: two posts, a top rail, three leaning iron shafts.
     let rx = 1.4;
-    v.push(tinted(cuboid(0.08, 0.9, 0.08, rx - 0.5, 0.45, 0.6), timber));
-    v.push(tinted(cuboid(0.08, 0.9, 0.08, rx + 0.5, 0.45, 0.6), timber));
-    v.push(tinted(cuboid(1.1, 0.08, 0.08, rx, 0.88, 0.6), timber));
+    v.push((cuboid(0.08, 0.9, 0.08, rx - 0.5, 0.45, 0.6), M::Beam));
+    v.push((cuboid(0.08, 0.9, 0.08, rx + 0.5, 0.45, 0.6), M::Beam));
+    v.push((cuboid(1.1, 0.08, 0.08, rx, 0.88, 0.6), M::Beam));
     for dx in [-0.3, 0.0, 0.3] {
-        v.push(tinted(cuboid(0.05, 1.05, 0.05, rx + dx, 0.55, 0.6), iron));
+        v.push((cuboid(0.05, 1.05, 0.05, rx + dx, 0.55, 0.6), M::Iron));
     }
     // Training pell: a stout post with a crossbar + a straw-bound head, in the yard.
     let (px, pz) = (1.5, -0.75);
-    v.push(tinted(cuboid(0.16, 1.5, 0.16, px, 0.75, pz), timber));
-    v.push(tinted(cuboid(0.9, 0.12, 0.12, px, 1.15, pz), timber)); // arms
-    v.push(tinted(cuboid(0.26, 0.3, 0.26, px, 1.55, pz), lin(0xcaa84e))); // straw head
-    // Two shields leaning on the hall's front wall (flat cuboids — merge-safe).
-    for (sx, col) in [(-1.4_f32, 0x8a4a2a), (-1.0, 0x3a5a7a)] {
-        v.push(tinted(
+    v.push((cuboid(0.16, 1.5, 0.16, px, 0.75, pz), M::Beam));
+    v.push((cuboid(0.9, 0.12, 0.12, px, 1.15, pz), M::Beam)); // arms
+    v.push((cuboid(0.26, 0.3, 0.26, px, 1.55, pz), M::Straw)); // straw head
+    // Two shields leaning on the hall's front wall.
+    for (sx, m) in [(-1.4_f32, M::Iron), (-1.0, M::Banner)] {
+        v.push((
             cuboid(0.44, 0.5, 0.08, 0.0, 0.0, 0.0)
                 .rotated_by(Quat::from_rotation_z(0.14))
                 .translated_by(Vec3::new(sx, 0.52, 0.95)),
-            lin(col),
+            m,
         ));
-        v.push(tinted(cuboid(0.12, 0.12, 0.05, sx, 0.52, 1.0), lin(0xcaa24a))); // boss
+        v.push((cuboid(0.12, 0.12, 0.05, sx, 0.52, 1.0), M::Bronze)); // boss
     }
     // Yard clutter.
     v.extend(barrel(0.6, 0.75));
@@ -914,27 +831,21 @@ fn barracks_parts(side: Side) -> Vec<Mesh> {
 
 /// **House** (footprint 2×2): a small plastered cottage with corner beams, a pyramid roof, a door
 /// and a lit window.
-fn house_parts(side: Side) -> Vec<Mesh> {
-    let wall = pal(0xd3b78b, 0xdcc596, side);
-    let beam = pal(0x5a3a22, 0x7a5a34, side);
-    let roof = pal(0x6b3322, 0x9c5a2e, side);
-    let door = lin(0x23242a);
-    let glow = lin(0xffd58c);
-
-    let mut v: Vec<Mesh> = Vec::new();
-    v.push(tinted(cuboid(1.5, 0.9, 1.3, 0.0, 0.45, 0.0), wall));
+fn house_parts() -> Vec<(Mesh, M)> {
+    let mut v: Vec<(Mesh, M)> = Vec::new();
+    v.push((cuboid(1.5, 0.9, 1.3, 0.0, 0.45, 0.0), M::Plaster));
     for (sx, sz) in [(-0.75, -0.65), (0.75, -0.65), (-0.75, 0.65), (0.75, 0.65)] {
-        v.push(tinted(cuboid(0.14, 0.9, 0.14, sx, 0.45, sz), beam));
+        v.push((cuboid(0.14, 0.9, 0.14, sx, 0.45, sz), M::Beam));
     }
     // Cross-timbering on the front wall (the half-timbered look) + a sill under the window.
-    v.push(tinted(cuboid(1.5, 0.1, 0.05, 0.0, 0.62, 0.66), beam));
-    v.push(tinted(cuboid(0.34, 0.06, 0.12, 0.5, 0.46, 0.68), beam)); // window box
-    v.push(tinted(pyramid(1.15, 0.7, 0.9), roof));
-    v.push(tinted(cuboid(0.4, 0.6, 0.06, 0.0, 0.3, 0.66), door));
-    v.push(tinted(cuboid(0.3, 0.3, 0.06, 0.5, 0.62, 0.67), glow));
+    v.push((cuboid(1.5, 0.1, 0.05, 0.0, 0.62, 0.66), M::Beam));
+    v.push((cuboid(0.34, 0.06, 0.12, 0.5, 0.46, 0.68), M::Beam)); // window box
+    v.push((pyramid(1.15, 0.7, 0.9), M::HouseRoof));
+    v.push((cuboid(0.4, 0.6, 0.06, 0.0, 0.3, 0.66), M::Slit));
+    v.push((cuboid(0.3, 0.3, 0.06, 0.5, 0.62, 0.67), M::Window));
     // Chimney (−X back corner) with a stone cap.
-    v.push(tinted(cuboid(0.24, 1.4, 0.24, -0.5, 0.7, -0.4), lin(0x7c6a5a)));
-    v.push(tinted(cuboid(0.32, 0.1, 0.32, -0.5, 1.42, -0.4), lin(0x5a4a3a)));
+    v.push((cuboid(0.24, 1.4, 0.24, -0.5, 0.7, -0.4), M::HouseStone));
+    v.push((cuboid(0.32, 0.1, 0.32, -0.5, 1.42, -0.4), M::DarkStone));
     // Cottage clutter (kept tight to the 2×2 footprint).
     v.extend(barrel(0.9, 0.9));
     v.extend(woodpile(-0.85, -0.1));

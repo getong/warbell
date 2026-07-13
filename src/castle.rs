@@ -499,7 +499,7 @@ fn tex_packed(hex: u32) -> Image {
 }
 
 // ── Material table ───────────────────────────────────────────────────────────────
-fn build_mats(images: &mut Assets<Image>, std_mats: &mut Assets<StandardMaterial>) -> Mats {
+pub(crate) fn build_mats(images: &mut Assets<Image>, std_mats: &mut Assets<StandardMaterial>) -> Mats {
     let mut h = std::collections::HashMap::new();
     // Double-sided: our custom gable/slab/taper meshes don't all wind CCW-outward, and
     // back-face culling would drop those faces (the see-through roof bug). Bevy flips the
