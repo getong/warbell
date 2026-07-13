@@ -205,14 +205,49 @@ fn spawn_hall(commands: &mut Commands, assets: &RtsBuildAssets, side: Side, pos:
 /// The live ghost's state, carried across frames on a `Local`.
 #[derive(Default)]
 struct GhostState {
+    /// The single-building ghost body (None for a Wall, which uses `wall_ghosts`).
     root: Option<Entity>,
     kind: Option<BuildingKind>,
     rot_steps: u32,
+    /// Wall drag: the tile where the LMB drag began (None = not dragging a wall).
+    wall_start: Option<Vec2>,
+    /// Pooled ghost segments previewing a wall run.
+    wall_ghosts: Vec<Entity>,
 }
 
-/// Drive the placement ghost when `Placing` is armed: follow the snapped cursor, tint by validity,
-/// rotate on **R**, place on **LMB**, cancel on **RMB / Esc**. Placement always goes through
-/// [`try_place`] so the player and AI paths share one validate+spend+spawn.
+/// The ghost tint colours.
+const GHOST_OK: Color = Color::srgba(0.32, 1.0, 0.38, 0.5);
+const GHOST_BAD: Color = Color::srgba(1.0, 0.32, 0.3, 0.5);
+/// Wall segments step by their footprint so a dragged run abuts cleanly; cap the run length.
+const WALL_STEP: f32 = 2.0;
+const WALL_RUN_MAX: i32 = 30;
+
+/// Axis-snapped run of wall tiles from `start` to `end` — only straight (H or V) runs, no diagonals:
+/// snap to whichever axis the drag favours, then step by the wall footprint. First tile = `start`.
+fn wall_line(start: Vec2, end: Vec2) -> Vec<Vec2> {
+    let d = end - start;
+    let (axis, len) = if d.x.abs() >= d.y.abs() {
+        (Vec2::new(d.x.signum(), 0.0), d.x.abs())
+    } else {
+        (Vec2::new(0.0, d.y.signum()), d.y.abs())
+    };
+    let n = ((len / WALL_STEP).round() as i32).clamp(0, WALL_RUN_MAX);
+    (0..=n)
+        .map(|i| {
+            let p = start + axis * (i as f32 * WALL_STEP);
+            Vec2::new(p.x.round(), p.y.round())
+        })
+        .collect()
+}
+
+/// Drive the placement ghost when `Placing` is armed. Two interactions:
+/// - **Normal buildings**: the ghost follows the snapped cursor (tinted by validity, **R** rotates);
+///   LMB places, and placement STAYS armed so you can drop as many as you can afford (like a real
+///   RTS) — RMB / Esc exits.
+/// - **Wall**: click-**drag** a straight (axis-snapped) run and release to raise the whole row of
+///   segments at once — no diagonals, no clicking each block.
+///
+/// Placement always routes through [`try_place`] so the player and AI share one validate+spend+spawn.
 #[allow(clippy::too_many_arguments)]
 fn ghost_placement(
     mut commands: Commands,
@@ -242,12 +277,12 @@ fn ghost_placement(
         clear_ghost(&mut commands, &mut ghost);
         return;
     }
-
-    if keys.just_pressed(KeyCode::KeyR) {
+    // R rotates non-wall footprints (walls are axis-snapped, no rotation).
+    if kind != BuildingKind::Wall && keys.just_pressed(KeyCode::KeyR) {
         ghost.rot_steps = (ghost.rot_steps + 1) % 4;
     }
 
-    // Cursor → ground. `pick::cursor_ray_ground` is the sibling-owned ray/terrain refinement.
+    // Cursor → ground.
     let (Ok(window), Ok((cam, cam_tf))) = (windows.single(), cameras.single()) else {
         return;
     };
@@ -257,47 +292,97 @@ fn ghost_placement(
     };
     let snapped = Vec2::new(gp.x.round(), gp.y.round());
 
-    // (Re)spawn the ghost body when the kind changes. `just_armed` = this is the very frame the
-    // build-strip button armed `Placing`. The button click and the ghost's confirm-click both read
-    // the SAME `just_pressed(Left)` this frame, so without this guard the arming click also lands
-    // the building instantly (at the ground point under the HUD button) — the player never gets to
-    // choose a spot. Skip placing on the arming frame; the next click confirms.
+    // `just_armed` = the very frame the build-strip button armed `Placing`. The button click and a
+    // ghost confirm-click share the SAME `just_pressed(Left)`; without this guard the arming click
+    // also lands the building / starts a wall drag instantly. Skip the first frame's action.
     let just_armed = ghost.kind != Some(kind);
     if just_armed {
         clear_ghost(&mut commands, &mut ghost);
-        ghost.root = Some(spawn_ghost(&mut commands, &assets, kind));
         ghost.kind = Some(kind);
+        ghost.rot_steps = 0;
     }
 
     let deposits: Vec<Vec2> =
         deposits_q.iter().map(|t| Vec2::new(t.translation.x, t.translation.z)).collect();
-    let valid = placement_valid(kind, Side::Player, snapped, &deposits);
+    let can_afford = |b: &RtsBanks| b.side(Side::Player).can_afford(&building_def(kind).cost);
 
-    if let Some(mut m) = mats.get_mut(&assets.ghost_body) {
-        m.base_color = if valid {
-            Color::srgba(0.32, 1.0, 0.38, 0.5)
-        } else {
-            Color::srgba(1.0, 0.32, 0.3, 0.5)
+    if kind == BuildingKind::Wall {
+        // ── Wall: click-drag a straight run ──
+        if !just_armed && mouse.just_pressed(MouseButton::Left) {
+            ghost.wall_start = Some(snapped);
+        }
+        let line = match ghost.wall_start {
+            Some(s) => wall_line(s, snapped),
+            None => vec![snapped],
         };
-    }
-
-    let y = crate::worldmap::ground_at_world(snapped.x, snapped.y).unwrap_or(0.0);
-    if let Some(e) = ghost.root {
-        commands.entity(e).try_insert(
-            Transform::from_xyz(snapped.x, y, snapped.y)
-                .with_rotation(Quat::from_rotation_y(ghost.rot_steps as f32 * FRAC_PI_2)),
-        );
-    }
-
-    if !just_armed
-        && mouse.just_pressed(MouseButton::Left)
-        && valid
-        && try_place(&mut commands, &assets, &mut banks, &deposits, kind, Side::Player, snapped, ghost.rot_steps)
-    {
-        cues.write(crate::audio::AudioCue::UiSelect); // placement confirm
-        placing.0 = None;
-        clear_ghost(&mut commands, &mut ghost);
-        ghost.rot_steps = 0;
+        let all_ok = line.iter().all(|t| placement_valid(kind, Side::Player, *t, &deposits));
+        if let Some(mut m) = mats.get_mut(&assets.ghost_body) {
+            m.base_color = if all_ok { GHOST_OK } else { GHOST_BAD };
+        }
+        // Pool the preview segments to the run length; park each on its tile, hide extras.
+        while ghost.wall_ghosts.len() < line.len() {
+            let e = spawn_ghost(&mut commands, &assets, kind);
+            ghost.wall_ghosts.push(e);
+        }
+        let seg_ents = ghost.wall_ghosts.clone();
+        for (i, e) in seg_ents.iter().enumerate() {
+            if let Some(tile) = line.get(i) {
+                let y = crate::worldmap::ground_at_world(tile.x, tile.y).unwrap_or(0.0);
+                commands
+                    .entity(*e)
+                    .try_insert((Transform::from_xyz(tile.x, y, tile.y), Visibility::Visible));
+            } else {
+                commands.entity(*e).try_insert(Visibility::Hidden);
+            }
+        }
+        // Release → raise the whole run (each affordable, valid tile), then STAY armed for another run.
+        if !just_armed && mouse.just_released(MouseButton::Left) && ghost.wall_start.is_some() {
+            let mut placed = false;
+            for tile in &line {
+                if !can_afford(&banks) {
+                    break;
+                }
+                if try_place(&mut commands, &assets, &mut banks, &deposits, kind, Side::Player, *tile, 0) {
+                    placed = true;
+                }
+            }
+            if placed {
+                cues.write(crate::audio::AudioCue::UiSelect);
+            }
+            ghost.wall_start = None;
+            if !can_afford(&banks) {
+                placing.0 = None;
+                clear_ghost(&mut commands, &mut ghost);
+            }
+        }
+    } else {
+        // ── Normal building: single ghost, REPEAT placement ──
+        if ghost.root.is_none() {
+            ghost.root = Some(spawn_ghost(&mut commands, &assets, kind));
+        }
+        let valid = placement_valid(kind, Side::Player, snapped, &deposits);
+        if let Some(mut m) = mats.get_mut(&assets.ghost_body) {
+            m.base_color = if valid { GHOST_OK } else { GHOST_BAD };
+        }
+        let y = crate::worldmap::ground_at_world(snapped.x, snapped.y).unwrap_or(0.0);
+        if let Some(e) = ghost.root {
+            commands.entity(e).try_insert(
+                Transform::from_xyz(snapped.x, y, snapped.y)
+                    .with_rotation(Quat::from_rotation_y(ghost.rot_steps as f32 * FRAC_PI_2)),
+            );
+        }
+        if !just_armed
+            && mouse.just_pressed(MouseButton::Left)
+            && valid
+            && try_place(&mut commands, &assets, &mut banks, &deposits, kind, Side::Player, snapped, ghost.rot_steps)
+        {
+            cues.write(crate::audio::AudioCue::UiSelect);
+            // Stay armed to drop another — only exit once the player can't afford it (or cancels).
+            if !can_afford(&banks) {
+                placing.0 = None;
+                clear_ghost(&mut commands, &mut ghost);
+            }
+        }
     }
 }
 
@@ -305,6 +390,10 @@ fn clear_ghost(commands: &mut Commands, ghost: &mut GhostState) {
     if let Some(e) = ghost.root.take() {
         commands.entity(e).try_despawn();
     }
+    for e in ghost.wall_ghosts.drain(..) {
+        commands.entity(e).try_despawn();
+    }
+    ghost.wall_start = None;
     ghost.kind = None;
 }
 
