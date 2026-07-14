@@ -182,7 +182,16 @@ fn setup_rts_hud(
     *done = true;
     spawn_top_bar(&mut commands, &fonts, &atlas);
     spawn_build_strip(&mut commands, &fonts, &atlas);
-    spawn_selection_panels(&mut commands, &fonts);
+    spawn_selection_panels(&mut commands, &fonts, &atlas);
+}
+
+/// The count-chip / train-card icon + tint for a unit kind (shared with `update_unit_summary`).
+fn unit_icon(kind: UnitKind) -> (&'static str, Color) {
+    match kind {
+        UnitKind::Worker => ("stat:wood", WOOD_COL),
+        UnitKind::Swordsman => ("buff:power", Color::WHITE),
+        UnitKind::Archer => ("def_keep_archers", GOLD),
+    }
 }
 
 /// Top-centre resource bar: `[Potyczka] wood stone gold food  pop`.
@@ -339,7 +348,7 @@ fn spawn_build_strip(commands: &mut Commands, fonts: &UiFonts, atlas: &IconAtlas
 
 /// Selection panels, parked to the RIGHT of the minimap (bottom-left is the minimap now) so they
 /// never overlap it. Both start hidden; `sync_selection_mode` toggles `display`.
-fn spawn_selection_panels(commands: &mut Commands, fonts: &UiFonts) {
+fn spawn_selection_panels(commands: &mut Commands, fonts: &UiFonts, atlas: &IconAtlas) {
     // ── unit summary + command buttons ──
     commands
         .spawn((
@@ -419,35 +428,60 @@ fn spawn_selection_panels(commands: &mut Commands, fonts: &UiFonts) {
                 Node {
                     display: Display::None,
                     flex_direction: FlexDirection::Column,
-                    row_gap: Val::Px(7.0),
-                    margin: UiRect::top(Val::Px(3.0)),
+                    row_gap: Val::Px(8.0),
+                    margin: UiRect::top(Val::Px(5.0)),
                     ..default()
                 },
                 BldgBar::Section,
             ))
             .with_children(|s| {
-                // Two train buttons.
+                // Section header — a gold rule + label so the panel reads as a barracks, not a
+                // bare stack of buttons.
+                s.spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        height: Val::Px(1.0),
+                        margin: UiRect::bottom(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BackgroundColor(rgba(224, 168, 74, 0.35)),
+                ));
                 s.spawn(Node {
                     flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
                     column_gap: Val::Px(7.0),
                     ..default()
                 })
-                .with_children(|r| {
-                    train_button(r, fonts, UnitKind::Swordsman, "Swordsman");
-                    train_button(r, fonts, UnitKind::Archer, "Archer");
+                .with_children(|h| {
+                    if let Some(e) = atlas.get_tintable("buff:power") {
+                        h.spawn(widgets::icon_tinted(e, 18.0, GOLD));
+                    }
+                    h.spawn(label(&fonts.display, "Train Troops", 13.0, rgba(224, 168, 74, 0.95)));
                 });
-                // Queue slots.
+                // Two train cards (icon + name + cost).
                 s.spawn(Node {
                     flex_direction: FlexDirection::Row,
-                    column_gap: Val::Px(5.0),
+                    column_gap: Val::Px(8.0),
+                    ..default()
+                })
+                .with_children(|r| {
+                    train_button(r, fonts, atlas, UnitKind::Swordsman, "Swordsman");
+                    train_button(r, fonts, atlas, UnitKind::Archer, "Archer");
+                });
+                // Queue row — a "Queue" caption + the FIFO slots (each shows the queued unit icon).
+                s.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(6.0),
                     ..default()
                 })
                 .with_children(|q| {
+                    q.spawn(label(&fonts.semibold, "Queue", 11.0, TEXT_DIM));
                     for i in 0..TRAIN_QUEUE_DEPTH {
                         q.spawn((
                             Node {
-                                width: Val::Px(24.0),
-                                height: Val::Px(24.0),
+                                width: Val::Px(26.0),
+                                height: Val::Px(26.0),
                                 align_items: AlignItems::Center,
                                 justify_content: JustifyContent::Center,
                                 border: border(1.0),
@@ -458,12 +492,12 @@ fn spawn_selection_panels(commands: &mut Commands, fonts: &UiFonts) {
                             BorderColor::all(SLOT_BORDER),
                         ))
                         .with_children(|cell| {
-                            cell.spawn((label(&fonts.bold, "", 12.0, GOLD), BldgText::Queue(i)));
+                            cell.spawn((label(&fonts.bold, "", 13.0, GOLD), BldgText::Queue(i)));
                         });
                     }
                 });
-                // Training progress bar.
-                bar_track(s, 8.0, |t| {
+                // Training progress bar (taller, so "a unit is cooking" reads at a glance).
+                bar_track(s, 10.0, |t| {
                     t.spawn((bar_fill(GOLD, GOLD_DEEP), BldgBar::Prog));
                 });
             });
@@ -496,17 +530,21 @@ fn cmd_button(p: &mut RelatedSpawnerCommands<ChildOf>, fonts: &UiFonts, cmd: Cmd
 fn train_button(
     p: &mut RelatedSpawnerCommands<ChildOf>,
     fonts: &UiFonts,
+    atlas: &IconAtlas,
     kind: UnitKind,
     name: &str,
 ) {
+    let (icon_id, tint) = unit_icon(kind);
     p.spawn((
         Button,
         Interaction::default(),
         Node {
+            flex_grow: 1.0,
+            flex_basis: Val::Px(0.0),
             flex_direction: FlexDirection::Column,
             align_items: AlignItems::Center,
-            row_gap: Val::Px(3.0),
-            padding: UiRect::axes(Val::Px(9.0), Val::Px(6.0)),
+            row_gap: Val::Px(4.0),
+            padding: UiRect::axes(Val::Px(9.0), Val::Px(8.0)),
             border: border(2.0),
             border_radius: radius(R_CARD),
             ..default()
@@ -516,6 +554,9 @@ fn train_button(
         TrainBtn(kind),
     ))
     .with_children(|b| {
+        if let Some(e) = atlas.get_tintable(icon_id) {
+            b.spawn(widgets::icon_tinted(e, 26.0, tint));
+        }
         b.spawn(label(&fonts.semibold, name, 13.0, Color::WHITE));
         b.spawn(Node {
             flex_direction: FlexDirection::Row,
@@ -523,8 +564,7 @@ fn train_button(
             column_gap: Val::Px(5.0),
             ..default()
         })
-        // No atlas at this call site — cost integers still read fine without their small coin icons.
-        .with_children(|cr| spawn_cost_chips(cr, fonts, None, &train_cost(kind)));
+        .with_children(|cr| spawn_cost_chips(cr, fonts, Some(atlas), &train_cost(kind)));
     });
 }
 
@@ -589,16 +629,34 @@ fn bar_fill(top: Color, bot: Color) -> impl Bundle {
 
 // ── top bar sync ──────────────────────────────────────────────────────────────────────────────
 
-fn update_top_bar(banks: Res<RtsBanks>, pop: Res<RtsPop>, mut q: Query<(&ResText, &mut Text)>) {
+fn update_top_bar(
+    banks: Res<RtsBanks>,
+    pop: Res<RtsPop>,
+    idle_q: Query<
+        (&Side, &RtsUnit),
+        (
+            Without<crate::rts::workers::Assigned>,
+            Without<crate::rts::units::Converting>,
+            Without<crate::dying::Dying>,
+        ),
+    >,
+    mut q: Query<(&ResText, &mut Text)>,
+) {
     let b = *banks.side(Side::Player);
     let ps = pop.0[Side::Player.ix()];
+    // Unemployed player workers (unassigned) — surfaced next to the pop total so the player sees
+    // idle labour to put to work (and knows why growth paused at the MAX_IDLE cap).
+    let idle = idle_q
+        .iter()
+        .filter(|(s, u)| **s == Side::Player && u.kind == UnitKind::Worker)
+        .count();
     for (r, mut t) in &mut q {
         let s = match r.0 {
             ResKind::Wood => format!("{}", b.wood as i64),
             ResKind::Stone => format!("{}", b.stone as i64),
             ResKind::Gold => format!("{}", b.gold as i64),
             ResKind::Food => format!("{}", b.food as i64),
-            ResKind::Pop => format!("{}/{}", ps.count, ps.cap),
+            ResKind::Pop => format!("{}/{}  ({} idle)", ps.count, ps.cap, idle),
         };
         if **t != s {
             **t = s; // change-detection guard: only re-layout when the numeral actually moved
@@ -646,6 +704,7 @@ fn build_strip_click(
     banks: Res<RtsBanks>,
     mut placing: ResMut<Placing>,
     mut notice: ResMut<Notice>,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
     q: Query<(&Interaction, &BuildStripBtn), Changed<Interaction>>,
 ) {
     for (interaction, btn) in &q {
@@ -654,8 +713,10 @@ fn build_strip_click(
         }
         if placing.0 == Some(btn.0) {
             placing.0 = None; // clicking the armed building again disarms
+            cues.write(crate::audio::AudioCue::UiSelect);
         } else if banks.side(Side::Player).can_afford(&building_def(btn.0).cost) {
             placing.0 = Some(btn.0);
+            cues.write(crate::audio::AudioCue::UiSelect);
             // Hint the controls — the ghost follows the cursor; the player picks the spot.
             notice.push("Move to a spot · click to place · R rotate · right-click cancel", time.elapsed_secs_f64());
         } else {
@@ -669,6 +730,7 @@ fn build_strip_click(
 fn cmd_button_click(
     mut commands: Commands,
     mut attack: ResMut<crate::rts::command::AttackMove>,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
     q: Query<(&Interaction, &CmdBtn), Changed<Interaction>>,
     selected: Query<Entity, (With<Selected>, With<RtsUnit>)>,
 ) {
@@ -676,6 +738,7 @@ fn cmd_button_click(
         if *interaction != Interaction::Pressed {
             continue;
         }
+        cues.write(crate::audio::AudioCue::UiSelect);
         match cmd {
             CmdBtn::Stop => {
                 for e in &selected {
@@ -874,6 +937,7 @@ fn train_click(
     pop: Res<RtsPop>,
     queues: Query<&TrainQueue>,
     mut orders: MessageWriter<TrainOrder>,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
     mut notice: ResMut<Notice>,
     q: Query<(&Interaction, &TrainBtn), Changed<Interaction>>,
 ) {
@@ -897,6 +961,7 @@ fn train_click(
             continue;
         }
         orders.write(TrainOrder { building: b, kind: tb.0 });
+        cues.write(crate::audio::AudioCue::ShopBuy); // "order placed / resources spent" confirm sting
     }
 }
 

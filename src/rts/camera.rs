@@ -56,7 +56,9 @@ const ZOOM_STEP: f32 = 3.0;
 // ── panning ──
 /// Ground pan speed (world-units/sec) at the default zoom; scaled by `zoom / ZOOM_DEFAULT` so a
 /// zoomed-out view slides proportionally faster (covers more map per second).
-const PAN_SPEED: f32 = 22.0;
+const PAN_SPEED: f32 = 46.0;
+/// Hold Shift to fast-pan (whip across the map) — standard RTS convenience.
+const PAN_BOOST: f32 = 1.9;
 /// Cursor within this many pixels of a window edge triggers an edge-pan that way.
 const EDGE_PAN_PX: f32 = 24.0;
 /// Keyboard rotate speed (rad/s) while Q / E held.
@@ -67,7 +69,7 @@ const ROT_MOUSE: f32 = 0.006;
 const FOCUS_MARGIN: f32 = 8.0;
 /// Camera glide rate (1/s) toward the target pose — a subtle ease so pans/zoom feel smooth, not
 /// rigid (mirrors the campaign follow-cam's `GLIDE_RATE` feel).
-const GLIDE_RATE: f32 = 12.0;
+const GLIDE_RATE: f32 = 15.0;
 /// Above this jump (world units) the eye snaps instead of gliding — so the very first skirmish
 /// frame doesn't sail the camera in from the boot overview pose.
 const SNAP_DIST: f32 = 40.0;
@@ -281,7 +283,13 @@ fn rts_drive_camera(
 
     if pan != Vec2::ZERO {
         // Speed scales with zoom; normalise so a diagonal (WASD + edge combined) isn't faster.
-        let speed = PAN_SPEED * (focus.zoom / ZOOM_DEFAULT);
+        // Shift whips the view across the map (fast-pan).
+        let boost = if keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight) {
+            PAN_BOOST
+        } else {
+            1.0
+        };
+        let speed = PAN_SPEED * boost * (focus.zoom / ZOOM_DEFAULT);
         focus.pos += pan.normalize() * speed * dt;
     }
     // Keep the focus inside the arena ellipse (+ margin) — a generous box clamp is plenty here.

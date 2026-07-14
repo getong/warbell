@@ -31,7 +31,7 @@ use crate::palette::lin;
 
 use super::{
     base_of, building_def, starting_bank, BuildingKind, Deposit, Placing, RtsBanks, RtsBuilding,
-    RtsOutcome, RtsPop, Side, TrainQueue, HALL_POP, HOUSE_POP, POP_HARD_CAP,
+    RtsOutcome, RtsPop, Side, TrainQueue, HALL_POP, HOUSE_POP, PLAYER_BASE, POP_HARD_CAP,
 };
 
 /// The seven placeable kinds — keyed by [`RtsBuildAssets`] and iterated at asset-bake time.
@@ -54,6 +54,10 @@ const START_SCALE_Y: f32 = 0.12;
 const FLAT_TOLERANCE: f32 = 0.35;
 /// No building may be raised within this radius of the ENEMY base plateau centre (spec §6).
 const ENEMY_BASE_KEEPOUT: f32 = 13.0;
+/// Your castle's territory: you may only build within this radius of your OWN base centre. Covers
+/// your half of the arena + the contested centre (origin is ~31u from each base), but stops well
+/// short of the enemy's base (~62u away) — so you can't wall in / cheese the opponent's plateau.
+pub(crate) const BUILD_TERRITORY_R: f32 = 34.0;
 
 // ────────────────────────────────────────────────────────────── plugin
 
@@ -67,6 +71,7 @@ impl Plugin for RtsBuildPlugin {
             (
                 spawn_starting_halls,
                 ghost_placement,
+                territory_ring,
                 grow_buildings,
                 reap_buildings,
                 crumble_buildings,
@@ -397,6 +402,52 @@ fn clear_ghost(commands: &mut Commands, ghost: &mut GhostState) {
     ghost.kind = None;
 }
 
+/// A faint blue ring on the ground marking your castle's build territory ([`BUILD_TERRITORY_R`]) —
+/// shown only while you're placing a building, so the "why is the ghost red out here" boundary is
+/// visible ("granice zamku"). Spawned lazily once, then just toggled visible/hidden.
+fn territory_ring(
+    mut commands: Commands,
+    mut ring: Local<Option<Entity>>,
+    placing: Res<Placing>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut mats: ResMut<Assets<StandardMaterial>>,
+    mut vis_q: Query<&mut Visibility>,
+) {
+    let want = placing.0.is_some();
+    if ring.is_none() {
+        if !want {
+            return; // don't spawn until first needed
+        }
+        let mesh = meshes.add(
+            Annulus::new(BUILD_TERRITORY_R - 0.6, BUILD_TERRITORY_R).mesh().resolution(96).build(),
+        );
+        let mat = mats.add(StandardMaterial {
+            base_color: Color::srgba(0.35, 0.72, 1.0, 0.5),
+            emissive: LinearRgba::rgb(0.12, 0.4, 0.85),
+            unlit: true,
+            alpha_mode: AlphaMode::Blend,
+            cull_mode: None,
+            ..default()
+        });
+        let y = crate::worldmap::ground_at_world(PLAYER_BASE.x, PLAYER_BASE.y).unwrap_or(0.0) + 0.15;
+        *ring = Some(
+            commands
+                .spawn((
+                    Mesh3d(mesh),
+                    MeshMaterial3d(mat),
+                    Transform::from_xyz(PLAYER_BASE.x, y, PLAYER_BASE.y)
+                        .with_rotation(Quat::from_rotation_x(-FRAC_PI_2)),
+                ))
+                .id(),
+        );
+    }
+    if let Some(e) = *ring {
+        if let Ok(mut v) = vis_q.get_mut(e) {
+            *v = if want { Visibility::Visible } else { Visibility::Hidden };
+        }
+    }
+}
+
 fn spawn_ghost(commands: &mut Commands, assets: &RtsBuildAssets, kind: BuildingKind) -> Entity {
     let root = commands.spawn((Transform::default(), Visibility::Visible)).id();
     let handles = assets.building.get(&kind).cloned().unwrap_or_default();
@@ -418,6 +469,10 @@ pub fn placement_valid(kind: BuildingKind, side: Side, pos: Vec2, deposits: &[Ve
 
     // Enemy base keep-out.
     if pos.distance(base_of(side.foe())) < ENEMY_BASE_KEEPOUT {
+        return false;
+    }
+    // Own-territory limit — can't build out in the enemy's half of the map.
+    if pos.distance(base_of(side)) > BUILD_TERRITORY_R {
         return false;
     }
     // Deposit overlap (deposits carry no radius; use a fixed clearance).

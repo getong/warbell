@@ -52,6 +52,9 @@ const FOOD_SPAWN_MIN: f64 = 8.0;
 const FOOD_SPAWN_COST: f64 = 5.0;
 /// Per-capita food burned per living unit per second (kept low — with an 80-pop town this adds up).
 const FOOD_DRAIN: f64 = 0.012;
+/// Never let more than this many UNEMPLOYED workers pile up per side — growth pauses once reached,
+/// so idle bodies don't clot the base (build more producers to absorb them, Stronghold-style).
+pub(crate) const MAX_IDLE: u32 = 6;
 
 pub struct RtsWorkersPlugin;
 
@@ -352,6 +355,8 @@ fn worker_haul(
     focus: Res<crate::rts::camera::RtsCamFocus>,
     // Global cooldown so many workers chopping at once don't stack into a wall of noise.
     mut tool_cd: Local<f32>,
+    // Separate cooldown so a busy row of gold miners doesn't machine-gun the coin chime.
+    mut gold_cd: Local<f32>,
     mut workers: Query<
         (
             Entity,
@@ -545,6 +550,16 @@ fn worker_haul(
                         CarryKind::Stone => bank.stone += amt,
                         CarryKind::Gold => bank.gold += amt,
                         CarryKind::Food => bank.food += amt,
+                    }
+                    // Coin chime when gold banks (like the campaign gold pickup) — earshot-gated +
+                    // throttled so a row of miners doesn't machine-gun it.
+                    if matches!(kind, CarryKind::Gold)
+                        && *side == Side::Player
+                        && focus.in_earshot(wpos)
+                        && now - *gold_cd > 0.6
+                    {
+                        *gold_cd = now;
+                        cues.write(crate::audio::AudioCue::Gold);
                     }
                     drop_carry(&mut commands, &mut haul);
                     commands.entity(we).try_remove::<MoveTo>();
@@ -759,6 +774,15 @@ fn population_growth(
     mut speak: MessageWriter<crate::audio::Speak>,
     focus: Res<crate::rts::camera::RtsCamFocus>,
     halls: Query<(&RtsBuilding, &Side, &Transform)>,
+    idle_q: Query<
+        (&Side, &RtsUnit),
+        (
+            Without<Assigned>,
+            Without<crate::rts::units::Converting>,
+            Without<Fleeing>,
+            Without<crate::dying::Dying>,
+        ),
+    >,
     mut acc: Local<f32>,
 ) {
     let dt = time.delta_secs();
@@ -774,6 +798,14 @@ fn population_growth(
     }
     *acc -= GROWTH_TICK;
 
+    // Current unemployed (unassigned) worker count per side — growth stops at MAX_IDLE.
+    let mut idle = [0u32, 0u32];
+    for (s, u) in &idle_q {
+        if u.kind == UnitKind::Worker {
+            idle[s.ix()] += 1;
+        }
+    }
+
     let mut hall_pos = [None, None];
     for (b, s, t) in &halls {
         if b.kind == BuildingKind::TownHall && b.built {
@@ -785,13 +817,17 @@ fn population_growth(
         // Grow up to TWO per tick while there's spare food + housing — a big town fills quickly.
         for i in 0..2u32 {
             let ps = pop.0[side.ix()];
-            if banks.side(side).food <= FOOD_SPAWN_MIN || ps.count >= ps.cap {
+            if banks.side(side).food <= FOOD_SPAWN_MIN
+                || ps.count >= ps.cap
+                || idle[side.ix()] >= MAX_IDLE
+            {
                 break;
             }
             let seed = 0x9e_0000 ^ (side.ix() as u32 * 131 + ps.count * 17 + i * 7 + 3);
             let out = pos + Vec2::new(2.0 + i as f32 * 0.9, 2.0 - i as f32 * 0.9);
             spawn_worker_body(&mut commands, &mut meshes, &mut creature_mats, side, out, seed);
             pop.0[side.ix()].count += 1;
+            idle[side.ix()] += 1; // the newborn is unemployed until claim_workers bonds it
             banks.side_mut(side).food -= FOOD_SPAWN_COST;
             if side == Side::Player && i == 0 && focus.in_earshot(out) {
                 // "A new pair of hands!" — villager birth line at the hall (only if on-screen).

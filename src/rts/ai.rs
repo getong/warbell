@@ -150,6 +150,7 @@ fn rival_ai_think(
     units_q: Query<(Entity, &RtsUnit, &Side), Without<Dying>>,
     mut trains: MessageWriter<TrainOrder>,
     mut orders: MessageWriter<RtsOrder>,
+    mut speak: MessageWriter<crate::audio::Speak>,
 ) {
     let now = time.elapsed_secs();
     if now < state.next_think {
@@ -235,5 +236,8 @@ fn rival_ai_think(
         orders.write(RtsOrder { units: soldiers, order: Order::AttackMove(PLAYER_BASE) });
         state.wave_threshold = (state.wave_threshold + WAVE_STEP).min(WAVE_CAP);
         state.wave_cooldown_until = now + WAVE_COOLDOWN;
+        // "Forward! Burn their keep!" — the rival's raid-march cry as the wave sets out.
+        let at = Vec3::new(RIVAL_BASE.x, 1.0, RIVAL_BASE.y);
+        speak.write(crate::audio::Speak::at(crate::audio::Concept::RivalRaidMarch, at));
     }
 }

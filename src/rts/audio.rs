@@ -13,9 +13,11 @@
 
 use bevy::prelude::*;
 
-use crate::audio::{Concept, Speak};
+use crate::audio::{Concept, MusicState, Speak};
 use crate::game_state::{AppState, Modal};
-use crate::rts::{in_skirmish, RtsBanks, RtsOutcome, RtsUnit, Side, UnitKind};
+use crate::player::Health;
+use crate::rts::command::AttackTarget;
+use crate::rts::{in_skirmish, RtsBanks, RtsBuilding, RtsOutcome, RtsUnit, Side, UnitKind};
 
 /// Below this stock (units) a resource is "short" and worth a spoken nudge.
 const LOW_WOOD: f64 = 20.0;
@@ -26,6 +28,13 @@ const ADVICE_COOLDOWN: f32 = 40.0;
 /// Seconds between one townsperson's ambient chatter line (`Greeting` pool — worker/villager idle
 /// remarks) so the settlement feels lived-in. Fairly frequent (the town SHOULD chatter).
 const CHATTER_EVERY: f32 = 11.0;
+/// Seconds between the rival garrison's ambient patrol murmur (`RivalIdle` pool) — sparser than the
+/// friendly chatter, and only while nothing's fighting.
+const RIVAL_CHATTER_EVERY: f32 = 17.0;
+/// A drop of at least this much total player-building HP between frames counts as "under attack".
+const UNDER_ATTACK_DROP: f32 = 6.0;
+/// Don't re-cry "under attack" within this many seconds.
+const UNDER_ATTACK_CD: f32 = 22.0;
 
 /// Per-concept "last spoken at" clock for the throttle (sim seconds; 0 = never).
 #[derive(Resource, Default)]
@@ -44,6 +53,9 @@ impl Plugin for RtsAudioPlugin {
             (
                 low_resource_advice.run_if(in_state(Modal::None)),
                 villager_chatter.run_if(in_state(Modal::None)),
+                rival_chatter.run_if(in_state(Modal::None)),
+                under_attack_voice.run_if(in_state(Modal::None)),
+                combat_music,
                 match_end_voice,
             )
                 .run_if(in_skirmish)
@@ -109,6 +121,71 @@ fn villager_chatter(
     // Pick one by the sim clock (stable within the tick, varies across ticks).
     let idx = (time.elapsed_secs() as usize) % mine.len();
     speak.write(Speak::at(Concept::Greeting, mine[idx]));
+}
+
+/// The rival garrison's ambient patrol murmur (`RivalIdle` pool) — the enemy town should sound
+/// lived-in too. Only while PEACEFUL (nothing fighting) and only from an on-screen rival body, so a
+/// bark never overlaps their combat cries or comes from off-map.
+fn rival_chatter(
+    time: Res<Time>,
+    focus: Res<crate::rts::camera::RtsCamFocus>,
+    fighting: Query<(), With<AttackTarget>>,
+    mut speak: MessageWriter<Speak>,
+    mut acc: Local<f32>,
+    units: Query<(&GlobalTransform, &Side, &RtsUnit), Without<crate::dying::Dying>>,
+) {
+    *acc += time.delta_secs();
+    if *acc < RIVAL_CHATTER_EVERY {
+        return;
+    }
+    *acc -= RIVAL_CHATTER_EVERY;
+    if !fighting.is_empty() {
+        return; // a battle is on — the RivalSpot combat pool owns the airwaves
+    }
+    let them: Vec<Vec3> = units
+        .iter()
+        .filter(|(gt, s, _)| {
+            **s == Side::Rival
+                && focus.in_earshot(Vec2::new(gt.translation().x, gt.translation().z))
+        })
+        .map(|(gt, _, _)| gt.translation())
+        .collect();
+    if them.is_empty() {
+        return;
+    }
+    let idx = (time.elapsed_secs() as usize) % them.len();
+    speak.write(Speak::at(Concept::RivalIdle, them[idx]));
+}
+
+/// Cry "the keep's taking a beating" (`KeepHurt`) when the player's buildings lose HP — the
+/// "you're under attack" alert the RTS was missing. Watches the total player-building HP and fires
+/// (throttled) whenever it drops by a real chunk, so a raid on your base is HEARD even off-screen.
+fn under_attack_voice(
+    time: Res<Time>,
+    mut last_total: Local<f32>,
+    mut clock: Local<f32>,
+    mut speak: MessageWriter<Speak>,
+    bldgs: Query<(&Side, &Health), With<RtsBuilding>>,
+) {
+    let mut total = 0.0;
+    for (s, h) in &bldgs {
+        if *s == Side::Player {
+            total += h.hp.max(0.0);
+        }
+    }
+    let now = time.elapsed_secs();
+    if total < *last_total - UNDER_ATTACK_DROP && now - *clock > UNDER_ATTACK_CD {
+        *clock = now;
+        speak.write(Speak::new(Concept::KeepHurt)); // "The keep's taking a beating…"
+    }
+    *last_total = total;
+}
+
+/// Swell the combat-music layer whenever anything on the field is fighting — the skirmish never set
+/// `MusicState.fighting`, so the battle track (`music-combat.ogg`) never rose. Skirmish-only, so it
+/// never fights the campaign's own combat/boss music flags.
+fn combat_music(mut music: ResMut<MusicState>, fighting: Query<(), With<AttackTarget>>) {
+    music.fighting = !fighting.is_empty();
 }
 
 /// Voice the match verdict once when it lands (victory cheer / defeat lament).

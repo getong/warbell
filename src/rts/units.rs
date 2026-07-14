@@ -320,7 +320,9 @@ fn drive_train_queue(
         let seed = 0x50_1D_00 ^ (side.ix() as u32 * 131 + (time.elapsed_secs() * 1000.0) as u32);
         spawn_soldier(&mut commands, &mut meshes, &mut creature_mats, *side, kind, pos, seed);
         if *side == Side::Player && focus.in_earshot(pos) {
-            cues.write(crate::audio::AudioCue::UiSelect); // "unit ready" click (no dedicated jingle)
+            // "Troops ready!" — reuse the LevelUp fanfare sting (synth-baked, always audible) so a
+            // finished unit is unmistakably HEARD, not the near-silent UiSelect blip it was before.
+            cues.write(crate::audio::AudioCue::LevelUp);
         }
     }
 }
