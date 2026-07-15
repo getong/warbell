@@ -283,13 +283,21 @@ pub(crate) fn biome_ambience(
     siege: Option<Res<crate::siege::Siege>>,
     mode: Res<crate::rts::GameMode>,
     cam: Query<&GlobalTransform, With<Camera3d>>,
+    focus: Option<Res<crate::rts::camera::RtsCamFocus>>,
     mut q: Query<(&mut Ambience, &mut AudioSink)>,
 ) {
     let dt = time.delta_secs();
-    let cam_xz = cam.single().ok().map(|g| {
-        let t = g.translation();
-        Vec2::new(t.x, t.z)
-    });
+    // The reference point for "what's the camera near". In skirmish the camera EYE rides ~90u off
+    // the focus (iso), so testing the eye's XZ against PLAYER_BASE never triggers the town bustle —
+    // use the ground FOCUS point instead. Campaign uses the (first-person / follow) eye as before.
+    let cam_xz = if *mode == crate::rts::GameMode::Skirmish {
+        focus.as_ref().map(|f| f.pos)
+    } else {
+        cam.single().ok().map(|g| {
+            let t = g.translation();
+            Vec2::new(t.x, t.z)
+        })
+    };
     let cur = current_ambience_biome(cam_xz);
     let water = near_water(cam_xz);
     // Town-square bustle plays near the castle by day; the night curfew empties the streets, so

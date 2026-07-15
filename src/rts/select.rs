@@ -80,6 +80,11 @@ fn selection_input(
     buildings: Query<(Entity, &GlobalTransform, &Side), (With<RtsBuilding>, Without<Dying>)>,
     sel_all: Query<Entity, With<Selected>>,
     sel_buildings: Query<Entity, (With<Selected>, With<RtsBuilding>)>,
+    // Any HUD button under the pointer (train / command / build strip) — a click on one must not
+    // also register as a world click (which would deselect the barracks and close its panel while
+    // you're queueing troops). The over_hud band only covers a thin strip; the tall selection panel
+    // sits above it, so this per-button guard is what keeps the panel open on a train click.
+    ui_hover: Query<&Interaction>,
 ) {
     // Build placement / attack-move own the pointer — no selection while either is active. Alt
     // rotates the camera (Alt+drag), so suppress selection while it's held.
@@ -94,12 +99,16 @@ fn selection_input(
     let cursor = win.cursor_position();
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
 
-    // Press: begin a potential drag (unless over the HUD bands).
+    // Press: begin a potential drag (unless over the HUD bands, the minimap, or a HUD button).
+    let over_button = ui_hover.iter().any(|i| !matches!(i, Interaction::None));
     if mouse.just_pressed(MouseButton::Left) {
         if let Some(c) = cursor {
-            // Skip clicks over the HUD bands or the minimap panel (the minimap owns those — it
-            // click-moves the camera).
-            if !pick::over_hud(c, win.height()) && !super::minimap::over_minimap(c, win.height()) {
+            // Skip clicks over the HUD bands, the minimap panel (which owns those — it click-moves
+            // the camera), or any HUD button (so a train/command/build click doesn't also deselect).
+            if !pick::over_hud(c, win.height())
+                && !super::minimap::over_minimap(c, win.height())
+                && !over_button
+            {
                 drag.start = Some(c);
                 drag.cur = c;
                 drag.box_active = false;

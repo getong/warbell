@@ -55,6 +55,12 @@ const FOOD_DRAIN: f64 = 0.012;
 /// Never let more than this many UNEMPLOYED workers pile up per side — growth pauses once reached,
 /// so idle bodies don't clot the base (build more producers to absorb them, Stronghold-style).
 pub(crate) const MAX_IDLE: u32 = 6;
+/// Idle workers settle into a phyllotaxis spread around their hall (radius grows with the slot
+/// index) instead of piling on the spawn point and jittering. Inner radius clears the hall footprint.
+const REST_BASE_R: f32 = 2.8;
+const REST_SPREAD: f32 = 1.5;
+/// Within this of its rest slot a worker stops (a touch above the mover's own 0.6 arrival).
+const REST_ARRIVE: f32 = 0.75;
 
 pub struct RtsWorkersPlugin;
 
@@ -65,6 +71,7 @@ impl Plugin for RtsWorkersPlugin {
             (
                 spawn_starting_workers,
                 claim_workers,
+                idle_rest,
                 worker_haul,
                 worker_defend,
                 worker_flee,
@@ -881,6 +888,72 @@ fn population_growth(
                 // "A new pair of hands!" — villager birth line at the hall (only if on-screen).
                 let at = Vec3::new(out.x, 1.0, out.y);
                 speak.write(crate::audio::Speak::at(crate::audio::Concept::VillagerBorn, at));
+            }
+        }
+    }
+}
+
+/// Idle (unemployed) workers drift to a tidy spread of rest slots around their hall and stand still
+/// there — instead of piling on the spawn point and jittering / spinning against each other. The
+/// spread means their bodies don't overlap, so `separation` never fires on them. `claim_workers` can
+/// still grab any of them for a producer at any time (this only steers the surplus).
+#[allow(clippy::type_complexity)]
+fn idle_rest(
+    mut commands: Commands,
+    halls: Query<(&RtsBuilding, &Side, &Transform)>,
+    mut idle: Query<
+        (Entity, &Side, &RtsUnit, &Transform, Has<MoveTo>, Option<&mut Villager>),
+        (
+            Without<Assigned>,
+            Without<crate::rts::units::Converting>,
+            Without<Fleeing>,
+            Without<WorkerDefend>,
+            Without<crate::dying::Dying>,
+        ),
+    >,
+) {
+    let mut hall = [None, None];
+    for (b, s, t) in &halls {
+        if b.kind == BuildingKind::TownHall && b.built {
+            hall[s.ix()] = Some(Vec2::new(t.translation.x, t.translation.z));
+        }
+    }
+    // Stable per-side ordering (sort by entity) so each idle worker keeps the same slot frame to
+    // frame — a slot that jumps around would send them chasing each other.
+    let mut lists: [Vec<Entity>; 2] = [Vec::new(), Vec::new()];
+    for (e, s, u, ..) in idle.iter() {
+        if u.kind == UnitKind::Worker {
+            lists[s.ix()].push(e);
+        }
+    }
+    lists[0].sort();
+    lists[1].sort();
+
+    for (e, s, u, tf, has_moveto, mut vil) in idle.iter_mut() {
+        if u.kind != UnitKind::Worker {
+            continue;
+        }
+        let Some(h) = hall[s.ix()] else { continue };
+        let i = lists[s.ix()].iter().position(|&x| x == e).unwrap_or(0);
+        let ang = i as f32 * TAU * 0.618_034; // golden-angle spread
+        let rad = REST_BASE_R + REST_SPREAD * (i as f32).sqrt();
+        let target = h + Vec2::new(ang.cos(), ang.sin()) * rad;
+        let wpos = Vec2::new(tf.translation.x, tf.translation.z);
+        let far = wpos.distance(target) > REST_ARRIVE;
+        // Walk to the slot only if we've drifted off it and aren't already headed somewhere.
+        if far && !has_moveto {
+            commands.entity(e).try_insert(MoveTo { goal: target, fight: false });
+        }
+        // Keep the biped animator honest: standing when settled (no shuffle-in-place), and facing
+        // the walk direction while travelling (so the mover's turn + the anim agree — no spin).
+        if let Some(v) = vil.as_mut() {
+            v.pos = wpos;
+            v.moving = has_moveto && far;
+            if v.moving {
+                let d = target - wpos;
+                if d.length_squared() > 1e-4 {
+                    v.facing = d.x.atan2(d.y);
+                }
             }
         }
     }

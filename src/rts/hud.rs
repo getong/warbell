@@ -400,7 +400,7 @@ fn spawn_selection_panels(commands: &mut Commands, fonts: &UiFonts, atlas: &Icon
                 bottom: Val::Px(18.0),
                 left: Val::Px(200.0), // clear of the bottom-left minimap
                 display: Display::None,
-                width: Val::Px(232.0),
+                width: Val::Px(272.0), // wide enough for the two train cards side-by-side
                 flex_direction: FlexDirection::Column,
                 row_gap: Val::Px(7.0),
                 padding: UiRect::axes(Val::Px(14.0), Val::Px(11.0)),
@@ -541,6 +541,7 @@ fn train_button(
         Node {
             flex_grow: 1.0,
             flex_basis: Val::Px(0.0),
+            min_width: Val::Px(0.0), // allow the card to shrink to its flex share (no overflow)
             flex_direction: FlexDirection::Column,
             align_items: AlignItems::Center,
             row_gap: Val::Px(4.0),

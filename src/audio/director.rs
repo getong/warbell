@@ -121,8 +121,10 @@ pub fn speak_director(
     threat: Res<super::HeroThreat>,
     mut subs: ResMut<crate::subtitles::Subtitles>,
     sources: Res<Assets<AudioSource>>,
+    mode: Res<crate::rts::GameMode>,
 ) {
     let now = time.elapsed_secs();
+    let skirmish = *mode == crate::rts::GameMode::Skirmish;
     let hero_pos = hero.single().ok().map(|h| Vec3::new(h.pos.x, 1.6, h.pos.y));
 
     for req in reqs.read() {
@@ -150,7 +152,7 @@ pub fn speak_director(
         if !can_play(mgr.active.get(&line.speaker), now, line.priority) {
             continue;
         }
-        play_line(&mut commands, &cfg, &mut mgr, &mut cd, &sinks, &mut subs, &sources, now, &line, req.at.or(hero_pos));
+        play_line(&mut commands, &cfg, &mut mgr, &mut cd, &sinks, &mut subs, &sources, now, &line, req.at.or(hero_pos), skirmish);
     }
 }
 
@@ -167,6 +169,7 @@ fn play_line(
     now: f32,
     line: &Line,
     pos: Option<Vec3>,
+    skirmish: bool,
 ) {
     let voice = speaker_voice(line.speaker);
     // Look up the preloaded handle; bail if the line has no clip registered.
@@ -190,19 +193,24 @@ fn play_line(
         }
     }
     let dur = crate::subtitles::read_secs(line.text);
-    let vol = voice.gain * cfg.voice_vol;
+    // In skirmish the listener rides the iso camera ~90u overhead, so a SPATIAL voice (villager /
+    // ork / rival) attenuates to silence — only the head-locked hero was ever heard. Play those 2D
+    // there (slightly quieter, since 2D doesn't fall off with distance) so the town/enemy actually
+    // speak. Campaign keeps them spatial next to the hero.
+    let spatial = voice.spatial && !skirmish;
+    let vol = voice.gain * cfg.voice_vol * if voice.spatial && skirmish { 0.7 } else { 1.0 };
     let mut ent = commands.spawn((
         AudioPlayer(clip),
         PlaybackSettings {
             mode: PlaybackMode::Despawn,
             volume: Volume::Linear(vol),
             speed,
-            spatial: voice.spatial,
+            spatial,
             ..default()
         },
         VoiceSink(line.speaker),
     ));
-    if voice.spatial {
+    if spatial {
         ent.insert(Transform::from_translation(pos.unwrap_or(Vec3::ZERO)));
     }
     // Place-bound hero lines (proximity remarks / biome musings) carry a walk-away anchor so they
@@ -267,8 +275,10 @@ pub fn tick_chains(
     sinks: Query<(Entity, &VoiceSink)>,
     mut subs: ResMut<crate::subtitles::Subtitles>,
     sources: Res<Assets<AudioSource>>,
+    mode: Res<crate::rts::GameMode>,
 ) {
     let now = time.elapsed_secs();
+    let skirmish = *mode == crate::rts::GameMode::Skirmish;
     // An unanswered offer expires silently.
     if offered.0.is_some_and(|o| now >= o.expires_at) {
         offered.0 = None;
@@ -297,7 +307,7 @@ pub fn tick_chains(
             .copied();
         let Some(reply) = pick else { continue };
         if can_play(mgr.active.get(&reply.speaker), now, reply.priority) {
-            play_line(&mut commands, &cfg, &mut mgr, &mut cd, &sinks, &mut subs, &sources, now, &reply, pos);
+            play_line(&mut commands, &cfg, &mut mgr, &mut cd, &sinks, &mut subs, &sources, now, &reply, pos, skirmish);
         }
     }
 }

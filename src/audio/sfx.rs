@@ -257,12 +257,16 @@ pub(crate) fn play_cues(
             // Metallic chip per ore pick-swing — random clang + wide pitch jitter so a long mine
             // never repeats the same note (old game's `playPick`).
             AudioCue::OreChip => {
-                one_shot(&mut commands, pick(&bank.chips, &mut seed), 0.5 * sfx, jitter(&mut seed, 0.10));
+                // Quieter in skirmish — a whole work crew chipping stone otherwise drowns the mix.
+                let g = if skirmish { 0.24 } else { 0.5 } * sfx;
+                one_shot(&mut commands, pick(&bank.chips, &mut seed), g, jitter(&mut seed, 0.10));
             }
             // A wood-axe chop per swing that bites a tree — random take + pitch jitter so a
             // long chop varies.
             AudioCue::WoodChop => {
-                one_shot(&mut commands, pick(&bank.chops, &mut seed), 0.6 * sfx, jitter(&mut seed, 0.12));
+                // Quieter in skirmish (many lumberjacks at once).
+                let g = if skirmish { 0.28 } else { 0.6 } * sfx;
+                one_shot(&mut commands, pick(&bank.chops, &mut seed), g, jitter(&mut seed, 0.12));
             }
             // A tree coming down on the felling blow: woody trees get the full crack+crash, a
             // cactus just the dry crack. Louder than a chop swing (rarer, the kill-stroke) and
