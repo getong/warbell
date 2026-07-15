@@ -9,11 +9,16 @@
 //!  2. **Train** — once a Rival Barracks stands, alternate Swordsman/Archer while the army is below
 //!     the current wave target, the bank affords the train cost, and > 4 workers remain hauling.
 //!     Emitted as a [`TrainOrder`]; `units.rs` re-validates at consume time, so a duplicate is inert.
-//!  3. **Muster** — a fresh soldier (one never seen before) gets a one-time attack-move to a point
+//!  3. **Defend** — if a PLAYER unit has walked inside [`DEFEND_R`] of `RIVAL_BASE`, recall the army
+//!     onto the nearest intruder and skip the muster/wave this tick: a raid on the rival's workers or
+//!     buildings must get an answer instead of a shrug. Only soldiers further than
+//!     [`DEFEND_ENGAGED_R`] are ordered — nearer ones are already engaging via `acquire_targets`, and
+//!     re-ordering would cancel their attack. The economy (build/train) keeps running.
+//!  4. **Muster** — a fresh soldier (one never seen before) gets a one-time attack-move to a point
 //!     just outside the base toward the map centre, so idle troops don't stand inside buildings.
-//!  4. **Attack wave** — when the living Rival army reaches the wave threshold (6, +2 each wave, cap
-//!     14) and the launch cooldown has elapsed, order the **whole** army to attack-move the player's
-//!     Town Hall, bump the threshold, and start a ~90 s cooldown. Soldiers fight to the death.
+//!  5. **Attack wave** — when the living Rival army reaches the wave threshold and the launch
+//!     cooldown has elapsed, order the **whole** army to attack-move the player's Town Hall, bump the
+//!     threshold, and start a ~90 s cooldown. Soldiers fight to the death.
 //!
 //! Assignment (worker→producer claiming) and population growth are the shared automatic systems in
 //! `workers.rs` — this AI never assigns a worker by hand.
@@ -52,6 +57,13 @@ const WAVE_STEP: u32 = 3;
 const WAVE_CAP: u32 = 26;
 /// Seconds a launched wave holds before the next one may go (so reinforcements don't dribble in).
 const WAVE_COOLDOWN: f32 = 90.0;
+/// A PLAYER unit within this of `RIVAL_BASE` counts as an incursion into the rival's town — the
+/// army is recalled onto it. Base-relative, so it holds at any map scale. Generous enough to cover
+/// the whole built-up base (the AI rings its structures out to ~13u).
+const DEFEND_R: f32 = 26.0;
+/// A defender already this close to the intruder is left alone — it's engaging on its own (units
+/// auto-acquire within `units::SIGHT`), and re-ordering it would cancel its attack.
+const DEFEND_ENGAGED_R: f32 = 14.0;
 /// How far outside the base (toward the map centre) fresh troops muster.
 const MUSTER_OUT: f32 = 6.0;
 
@@ -149,7 +161,7 @@ fn rival_ai_think(
     mut banks: ResMut<RtsBanks>,
     deposits_q: Query<&Transform, With<Deposit>>,
     buildings_q: Query<(Entity, &RtsBuilding, &Side, Option<&TrainQueue>)>,
-    units_q: Query<(Entity, &RtsUnit, &Side), Without<Dying>>,
+    units_q: Query<(Entity, &RtsUnit, &Side, &Transform), Without<Dying>>,
     mut trains: MessageWriter<TrainOrder>,
     mut orders: MessageWriter<RtsOrder>,
     mut speak: MessageWriter<crate::audio::Speak>,
@@ -160,16 +172,29 @@ fn rival_ai_think(
     }
     state.next_think = now + THINK_INTERVAL;
 
-    // Living Rival roster (Dying already filtered by the query).
+    // Living Rival roster (Dying already filtered by the query) + the nearest PLAYER unit that has
+    // walked into our town (the incursion the army must answer).
     let mut soldiers: Vec<Entity> = Vec::new();
+    let mut soldier_at: Vec<Vec2> = Vec::new(); // parallel to `soldiers`
     let mut workers = 0usize;
-    for (e, u, side) in &units_q {
+    let mut intruder: Option<Vec2> = None;
+    let mut nearest = f32::MAX;
+    for (e, u, side, tf) in &units_q {
+        let p = Vec2::new(tf.translation.x, tf.translation.z);
         if *side != Side::Rival {
+            let d = p.distance(RIVAL_BASE);
+            if d < DEFEND_R && d < nearest {
+                nearest = d;
+                intruder = Some(p);
+            }
             continue;
         }
         match u.kind {
             UnitKind::Worker => workers += 1,
-            UnitKind::Swordsman | UnitKind::Archer => soldiers.push(e),
+            UnitKind::Swordsman | UnitKind::Archer => {
+                soldiers.push(e);
+                soldier_at.push(p);
+            }
         }
     }
     let army = soldiers.len() as u32;
@@ -222,7 +247,30 @@ fn rival_ai_think(
         }
     }
 
-    // ── 3. MUSTER ── nudge each never-seen soldier out of the base once, toward the map centre.
+    // ── 3. DEFEND ── an enemy is in our town: recall the WHOLE army onto the nearest intruder and
+    // skip the muster/wave this tick. A raid on our workers or buildings has to get an answer —
+    // marching out while the base burns is the "rival just ignores me" bug. (Soldiers already
+    // standing next to a foe engage on their own via `acquire_targets`; this is what brings back the
+    // ones that are elsewhere.) The economy above keeps running — only the army is redirected.
+    if let Some(threat) = intruder {
+        // Recall only the soldiers NOT already at the fight: an order clears `AttackTarget`, so
+        // re-issuing it to an engaged soldier every think tick would knock it out of its swing.
+        // Anything already within ~SIGHT of the threat is fighting on its own.
+        let recall: Vec<Entity> = soldiers
+            .iter()
+            .zip(soldier_at.iter())
+            .filter(|(_, p)| p.distance(threat) > DEFEND_ENGAGED_R)
+            .map(|(e, _)| *e)
+            .collect();
+        if !recall.is_empty() {
+            orders.write(RtsOrder { units: recall, order: Order::AttackMove(threat) });
+            // Reset the muster latch so the defenders get re-nudged out once the town is clear.
+            state.known_soldiers.clear();
+        }
+        return;
+    }
+
+    // ── 4. MUSTER ── nudge each never-seen soldier out of the base once, toward the map centre.
     let current: HashSet<Entity> = soldiers.iter().copied().collect();
     state.known_soldiers.retain(|e| current.contains(e));
     let to_centre = (Vec2::ZERO - RIVAL_BASE).normalize_or_zero();
@@ -233,7 +281,7 @@ fn rival_ai_think(
         }
     }
 
-    // ── 4. ATTACK WAVE ── whole army marches on the player's hall; overrides any muster this tick.
+    // ── 5. ATTACK WAVE ── whole army marches on the player's hall; overrides any muster this tick.
     if army >= state.wave_threshold && now >= state.wave_cooldown_until && !soldiers.is_empty() {
         orders.write(RtsOrder { units: soldiers, order: Order::AttackMove(PLAYER_BASE) });
         state.wave_threshold = (state.wave_threshold + WAVE_STEP).min(WAVE_CAP);

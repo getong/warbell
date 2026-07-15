@@ -102,11 +102,13 @@ impl Plugin for RtsUnitsPlugin {
 
 /// A worker walking to a barracks to be trained into `kind`. Its economy bond is stripped when it's
 /// conscripted; [`drive_converting`] re-strips any re-claim each frame, then on arrival despawns the
-/// body and enqueues the soldier. `pub(crate)` so `workers::claim_workers` can exclude it.
+/// body and enqueues the soldier. `pub(crate)` so `workers::claim_workers` can exclude it — and so
+/// the HUD can show a conversion that's still WALKING as an already-queued slot (the click has to
+/// register in the queue instantly, not only once the peasant reaches the door).
 #[derive(Component)]
 pub(crate) struct Converting {
-    barracks: Entity,
-    kind: UnitKind,
+    pub(crate) barracks: Entity,
+    pub(crate) kind: UnitKind,
 }
 
 /// A swordsman's swing cooldown (seconds until the next strike is allowed).

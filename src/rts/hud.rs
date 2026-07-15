@@ -853,6 +853,7 @@ fn unit_ix(kind: UnitKind) -> usize {
 fn update_building_panel(
     sel: Res<HudSel>,
     bldgs: Query<(&RtsBuilding, Option<&Health>, Option<&TrainQueue>)>,
+    converting: Query<&crate::rts::units::Converting>,
     mut texts: Query<(&BldgText, &mut Text)>,
     mut bars: Query<(&BldgBar, &mut Node)>,
 ) {
@@ -862,6 +863,11 @@ fn update_building_panel(
     let Some(b) = sel.building else { return };
     let Ok((rb, health, tq)) = bldgs.get(b) else { return };
     let def = building_def(rb.kind);
+    // The displayed queue = what's actually queued at the barracks, THEN the conversions still
+    // walking to it. A Train click conscripts a peasant who has to reach the door before it lands in
+    // the real queue — showing the in-flight ones means the click registers in the UI instantly.
+    let mut shown: Vec<UnitKind> = tq.map(|q| q.queue.clone()).unwrap_or_default();
+    shown.extend(converting.iter().filter(|c| c.barracks == b).map(|c| c.kind));
 
     let (hp, max) = match health {
         Some(h) => (h.hp.max(0.0), h.max.max(1.0)),
@@ -875,10 +881,9 @@ fn update_building_panel(
         let s = match *bt {
             BldgText::Name => def.name.to_string(),
             BldgText::Hp => format!("{} / {}", hp as i64, max as i64),
-            BldgText::Queue(i) => tq
-                .and_then(|q| q.queue.get(i))
-                .map(|k| unit_glyph(*k).to_string())
-                .unwrap_or_default(),
+            BldgText::Queue(i) => {
+                shown.get(i).map(|k| unit_glyph(*k).to_string()).unwrap_or_default()
+            }
         };
         if **text != s {
             **text = s;
@@ -910,16 +915,22 @@ fn update_train_buttons(
     sel: Res<HudSel>,
     banks: Res<RtsBanks>,
     queues: Query<&TrainQueue>,
+    converting: Query<&crate::rts::units::Converting>,
     mut buttons: Query<(Entity, &TrainBtn, &mut BackgroundColor)>,
     kids: Query<&Children>,
     mut texts: Query<&mut TextColor>,
     mut imgs: Query<&mut ImageNode>,
 ) {
     let bank = banks.side(Side::Player);
+    // Count the in-flight conversions too — `consume_train_orders` is the authority and it counts
+    // them, so the button has to grey on the same rule or a click would silently no-op.
     let full = sel
         .building
-        .and_then(|b| queues.get(b).ok())
-        .map(|q| q.queue.len() >= TRAIN_QUEUE_DEPTH)
+        .map(|b| {
+            let q = queues.get(b).map(|q| q.queue.len()).unwrap_or(0);
+            let inflight = converting.iter().filter(|c| c.barracks == b).count();
+            q + inflight >= TRAIN_QUEUE_DEPTH
+        })
         .unwrap_or(false);
     for (e, tb, mut bg) in &mut buttons {
         let ok = !full && bank.can_afford(&train_cost(tb.0));
@@ -937,6 +948,7 @@ fn train_click(
     banks: Res<RtsBanks>,
     pop: Res<RtsPop>,
     queues: Query<&TrainQueue>,
+    converting: Query<&crate::rts::units::Converting>,
     mut orders: MessageWriter<TrainOrder>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
     mut notice: ResMut<Notice>,
@@ -947,8 +959,11 @@ fn train_click(
         if *interaction != Interaction::Pressed {
             continue;
         }
-        // Queue full → the button is greyed; swallow the click silently.
-        if queues.get(b).map(|qq| qq.queue.len() >= TRAIN_QUEUE_DEPTH).unwrap_or(false) {
+        // Queue full → the button is greyed; swallow the click silently. Counts in-flight
+        // conversions like `consume_train_orders` does.
+        let queued = queues.get(b).map(|qq| qq.queue.len()).unwrap_or(0)
+            + converting.iter().filter(|c| c.barracks == b).count();
+        if queued >= TRAIN_QUEUE_DEPTH {
             continue;
         }
         let now = time.elapsed_secs_f64();
