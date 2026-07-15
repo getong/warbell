@@ -1,18 +1,16 @@
-//! Team colours — the friend/foe read the RTS was missing. A pooled flat ground ring sits under
-//! every **unit**, tinted by [`Side`] (player = blue, rival = red), so at a glance you can tell your
-//! army from the enemy's. Buildings are NOT ringed (a big ring around a building read as clutter — a
-//! building's ownership is clear from its place + the minimap). The green **selection** ring
-//! (`select.rs`) still draws on top.
+//! Team colours + selection ring in one. A pooled flat ground ring sits under each **selected**
+//! unit, tinted by [`Side`] (player = blue, rival = red). Only selected units are ringed — an
+//! always-on ring under every body read as clutter — so the ring doubles as the "this is selected"
+//! marker (there's no separate green ring anymore). Buildings are never ringed.
 //!
-//! Same reposition-a-pool approach as the selection rings (no per-entity child management, so a ring
-//! can't orphan when a unit dies mid-frame); one shared ring mesh scaled per entity, two shared
-//! unlit materials.
+//! Same reposition-a-pool approach (no per-entity child management, so a ring can't orphan when a
+//! unit dies mid-frame); one shared ring mesh scaled per entity, two shared unlit materials.
 
 use bevy::prelude::*;
 
 use crate::dying::Dying;
 use crate::game_state::AppState;
-use crate::rts::{in_skirmish, RtsUnit, Side};
+use crate::rts::{in_skirmish, RtsUnit, Selected, Side};
 
 /// Player ring colour (cool blue) and rival ring colour (warm red).
 const PLAYER: Color = Color::srgb(0.25, 0.55, 1.0);
@@ -47,7 +45,7 @@ fn sync_team_rings(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    units: Query<(&GlobalTransform, &Side), (With<RtsUnit>, Without<Dying>)>,
+    units: Query<(&GlobalTransform, &Side), (With<RtsUnit>, With<Selected>, Without<Dying>)>,
     mut rings: Query<(&mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>), With<TeamRing>>,
     mut assets_l: Local<Option<TeamRingAssets>>,
 ) {

@@ -50,8 +50,10 @@ use super::{
 /// defender at the base reacts before an attacker is on top of it. (Archers cap their standoff at
 /// `ARCHER_HOLD+1.5` regardless, so widening acquisition doesn't stretch their kite.)
 const SIGHT: f32 = 18.0;
-/// Melee reach past a target's body / footprint edge.
-const STRIKE_RANGE: f32 = 1.3;
+/// Melee reach past a target's body / footprint edge. A touch generous so a CLUSTER of attackers can
+/// all engage a single foe from a loose ring — instead of the rear rank jamming behind the front one,
+/// unable to reach, and jittering.
+const STRIKE_RANGE: f32 = 1.8;
 /// Seconds between melee swings.
 const MELEE_CD: f32 = 1.0;
 /// A converting worker within this of its barracks has arrived (footprint 4 → edge ~2 + body).

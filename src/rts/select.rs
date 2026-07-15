@@ -35,10 +35,6 @@ struct RtsDrag {
     box_active: bool,
 }
 
-/// Marker on the pooled ground-ring meshes (placed under selected units by `sync_selection_rings`).
-#[derive(Component)]
-struct SelectionRing;
-
 /// Marker on the single rubber-band UI node.
 #[derive(Component)]
 struct SelectionBand;
@@ -56,11 +52,11 @@ impl Plugin for RtsSelectPlugin {
                     .run_if(in_state(Modal::None)),
             )
             // Cosmetics: keep drawing even if a panel is up (the frozen world still shows selection).
+            // The per-unit selection ring is the team-coloured ring in `teamcolor.rs` (drawn only
+            // under selected units), so there's no separate green ring here anymore.
             .add_systems(
                 Update,
-                (draw_band, sync_selection_rings)
-                    .run_if(super::in_skirmish)
-                    .run_if(in_state(AppState::Playing)),
+                draw_band.run_if(super::in_skirmish).run_if(in_state(AppState::Playing)),
             );
     }
 }
@@ -262,54 +258,3 @@ fn draw_band(
     }
 }
 
-/// Pool of flat ground rings placed under each selected unit (one ring per unit; extras hidden).
-/// Same reposition-a-pool approach as `town::sync_build_rings` — no per-entity child management, so
-/// it can't orphan a ring when a unit dies mid-frame.
-fn sync_selection_rings(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    selected: Query<&GlobalTransform, (With<Selected>, With<RtsUnit>)>,
-    mut rings: Query<(&mut Transform, &mut Visibility), With<SelectionRing>>,
-    mut assets: Local<Option<(Handle<Mesh>, Handle<StandardMaterial>)>>,
-) {
-    let (mesh, mat) = assets
-        .get_or_insert_with(|| {
-            let mesh = meshes.add(Annulus::new(0.5, 0.66).mesh().resolution(40).build());
-            let mat = materials.add(StandardMaterial {
-                base_color: Color::srgba(0.5, 1.0, 0.55, 0.6),
-                emissive: LinearRgba::rgb(0.3, 1.1, 0.4),
-                unlit: true,
-                alpha_mode: AlphaMode::Blend,
-                cull_mode: None,
-                ..default()
-            });
-            (mesh, mat)
-        })
-        .clone();
-
-    let positions: Vec<Vec3> = selected.iter().map(|gt| gt.translation()).collect();
-    // Grow the pool if more units are selected than we have rings (new rings show next frame).
-    let have = rings.iter().count();
-    for _ in have..positions.len() {
-        commands.spawn((
-            Mesh3d(mesh.clone()),
-            MeshMaterial3d(mat.clone()),
-            Transform::from_xyz(0.0, -100.0, 0.0).with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
-            Visibility::Hidden,
-            SelectionRing,
-        ));
-    }
-    // Place one ring per selected unit; hide the rest. Only translation is touched, so the flat
-    // rotation set at spawn is preserved.
-    let mut it = positions.into_iter();
-    for (mut tf, mut vis) in &mut rings {
-        match it.next() {
-            Some(p) => {
-                tf.translation = Vec3::new(p.x, p.y + 0.08, p.z);
-                *vis = Visibility::Visible;
-            }
-            None => *vis = Visibility::Hidden,
-        }
-    }
-}

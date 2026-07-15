@@ -200,6 +200,10 @@ fn rts_issue_orders(
     }
 }
 
+/// How far behind the melee line (along the march direction) archers form up, so they volley over
+/// the front rank instead of walking into the fight.
+const ARCHER_BACK: f32 = 4.0;
+
 /// Goal for group slot `n` of `count` — the phyllotaxis blob around `goal` (single unit → exact goal).
 fn group_goal(goal: Vec2, slot: usize, count: usize) -> Vec2 {
     if count <= 1 {
@@ -222,9 +226,38 @@ fn rts_consume_orders(
         match ord.order {
             Order::Move(goal) | Order::AttackMove(goal) => {
                 let fight = matches!(ord.order, Order::AttackMove(_));
-                let n = ord.units.len();
-                for (i, &e) in ord.units.iter().enumerate() {
-                    let g = group_goal(goal, i, n);
+                // Formation: melee blob at the goal, archers in their own blob set BACK from it (along
+                // the march direction) so they naturally sit behind the front rank.
+                let is_archer =
+                    |e: Entity| kinds.get(e).map(|u| u.kind) == Ok(UnitKind::Archer);
+                let melee_n = ord.units.iter().filter(|&&e| !is_archer(e)).count();
+                let archer_n = ord.units.len() - melee_n;
+                // March direction from the group's centroid toward the goal → "back" is the reverse.
+                let mut sum = Vec2::ZERO;
+                let mut cnt = 0.0;
+                for &e in &ord.units {
+                    if let Ok(gt) = transforms.get(e) {
+                        sum += Vec2::new(gt.translation().x, gt.translation().z);
+                        cnt += 1.0;
+                    }
+                }
+                let back = if cnt > 0.0 {
+                    (sum / cnt - goal).normalize_or_zero() // centroid - goal = pointing rearward
+                } else {
+                    Vec2::ZERO
+                };
+                let archer_goal = goal + back * ARCHER_BACK;
+                let (mut mslot, mut aslot) = (0usize, 0usize);
+                for &e in &ord.units {
+                    let g = if is_archer(e) {
+                        let s = aslot;
+                        aslot += 1;
+                        group_goal(archer_goal, s, archer_n)
+                    } else {
+                        let s = mslot;
+                        mslot += 1;
+                        group_goal(goal, s, melee_n)
+                    };
                     commands.entity(e).try_insert((MoveTo { goal: g, fight }, NavPath::default()));
                     commands.entity(e).try_remove::<AttackTarget>();
                     commands.entity(e).try_remove::<HarvestAt>();
@@ -308,6 +341,11 @@ fn rts_move_units(
         if let Some(s) = steer::advance(pos, facing, step_target, speed * dt, BODY_R, cur_y, MAX_TURN * dt) {
             let gy = steer::footing(s.pos.x, s.pos.y).unwrap_or(cur_y);
             tf.translation = Vec3::new(s.pos.x, gy, s.pos.y);
+            // Always apply the steer facing — it's load-bearing: `steer::advance` turns the body
+            // incrementally to navigate AROUND obstacles, so suppressing it wedges a unit that can't
+            // reach its goal (it never turns to find a clear path). The combat-pile "spin" is tamed
+            // instead by the wider STRIKE_RANGE (a foe is struck from a loose ring, so the rear rank
+            // doesn't jam behind the front one).
             tf.rotation = Quat::from_rotation_y(s.facing);
         }
     }

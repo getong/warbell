@@ -26,11 +26,13 @@ const LOW_STONE: f64 = 15.0;
 /// Don't repeat the same advice within this many seconds (so a lingering shortage doesn't nag).
 const ADVICE_COOLDOWN: f32 = 40.0;
 /// Seconds between one townsperson's ambient chatter line (`Greeting` pool — worker/villager idle
-/// remarks) so the settlement feels lived-in. Fairly frequent (the town SHOULD chatter).
-const CHATTER_EVERY: f32 = 11.0;
-/// Seconds between the rival garrison's ambient patrol murmur (`RivalIdle` pool) — sparser than the
-/// friendly chatter, and only while nothing's fighting.
-const RIVAL_CHATTER_EVERY: f32 = 17.0;
+/// remarks) so the settlement feels lived-in — but sparse, so it's flavour not chatterbox spam (the
+/// lines are 2D + audible in skirmish now, so they don't need to fire nearly as often as when they
+/// were half-inaudible spatial).
+const CHATTER_EVERY: f32 = 30.0;
+/// Seconds between the rival garrison's ambient patrol murmur (`RivalIdle` pool) — sparser still, and
+/// only while nothing's fighting.
+const RIVAL_CHATTER_EVERY: f32 = 44.0;
 /// A drop of at least this much total player-building HP between frames counts as "under attack".
 const UNDER_ATTACK_DROP: f32 = 6.0;
 /// Don't re-cry "under attack" within this many seconds.
