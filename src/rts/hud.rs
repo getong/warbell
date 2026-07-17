@@ -210,6 +210,7 @@ fn spawn_top_bar(commands: &mut Commands, fonts: &UiFonts, atlas: &IconAtlas) {
             },
             GlobalZIndex(60),
             bevy::ui::FocusPolicy::Pass,
+            crate::rts::RtsUi,
         ))
         .with_children(|w| {
             w.spawn((
@@ -296,6 +297,7 @@ fn spawn_build_strip(commands: &mut Commands, fonts: &UiFonts, atlas: &IconAtlas
             widgets::card_paint(),
             GlobalZIndex(60),
             bevy::ui::FocusPolicy::Pass,
+            crate::rts::RtsUi,
         ))
         .with_children(|col| {
             col.spawn(label(&fonts.display, "Build", 12.0, GOLD));
@@ -367,6 +369,7 @@ fn spawn_selection_panels(commands: &mut Commands, fonts: &UiFonts, atlas: &Icon
             widgets::card_paint(),
             GlobalZIndex(60),
             SelUnitPanel,
+            crate::rts::RtsUi,
         ))
         .with_children(|panel| {
             // Count chips (rebuilt each frame by `update_unit_summary` into this host).
@@ -411,6 +414,7 @@ fn spawn_selection_panels(commands: &mut Commands, fonts: &UiFonts, atlas: &Icon
             widgets::card_paint(),
             GlobalZIndex(60),
             SelBldgPanel,
+            crate::rts::RtsUi,
         ))
         .with_children(|p| {
             p.spawn((label(&fonts.display, "", 16.0, GOLD), BldgText::Name));

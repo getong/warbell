@@ -129,18 +129,22 @@ pub fn take(deposit: &mut Deposit, amount: f64) -> f64 {
 }
 
 /// After the arena world is up ([`crate::biome::WorldReady`], the same signal `build.rs` waits on),
-/// seed the nine deposits at `worldmap::arena_sites()` — one-shot.
+/// seed the nine deposits at `worldmap::arena_sites()`. Re-fires once per skirmish run
+/// (generation-keyed on [`crate::rts::RtsRunGen`]): the `Local<u32>` latch trails the live
+/// generation so a fresh skirmish entry re-seeds the deposits instead of firing only once per
+/// process. Still waits for `WorldReady` before latching.
 fn spawn_arena_deposits(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     ready: Res<crate::biome::WorldReady>,
-    mut done: Local<bool>,
+    run_gen: Res<crate::rts::RtsRunGen>,
+    mut last_gen: Local<u32>,
 ) {
-    if *done || !ready.0 {
+    if *last_gen == run_gen.0 || !ready.0 {
         return;
     }
-    *done = true;
+    *last_gen = run_gen.0;
 
     let sites = crate::worldmap::arena_sites();
     // Colour lives in the mesh vertex COLOR (mesh contract), so one shared white material batches
@@ -198,18 +202,22 @@ fn spawn_arena_deposits(
 /// register modest nav blockers like the deposit clusters; the MOUNTAIN crags deliberately DON'T
 /// (they ring the central ore bowl, so a blocker there could fence workers out of the vein — the
 /// walkable terraced slope keeps units off them anyway). All sit on the flanks well off the
-/// base-to-base lane. One-shot on [`crate::biome::WorldReady`].
+/// base-to-base lane. Re-fires once per skirmish run (generation-keyed on
+/// [`crate::rts::RtsRunGen`]): the `Local<u32>` latch trails the live generation so a fresh
+/// skirmish entry re-crowns the hills instead of firing only once per process. Still waits for
+/// [`crate::biome::WorldReady`] before latching.
 fn spawn_arena_hills(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     ready: Res<crate::biome::WorldReady>,
-    mut done: Local<bool>,
+    run_gen: Res<crate::rts::RtsRunGen>,
+    mut last_gen: Local<u32>,
 ) {
-    if *done || !ready.0 {
+    if *last_gen == run_gen.0 || !ready.0 {
         return;
     }
-    *done = true;
+    *last_gen = run_gen.0;
     let rock_mat = materials.add(StandardMaterial {
         base_color: Color::WHITE,
         perceptual_roughness: 0.95,
@@ -241,6 +249,7 @@ fn spawn_arena_hills(
                 Transform::from_xyz(rx, ry, rz)
                     .with_rotation(Quat::from_rotation_y(yaw))
                     .with_scale(Vec3::splat(sc)),
+                crate::rts::RtsSpawned,
             ));
         }
     }
@@ -275,6 +284,7 @@ fn spawn_arena_hills(
                 Transform::from_xyz(rx, ry, rz)
                     .with_rotation(Quat::from_rotation_y(yaw))
                     .with_scale(Vec3::splat(sc)),
+                crate::rts::RtsSpawned,
             ));
         }
     }
@@ -297,6 +307,7 @@ fn spawn_grove(
             Transform::from_xyz(centre.x, cy, centre.y),
             Visibility::Hidden,
             Deposit { kind: DepositKind::Wood, remaining },
+            crate::rts::RtsSpawned,
         ))
         .id();
 
@@ -317,6 +328,7 @@ fn spawn_grove(
                 Transform::from_xyz(tx, ty, tz)
                     .with_rotation(Quat::from_rotation_y(yaw))
                     .with_scale(Vec3::splat(sc)),
+                crate::rts::RtsSpawned,
             ))
             .id();
         parts.push((e, None));
@@ -344,6 +356,7 @@ fn spawn_cluster(
             Transform::from_xyz(centre.x, cy, centre.y),
             Visibility::Hidden,
             Deposit { kind, remaining },
+            crate::rts::RtsSpawned,
         ))
         .id();
 
@@ -368,6 +381,7 @@ fn spawn_cluster(
                 Transform::from_xyz(rx, ry, rz)
                     .with_rotation(Quat::from_rotation_y(yaw))
                     .with_scale(Vec3::splat(sc)),
+                crate::rts::RtsSpawned,
             ))
             .id();
         parts.push((e, Some(Vec2::new(rx, rz))));

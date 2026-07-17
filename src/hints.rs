@@ -37,8 +37,10 @@ pub struct HintsPlugin;
 
 impl Plugin for HintsPlugin {
     fn build(&self, app: &mut App) {
-        // Campaign-only: the hero-economy hint toasts don't apply to the RTS.
-        app.add_systems(Startup, setup_hint_root.run_if(crate::rts::in_campaign))
+        // Ungated spawn: the hint-toast root is built in EVERY boot (the mode can flip mid-process)
+        // and tagged `CampaignOnly`, so `apply_mode_visibility` hides it in the RTS. The per-frame
+        // `drive_hints` stays `in_campaign`-gated.
+        app.add_systems(Startup, setup_hint_root)
             .add_sim_systems(drive_hints.run_if(crate::rts::in_campaign));
     }
 }
@@ -201,6 +203,7 @@ struct HintRow;
 fn setup_hint_root(mut commands: Commands) {
     commands.spawn((
         HintRoot,
+        crate::game_state::CampaignOnly,
         Node {
             position_type: PositionType::Absolute,
             right: Val::Px(16.0),

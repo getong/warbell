@@ -565,6 +565,34 @@ fn light_glow_color(high: f32) -> Color {
     lerp_col(Color::srgb(1.0, 0.6, 0.35), Color::srgb(1.0, 0.93, 0.78), high)
 }
 
+/// The main camera's authored perspective projection. Shared by [`setup_camera`] and the RTS
+/// camera restore (`rts::camera::rts_camera_restore`) when an in-process Skirmish → Campaign
+/// switch hands the single camera back.
+///
+/// far=230 (was the 1000 default). The Linear fog reaches full horizon colour by 190 tiles
+/// (biome.rs), so everything past ~190 is solid fog — invisible but still drawn at full cost.
+/// Clipping the frustum at 230 (40-tile margin) lets Bevy's frustum culler drop all that far
+/// geometry for free. near=0.04 (was the 0.1 default): in first person the sword/shield are held
+/// right at the lens and the default near-plane sliced through them ("flicker" bug); safe for
+/// depth precision since `far` is only 230.
+pub fn default_projection() -> Projection {
+    Projection::from(PerspectiveProjection { fov: 50f32.to_radians(), near: 0.04, far: 230.0, ..default() })
+}
+
+/// The authored campaign distance-fog. Shared by [`setup_camera`] and the RTS camera restore —
+/// `rts_camera_boot` strips `DistanceFog` for the crisp top-down read and nothing else re-adds it
+/// (`quality::apply_quality` doesn't own fog), so the restore re-inserts exactly this.
+pub fn default_fog() -> DistanceFog {
+    DistanceFog {
+        color: SKY,
+        directional_light_color: Color::srgb(1.0, 0.93, 0.78),
+        // 7 (was 12): a wider sun-toward-camera in-scatter lobe — the haze catches the
+        // light across a broad band of the frame instead of a tight sun-adjacent glow.
+        directional_light_exponent: 7.0,
+        falloff: FogFalloff::ExponentialSquared { density: FOG_DENSITY },
+    }
+}
+
 fn setup_camera(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
@@ -606,7 +634,7 @@ fn setup_camera(
         // lens and the default near-plane sliced through them, popping bits in/out every frame as the
         // walk-bob moved them across z=near (the "flicker" bug). 0.04 keeps the close viewmodel whole.
         // Safe for depth precision — `far` is only 230 (ratio ~5750:1), not the 1000 default.
-        Projection::from(PerspectiveProjection { fov: 50f32.to_radians(), near: 0.04, far: 230.0, ..default() }),
+        default_projection(),
         cam_tf,
         Hdr,
         Exposure { ev100: 10.85 },
@@ -646,14 +674,7 @@ fn setup_camera(
         // auto-focused on the player by `drive_dof_focus`, fore/background melting into
         // bokeh. Tunable live in F1 → Blur+Bloom (sharp band / blur radius).
         crate::dof::default_dof(),
-        DistanceFog {
-            color: SKY,
-            directional_light_color: Color::srgb(1.0, 0.93, 0.78),
-            // 7 (was 12): a wider sun-toward-camera in-scatter lobe — the haze catches the
-            // light across a broad band of the frame instead of a tight sun-adjacent glow.
-            directional_light_exponent: 7.0,
-            falloff: FogFalloff::ExponentialSquared { density: FOG_DENSITY },
-        },
+        default_fog(),
         GeneratedEnvironmentMapLight { environment_map: env, intensity: IBL_INTENSITY, ..default() },
     ))
     // Procedural sky — real blue sky + sun disk + horizon glow, using the DirectionalLight as the

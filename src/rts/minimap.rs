@@ -87,6 +87,7 @@ fn spawn_panel(mut commands: Commands, panel: Query<Entity, With<MinimapPanel>>)
             BorderColor::all(Color::srgba(0.55, 0.45, 0.25, 0.9)),
             GlobalZIndex(40),
             MinimapPanel,
+            crate::rts::RtsUi,
         ))
         .with_children(|p| {
             // The camera-view outline (spawned first so blips draw over it).

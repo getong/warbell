@@ -72,6 +72,7 @@ fn spawn_marks(
                 .with_rotation(Quat::from_rotation_x(-FRAC_PI_2))
                 .with_scale(Vec3::splat(1.5)),
             ClickMarker { spawned: now, mat },
+            crate::rts::RtsSpawned,
         ));
     }
 }

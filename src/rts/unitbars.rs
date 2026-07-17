@@ -97,7 +97,7 @@ fn sync_unit_bars(
     let have = bars.iter().count();
     for _ in have..want.len() {
         commands
-            .spawn((Transform::from_xyz(0.0, -100.0, 0.0), Visibility::Hidden, UnitBar))
+            .spawn((Transform::from_xyz(0.0, -100.0, 0.0), Visibility::Hidden, UnitBar, crate::rts::RtsUi))
             .with_children(|p| {
                 // Backing.
                 p.spawn((

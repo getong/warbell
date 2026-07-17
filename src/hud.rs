@@ -114,7 +114,10 @@ impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         // Campaign-only: the hero HP/stamina/inventory/town HUD chrome is replaced by the RTS HUD
         // (src/rts/hud.rs) in Skirmish.
-        app.add_systems(Startup, (setup_hud, setup_inv_hud).run_if(crate::rts::in_campaign))
+        // Ungated spawn: the campaign HUD chrome is built in EVERY boot (the mode can flip
+        // Campaign⇄Skirmish mid-process) and tagged `CampaignOnly`, so `apply_mode_visibility`
+        // hides it in Skirmish. The per-frame update systems below stay `in_campaign`-gated.
+        app.add_systems(Startup, (setup_hud, setup_inv_hud))
             .add_systems(
                 Update,
                 (setup_stat_bar, update_hud, update_inv_hud, update_town_stats, flash_quick_slots)
@@ -163,15 +166,18 @@ fn track(h: f32) -> impl Bundle {
 
 fn setup_hud(mut commands: Commands, fonts: Res<UiFonts>) {
     commands
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            left: Val::Px(18.0),
-            bottom: Val::Px(18.0),
-            flex_direction: FlexDirection::Row,
-            align_items: AlignItems::Center,
-            column_gap: Val::Px(8.0),
-            ..default()
-        })
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(18.0),
+                bottom: Val::Px(18.0),
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(8.0),
+                ..default()
+            },
+            crate::game_state::CampaignOnly,
+        ))
         .with_children(|root| {
             // Level badge.
             root.spawn((
@@ -240,6 +246,9 @@ fn setup_stat_bar(mut done: Local<bool>, atlas: Res<IconAtlas>, fonts: Res<UiFon
             BorderColor::all(rgba(224, 168, 74, 0.3)),
             shadow_hud(),
             bevy::ui::FocusPolicy::Pass,
+            // Kept `in_campaign`-gated (it self-spawns when campaign is live), but tagged so a
+            // later mid-process flip to Skirmish hides it too.
+            crate::game_state::CampaignOnly,
         ))
         .with_children(|row| {
             // Money + resources first, then the town's people + daily food balance. Each stat is an
@@ -295,6 +304,7 @@ fn setup_inv_hud(mut commands: Commands, fonts: Res<UiFonts>) {
         },
         bevy::ui::FocusPolicy::Pass,
         ToastRoot,
+        crate::game_state::CampaignOnly,
     ));
     // Buff pips, bottom-left above the vitals.
     commands.spawn((
@@ -310,20 +320,24 @@ fn setup_inv_hud(mut commands: Commands, fonts: Res<UiFonts>) {
         },
         bevy::ui::FocusPolicy::Pass,
         BuffRoot,
+        crate::game_state::CampaignOnly,
     ));
     // (The single top-left stat bar — gold/stone/wood/pop/food as icon+number — is built in
     // `setup_stat_bar` once the icon atlas is ready.)
     // Bottom-centre quick-bar: four quick-use slots.
     commands
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            bottom: Val::Px(14.0),
-            width: Val::Percent(100.0),
-            flex_direction: FlexDirection::Column,
-            align_items: AlignItems::Center,
-            row_gap: Val::Px(5.0),
-            ..default()
-        })
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                bottom: Val::Px(14.0),
+                width: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(5.0),
+                ..default()
+            },
+            crate::game_state::CampaignOnly,
+        ))
         .with_children(|col| {
             col.spawn((
                 Node {

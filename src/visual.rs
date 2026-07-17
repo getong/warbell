@@ -133,10 +133,9 @@ fn spawn_clouds(
         return;
     }
     // Same blanket problem in the RTS skirmish: the iso ortho camera looks down through the
-    // cloud band the whole match, so the arena skips the layer entirely.
-    if crate::rts::mode_from_env() == crate::rts::GameMode::Skirmish {
-        return;
-    }
+    // cloud band the whole match. The layer is spawned regardless (the mode can now flip
+    // mid-process) and tagged `CampaignOnly`, so `game_state::apply_mode_visibility` hides it
+    // for the arena and re-shows it back in the campaign.
     let cloud_mat = mats.add(StandardMaterial {
         base_color: Color::srgb(1.0, 1.0, 1.0),
         // Small white emissive keeps the shaded side bright (clouds, not grey rocks).
@@ -165,6 +164,7 @@ fn spawn_clouds(
             Transform::from_xyz(x, y, z).with_scale(Vec3::splat(s)),
             NotShadowCaster,
             Cloud,
+            crate::game_state::CampaignOnly,
         ));
     }
 }

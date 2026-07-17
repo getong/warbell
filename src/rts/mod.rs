@@ -29,17 +29,53 @@ pub mod workers;
 
 // ---------------------------------------------------------------- mode
 
-/// Coarse process-wide mode, decided once at boot from `FOREST_RTS=1` and never changed
-/// mid-process (entering Potyczka relaunches the exe, exactly like New Game).
+/// Coarse app mode. Seeded at boot from `FOREST_RTS=1` (`mode_from_env`) and **switchable
+/// mid-process**: the menu's Potyczka button (and the skirmish pause/game-over buttons) flip this
+/// resource live and rebuild the world in-process (`game_state::enter_skirmish` /
+/// `to_campaign_menu`) — the window never closes. Every RTS system gates on the live resource via
+/// [`in_skirmish`], so a flip re-gates the whole mode the same frame; [`RtsRunGen`] +
+/// [`reset_skirmish_state`] handle the entity/resource turnover between runs.
 #[derive(Resource, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum GameMode {
     Campaign,
     Skirmish,
 }
 
+/// The mode a fresh process boots into. Boot-time only — after startup the [`GameMode`]
+/// **resource** is the live truth (it can be flipped mid-process); don't call this from
+/// per-frame systems.
 pub fn mode_from_env() -> GameMode {
     if std::env::var("FOREST_RTS").is_ok() { GameMode::Skirmish } else { GameMode::Campaign }
 }
+
+/// Bumped once per skirmish (re)entry *and* per skirmish exit. Two consumers: the arena stagers
+/// (halls / deposits / hills / workers) re-fire when their `Local<u32>` last-generation trails
+/// this, replacing the old fire-once `Local<bool>` latches; and [`reset_skirmish_state`] sweeps
+/// the previous run's entities + resources on the same edge. Starts at 1 so the boot generation
+/// stages exactly once (the stagers' `Local` defaults to 0).
+#[derive(Resource)]
+pub struct RtsRunGen(pub u32);
+
+impl Default for RtsRunGen {
+    fn default() -> Self {
+        RtsRunGen(1)
+    }
+}
+
+/// Umbrella marker on every RTS-spawned **world** entity (units, buildings, scaffolds, deposit
+/// anchors + their tree/boulder parts, arena hills/crags, order marks…) so one query can sweep
+/// the whole arena between runs. Deliberately NOT `BiomeEntity` — the biome rebuild despawn and
+/// the RTS run turnover are separate lifecycles. Screen/world UI that persists across runs (HUD
+/// roots, minimap, pooled bars) uses [`RtsUi`] + visibility instead.
+#[derive(Component)]
+pub struct RtsSpawned;
+
+/// Marker on RTS UI that outlives a single run (HUD roots, minimap panel, pooled unit/building
+/// bars, the selection band): hidden in Campaign / shown in Skirmish by
+/// `game_state::apply_mode_visibility` rather than despawned, so the spawn-once latches and bar
+/// pools stay valid across mode flips.
+#[derive(Component)]
+pub struct RtsUi;
 
 /// Run condition: this system only runs in the RTS skirmish mode.
 pub fn in_skirmish(mode: Res<GameMode>) -> bool {
@@ -443,6 +479,46 @@ pub enum RtsOutcome {
     RivalWon,
 }
 
+// ---------------------------------------------------------------- run turnover
+
+/// Sweep the previous skirmish's leavings whenever [`RtsRunGen`] bumps: despawn every
+/// [`RtsSpawned`] entity and zero the run resources (banks / pop / outcome / placement / camera
+/// focus), so the next skirmish — or the campaign the player just returned to — starts clean.
+/// Ungated (it must fire on the way *out* of skirmish too); at boot (gen 1, nothing staged) it's
+/// a no-op sweep. The arena stagers re-populate afterwards, once the arena rebuild lands.
+fn reset_skirmish_state(
+    run_gen: Res<RtsRunGen>,
+    mut last: Local<u32>,
+    mut commands: Commands,
+    spawned: Query<Entity, With<RtsSpawned>>,
+    selected: Query<Entity, With<Selected>>,
+    mut banks: ResMut<RtsBanks>,
+    mut pop: ResMut<RtsPop>,
+    mut outcome: ResMut<RtsOutcome>,
+    mut placing: ResMut<Placing>,
+    mut focus: ResMut<camera::RtsCamFocus>,
+) {
+    if *last == run_gen.0 {
+        return;
+    }
+    *last = run_gen.0;
+    for e in &spawned {
+        commands.entity(e).try_despawn();
+    }
+    // Belt-and-braces: `Selected` should only ever sit on RtsSpawned entities, but a stray marker
+    // left on a survivor would wrongly route campaign clicks, so strip any leftovers explicitly.
+    for e in &selected {
+        if let Ok(mut ec) = commands.get_entity(e) {
+            ec.remove::<Selected>();
+        }
+    }
+    *banks = RtsBanks::default();
+    *pop = RtsPop::default();
+    *outcome = RtsOutcome::default();
+    placing.0 = None;
+    *focus = camera::RtsCamFocus::default();
+}
+
 // ---------------------------------------------------------------- plugin assembly
 
 /// Added unconditionally in `main.rs`; every system inside the submodules is gated on
@@ -455,6 +531,10 @@ impl Plugin for RtsPlugin {
             .init_resource::<RtsBanks>()
             .init_resource::<RtsPop>()
             .init_resource::<RtsOutcome>()
+            .init_resource::<RtsRunGen>()
+            // Ungated + ordered before everything mode-gated: the sweep must run in Campaign too
+            // (a skirmish exit bumps the generation) and must not race the same-frame stagers.
+            .add_systems(Update, reset_skirmish_state)
             .add_message::<RtsOrder>()
             .add_message::<TrainOrder>()
             .init_resource::<Placing>()

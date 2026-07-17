@@ -97,7 +97,7 @@ fn sync_building_bars(
     let have = bars.iter().count();
     for _ in have..want.len() {
         commands
-            .spawn((Transform::from_xyz(0.0, -100.0, 0.0), Visibility::Hidden, BldgBar))
+            .spawn((Transform::from_xyz(0.0, -100.0, 0.0), Visibility::Hidden, BldgBar, crate::rts::RtsUi))
             .with_children(|p| {
                 p.spawn((
                     Mesh3d(a.quad.clone()),

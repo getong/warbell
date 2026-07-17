@@ -129,13 +129,17 @@ pub struct RtsCameraPlugin;
 
 impl Plugin for RtsCameraPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<RtsCamFocus>().add_systems(
-            Update,
-            (rts_camera_boot, rts_drive_camera)
-                .chain() // boot swaps to ortho first, so drive sees the ortho to apply zoom
-                .run_if(super::in_skirmish)
-                .run_if(in_state(AppState::Playing)),
-        );
+        app.init_resource::<RtsCamFocus>()
+            .add_systems(
+                Update,
+                (rts_camera_boot, rts_drive_camera)
+                    .chain() // boot swaps to ortho first, so drive sees the ortho to apply zoom
+                    .run_if(super::in_skirmish)
+                    .run_if(in_state(AppState::Playing)),
+            )
+            // The give-back half of the in-process mode switch: whenever the mode is Campaign but
+            // the camera is still the skirmish ortho rig, restore the authored perspective camera.
+            .add_systems(Update, rts_camera_restore.run_if(super::in_campaign));
     }
 }
 
@@ -207,6 +211,28 @@ fn rts_camera_boot(
             ec.remove::<crate::atmospherics::Atmospherics>();
         }
     }
+}
+
+/// Undo [`rts_camera_boot`] after an in-process Skirmish → Campaign switch: the ortho projection
+/// is the tell (only skirmish ever sets it), so swap back the authored perspective
+/// (`scene::default_projection`), re-insert the `DistanceFog` that boot stripped (nothing else
+/// re-adds fog — `apply_quality` doesn't own it), and nudge [`GraphicsSettings`] so
+/// `quality::apply_quality` re-inserts DoF / god-rays / atmospherics / the subtle campaign
+/// outline per the player's settings. Re-inserting those through `apply_quality` is the proven
+/// live path (it's what the F1 settings menu does); with the mode now Campaign, `rts_camera_boot`
+/// no longer runs, so nothing strips them again.
+fn rts_camera_restore(
+    mut commands: Commands,
+    mut cam: Query<(Entity, &mut Projection), With<Camera3d>>,
+    mut gfx: ResMut<crate::quality::GraphicsSettings>,
+) {
+    let Ok((e, mut proj)) = cam.single_mut() else { return };
+    if !matches!(*proj, Projection::Orthographic(_)) {
+        return;
+    }
+    *proj = crate::scene::default_projection();
+    commands.entity(e).try_insert(crate::scene::default_fog());
+    gfx.set_changed();
 }
 
 /// Per-frame: fold WASD/edge-pan/wheel input into `RtsCamFocus`, then glide the single camera into

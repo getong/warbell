@@ -554,7 +554,10 @@ impl Plugin for SiegePlugin {
         app.init_resource::<KeepHp>()
             .init_resource::<Siege>()
             .init_resource::<GameTime>()
-            .add_systems(Startup, (setup_invader_armory, setup_siege_hud).run_if(crate::rts::in_campaign))
+            // Ungated spawn: the invader armory (asset baking) + the siege HUD root are built in
+            // EVERY boot (the mode can flip mid-process); the HUD root is tagged `CampaignOnly` so
+            // `apply_mode_visibility` hides it in Skirmish. All sim/update systems stay gated.
+            .add_systems(Startup, (setup_invader_armory, setup_siege_hud))
             .add_systems(PostStartup, seed_demo_wave.run_if(crate::rts::in_campaign)) // FOREST_WAVE screenshot hook only
             // Pause-aware clock — advances before the sim, frozen behind any panel / outside Playing.
             .add_sim_systems(advance_game_clock.run_if(crate::rts::in_campaign))
@@ -1289,6 +1292,7 @@ fn setup_siege_hud(mut commands: Commands, fonts: Res<UiFonts>, assets: Res<Asse
                 ..default()
             },
             anim(AnimKind::SlideDown, 0.0, 0.36),
+            crate::game_state::CampaignOnly,
         ))
         .with_children(|col| {
             // Objective row: the one number that matters this phase.

@@ -241,6 +241,7 @@ fn draw_band(
             Visibility::Hidden,
             GlobalZIndex(50),
             SelectionBand,
+            crate::rts::RtsUi,
         ));
         return; // node shows from next frame
     }

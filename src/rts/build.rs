@@ -84,7 +84,10 @@ pub struct RtsBuildPlugin;
 
 impl Plugin for RtsBuildPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup_build_assets.run_if(super::in_skirmish));
+        // Ungated: bakes meshes/materials into a resource with no gameplay side effects, so it must
+        // run in EVERY boot — a campaign-booted process can flip to skirmish mid-process and needs
+        // these assets ready.
+        app.add_systems(Startup, setup_build_assets);
         app.add_systems(
             Update,
             (
@@ -123,6 +126,10 @@ pub struct RtsBuildAssets {
     ghost_body: Handle<StandardMaterial>,
 }
 
+/// Bake the per-building meshes + shared materials into [`RtsBuildAssets`]. Runs at Startup in
+/// EVERY boot (not just a skirmish one) — the mode can flip Campaign→Skirmish mid-process, so the
+/// assets have to exist before the first skirmish frame; it's pure asset baking with no gameplay
+/// side effects, so running it in a campaign process is harmless.
 fn setup_build_assets(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -168,16 +175,20 @@ fn setup_build_assets(
 // ────────────────────────────────────────────────────────────── pre-built halls
 
 /// Once the arena terrain is up (`WorldReady`), drop a completed Town Hall on each base plateau and
-/// seed that side's bank + pop cap. Runs every frame until it has fired once (`Local` latch).
+/// seed that side's bank + pop cap. Re-fires once per skirmish run (generation-keyed on
+/// [`crate::rts::RtsRunGen`]): the `Local<u32>` latch trails the live generation, so a fresh
+/// skirmish entry (which bumps the generation) re-stages the halls instead of firing only once per
+/// process. Still waits for assets + `WorldReady` before latching.
 fn spawn_starting_halls(
     mut commands: Commands,
     assets: Option<Res<RtsBuildAssets>>,
     world_ready: Res<crate::biome::WorldReady>,
     mut banks: ResMut<RtsBanks>,
     mut pop: ResMut<RtsPop>,
-    mut done: Local<bool>,
+    run_gen: Res<crate::rts::RtsRunGen>,
+    mut last_gen: Local<u32>,
 ) {
-    if *done {
+    if *last_gen == run_gen.0 {
         return;
     }
     let Some(assets) = assets else { return };
@@ -198,7 +209,7 @@ fn spawn_starting_halls(
         pop.0[side.ix()].count = 0;
         pop.0[side.ix()].cap = HALL_POP;
     }
-    *done = true;
+    *last_gen = run_gen.0;
 }
 
 /// Spawn a **completed** Town Hall (built, full scale, blocker + Health registered).
@@ -213,6 +224,7 @@ fn spawn_hall(commands: &mut Commands, assets: &RtsBuildAssets, side: Side, pos:
             RtsBuilding { kind: BuildingKind::TownHall, built: true },
             side,
             crate::player::Health { hp: def.hp, max: def.hp },
+            crate::rts::RtsSpawned,
         ))
         .id();
     commands.entity(root).with_children(|p| {
@@ -458,6 +470,9 @@ fn territory_ring(
                     MeshMaterial3d(mat),
                     Transform::from_xyz(PLAYER_BASE.x, y, PLAYER_BASE.y)
                         .with_rotation(Quat::from_rotation_x(-FRAC_PI_2)),
+                    // `RtsUi` (hide-don't-despawn): the `Local<Option<Entity>>` above caches this
+                    // id for the process lifetime, so the generation sweep must not reap it.
+                    super::RtsUi,
                 ))
                 .id(),
         );
@@ -470,7 +485,11 @@ fn territory_ring(
 }
 
 fn spawn_ghost(commands: &mut Commands, assets: &RtsBuildAssets, kind: BuildingKind) -> Entity {
-    let root = commands.spawn((Transform::default(), Visibility::Visible)).id();
+    // `RtsUi`, not `RtsSpawned`: `GhostState` (a `Local`) holds these entity ids, so the
+    // generation sweep must not despawn them out from under it. If one is alive across a
+    // Skirmish → Campaign flip (paused mid-placement), the mode reconciler hides it; back in
+    // skirmish, `ghost_placement` sees `Placing::None` and `clear_ghost`s it properly.
+    let root = commands.spawn((Transform::default(), Visibility::Visible, super::RtsUi)).id();
     let handles = assets.building.get(&kind).cloned().unwrap_or_default();
     commands.entity(root).with_children(|p| {
         for (h, _m) in &handles {
@@ -598,6 +617,7 @@ fn spawn_scaffold(
             RtsBuilding { kind, built: false },
             side,
             crate::player::Health { hp: def.hp, max: def.hp },
+            crate::rts::RtsSpawned,
         ))
         .id();
     commands.entity(root).with_children(|p| {
