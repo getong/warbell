@@ -121,9 +121,10 @@ pub struct SnowmanPlugin;
 impl Plugin for SnowmanPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SnowmanField>();
-        // Seed once the terrain exists (footing/biome sampling needs the built world). Ungated:
-        // the body early-returns until `WorldReady`, then runs its one-shot spawn.
-        app.add_systems(Update, seed_snowmen);
+        // Seed once the terrain exists (footing/biome sampling needs the built world). Campaign
+        // only — snowmen are a hero-combat snow hazard; the RTS skirmish has no hero, and its snow
+        // wedge is a plain biome, so an ambush snowman there is just a stray prop.
+        app.add_systems(Update, seed_snowmen.run_if(crate::rts::in_campaign));
         // Sim tier — frozen with the rest of the world on a panel/pause (Modal only lives in Play).
         app.add_sim_systems(
             (snowman_brain, detect_snowman_deaths, respawn_snowmen)

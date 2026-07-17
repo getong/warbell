@@ -342,6 +342,23 @@ pub fn building_def(kind: BuildingKind) -> &'static BuildingDef {
     BUILDINGS.iter().find(|d| d.kind == kind).expect("every BuildingKind has a def")
 }
 
+/// One-line "what it does" blurb for a building — shown in the build-bar hover tooltip so the
+/// player knows a structure's role before committing to place it.
+pub fn building_desc(kind: BuildingKind) -> &'static str {
+    match kind {
+        BuildingKind::TownHall => "Your keep — its fall ends the game.",
+        BuildingKind::House => "Beds for more peasants — raises your population cap.",
+        BuildingKind::Farm => "Grows food so your town keeps growing.",
+        BuildingKind::Sawmill => "Fells nearby trees and hauls the logs home (needs a worker).",
+        BuildingKind::Quarry => "Cuts stone from a nearby outcrop (needs a worker).",
+        BuildingKind::GoldMine => "Digs gold from a nearby vein (needs a worker).",
+        BuildingKind::Market => "Trickles passive gold — no worker needed.",
+        BuildingKind::Barracks => "Trains swordsmen and archers from your idle workers.",
+        BuildingKind::Watchtower => "Looses arrows at the nearest enemy in range.",
+        BuildingKind::Wall => "A stone block — chain them to fence off a lane.",
+    }
+}
+
 /// A placed RTS structure (scaffold or complete). Carries `Side` + `Health` alongside.
 #[derive(Component, Clone, Copy)]
 pub struct RtsBuilding {

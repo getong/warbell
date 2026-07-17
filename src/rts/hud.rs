@@ -4,10 +4,11 @@
 //!  1. **Top bar** (top-centre): the four resource counters (wood/stone/gold/food) + population
 //!     `cur/cap`, read live off [`RtsBanks`]/[`RtsPop`] for the player side. Reuses the campaign
 //!     stat-row chrome (`crate::hud`).
-//!  2. **Build strip** (bottom-right): one button per placeable [`BuildingKind`] (all but the free
-//!     Town Hall), each with a cost row; clicking sets [`Placing`] (click again = cancel).
-//!     Unaffordable buttons grey out; the active one is highlighted. Template: `town::spawn_build_strip`.
-//!  3. **Selection panel** (bottom-left): hidden with nothing selected. Units → per-kind icon +
+//!  2. **Build palette** (bottom-centre): a Stronghold-style centred bar of compact tiles, one per
+//!     placeable [`BuildingKind`] (all but the free Town Hall), each an icon + name + cost; clicking
+//!     sets [`Placing`] (click again = cancel). Unaffordable tiles grey out; the active one is
+//!     highlighted. Mirrors the campaign `town::spawn_build_strip` palette.
+//!  3. **Selection panel** (bottom-right): hidden with nothing selected. Units → per-kind icon +
 //!     count. A single building → its name + HP bar; a barracks additionally shows the two train
 //!     buttons (Miecznik / Łucznik), the FIFO queue slots, and a training progress bar.
 //!
@@ -27,8 +28,9 @@ use crate::ui::widgets::{self, border};
 use crate::ui::IconAtlas;
 
 use super::{
-    building_def, in_skirmish, train_cost, BuildingKind, Cost, Placing, RtsBanks, RtsBuilding,
-    RtsPop, RtsUnit, Selected, Side, TrainOrder, TrainQueue, UnitKind, TRAIN_QUEUE_DEPTH, TRAIN_SECS,
+    building_def, building_desc, in_skirmish, train_cost, BuildingKind, Cost, Placing, RtsBanks,
+    RtsBuilding, RtsPop, RtsUnit, Selected, Side, TrainOrder, TrainQueue, UnitKind,
+    TRAIN_QUEUE_DEPTH, TRAIN_SECS,
 };
 
 /// The shared vitals component RTS bodies/buildings carry (the campaign combat `Health`, re-exported
@@ -64,6 +66,14 @@ struct ResText(ResKind);
 /// A build-strip button → the building it places.
 #[derive(Component, Clone, Copy)]
 struct BuildStripBtn(BuildingKind);
+
+/// The hover-info popup above the build bar (hidden until a tile is hovered) and its two text nodes.
+#[derive(Component)]
+struct BuildInfoPanel;
+#[derive(Component)]
+struct BuildInfoName;
+#[derive(Component)]
+struct BuildInfoDesc;
 
 /// The two bottom-left panels; exactly one is shown at a time (or neither).
 #[derive(Component)]
@@ -140,6 +150,7 @@ impl Plugin for RtsHudPlugin {
                 update_top_bar,
                 update_build_strip,
                 build_strip_click,
+                build_info_hover,
                 sync_selection_mode,
                 update_unit_summary,
                 update_building_panel,
@@ -182,7 +193,53 @@ fn setup_rts_hud(
     *done = true;
     spawn_top_bar(&mut commands, &fonts, &atlas);
     spawn_build_strip(&mut commands, &fonts, &atlas);
+    spawn_build_info(&mut commands, &fonts);
     spawn_selection_panels(&mut commands, &fonts, &atlas);
+}
+
+/// The build-bar hover popup: a hidden card, parked ABOVE the centred build bar, that names + blurbs
+/// whichever building tile the cursor is over. `build_info_hover` fills + toggles it.
+fn spawn_build_info(commands: &mut Commands, fonts: &UiFonts) {
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                bottom: Val::Px(142.0), // clear of the build bar below it
+                left: Val::Px(0.0),
+                width: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            GlobalZIndex(61),
+            bevy::ui::FocusPolicy::Pass,
+            Visibility::Hidden,
+            crate::rts::RtsUi, // managed with the other HUD roots across mode flips
+            BuildInfoPanel,
+        ))
+        .with_children(|wrap| {
+            wrap.spawn((
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    row_gap: Val::Px(3.0),
+                    max_width: Val::Px(340.0),
+                    padding: UiRect::axes(Val::Px(14.0), Val::Px(9.0)),
+                    border: border(2.0),
+                    border_radius: radius(R_PANEL),
+                    ..default()
+                },
+                widgets::card_paint(),
+            ))
+            .with_children(|card| {
+                card.spawn((label(&fonts.display, "", 15.0, GOLD), BuildInfoName));
+                card.spawn((
+                    Node { max_width: Val::Px(312.0), ..default() },
+                    label(&fonts.regular, "", 12.0, TEXT_DIM),
+                    BuildInfoDesc,
+                ));
+            });
+        });
 }
 
 /// The count-chip / train-card icon + tint for a unit kind (shared with `update_unit_summary`).
@@ -281,71 +338,99 @@ fn build_icon(kind: BuildingKind) -> &'static str {
 
 fn spawn_build_strip(commands: &mut Commands, fonts: &UiFonts, atlas: &IconAtlas) {
     commands
+        // Full-width wrapper so the palette self-centres along the bottom edge (Stronghold-style),
+        // passing pointer events through everywhere but the tiles themselves.
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                bottom: Val::Px(18.0),
-                right: Val::Px(18.0),
+                bottom: Val::Px(16.0),
+                left: Val::Px(0.0),
+                width: Val::Percent(100.0),
                 flex_direction: FlexDirection::Column,
-                align_items: AlignItems::FlexEnd,
-                row_gap: Val::Px(6.0),
-                padding: UiRect::all(Val::Px(8.0)),
-                border: border(2.0),
-                border_radius: radius(R_PANEL),
+                align_items: AlignItems::Center,
                 ..default()
             },
-            widgets::card_paint(),
             GlobalZIndex(60),
             bevy::ui::FocusPolicy::Pass,
             crate::rts::RtsUi,
         ))
-        .with_children(|col| {
-            col.spawn(label(&fonts.display, "Build", 12.0, GOLD));
-            for kind in PLACEABLE {
-                let def = building_def(kind);
-                col.spawn((
-                    Button,
-                    Interaction::default(),
-                    Node {
-                        width: Val::Px(232.0),
-                        flex_direction: FlexDirection::Row,
-                        align_items: AlignItems::Center,
-                        justify_content: JustifyContent::SpaceBetween,
-                        column_gap: Val::Px(8.0),
-                        padding: UiRect::axes(Val::Px(10.0), Val::Px(7.0)),
-                        border: border(2.0),
-                        border_radius: radius(R_CARD),
-                        ..default()
-                    },
-                    BackgroundColor(BTN_BG),
-                    BorderColor::all(BORDER_SOFT),
-                    BuildStripBtn(kind),
-                ))
-                .with_children(|b| {
-                    // Left: an icon medallion + the name (the campaign build-palette look).
-                    b.spawn(Node {
-                        flex_direction: FlexDirection::Row,
-                        align_items: AlignItems::Center,
-                        column_gap: Val::Px(9.0),
-                        ..default()
-                    })
-                    .with_children(|l| {
-                        if let Some(e) = atlas.get_tintable(build_icon(kind)) {
-                            l.spawn(widgets::icon_tinted(e, 30.0, GOLD));
-                        }
-                        l.spawn(label(&fonts.semibold, def.name, 14.0, Color::WHITE));
-                    });
-                    // Right: the cost chips.
-                    b.spawn(Node {
-                        flex_direction: FlexDirection::Row,
-                        align_items: AlignItems::Center,
-                        column_gap: Val::Px(6.0),
-                        ..default()
-                    })
-                    .with_children(|cr| spawn_cost_chips(cr, fonts, Some(atlas), &def.cost));
+        .with_children(|wrap| {
+            // The palette card: a title above a centred row of building tiles.
+            wrap.spawn((
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    row_gap: Val::Px(5.0),
+                    padding: UiRect::axes(Val::Px(10.0), Val::Px(8.0)),
+                    border: border(2.0),
+                    border_radius: radius(R_PANEL),
+                    ..default()
+                },
+                widgets::card_paint(),
+            ))
+            .with_children(|card| {
+                card.spawn(label(&fonts.display, "Build", 12.0, GOLD));
+                // The tile row (wraps on a narrow window so it never overruns the minimap/panels).
+                card.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    flex_wrap: FlexWrap::Wrap,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::FlexStart,
+                    column_gap: Val::Px(6.0),
+                    row_gap: Val::Px(6.0),
+                    max_width: Val::Px(940.0),
+                    ..default()
+                })
+                .with_children(|row| {
+                    for kind in PLACEABLE {
+                        build_tile(row, fonts, atlas, kind);
+                    }
                 });
-            }
+            });
         });
+}
+
+/// One compact build tile (icon over name over cost chips), carrying its [`BuildStripBtn`] — the
+/// square-card Stronghold/AoE look. Highlight + grey-out are driven live by `update_build_strip`.
+fn build_tile(
+    p: &mut RelatedSpawnerCommands<ChildOf>,
+    fonts: &UiFonts,
+    atlas: &IconAtlas,
+    kind: BuildingKind,
+) {
+    let def = building_def(kind);
+    p.spawn((
+        Button,
+        Interaction::default(),
+        Node {
+            width: Val::Px(96.0),
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::FlexStart,
+            row_gap: Val::Px(3.0),
+            padding: UiRect::axes(Val::Px(6.0), Val::Px(7.0)),
+            border: border(2.0),
+            border_radius: radius(R_CARD),
+            ..default()
+        },
+        BackgroundColor(BTN_BG),
+        BorderColor::all(BORDER_SOFT),
+        BuildStripBtn(kind),
+    ))
+    .with_children(|b| {
+        if let Some(e) = atlas.get_tintable(build_icon(kind)) {
+            b.spawn(widgets::icon_tinted(e, 34.0, GOLD));
+        }
+        b.spawn(label(&fonts.semibold, def.name, 11.5, Color::WHITE));
+        b.spawn(Node {
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            column_gap: Val::Px(4.0),
+            ..default()
+        })
+        .with_children(|cr| spawn_cost_chips(cr, fonts, Some(atlas), &def.cost));
+    });
 }
 
 /// Selection panels, parked to the RIGHT of the minimap (bottom-left is the minimap now) so they
@@ -357,7 +442,7 @@ fn spawn_selection_panels(commands: &mut Commands, fonts: &UiFonts, atlas: &Icon
             Node {
                 position_type: PositionType::Absolute,
                 bottom: Val::Px(18.0),
-                left: Val::Px(200.0), // clear of the bottom-left minimap
+                right: Val::Px(16.0), // bottom-right corner — clear of the centred build palette
                 display: Display::None,
                 flex_direction: FlexDirection::Column,
                 row_gap: Val::Px(8.0),
@@ -401,7 +486,7 @@ fn spawn_selection_panels(commands: &mut Commands, fonts: &UiFonts, atlas: &Icon
             Node {
                 position_type: PositionType::Absolute,
                 bottom: Val::Px(18.0),
-                left: Val::Px(200.0), // clear of the bottom-left minimap
+                right: Val::Px(16.0), // bottom-right corner — clear of the centred build palette
                 display: Display::None,
                 width: Val::Px(272.0), // wide enough for the two train cards side-by-side
                 flex_direction: FlexDirection::Column,
@@ -726,6 +811,46 @@ fn build_strip_click(
             notice.push("Move to a spot · click to place · R rotate · right-click cancel", time.elapsed_secs_f64());
         } else {
             notice.push("Not enough resources", time.elapsed_secs_f64());
+        }
+    }
+}
+
+/// Drive the build-bar hover popup: show + fill it with the hovered tile's name + blurb, hide it
+/// when the cursor leaves the bar. Keyed on the hovered `BuildingKind` (a `Local`) so the two text
+/// nodes only rewrite when the tile under the cursor actually changes.
+#[allow(clippy::type_complexity)]
+fn build_info_hover(
+    mut last: Local<Option<BuildingKind>>,
+    tiles: Query<(&Interaction, &BuildStripBtn)>,
+    mut panel: Query<&mut Visibility, With<BuildInfoPanel>>,
+    mut name_q: Query<&mut Text, (With<BuildInfoName>, Without<BuildInfoDesc>)>,
+    mut desc_q: Query<&mut Text, (With<BuildInfoDesc>, Without<BuildInfoName>)>,
+) {
+    let Ok(mut vis) = panel.single_mut() else { return };
+    let hovered = tiles
+        .iter()
+        .find(|(i, _)| matches!(**i, Interaction::Hovered | Interaction::Pressed))
+        .map(|(_, b)| b.0);
+    match hovered {
+        Some(kind) => {
+            if *vis != Visibility::Visible {
+                *vis = Visibility::Visible;
+            }
+            if *last != Some(kind) {
+                *last = Some(kind);
+                if let Ok(mut t) = name_q.single_mut() {
+                    **t = building_def(kind).name.to_string();
+                }
+                if let Ok(mut t) = desc_q.single_mut() {
+                    **t = building_desc(kind).to_string();
+                }
+            }
+        }
+        None => {
+            if *vis != Visibility::Hidden {
+                *vis = Visibility::Hidden;
+            }
+            *last = None;
         }
     }
 }

@@ -1351,18 +1351,62 @@ const ARENA_MOUNT_R: f32 = 20.0;
 const ARENA_FOREST: [Vec2; 2] = [Vec2::new(-72.0, 8.0), Vec2::new(72.0, -8.0)];
 const ARENA_FOREST_R: f32 = 18.0;
 
-/// SNOW highlands: a mirrored pair straddling the fair bisector (`z = x`) — each sits exactly
-/// equidistant from both bases, so neither side owns one. A cold, terraced massif: raised
-/// [`TB::Snow`] on a walkable slope, tinted to a bright frost-white cap in `ground_color_arena`.
-/// Gives the two far lobes of the enlarged island a place of their own instead of more lawn.
-const ARENA_SNOW: [Vec2; 2] = [Vec2::new(51.0, 51.0), Vec2::new(-51.0, -51.0)];
-const ARENA_SNOW_R: f32 = 17.0;
+/// **Four-biome quadrant split.** The arena island is carved into four roughly-equal biome wedges
+/// by the world axes through the origin, each seam meandered by value-noise (see [`arena_wedge`])
+/// so the biomes interlock naturally instead of meeting on clean radial spokes. The home biomes
+/// sit where the bases do — the player's green grassland fills the NW quadrant (`x<0, z>0`, where
+/// [`crate::rts::PLAYER_BASE`] sits), the rival's desert the SE (`x>0, z<0`, [`crate::rts::RIVAL_BASE`]);
+/// the two neutral flanks are snow (NE) and rock (SW). This replaces the earlier scattered mirrored
+/// snow/dune patches (the "tiny unnatural snow lobe"). How far (world units) a wedge seam wanders
+/// off its axis.
+const ARENA_WEDGE_FRAY: f32 = 20.0;
 
-/// DUNE scrub: a mirrored pair of dry, sandy flats on the outer field — [`TB::Desert`] at the
-/// normal field height (no rise), tinted sand-gold, carrying the desert scatter (cacti, dry rocks).
-/// A warm counterweight to the snow lobes.
-const ARENA_DUNES: [Vec2; 2] = [Vec2::new(72.0, 26.0), Vec2::new(-72.0, -26.0)];
-const ARENA_DUNE_R: f32 = 13.0;
+/// The biome wedge (see [`ARENA_WEDGE_FRAY`]) containing base-space `(x,z)` / world `(wx,wz)`, plus
+/// the world-space distance to the nearest wedge seam (so [`ground_color_arena`] can soft-fade the
+/// tint across borders). The quadrant seams are pushed around by two decorrelated value-noise
+/// fields, so a biome's border wanders ±[`ARENA_WEDGE_FRAY`]u instead of running dead-straight
+/// along an axis. Both [`classify_arena`] (props/height) and [`ground_color_arena`] (tint) route
+/// through this, so ground colour and scatter always agree on which biome a tile belongs to.
+fn arena_wedge(x: f32, z: f32, wx: f32, wz: f32) -> (TB, f32) {
+    let fx = wx + (vnoise(x * 0.05 + 11.0, z * 0.05 - 4.0) - 0.5) * 2.0 * ARENA_WEDGE_FRAY;
+    let fz = wz + (vnoise(x * 0.05 - 7.0, z * 0.05 + 13.0) - 0.5) * 2.0 * ARENA_WEDGE_FRAY;
+    let biome = match (fx >= 0.0, fz >= 0.0) {
+        (false, true) => TB::Grass,  // NW — player grassland (Forest tiles layered on in classify)
+        (true, false) => TB::Desert, // SE — rival desert
+        (true, true) => TB::Snow,    // NE — snow flank
+        (false, false) => TB::Rock,  // SW — rock flank
+    };
+    (biome, fx.abs().min(fz.abs()))
+}
+
+// ── Rock wedge = a real mountain range ──────────────────────────────────────────────
+/// The rock wedge rises into a genuine mountain MASSIF instead of a grey flat. The height is a hump
+/// that peaks at MID-radius and ramps back to flat at both the open central battlefield and the
+/// shore: `terrace_inland` caps a tile's height by its distance to the class-1 coast, so a peak
+/// jammed against the rim just gets eaten back down — a mid-wedge massif is what actually stands
+/// tall. The hump is gentle enough (≤~1 class/tile) that terracing keeps every slope climbable (no
+/// nav blockers), so units still cross the range via its saddles.
+const ARENA_RANGE_CORE: f32 = 30.0;
+const ARENA_RANGE_RIM: f32 = 88.0;
+/// Summit height (classes) above the flat field; ridge noise adds a couple more for peaks + saddles.
+const ARENA_RANGE_PEAK: f32 = 8.0;
+const ARENA_RANGE_RIDGE: f32 = 2.0;
+
+/// `0→1→0` mountain hump for a rock-wedge point at radius `r`: 0 at the open centre (≤`CORE`) and at
+/// the shore (≥`RIM`), 1 mid-wedge. Shared by [`arena_rock_mountain`] (height) and the ground tint
+/// (pale peak caps) so both agree on where the summits are.
+fn arena_range_hump(r: f32) -> f32 {
+    let t = ((r - ARENA_RANGE_CORE) / (ARENA_RANGE_RIM - ARENA_RANGE_CORE)).clamp(0.0, 1.0);
+    (t * std::f32::consts::PI).sin()
+}
+
+/// Terraced mountain height for a rock-wedge tile at world `(wx,wz)`: the flat field plus the
+/// mid-wedge massif hump (see [`arena_range_hump`]) with a little ridge noise for peaks + saddles.
+fn arena_rock_mountain(wx: f32, wz: f32, flat: i32) -> i32 {
+    let hump = arena_range_hump(wx.hypot(wz));
+    let ridge = (noise_a(wx * 0.05 + 30.0, wz * 0.05 - 12.0) * 0.5 + 0.5).clamp(0.0, 1.0);
+    flat + (hump * (ARENA_RANGE_PEAK + ridge * ARENA_RANGE_RIDGE)).round().max(0.0) as i32
+}
 
 /// The arena rocky-hill centres (world XZ) + their radius — exposed so the `rts` deposits module can
 /// crown each terrain hill with a cosmetic boulder mound (the terrain tint alone read too flat).
@@ -1388,13 +1432,6 @@ fn arena_hill_class(wx: f32, wz: f32) -> Option<i32> {
 /// mountain. Shared by [`classify_arena`] (terrain) and [`ground_color_arena`] (dark-grey tint).
 fn arena_mount_class(wx: f32, wz: f32) -> Option<i32> {
     arena_cone_class(wx, wz, &ARENA_MOUNTS, ARENA_MOUNT_R, 2.0)
-}
-
-/// Raised height class of the arena SNOW highlands at world `(wx,wz)` — a terraced cold massif,
-/// same walkable ≤1-step slope — or `None` if outside every highland. Shared by [`classify_arena`]
-/// (terrain) and [`ground_color_arena`] (frost tint).
-fn arena_snow_class(wx: f32, wz: f32) -> Option<i32> {
-    arena_cone_class(wx, wz, &ARENA_SNOW, ARENA_SNOW_R, 3.0)
 }
 
 /// Shared terraced-cone height for the arena's raised regions: a linear cone from `ARENA_FLAT_CLASS`
@@ -1579,10 +1616,6 @@ fn classify_arena(x: f32, z: f32) -> Option<(TB, i32)> {
     if let Some(mc) = arena_mount_class(wx, wz) {
         return Some((TB::Rock, mc));
     }
-    // Snow highlands on the two fair-bisector lobes — a raised, terraced cold massif.
-    if let Some(sc) = arena_snow_class(wx, wz) {
-        return Some((TB::Snow, sc));
-    }
     // Ornamental lakes (mirrored pair): carve a hole so the sea plane reads through as shallow
     // water. After the base/road/deposit returns above, so a lake can never eat a build plot or
     // the lane. `arena_lake_sd` marching-squares this same circle into a smooth shore.
@@ -1594,46 +1627,49 @@ fn classify_arena(x: f32, z: f32) -> Option<(TB, i32)> {
     if r > ARENA_LAND_R - ARENA_BEACH_W + coast {
         return Some((TB::Sand, 1));
     }
-    // Dune scrub: dry sandy flats at field height (no rise) — a warm biome on the outer field.
-    if arena_region_t(wx, wz, &ARENA_DUNES, ARENA_DUNE_R) > 0.0 {
-        return Some((TB::Desert, ARENA_FLAT_CLASS));
-    }
-    // Gentle rolling grass: mostly flat, an occasional one-class knoll (kept ≤1 step, walkable;
-    // `terrace_inland` enforces it globally anyway).
+    // The four-biome quadrant split (see `arena_wedge`): the outer field takes its wedge's biome —
+    // green grassland (player NW), desert (rival SE), snow (NE) and rock (SW).
+    let (wedge, _) = arena_wedge(x, z, wx, wz);
+    // Gentle rolling knolls: mostly flat, an occasional one-class rise (kept ≤1 step, walkable;
+    // `terrace_inland` enforces it globally anyway). Shared across every flat wedge.
     let h = if noise_b(x + 11.0, z - 7.0) > 0.95 { ARENA_FLAT_CLASS + 1 } else { ARENA_FLAT_CLASS };
-    // Decorative light-forest clumps on the OUTER field only (open centre for the battle), kept
-    // clear of the bases and deposit spots. The road / base / deposit force-flat checks above have
-    // already returned, so a Forest tile can never land on them.
-    let base_clear = (p - crate::rts::PLAYER_BASE).length().min((p - crate::rts::RIVAL_BASE).length());
     // Off the bases, the deposit spots and the base-to-base lane — the gate every decorative
     // region shares, so nothing can crowd a build plot or wall off the road.
+    let base_clear = (p - crate::rts::PLAYER_BASE).length().min((p - crate::rts::RIVAL_BASE).length());
     let off_lane = base_clear > ARENA_BASE_CLEAR
         && dep_d > ARENA_DEPOSIT_CLEAR
         && arena_road_dist(wx, wz) > ARENA_ROAD_CLEAR;
-    // Rocky hills on the free flanks — terraced (walkable, no blockers). Take priority over the
-    // tree fringe so a hill reads as rock, not woods.
     if off_lane {
+        // Rocky hills on the free flanks — terraced (walkable, no blockers). Any wedge; a hill reads
+        // as rock, not the surrounding biome.
         if let Some(hc) = arena_hill_class(wx, wz) {
             return Some((TB::Rock, hc));
         }
-    }
-    // Forest PATCHES — a dense stand, near-solid `Forest` tiles (vs the fringe's sparse clumps
-    // below), so each side's wood really reads as a wood. Density falls off toward the rim, so the
-    // stand fades into the meadow instead of ending on a circle.
-    if off_lane {
+        // Dense decorative wood STANDS (the mirrored `ARENA_FOREST` groves) — near-solid `Forest`
+        // tiles for real ambient timber, in any wedge (a wooded stand / desert oasis).
         let ft = arena_region_t(wx, wz, &ARENA_FOREST, ARENA_FOREST_R);
         if ft > 0.0 && ft * 2.6 + noise_a(x * 0.7 + 13.0, z * 0.7 - 5.0) * 0.5 > 1.0 {
             return Some((TB::Forest, h));
         }
     }
-    let forested = r > ARENA_FOREST_R0
-        && r < ARENA_LAND_R - ARENA_BEACH_W - 2.0
-        && off_lane
-        && noise_a(x * 0.6 + 40.0, z * 0.6 - 20.0) * noise_b(x * 0.6 + 7.0, z * 0.6 - 3.0) > 0.55;
-    if forested {
-        return Some((TB::Forest, h));
+    match wedge {
+        // Flat-field wedges: the biome props (cacti / firs+rime) follow the tile.
+        TB::Desert => Some((TB::Desert, h)),
+        TB::Snow => Some((TB::Snow, h)),
+        // Rock wedge = a genuine MOUNTAIN range: raised terraced highland (crags scatter on top).
+        TB::Rock => Some((TB::Rock, arena_rock_mountain(wx, wz, h))),
+        // Player wedge = a genuine FOREST: dense trees off the base / road / deposits, with natural
+        // clearings where the noise dips, thinning to open meadow only right around the keep.
+        _ => {
+            if off_lane {
+                let n = noise_a(x * 0.5 + 4.0, z * 0.5 - 9.0) * noise_b(x * 0.5 - 6.0, z * 0.5 + 2.0);
+                if n > -0.15 {
+                    return Some((TB::Forest, h));
+                }
+            }
+            Some((TB::Grass, h))
+        }
     }
-    Some((TB::Grass, h))
 }
 
 /// Arena ground colour (base-space in, like [`ground_color`]): the home meadow macro-patches, a
@@ -1669,6 +1705,38 @@ fn ground_color_arena(x: f32, z: f32) -> [f32; 4] {
         (col[1] * v).clamp(0.0, 1.0),
         (col[2] * v * (1.0 - warm)).clamp(0.0, 1.0),
     ];
+    // Four-biome wedge tint (see `arena_wedge`): paint each quadrant its biome colour, soft-faded
+    // across the meandering seam (`edge`) and killed on the sandy foreshore (`1-sand_w`) so the
+    // beach stays sand. The player's grassland wedge keeps the default meadow (no tint). Laid down
+    // BEFORE the hill/mountain grey below, so a rocky landmark in any wedge still reads as rock.
+    {
+        let (wedge, seam) = arena_wedge(x, z, wx, wz);
+        // Fill factor: full just inside the wedge, with only a narrow seam softening — kept TIGHT so
+        // the colour edge tracks the (hard) tile classification that drives props, otherwise snow /
+        // desert / rock props near a seam sit on still-green ground. Eased out on the sandy foreshore
+        // (`1-sand_w`) so the beach stays sand.
+        let fill = smoothstep(0.0, 5.0, seam) * (1.0 - sand_w);
+        match wedge {
+            TB::Desert => {
+                col = mix3(col, lin3(p.desert), fill * 0.85); // warm tan dunes
+                col = mix3(col, [0.74, 0.57, 0.31], fill * 0.30); // oranger toward the core
+            }
+            TB::Snow => {
+                col = mix3(col, [0.55, 0.60, 0.68], fill * 0.40); // cool blue-grey base
+                col = mix3(col, lin3(p.snow), fill * 0.85); // bright frost
+            }
+            TB::Rock => {
+                // A DARK cool slate — NOT the tan-brown `p.rock` (read as desert), and dark enough
+                // that the warm sun can't wash it back to tan like a mid-grey did.
+                col = mix3(col, [0.22, 0.23, 0.27], fill * 0.90);
+                // Pale bare-rock / snow-dusted caps on the mid-wedge summits (same hump the height
+                // uses), so the massif reads as mountains — not a flat slate quadrant — from the cam.
+                let peak = arena_range_hump(r) * fill;
+                col = mix3(col, [0.62, 0.65, 0.72], peak * 0.6);
+            }
+            _ => {} // grassland wedge keeps the green meadow
+        }
+    }
     // Rock-grey rise on the hill tiles (blend grows toward each hill's peak so the slope reads
     // rocky). Matches the raised `TB::Rock` tiles from `classify_arena`.
     if let Some(hc) = arena_hill_class(wx, wz) {
@@ -1685,23 +1753,6 @@ fn ground_color_arena(x: f32, z: f32) -> [f32; 4] {
             // rockscape against the meadow.
             col = mix3(col, [0.24, 0.23, 0.21], smoothstep(0.05, 0.55, mt) * 0.82);
             col = mix3(col, [0.35, 0.16, 0.10], smoothstep(0.45, 1.0, mt) * 0.42); // rust ore stain toward the core
-        }
-    }
-    // Snow highlands: a cold massif — pale blue-grey scree at the rim climbing to a bright frost
-    // cap at the peak, so the lobe reads as its own (cold) place from across the map.
-    {
-        let st = arena_region_t(wx, wz, &ARENA_SNOW, ARENA_SNOW_R);
-        if st > 0.0 {
-            col = mix3(col, [0.42, 0.46, 0.52], smoothstep(0.04, 0.42, st) * 0.80); // frosted scree
-            col = mix3(col, lin3(p.snow), smoothstep(0.30, 0.90, st) * 0.92); // the snow cap
-        }
-    }
-    // Dune scrub: dry sand-gold flats fading into the meadow at the rim.
-    {
-        let dt = arena_region_t(wx, wz, &ARENA_DUNES, ARENA_DUNE_R);
-        if dt > 0.0 {
-            col = mix3(col, lin3(p.grass_dry), smoothstep(0.02, 0.35, dt) * 0.70);
-            col = mix3(col, lin3(p.sand), smoothstep(0.20, 0.85, dt) * 0.78);
         }
     }
     // Forest patches: a greener, shadier floor so the stand reads as woodland, not open meadow.
