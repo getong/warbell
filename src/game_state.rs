@@ -106,6 +106,13 @@ pub struct ConfirmWipe(pub Option<bool>);
 #[derive(Resource, Default)]
 pub struct RunInProgress(pub bool);
 
+/// Marker on campaign-only presentation — the hero rig, campaign HUD roots, compass, quest
+/// tracker, hint root, sky clouds… Tag the ROOT entity (visibility cascades to children).
+/// [`apply_mode_visibility`] hides everything tagged while the live mode is Skirmish and shows it
+/// again in Campaign, so an in-process mode flip never leaves campaign dressing over the arena.
+#[derive(Component)]
+pub struct CampaignOnly;
+
 pub struct GameStatePlugin;
 
 impl Plugin for GameStatePlugin {
@@ -120,6 +127,8 @@ impl Plugin for GameStatePlugin {
             .init_resource::<RunInProgress>()
             // Drive a pending in-process fresh run to completion (ungated — works over every screen).
             .add_systems(Update, drive_fresh_run)
+            // Hide/show campaign vs RTS presentation whenever the live GameMode flips (ungated).
+            .add_systems(Update, apply_mode_visibility)
             // Sweep the dead run's battlefield the frame an in-process Continue lands in Playing.
             .add_systems(Update, clear_battlefield.run_if(in_state(AppState::Playing)))
             // Overwrite-confirm dialog: reconcile its overlay + resolve its input. Ungated so it
@@ -177,25 +186,75 @@ fn skip_menu() -> bool {
         || std::env::var("FOREST_PERFTEST").is_ok()
 }
 
-/// Relaunch the game as a **fresh process**, entering Potyczka (`skirmish = true`) or the classic
-/// campaign (`false`). This is the ONLY way to switch [`crate::rts::GameMode`], which is decided
-/// once at boot from `FOREST_RTS` (`rts::mode_from_env`) and never changes mid-process — so the
-/// mode toggle spawns a new exe carrying (or explicitly dropping) the flag, then exits this one.
-///
-/// Note the asymmetry with the campaign New Game reset, which is *in-process* (`FreshRunPending` →
-/// `drive_fresh_run`, window kept): only the **mode** needs a fresh boot; a same-mode restart does
-/// not. On "Menu główne" we `env_remove` the flag so the child does NOT inherit this skirmish
-/// process's `FOREST_RTS` and lands back in the campaign. A failed spawn is a no-op (we stay put).
-fn relaunch_process(skirmish: bool) {
-    let Ok(exe) = std::env::current_exe() else { return };
-    let mut cmd = std::process::Command::new(exe);
-    if skirmish {
-        cmd.env("FOREST_RTS", "1");
-    } else {
-        cmd.env_remove("FOREST_RTS"); // don't let a skirmish parent leak the flag into the campaign child
+// ── In-process mode switch (Campaign ⇄ Potyczka, the window never closes) ────────────────
+
+/// The resource set every mode-switch button needs, bundled so the four button systems
+/// (start / pause / game-over click + game-over keys) don't each grow five parameters.
+/// Replaces the old `relaunch_process` (which spawned a fresh exe with/without `FOREST_RTS` and
+/// exited — the visible window-close on entering Potyczka).
+#[derive(bevy::ecs::system::SystemParam)]
+struct ModeSwitch<'w> {
+    mode: ResMut<'w, crate::rts::GameMode>,
+    active_map: ResMut<'w, crate::worldmap::ActiveMap>,
+    run_gen: ResMut<'w, crate::rts::RtsRunGen>,
+    run: ResMut<'w, RunInProgress>,
+    veil: ResMut<'w, crate::loading::Veil>,
+}
+
+impl ModeSwitch<'_> {
+    /// Enter (or replay) Potyczka **in-process**: flip the live mode, point the map at the arena,
+    /// bump the RTS run generation (sweeps the previous run's entities + resources, re-arms the
+    /// arena stagers), and request the standard in-process fresh run — `drive_fresh_run` rebuilds
+    /// the world to the arena under the loading veil and drops into `Playing`. The
+    /// `OnExit(StartScreen)` campaign resets it routes through are `in_campaign`-gated or
+    /// harmless resource wipes, so they don't fight the skirmish.
+    fn enter_skirmish(&mut self, fresh: &mut FreshRunPending, diff: crate::siege::Difficulty) {
+        *self.mode = crate::rts::GameMode::Skirmish;
+        self.active_map.0 = crate::worldmap::MapId::Arena;
+        self.run_gen.0 += 1;
+        fresh.0 = Some(diff);
     }
-    if cmd.spawn().is_ok() {
-        std::process::exit(0); // hand the window over to the fresh process
+
+    /// Leave Potyczka for the campaign **title screen**, in-process. Flips the mode back (which
+    /// re-gates every system and lets `rts_camera_restore` hand the camera back), points the map
+    /// home, bumps the generation (sweeps the arena's RTS entities), and hops to the start
+    /// screen. The stale arena *terrain* deliberately stays behind the title: `run.0 = false`
+    /// hides RESUME, so the only ways forward are **New Game** — whose `map_changed` check sees
+    /// Arena ≠ Home and forces the full in-process reset — or **Continue**, whose
+    /// `restore_active_map` rebuilds the saved map itself. Both rebuild before play; nothing can
+    /// re-enter the arena world. The veil covers the hop (world_ready is true, so it fades on
+    /// its own after the reveal hold).
+    fn to_campaign_menu(&mut self, next_app: &mut NextState<AppState>, now: f32) {
+        *self.mode = crate::rts::GameMode::Campaign;
+        self.active_map.0 = crate::worldmap::MapId::Home;
+        self.run_gen.0 += 1;
+        self.run.0 = false;
+        self.veil.raise(now);
+        next_app.set(AppState::StartScreen);
+    }
+}
+
+/// Reconcile what's on screen with the live [`crate::rts::GameMode`]: campaign-only presentation
+/// (hero, campaign HUD roots, compass, quest tracker, clouds — everything tagged
+/// [`CampaignOnly`]) hides in Skirmish; persistent RTS UI (HUD roots, minimap, pooled bars —
+/// tagged [`crate::rts::RtsUi`]) hides in Campaign. Visibility-only, never despawn: the spawn
+/// latches and bar pools stay valid, so flipping back is a pure re-show. Runs on the mode
+/// resource's change ticks (including its boot insertion, which hides campaign dressing on a
+/// `FOREST_RTS=1` boot the frame it starts).
+fn apply_mode_visibility(
+    mode: Res<crate::rts::GameMode>,
+    mut campaign: Query<&mut Visibility, (With<CampaignOnly>, Without<crate::rts::RtsUi>)>,
+    mut rts: Query<&mut Visibility, (With<crate::rts::RtsUi>, Without<CampaignOnly>)>,
+) {
+    if !mode.is_changed() {
+        return;
+    }
+    let skirmish = matches!(*mode, crate::rts::GameMode::Skirmish);
+    for mut v in &mut campaign {
+        *v = if skirmish { Visibility::Hidden } else { Visibility::Inherited };
+    }
+    for mut v in &mut rts {
+        *v = if skirmish { Visibility::Inherited } else { Visibility::Hidden };
     }
 }
 
@@ -500,7 +559,7 @@ fn gameover_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut fresh: ResMut<FreshRunPending>,
     siege: Option<Res<crate::siege::Siege>>,
-    mode: Res<crate::rts::GameMode>,
+    mut sw: ModeSwitch,
     save: Res<crate::savegame::SaveExists>,
     mut confirm: ResMut<ConfirmWipe>,
     mut pending: ResMut<crate::savegame::PendingLoad>,
@@ -510,14 +569,15 @@ fn gameover_input(
     if confirm.0.is_some() {
         return; // dialog owns the keyboard
     }
-    // Skirmish: Enter replays the skirmish (a fresh process); nothing else applies (no save).
-    if matches!(*mode, crate::rts::GameMode::Skirmish) {
+    let cur_diff = current_difficulty(siege.as_deref());
+    // Skirmish: Enter replays the skirmish (an in-process fresh arena); nothing else applies
+    // (no save exists in Potyczka).
+    if matches!(*sw.mode, crate::rts::GameMode::Skirmish) {
         if keys.just_pressed(KeyCode::Enter) {
-            relaunch_process(true);
+            sw.enter_skirmish(&mut fresh, cur_diff);
         }
         return;
     }
-    let cur_diff = current_difficulty(siege.as_deref());
     let defeat = !matches!(siege.as_deref().map(|s| s.phase), Some(crate::siege::GamePhase::Victory));
     // C resumes last night in-process (defeat + save only); Enter starts a fresh run (confirming
     // first if it'd overwrite) — a full in-process reset, no relaunch.
@@ -553,8 +613,9 @@ struct StartResumeButton;
 /// The "Settings" button on the start screen — opens the graphics Settings page.
 #[derive(Component)]
 struct StartSettingsButton;
-/// The "Potyczka" button on the start screen — enters the RTS skirmish mode by relaunching the exe
-/// with `FOREST_RTS=1` (the mode can only be picked at boot; see [`relaunch_process`]).
+/// The "Potyczka" button on the start screen — enters the RTS skirmish mode **in-process**
+/// ([`ModeSwitch::enter_skirmish`]): the live [`crate::rts::GameMode`] flips and the world
+/// rebuilds to the arena under the loading veil; the window never closes.
 #[derive(Component)]
 struct SkirmishButton;
 /// The "Credits" button on the start screen — opens the credits overlay ([`mainmenu::CreditsOpen`]).
@@ -764,8 +825,8 @@ fn spawn_start_screen(
                 .with_children(|b| {
                     b.spawn(label(&fonts.extrabold, "NEW GAME", 19.0, INK));
                 });
-                // Potyczka — the RTS skirmish mode. A separate entry point (not a campaign run), so
-                // it relaunches the exe with FOREST_RTS=1 rather than starting a run in-process.
+                // Potyczka — the RTS skirmish mode. A separate entry point (not a campaign run):
+                // it flips the live GameMode and rebuilds the world to the arena in-process.
                 m.spawn((
                     Node {
                         padding: UiRect::axes(Val::Px(44.0), Val::Px(13.0)),
@@ -1076,9 +1137,9 @@ fn spawn_pause_screen(
                 BackgroundColor(BORDER_SOFT),
             ));
             if skirmish {
-                // Skirmish has no save/load and no in-process campaign reset — the mode is chosen at
-                // boot, so both a fresh skirmish and a return to the campaign menu are exe relaunches
-                // (handled in `pause_click`). Reuse the Restart / Main Menu markers for the routing.
+                // Skirmish has no save/load — a fresh skirmish and a return to the campaign menu
+                // are both in-process mode moves (handled in `pause_click` via `ModeSwitch`).
+                // Reuse the Restart / Main Menu markers for the routing.
                 pause_btn(c, &fonts.extrabold, "NEW SKIRMISH", PauseRestartBtn, (), 0.11);
                 pause_btn(c, &fonts.extrabold, "MAIN MENU", PauseMenuBtn, (), 0.14);
             } else {
@@ -1141,7 +1202,8 @@ fn pause_click(
     mut next_app: ResMut<NextState<AppState>>,
     mut fresh: ResMut<FreshRunPending>,
     siege: Option<Res<crate::siege::Siege>>,
-    mode: Res<crate::rts::GameMode>,
+    mut sw: ModeSwitch,
+    time: Res<Time>,
     mut gfx_menu: ResMut<crate::ui::graphics_menu::GraphicsMenuOpen>,
     save: Res<crate::savegame::SaveExists>,
     mut confirm: ResMut<ConfirmWipe>,
@@ -1152,14 +1214,14 @@ fn pause_click(
     if confirm.0.is_some() {
         return; // dialog owns input
     }
-    let skirmish = matches!(*mode, crate::rts::GameMode::Skirmish);
+    let skirmish = matches!(*sw.mode, crate::rts::GameMode::Skirmish);
     let cur_diff = current_difficulty(siege.as_deref());
     for (interaction, resume, load, restart_b, gfx_b, save_b, menu_b) in &q {
         if *interaction != Interaction::Pressed {
             continue;
         }
-        // Skirmish: Resume + Settings work in place; Restart / Main Menu are mode changes, so they
-        // relaunch (the campaign save/load/in-process-reset routing below never runs here).
+        // Skirmish: Resume + Settings work in place; Restart / Main Menu are in-process mode
+        // moves (the campaign save/load/in-process-reset routing below never runs here).
         if skirmish {
             if resume.is_some() {
                 next_app.set(AppState::Playing);
@@ -1168,10 +1230,10 @@ fn pause_click(
                 gfx_menu.0 = true;
             }
             if restart_b.is_some() {
-                relaunch_process(true); // NOWA POTYCZKA — fresh skirmish process
+                sw.enter_skirmish(&mut fresh, cur_diff); // NOWA POTYCZKA — fresh in-process arena
             }
             if menu_b.is_some() {
-                relaunch_process(false); // MENU GŁÓWNE — relaunch into the campaign (drop the flag)
+                sw.to_campaign_menu(&mut next_app, time.elapsed_secs()); // MENU GŁÓWNE
             }
             continue;
         }
@@ -1237,7 +1299,7 @@ fn spawn_gameover_screen(
         player.map(|p| format!("Level {}     Gold {}", p.0.level, p.0.gold)).unwrap_or_default()
     };
     // On a defeat with a save, offer to resume last night; a victory ends the saga (no Continue).
-    // Skirmish has no save/continue at all (mode is relaunch-per-run).
+    // Skirmish has no save/continue at all (each Potyczka is a fresh in-process run).
     let can_continue = !skirmish && !won && save.0;
 
     commands.spawn((modal_root(50), GameOverUi)).with_children(|root| {
@@ -1341,10 +1403,9 @@ fn start_click(
     siege: Option<ResMut<crate::siege::Siege>>,
     save: Res<crate::savegame::SaveExists>,
     mut confirm: ResMut<ConfirmWipe>,
-    run: Res<RunInProgress>,
+    mut sw: ModeSwitch,
     mut fresh: ResMut<FreshRunPending>,
     mut credits: ResMut<crate::mainmenu::CreditsOpen>,
-    active_map: Res<crate::worldmap::ActiveMap>,
     mut gfx_menu: ResMut<crate::ui::graphics_menu::GraphicsMenuOpen>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -1361,7 +1422,10 @@ fn start_click(
             exit.write(AppExit::Success);
         }
         if skirmish_b.is_some() {
-            relaunch_process(true); // enter Potyczka — a fresh boot with FOREST_RTS=1 (exits this process)
+            // Enter Potyczka in-process: flip the mode + rebuild to the arena under the veil.
+            // Any live campaign run is abandoned un-saved (same contract as the old relaunch);
+            // its last dawn autosave remains for Continue.
+            sw.enter_skirmish(&mut fresh, cur_diff);
         }
         if settings_b.is_some() {
             gfx_menu.0 = true; // open the graphics Settings page over the start screen
@@ -1370,7 +1434,7 @@ fn start_click(
             if save.0 {
                 confirm.0 = Some(false); // New Game would overwrite — confirm first
             } else {
-                begin_new_game(run.0, cur_diff, map_changed(&active_map), &mut pending, &mut next_app, &mut fresh);
+                begin_new_game(sw.run.0, cur_diff, map_changed(&sw.active_map), &mut pending, &mut next_app, &mut fresh);
             }
         }
         if resume.is_some() {
@@ -1423,7 +1487,8 @@ fn gameover_click(
     >,
     mut fresh: ResMut<FreshRunPending>,
     siege: Option<Res<crate::siege::Siege>>,
-    mode: Res<crate::rts::GameMode>,
+    mut sw: ModeSwitch,
+    time: Res<Time>,
     save: Res<crate::savegame::SaveExists>,
     mut confirm: ResMut<ConfirmWipe>,
     mut pending: ResMut<crate::savegame::PendingLoad>,
@@ -1433,19 +1498,19 @@ fn gameover_click(
     if confirm.0.is_some() {
         return;
     }
-    let skirmish = matches!(*mode, crate::rts::GameMode::Skirmish);
+    let skirmish = matches!(*sw.mode, crate::rts::GameMode::Skirmish);
     let cur_diff = current_difficulty(siege.as_deref());
     for (interaction, again, cont, menu_b) in &q {
         if *interaction != Interaction::Pressed {
             continue;
         }
-        // Skirmish: both actions are mode-scoped relaunches (no save/continue exists here).
+        // Skirmish: both actions are in-process mode moves (no save/continue exists here).
         if skirmish {
             if again.is_some() {
-                relaunch_process(true); // ZAGRAJ PONOWNIE — fresh skirmish process
+                sw.enter_skirmish(&mut fresh, cur_diff); // ZAGRAJ PONOWNIE — fresh arena
             }
             if menu_b.is_some() {
-                relaunch_process(false); // MENU GŁÓWNE — relaunch into the campaign
+                sw.to_campaign_menu(&mut next_app, time.elapsed_secs()); // MENU GŁÓWNE
             }
             continue;
         }

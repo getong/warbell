@@ -49,6 +49,7 @@ pub(crate) fn spawn_charge_bar(mut commands: Commands, fonts: Res<UiFonts>) {
             GlobalZIndex(30),
             bevy::ui::FocusPolicy::Pass,
             ChargeBarRoot,
+            crate::game_state::CampaignOnly,
         ))
         .with_children(|root| {
             // Track + fill.

@@ -63,7 +63,10 @@ impl Plugin for QuestPlugin {
         app.init_resource::<QuestLogRes>()
             .init_resource::<QuestTracking>()
             .add_message::<QuestSignal>()
-            .add_systems(Startup, setup_quest_root.run_if(crate::rts::in_campaign))
+            // Ungated spawn: the tracker root is built in EVERY boot (the mode can flip
+            // mid-process) and tagged `CampaignOnly`, so `apply_mode_visibility` hides it in
+            // Skirmish. Everything else (reset/detect/panel) stays `in_campaign`-gated.
+            .add_systems(Startup, setup_quest_root)
             // Fresh run → restart the chain (mirrors the economy/town resets).
             .add_systems(OnExit(AppState::StartScreen), reset_quests.run_if(crate::rts::in_campaign))
             .add_systems(OnExit(AppState::GameOver), reset_quests.run_if(crate::rts::in_campaign))
@@ -275,6 +278,7 @@ fn setup_quest_root(mut commands: Commands) {
     commands
         .spawn((
             QuestRoot,
+            crate::game_state::CampaignOnly,
             Node {
                 position_type: PositionType::Absolute,
                 right: Val::Px(16.0),

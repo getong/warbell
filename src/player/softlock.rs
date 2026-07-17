@@ -67,6 +67,7 @@ pub fn spawn_target_ring(
         Visibility::Hidden,
         bevy::light::NotShadowCaster,
         TargetRing,
+        crate::game_state::CampaignOnly,
     ));
 }
 

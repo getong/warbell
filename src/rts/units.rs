@@ -360,6 +360,7 @@ fn spawn_soldier(
             crate::player::Health { hp, max: hp },
             crate::scenes::SceneActor,
             crate::navgrid::NavPath::default(),
+            crate::rts::RtsSpawned,
         ))
         .remove::<crate::biome::BiomeEntity>();
     if archer {

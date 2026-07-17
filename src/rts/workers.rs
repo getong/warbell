@@ -66,7 +66,10 @@ pub struct RtsWorkersPlugin;
 
 impl Plugin for RtsWorkersPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, init_carry_assets.run_if(in_skirmish)).add_systems(
+        // `init_carry_assets` is ungated: it only bakes carried-load meshes/materials into a
+        // resource (no gameplay side effects), so it must run in EVERY boot — a campaign-booted
+        // process can flip to skirmish mid-process and needs these assets ready.
+        app.add_systems(Startup, init_carry_assets).add_systems(
             Update,
             (
                 spawn_starting_workers,
@@ -217,6 +220,10 @@ impl CarryAssets {
     }
 }
 
+/// Bake the carried-load props (shouldered log / stone lump / gold sack / food sack) into
+/// [`CarryAssets`]. Runs at Startup in EVERY boot (not just a skirmish one) — the mode can flip
+/// Campaign→Skirmish mid-process, so these assets must exist before the first skirmish frame; it's
+/// pure asset baking with no gameplay side effects.
 fn init_carry_assets(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -268,6 +275,7 @@ pub(crate) fn spawn_worker_body(
             crate::player::Health { hp, max: hp },
             crate::scenes::SceneActor,
             crate::navgrid::NavPath::default(),
+            crate::rts::RtsSpawned,
         ))
         // The spawn helpers tag bodies `BiomeEntity`; drop it so a campaign biome-swap (keys 1-5,
         // if ever wired in this mode) can't despawn a live RTS unit.
@@ -276,16 +284,20 @@ pub(crate) fn spawn_worker_body(
 }
 
 /// Once both Town Halls stand, drop 3 idle workers beside each and seed the population count.
-/// One-shot (waits until it can find a hall for *both* sides so neither is missed).
+/// Re-fires once per skirmish run (generation-keyed on [`crate::rts::RtsRunGen`]): the `Local<u32>`
+/// latch trails the live generation so a fresh skirmish entry re-spawns the starting workers
+/// instead of firing only once per process. Still waits until it can find a hall for *both* sides
+/// (so neither is missed) — it only latches on the frame it actually spawns.
 fn spawn_starting_workers(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut creature_mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
     mut pop: ResMut<RtsPop>,
     halls: Query<(&RtsBuilding, &Side, &Transform)>,
-    mut done: Local<bool>,
+    run_gen: Res<crate::rts::RtsRunGen>,
+    mut last_gen: Local<u32>,
 ) {
-    if *done {
+    if *last_gen == run_gen.0 {
         return;
     }
     let mut player = None;
@@ -300,7 +312,7 @@ fn spawn_starting_workers(
         }
     }
     let (Some(pp), Some(rp)) = (player, rival) else { return };
-    *done = true;
+    *last_gen = run_gen.0;
     for (side, hall) in [(Side::Player, pp), (Side::Rival, rp)] {
         for k in 0..5u32 {
             let ang = k as f32 / 5.0 * TAU;

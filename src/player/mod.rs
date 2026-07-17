@@ -456,10 +456,15 @@ impl Plugin for PlayerPlugin {
             // ungated modules (projectile/defenses impact sparks) read, and RTS archer arrows
             // reuse those FX in Skirmish. Everything hero-specific below is Campaign-only.
             .add_systems(Startup, combat::setup_combat_fx)
+            // Ungated spawn: the hero rig + its campaign HUD (ability bar, charge bar, target ring)
+            // are built in EVERY boot (the mode can flip Campaign⇄Skirmish mid-process). Each root
+            // is tagged `CampaignOnly`, so `apply_mode_visibility` hides them on a Skirmish boot the
+            // first Update frame (the mode resource's boot change-tick). `debug_grant_boons` is
+            // internally env-gated (no-op unless `FOREST_BOONS`), so it rides along un-gated. All
+            // per-frame hero systems below stay `in_campaign`-gated.
             .add_systems(
                 PostStartup,
-                (spawn_hero, arts::spawn_arts_hud, charge::spawn_charge_bar, debug_grant_boons, softlock::spawn_target_ring)
-                    .run_if(crate::rts::in_campaign),
+                (spawn_hero, arts::spawn_arts_hud, charge::spawn_charge_bar, debug_grant_boons, softlock::spawn_target_ring),
             )
             // Fresh run: wipe progression + revive the hero on a new run (NOT on un-pause).
             .add_systems(
@@ -636,6 +641,7 @@ fn spawn_hero(
             Visibility::Visible,
             Hero::fresh(pos, y, facing),
             HeroHealth::default(),
+            crate::game_state::CampaignOnly,
         ))
         .id();
 

@@ -91,8 +91,10 @@ struct CompassPip {
 pub struct CompassPlugin;
 impl Plugin for CompassPlugin {
     fn build(&self, app: &mut App) {
-        // Campaign-only: the hero compass strip has no place in the RTS iso view.
-        app.add_systems(Startup, setup_compass.run_if(crate::rts::in_campaign))
+        // Ungated spawn: the compass strip is built in EVERY boot (the mode can flip mid-process)
+        // and tagged `CampaignOnly`, so `apply_mode_visibility` hides it in the RTS iso view. The
+        // per-frame update systems stay `in_campaign`-gated.
+        app.add_systems(Startup, setup_compass)
             .add_systems(Update, (update_compass, update_blips).run_if(crate::rts::in_campaign));
     }
 }
@@ -140,6 +142,7 @@ fn setup_compass(mut commands: Commands, fonts: Res<UiFonts>, assets: Res<AssetS
                 },
                 GlobalZIndex(95), // above the rest of the HUD — the compass owns the very top
                 CompassRoot,
+                crate::game_state::CampaignOnly,
             ))
             .with_children(|s| {
                 // Baseline.

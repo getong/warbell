@@ -151,7 +151,10 @@ impl Plugin for SaveGamePlugin {
             .init_resource::<SaveExists>()
             .add_message::<GameLoaded>()
             .add_message::<RequestSave>()
-            .add_systems(Startup, detect_existing_save.run_if(crate::rts::in_campaign))
+            // Ungated: only checks whether a save file exists (no gameplay side effects), so it can
+            // run in EVERY boot — a campaign-booted process can flip modes mid-process. Save/load
+            // systems below stay `in_campaign`-gated.
+            .add_systems(Startup, detect_existing_save)
             // Snapshot at dawn (a cleared night). Gated like the rest of the sim.
             .add_sim_systems(autosave_on_dawn.run_if(crate::rts::in_campaign))
             // Manual save (pause-menu button). Runs in `Paused` — where the world is frozen but

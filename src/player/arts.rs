@@ -392,6 +392,7 @@ pub(crate) fn spawn_arts_hud(mut commands: Commands, fonts: Res<UiFonts>, atlas:
             },
             GlobalZIndex(30),
             AbilityBar,
+            crate::game_state::CampaignOnly,
         ))
         .with_children(|bar| {
             for (kind, key, sym) in
