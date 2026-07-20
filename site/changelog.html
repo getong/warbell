@@ -73,11 +73,37 @@
 
 <main class="log">
 
-  <!-- ── v0.21.0 ── -->
+  <!-- ── v0.21.1 ── -->
   <article class="rel latest rv">
     <div class="rel-head">
-      <span class="rel-ver">v0.21.0</span>
+      <span class="rel-ver">v0.21.1</span>
       <span class="rel-badge">Latest</span>
+      <span class="rel-date">July 20, 2026</span>
+    </div>
+    <p class="rel-sum">Installer hotfix — v0.21.0 wouldn't install over an existing copy. Same game build, working setup.</p>
+    <div class="rel-card">
+      <div class="grp">
+        <div class="grp-h"><span class="tag fix">Fixed</span></div>
+        <ul>
+          <li><strong>The installer works again.</strong> On v0.21.0 the setup window flashed "Preparing to install…" and vanished for anyone who already had Warbell installed — Windows rolled the install back silently (error 1603). A stale second installer script stamped every release with the same internal version, so Windows saw the new package as a copy of the one already on disk. There's now one installer script for every build, its version tracks the real game version, and installing over an old copy removes it cleanly first.</li>
+          <li><strong>Shortcuts are back.</strong> Setup shows its proper wizard again and creates the Desktop and Start-menu shortcuts, which the broken package skipped.</li>
+        </ul>
+      </div>
+      <div class="grp">
+        <div class="grp-h"><span class="tag new">Note</span></div>
+        <ul>
+          <li>Tried v0.21.0? Just run this installer — it clears the stranded copy for you. If Windows still objects, uninstall "Warbell" from Apps &amp; features first.</li>
+          <li>Everything from v0.21.0 — the <strong>Potyczka</strong> RTS skirmish mode and the integrated-graphics crash fix — is included below, unchanged.</li>
+        </ul>
+      </div>
+      <div class="rel-foot"><a href="https://github.com/miskibin/warbell/releases/tag/v0.21.1">Release on GitHub →</a></div>
+    </div>
+  </article>
+
+  <!-- ── v0.21.0 ── -->
+  <article class="rel rv">
+    <div class="rel-head">
+      <span class="rel-ver">v0.21.0</span>
       <span class="rel-date">July 20, 2026</span>
     </div>
     <p class="rel-sum">A whole new way to play — <strong>Potyczka</strong>, a top-down RTS skirmish mode — plus a fix for the startup crash on integrated-graphics laptops.</p>

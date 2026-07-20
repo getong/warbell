@@ -74,15 +74,19 @@ jobs:
           Copy-Item -Recurse assets dist/${{ matrix.artifact }}/assets
           Compress-Archive -Path dist/${{ matrix.artifact }}/* -DestinationPath dist/${{ matrix.artifact }}.zip
 
-      # Build the MSI installer (WiX 6, a dotnet global tool). The exe already carries its
-      # embedded icon + version metadata from build.rs, so the installer + installed shortcut
-      # are branded with no extra work here.
+      # Build the MSI installer (WiX 6, a dotnet global tool) from the SAME authoring
+      # scripts/release.ps1 uses — warbell.wxs. There used to be a second, CI-only
+      # installer/tileworld.wxs; it hardcoded Version="0.2.0", so every CI-built MSI shipped
+      # the same ProductVersion under one UpgradeCode and the second one a user installed died
+      # with error 1603 (v0.21.0). One authoring only: version binds to the exe's FileVersion
+      # (= Cargo.toml), the wizard UI exists, and shortcuts get created.
       - name: Build MSI (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           dotnet tool install --global wix --version 6.0.2
-          wix build installer/tileworld.wxs -arch x64 -d SourceDir="$env:GITHUB_WORKSPACE" -o "dist/Warbell-${{ env.RELEASE_TAG }}-setup.msi"
+          wix extension add -g WixToolset.UI.wixext/6.0.2
+          wix build warbell.wxs -arch x64 -ext WixToolset.UI.wixext -o "dist/Warbell-${{ env.RELEASE_TAG }}-setup.msi"
 
       # Self-sign the MSI so it carries an Authenticode signature (Digital Signatures tab shows
       # "Warbell (self-signed)"). NOTE: a self-signed cert does NOT chain to a trusted root, so
