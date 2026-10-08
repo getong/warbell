@@ -138,6 +138,9 @@ impl AtmoSample {
             // off-noon (the Blight sets its own, higher, in `blight_ambience`).
             ambient_scale: match c.biome {
                 Biome::Swamp => 1.75,
+                // The realistic forest (`realforest`) has a closed leaf canopy: away from the trails
+                // the floor sees no sun at all, so without a lift it crushes to near-black.
+                Biome::Forest if crate::realforest::get().is_some() => 2.1,
                 _ => 1.0,
             },
         }
@@ -984,6 +987,14 @@ pub fn scatter_region(
 
     let story_clearings = crate::poi::story_clearings();
 
+    // Realistic forest kit (`realforest`, Blender PBR assets): when loaded, the FOREST biome keeps
+    // every placement decision below and only swaps WHAT is drawn at the very end of each branch.
+    // Its picks hash the position (`realforest::roll`) instead of drawing from `r`, so the world
+    // layout is identical with the kit on or off.
+    let kit = if cfg.biome == Biome::Forest { crate::realforest::get() } else { None };
+    let mut kit_chunks = crate::realforest::Chunks::default();
+    let class_index = |c: &ClassHandles| classes.iter().position(|x| std::ptr::eq(x, c)).unwrap_or(usize::MAX);
+
     // ── Main per-tile scatter ──
     let mut gx = lo;
     while gx < hi {
@@ -1057,7 +1068,14 @@ pub fn scatter_region(
                                 let rot = yaw(&mut r);
                                 register_passive_blocker(cx, cz, fb.footprints[fi], fs, fb.block_radius, rot);
                                 crate::blockers::reserve_visual(cx, cz, footprint);
-                                queue(false, fb.variants[fi].clone(), Vec3::new(cx, py, cz), rot, fs);
+                                if let Some(k) = kit {
+                                    let (a, b) = crate::realforest::rolls(cx, cz);
+                                    if let Some((m, sm)) = k.passive_for(class_index(fb), false, a, b) {
+                                        kit_chunks.push(k, m, Vec3::new(cx, py, cz), rot, fs * sm, false);
+                                    }
+                                } else {
+                                    queue(false, fb.variants[fi].clone(), Vec3::new(cx, py, cz), rot, fs);
+                                }
                             }
                         }
                     } else {
@@ -1080,6 +1098,26 @@ pub fn scatter_region(
                         // material (see `phototrees::mesh::build_tree`), so the one-entity-per-tree
                         // batching contract below holds identically for both paths.
                         let photo = crate::phototrees::get().map(|p| p.pick(r.next()));
+                        // Realistic-forest tree: the same gameplay entity (transform / sway / chop),
+                        // with the kit's two LOD meshes hung underneath as children.
+                        let kit_tree = kit.and_then(|k| {
+                            k.tree_for(class_index(c), vi / PROP_TINTS.len()).map(|t| (k, t))
+                        });
+                        if let Some((k, lod0)) = kit_tree {
+                            let mut tree = commands.spawn((
+                                Transform {
+                                    translation: Vec3::new(cx, py, cz),
+                                    rotation: Quat::IDENTITY,
+                                    scale: Vec3::splat(s),
+                                },
+                                crate::wind::sway_for(cx, cz, base),
+                                crate::verbs::ChopTree::new(trunk_r),
+                                BiomeEntity,
+                            ));
+                            k.attach_tree(&mut tree, lod0, scatter_cull_enabled());
+                            gz += 1.0;
+                            continue;
+                        }
                         // Trees stay individual entities (chop HP + wind sway) sharing one
                         // uploaded handle per variant — the renderer auto-batches the instances.
                         let mut tree = commands.spawn((
@@ -1132,7 +1170,14 @@ pub fn scatter_region(
                     let rot = yaw(&mut r);
                     register_passive_blocker(cx, cz, c.footprints[vi], s, c.block_radius, rot);
                     crate::blockers::reserve_visual(cx, cz, footprint);
-                    queue(false, c.variants[vi].clone(), Vec3::new(cx, py, cz), rot, s);
+                    if let Some(k) = kit {
+                        let (a, b) = crate::realforest::rolls(cx, cz);
+                        if let Some((m, sm)) = k.passive_for(class_index(c), false, a, b) {
+                            kit_chunks.push(k, m, Vec3::new(cx, py, cz), rot, s * sm, false);
+                        }
+                    } else {
+                        queue(false, c.variants[vi].clone(), Vec3::new(cx, py, cz), rot, s);
+                    }
                 }
             }
             gz += 1.0;
@@ -1199,7 +1244,14 @@ pub fn scatter_region(
                                 // Ground cover → the chunk's cover bucket (NotShadowCaster +
                                 // distance-fade, applied once per merged chunk in `spawn_chunks`).
                                 let rot = yaw(&mut r);
-                                queue(true, c.variants[vi].clone(), Vec3::new(x, py, z), rot, s);
+                                if let Some(k) = kit {
+                                    let (a, b) = crate::realforest::rolls(x, z);
+                                    if let Some((m, sm)) = k.passive_for(i, true, a, b).filter(|_| !no_grass()) {
+                                        kit_chunks.push(k, m, Vec3::new(x, py, z), rot, s * sm, true);
+                                    }
+                                } else {
+                                    queue(true, c.variants[vi].clone(), Vec3::new(x, py, z), rot, s);
+                                }
                                 break;
                             }
                         }
@@ -1216,6 +1268,9 @@ pub fn scatter_region(
     // the map in. `drop(queue)` makes that explicit (and silences any "borrowed after move").
     drop(queue);
     spawn_chunks(commands, meshes, &mat, chunks);
+    if let Some(k) = kit {
+        kit_chunks.spawn(k, commands, meshes, scatter_cull_enabled());
+    }
 }
 
 fn cardinal(r: &mut Rng) -> Quat {

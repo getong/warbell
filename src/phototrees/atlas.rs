@@ -61,7 +61,7 @@ fn repeat_sampler() -> bevy::image::ImageSampler {
 /// repo root, the atlas falls back to procedural blobs, and the ONLY symptom is one `warn!` line.
 /// That is exactly what an installed MSI would hit: it nests `assets/` beside the `.exe`, and
 /// Explorer/shortcut launches set an arbitrary CWD. Hence the exe directory is checked explicitly.
-fn resolve(rel: &str) -> std::path::PathBuf {
+pub(crate) fn resolve(rel: &str) -> std::path::PathBuf {
     let mut roots: Vec<std::path::PathBuf> = Vec::new();
     // 1. Explicit override — the documented escape hatch for running the binary from elsewhere.
     if let Ok(root) = std::env::var("BEVY_ASSET_ROOT") {

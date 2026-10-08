@@ -16,6 +16,7 @@
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing, visibility_range_dither},
     pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
     forward_io::{VertexOutput, FragmentOutput},
+    mesh_view_bindings::view,
 }
 
 struct ForestParams {
@@ -25,6 +26,10 @@ struct ForestParams {
     params2: vec4<f32>,
     // Wheel-rut mask world→UV mapping: xy = world min corner, zw = 1/extent (0 = disabled).
     rut_region: vec4<f32>,
+    // Realistic forest floor: x = 1 when the scanned layers + mask are bound (`realforest`).
+    pbr: vec4<f32>,
+    // Forest/road mask world→UV mapping (same contract as rut_region).
+    pbr_region: vec4<f32>,
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> forest: ForestParams;
@@ -34,6 +39,36 @@ struct ForestParams {
 // Fragment-resolution because ~0.5u grooves are far below the 1u vertex-colour grid.
 @group(#{MATERIAL_BIND_GROUP}) @binding(103) var rut_tex: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(104) var rut_samp: sampler;
+// Realistic forest floor (`realforest`): three scanned layers as 2D arrays - 0 litter, 1 moss,
+// 2 path - sRGB albedo, OpenGL normal, and linear AO / roughness / metal / HEIGHT (alpha).
+@group(#{MATERIAL_BIND_GROUP}) @binding(105) var fp_albedo: texture_2d_array<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(106) var fp_normal: texture_2d_array<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(107) var fp_ormh: texture_2d_array<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(108) var fp_samp: sampler;
+// RG8 mask: R = forest weight (soft-edged tile mask), G = road strength.
+@group(#{MATERIAL_BIND_GROUP}) @binding(109) var fp_mask: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(110) var fp_mask_samp: sampler;
+
+// World units covered by one repeat of each forest-floor layer (different on purpose so the
+// three repeats never line up), and the deepest parallax displacement in world units.
+const FP_T0: f32 = 2.7;
+const FP_T1: f32 = 3.3;
+const FP_T2: f32 = 2.3;
+const FP_DEPTH: f32 = 0.08;
+
+fn fp_uv0(p: vec2<f32>) -> vec2<f32> { return p / FP_T0; }
+fn fp_uv1(p: vec2<f32>) -> vec2<f32> { return p / FP_T1 + vec2<f32>(0.37, 0.61); }
+fn fp_uv2(p: vec2<f32>) -> vec2<f32> { return p / FP_T2 + vec2<f32>(0.73, 0.19); }
+
+// Per-layer height (ormh.a) at world XZ `p`, explicit gradients so it is legal inside the
+// parallax loop / weight branches. Layers with ~0 weight are skipped (returned as 0).
+fn fp_heights(p: vec2<f32>, w: vec3<f32>, dx: vec2<f32>, dy: vec2<f32>) -> vec3<f32> {
+    var h = vec3<f32>(0.0);
+    if w.x > 0.01 { h.x = textureSampleGrad(fp_ormh, fp_samp, fp_uv0(p), 0, dx / FP_T0, dy / FP_T0).a; }
+    if w.y > 0.01 { h.y = textureSampleGrad(fp_ormh, fp_samp, fp_uv1(p), 1, dx / FP_T1, dy / FP_T1).a; }
+    if w.z > 0.01 { h.z = textureSampleGrad(fp_ormh, fp_samp, fp_uv2(p), 2, dx / FP_T2, dy / FP_T2).a; }
+    return h;
+}
 
 // 2D value-noise hash. The original `fract(sin(p.x*127.1 + p.y*311.7)*43758)` is effectively
 // a 1D hash of the dot product `p·(127.1,311.7)`, so cells along that fixed diagonal get
@@ -348,6 +383,110 @@ fn fragment(
         rgb = mix(rgb, drift, tg.x * 0.48 * debris_w);
     }
 
+    // ── Realistic forest floor (`realforest`) ── scanned litter / moss / path layers splatted over
+    //    the forest by the baked mask, height-blended (pebbles and leaves poke through the moss
+    //    instead of a soft cross-fade), with parallax occlusion mapping near the camera so the
+    //    litter reads as real depth at grazing angles. Everything here uses explicit-gradient /
+    //    explicit-level taps so it stays legal inside the weight branches and the march loop.
+    let wp_dx = dpdx(wp);
+    let wp_dy = dpdy(wp);
+    let fmask_uv = (wp - forest.pbr_region.xy) * forest.pbr_region.zw;
+    let fmask = textureSampleLevel(fp_mask, fp_mask_samp, fmask_uv, 0.0).rg;
+    var fp_w = 0.0;
+    var fp_nw = vec3<f32>(0.0, 1.0, 0.0);
+    var fp_rough = 1.0;
+    var fp_ao = 1.0;
+    if forest.pbr.x > 0.5 {
+        let edge_n = ter_noise(wp * 0.21 + vec2<f32>(3.0, 41.0)) - 0.5;
+        fp_w = smoothstep(0.25, 0.75, fmask.r + edge_n * 0.45)
+             * smoothstep(0.55, 0.85, in.world_normal.y) * (1.0 - cliff);
+    }
+    if fp_w > 0.002 {
+        // Layer weights: trails -> path, broad damp patches -> moss, the rest -> leaf litter.
+        // Ragged trail edge: two noise octaves wobble the road mask so the litter eats into the
+        // path in tongues instead of along the mask's straight iso-line.
+        let edge = (ter_noise(wp * 0.45 + vec2<f32>(17.0, 3.0)) - 0.5) * 0.45
+                 + (ter_noise(wp * 1.7 + vec2<f32>(4.0, 29.0)) - 0.5) * 0.25;
+        let path = smoothstep(0.12, 0.70, fmask.g + edge);
+        let mossn = ter_noise_rot(wp * 0.05, 0.946, 0.326) * 0.65 + ter_noise(wp * 0.19 + vec2<f32>(5.0, 9.0)) * 0.35;
+        let moss = smoothstep(0.44, 0.66, mossn);
+        var w = vec3<f32>((1.0 - moss) * (1.0 - path), moss * (1.0 - path), path);
+        // Height blend: the taller texel of the competing layers wins across a narrow band.
+        let h0 = fp_heights(wp, w, wp_dx, wp_dy);
+        let hb = w + h0 * 0.6;
+        let hm = max(hb.x, max(hb.y, hb.z));
+        w = max(hb - (hm - 0.32), vec3<f32>(0.0));
+        w = w / max(w.x + w.y + w.z, 1e-4);
+
+        // Parallax occlusion mapping: march the view ray down through the height field
+        // (linear search + one secant refine). High: 10 steps to 16u; Ultra: 18 steps to 26u.
+        var pw = wp;
+        let q = forest.params2.y;
+        let dist = distance(view.world_position.xyz, in.world_position.xyz);
+        let pom_far = select(0.0, select(16.0, 26.0, q >= 2.0), q >= 1.0);
+        let depth = FP_DEPTH * fp_w * (1.0 - smoothstep(pom_far * 0.55, pom_far, dist));
+        if depth > 0.002 {
+            let vdir = normalize(view.world_position.xyz - in.world_position.xyz);
+            let shift = -vdir.xz / max(vdir.y, 0.2) * depth;
+            let steps = select(10, 18, q >= 2.0);
+            var prev_d = 0.0;
+            var prev_diff = 1.0 - dot(w, h0);
+            var hit = 1.0;
+            for (var i = 1; i <= steps; i += 1) {
+                let d = f32(i) / f32(steps);
+                let diff = (1.0 - dot(w, fp_heights(wp + shift * d, w, wp_dx, wp_dy))) - d;
+                if diff <= 0.0 {
+                    hit = mix(prev_d, d, prev_diff / max(prev_diff - diff, 1e-4));
+                    break;
+                }
+                prev_d = d;
+                prev_diff = diff;
+            }
+            pw = wp + shift * hit;
+        }
+
+        // Final layer taps at the displaced position.
+        var alb = vec3<f32>(0.0);
+        var nts = vec3<f32>(0.0);
+        var orm = vec3<f32>(0.0);
+        if w.x > 0.01 {
+            let u = fp_uv0(pw);
+            let gx = wp_dx / FP_T0;
+            let gy = wp_dy / FP_T0;
+            alb += w.x * textureSampleGrad(fp_albedo, fp_samp, u, 0, gx, gy).rgb;
+            nts += w.x * (textureSampleGrad(fp_normal, fp_samp, u, 0, gx, gy).rgb * 2.0 - 1.0);
+            orm += w.x * textureSampleGrad(fp_ormh, fp_samp, u, 0, gx, gy).rgb;
+        }
+        if w.y > 0.01 {
+            let u = fp_uv1(pw);
+            let gx = wp_dx / FP_T1;
+            let gy = wp_dy / FP_T1;
+            alb += w.y * textureSampleGrad(fp_albedo, fp_samp, u, 1, gx, gy).rgb;
+            nts += w.y * (textureSampleGrad(fp_normal, fp_samp, u, 1, gx, gy).rgb * 2.0 - 1.0);
+            orm += w.y * textureSampleGrad(fp_ormh, fp_samp, u, 1, gx, gy).rgb;
+        }
+        if w.z > 0.01 {
+            let u = fp_uv2(pw);
+            let gx = wp_dx / FP_T2;
+            let gy = wp_dy / FP_T2;
+            alb += w.z * textureSampleGrad(fp_albedo, fp_samp, u, 2, gx, gy).rgb;
+            nts += w.z * (textureSampleGrad(fp_normal, fp_samp, u, 2, gx, gy).rgb * 2.0 - 1.0);
+            orm += w.z * textureSampleGrad(fp_ormh, fp_samp, u, 2, gx, gy).rgb;
+        }
+        // Broad value drift so the repeats never read as a grid from a distance.
+        alb *= 0.84 + 0.32 * (ter_noise(wp * 0.07 + vec2<f32>(9.0, 2.0)) * 0.6 + ter_noise(wp * 0.23) * 0.4);
+        rgb = mix(rgb, alb, fp_w);
+        // Tangent frame of the planar XZ mapping: u runs along +X, v along +Z, and an OpenGL
+        // normal map's +Y (image up = decreasing v) therefore points toward -Z.
+        let gn = normalize(in.world_normal);
+        let tx = normalize(vec3<f32>(1.0, 0.0, 0.0) - gn * gn.x);
+        let bz = cross(gn, tx);
+        let n_ts = vec3<f32>(nts.xy * 1.25, max(nts.z, 0.2));
+        fp_nw = normalize(tx * n_ts.x + bz * n_ts.y + gn * n_ts.z);
+        fp_ao = orm.r;
+        fp_rough = orm.g;
+    }
+
     // Clamp alpha ≥ 0 on write-back: the negative cliffness flag has served its purpose and
     // must not leak into lighting/wetness (the wet gate below reads this same channel).
     pbr_input.material.base_color = vec4<f32>(max(rgb, vec3<f32>(0.0)), max(pbr_input.material.base_color.a, 0.0));
@@ -428,10 +567,18 @@ fn fragment(
         // the mound tops so the relief pops both ways (bright peaks ↔ dark pits).
         let ao = mix(0.56, 1.0, mound) * mix(0.72, 1.0, groove);
         let crown = 1.0 + smoothstep(0.62, 1.0, h0) * 0.20;
-        let shade = mix(1.0, ao * crown, topw);
+        // The scanned forest floor brings its own baked AO - don't stack the procedural cavity on it.
+        let shade = mix(mix(1.0, ao * crown, topw), 1.0, fp_w);
         pbr_input.material.base_color = vec4<f32>(pbr_input.material.base_color.rgb * shade, pbr_input.material.base_color.a);
 
         pbr_input.N = n2;
+    }
+
+    // Forest floor: its normal map + AO + roughness replace the procedural relief.
+    if fp_w > 0.002 {
+        pbr_input.N = normalize(mix(pbr_input.N, fp_nw, fp_w));
+        pbr_input.diffuse_occlusion *= vec3<f32>(mix(1.0, fp_ao, fp_w * 0.6));
+        pbr_input.material.perceptual_roughness = mix(pbr_input.material.perceptual_roughness, fp_rough, fp_w);
     }
 
     // ── Wet ground (marsh) — the vertex-colour ALPHA carries a per-vertex wetness (0 = dry … 1 =

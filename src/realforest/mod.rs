@@ -1,0 +1,448 @@
+//! **Realistic forest** — the Blender-authored PBR kit (`tools/blender_forest/`, Poly Haven CC0
+//! scans) swapped into the FOREST biome in place of the low-poly vertex-colour scatter.
+//!
+//! What it replaces, and how it stays cheap:
+//! - **Trees** (`trees.glb`): procedurally grown oaks / beeches / pines / a dead snag with scanned
+//!   bark and leaf-spray cards, two LODs each (~1.5k / ~0.35k tris). A tree stays ONE gameplay
+//!   entity (`ChopTree` + wind `Sway` on the parent, exactly as before) with its LOD meshes as
+//!   children, cross-faded by `VisibilityRange` at [`LOD_NEAR`] and hard-culled at 180u as before.
+//! - **Undergrowth + props** (`undergrowth.glb`, `props.glb`): ferns, grass clumps, seed stalks,
+//!   scanned stumps / logs / deadfall / mossy rocks. Merged per 16u chunk **per material**, so a
+//!   whole chunk of ferns+grass is one draw (they share one atlas), same culling as the old cover.
+//! - **Ground**: three scanned forest-floor layers (litter / moss / path) with height maps, splatted
+//!   by the terrain shader inside the forest with height-blending and parallax occlusion mapping
+//!   (`terrain.wgsl`, `FP_*`). The forest/road mask is baked once from the tile map.
+//!
+//! Placement, spacing, blockers, chop/regrow and determinism are untouched: `biome::scatter_region`
+//! still makes every decision and only asks [`Kit`] *what to draw* at the very end.
+//! On by default; `FOREST_PBR=0` restores the low-poly forest (A/B and fallback). If any kit file
+//! fails to load the game logs a warning and keeps the low-poly forest.
+
+pub mod load;
+
+use std::collections::HashMap;
+use std::sync::OnceLock;
+
+use bevy::camera::visibility::VisibilityRange;
+use bevy::prelude::*;
+
+use crate::terrain::TerrainMaterial;
+
+/// LOD0 → LOD1 cross-fade distance (world units, dithered over ±[`LOD_BAND`]).
+pub const LOD_NEAR: f32 = 30.0;
+const LOD_BAND: f32 = 4.0;
+/// Far cull, same as the low-poly trees (fog has them by then).
+const TREE_FAR: f32 = 180.0;
+/// Ground-cover / prop chunk cut-offs (mirror `biome::spawn_chunks`).
+const COVER_FAR: f32 = 58.0;
+const PROPS_FAR: f32 = 75.0;
+/// Alpha-test cutoff for leaf / blade cards (mips keep this coverage, see `load::mip_chain`).
+const CARD_CUTOFF: f32 = 0.42;
+
+/// Is the kit wanted? Read once.
+pub fn enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("FOREST_PBR").map(|v| v != "0").unwrap_or(true))
+}
+
+static KIT: OnceLock<Kit> = OnceLock::new();
+
+/// The loaded kit, or `None` when disabled / failed to load / before `PreStartup`.
+/// A write-once global for the same reason as `phototrees::get` — the only consumer sits deep
+/// inside the `Startup` world-build chain.
+pub fn get() -> Option<&'static Kit> {
+    KIT.get()
+}
+
+/// One mesh primitive of a kit model: CPU copy (for chunk merging) + uploaded handle.
+pub struct Part {
+    pub mesh: Mesh,
+    pub handle: Handle<Mesh>,
+    pub mat: usize,
+}
+
+pub struct Model {
+    pub parts: Vec<Part>,
+}
+
+pub struct GroundTextures {
+    pub albedo: Handle<Image>,
+    pub normal: Handle<Image>,
+    pub ormh: Handle<Image>,
+}
+
+pub struct Kit {
+    mats: Vec<Handle<StandardMaterial>>,
+    models: Vec<Model>,
+    by_name: HashMap<String, usize>,
+    pub ground: GroundTextures,
+}
+
+/// Material sets by the names Blender exported: (name, PBR set file stem, foliage card?).
+const MATERIALS: [(&str, &str, bool); 10] = [
+    ("bark_oak", "bark_oak", false),
+    ("bark_beech", "bark_beech", false),
+    ("bark_pine", "bark_pine", false),
+    ("canopy", "canopy", true),
+    ("undergrowth", "undergrowth", true),
+    ("prop_stump", "prop_stump", false),
+    ("prop_log", "prop_log", false),
+    ("prop_branches", "prop_branches", false),
+    ("prop_rock_a", "prop_rock_a", false),
+    ("prop_rock_b", "prop_rock_b", false),
+];
+
+impl Kit {
+    fn model(&self, name: &str) -> Option<usize> {
+        self.by_name.get(name).copied()
+    }
+
+    fn pick(&self, names: &[&str], roll: f32) -> Option<usize> {
+        let i = ((roll * names.len() as f32) as usize).min(names.len() - 1);
+        self.model(names[i])
+    }
+
+    /// Which tree to draw for forest tree class `class` (0 = canopy mix, 1 = ancient giants) and
+    /// its SOURCE variant (the variant index before `biome::upload_classes` tint expansion).
+    /// The forest canopy class lists five living kinds × `trees::TREE_TINTS` then one dead tree
+    /// (`biome_forest::config`), so the source variant encodes the old `TreeKind`.
+    pub fn tree_for(&self, class: usize, src_variant: usize) -> Option<usize> {
+        let tints = crate::trees::TREE_TINTS.len();
+        let name = if class == 1 {
+            ["oak_a", "oak_b", "oak_c"][src_variant % 3]
+        } else if src_variant >= 5 * tints {
+            "dead_a"
+        } else {
+            let t = src_variant % tints;
+            match src_variant / tints {
+                0 => ["oak_a", "oak_b", "oak_c"][t % 3],   // Broadleaf
+                1 => ["beech_a", "beech_b"][t % 2],        // Birch
+                2 => ["pine_a", "pine_b", "pine_c"][t % 3], // Pine
+                3 => ["beech_b", "beech_a"][t % 2],        // Poplar → tall slim beech
+                _ => ["oak_c", "oak_a", "oak_b"][t % 3],   // Autumn canopy → oak
+            }
+        };
+        self.model(&format!("{name}_lod0"))
+    }
+
+    /// What to draw for a forest passive class (props: 2 bush / 3 rock / 4 stump; cover: 0 grass,
+    /// 1 clover, 2 mushroom, 3 flowers, 4 fern, 5 litter). `None` = leave the spot bare — a real
+    /// forest floor is litter with scattered plants, not a meadow carpet. Returns (model, scale ×).
+    pub fn passive_for(&self, class: usize, cover: bool, roll: f32, roll2: f32) -> Option<(usize, f32)> {
+        const GRASS: [&str; 4] = ["grass_a", "grass_b", "grass_c", "grass_d"];
+        const FERN: [&str; 3] = ["fern_a", "fern_b", "fern_c"];
+        const ROCKS: [&str; 13] = [
+            "rock_01_a", "rock_01_b", "rock_01_c", "rock_01_d", "rock_01_e", "rock_01_f", "rock_02_a",
+            "rock_02_b", "rock_02_c", "rock_02_d", "rock_02_e", "rock_02_f", "rock_02_g",
+        ];
+        let m = |names: &[&str], s: f32| self.pick(names, roll2).map(|i| (i, s));
+        if cover {
+            match class {
+                0 => m(&GRASS, 1.0),
+                1 if roll < 0.35 => m(&GRASS, 1.0),
+                1 if roll < 0.55 => m(&FERN, 0.85),
+                2 if roll < 0.25 => m(&["branches_a"], 0.5),
+                3 if roll < 0.45 => m(&["stalks_a"], 1.0),
+                4 => m(&FERN, 1.0),
+                5 if roll < 0.5 => m(&["branches_a"], 0.7),
+                5 => m(&ROCKS, 0.35),
+                _ => None,
+            }
+        } else {
+            match class {
+                2 => m(&["bush_a", "bush_b"], 1.0),
+                3 => m(&ROCKS, 0.9),
+                4 if roll < 0.45 => m(&["stump_a"], 1.0),
+                4 if roll < 0.8 => m(&["log_a"], 0.8),
+                4 => m(&["branches_a"], 1.0),
+                _ => None,
+            }
+        }
+    }
+
+    /// Hang tree `model` (its `_lod0`, plus the matching `_lod1`) under an already-spawned
+    /// gameplay entity. The parent keeps `Transform` / `Sway` / `ChopTree`; the children only draw.
+    pub fn attach_tree(&self, e: &mut EntityCommands, lod0: usize, cull: bool) {
+        let lod1 = self.models.get(lod0 + 1);
+        e.insert(Visibility::default());
+        let near = VisibilityRange {
+            start_margin: 0.0..0.0,
+            end_margin: (LOD_NEAR - LOD_BAND)..(LOD_NEAR + LOD_BAND),
+            use_aabb: false,
+        };
+        let far_end = if cull { TREE_FAR } else { 1.0e6 };
+        let far = VisibilityRange {
+            start_margin: (LOD_NEAR - LOD_BAND)..(LOD_NEAR + LOD_BAND),
+            end_margin: far_end..far_end,
+            use_aabb: false,
+        };
+        e.with_children(|p| {
+            for part in &self.models[lod0].parts {
+                p.spawn((Mesh3d(part.handle.clone()), MeshMaterial3d(self.mats[part.mat].clone()), near.clone()));
+            }
+            if let Some(l1) = lod1 {
+                for part in &l1.parts {
+                    p.spawn((Mesh3d(part.handle.clone()), MeshMaterial3d(self.mats[part.mat].clone()), far.clone()));
+                }
+            }
+        });
+    }
+}
+
+/// Two decorrelated uniform rolls hashed from a world position — the kit's variety picks, kept
+/// OFF the scatter's sequential RNG so turning the kit on/off can't shift any later placement.
+pub fn rolls(x: f32, z: f32) -> (f32, f32) {
+    let h = |s: u32| {
+        let mut v = (x * 64.0).round() as i32 as u32;
+        v = v.wrapping_mul(0x9E37_79B1) ^ ((z * 64.0).round() as i32 as u32).wrapping_mul(0x85EB_CA77) ^ s;
+        v ^= v >> 15;
+        v = v.wrapping_mul(0x2C1B_3C6D);
+        v ^= v >> 12;
+        v = v.wrapping_mul(0x297A_2D39);
+        v ^= v >> 15;
+        (v >> 8) as f32 / (1u32 << 24) as f32
+    };
+    (h(0x1234_5678), h(0x0BAD_F00D))
+}
+
+// ── Chunk merging for passive props / ground cover ───────────────────────────────────────────
+
+/// Queued kit props, grouped by (16u chunk, cover?, material) so each group merges to one mesh.
+#[derive(Default)]
+pub struct Chunks {
+    groups: HashMap<((i32, i32), bool, usize), Vec<(usize, usize, Transform)>>,
+}
+
+fn chunk_key(x: f32, z: f32) -> (i32, i32) {
+    let c = crate::biome::COVER_CHUNK;
+    ((x / c).floor() as i32, (z / c).floor() as i32)
+}
+
+fn chunk_center(k: (i32, i32)) -> Vec3 {
+    let c = crate::biome::COVER_CHUNK;
+    Vec3::new(k.0 as f32 * c + c * 0.5, 0.0, k.1 as f32 * c + c * 0.5)
+}
+
+impl Chunks {
+    pub fn push(&mut self, kit: &Kit, model: usize, world: Vec3, rot: Quat, scale: f32, cover: bool) {
+        let key = chunk_key(world.x, world.z);
+        let t = Transform { translation: world - chunk_center(key), rotation: rot, scale: Vec3::splat(scale) };
+        for (pi, part) in kit.models[model].parts.iter().enumerate() {
+            self.groups.entry((key, cover, part.mat)).or_default().push((model, pi, t));
+        }
+    }
+
+    pub fn spawn(self, kit: &Kit, commands: &mut Commands, meshes: &mut Assets<Mesh>, cull: bool) {
+        for ((key, cover, mat), items) in self.groups {
+            let mut it = items.into_iter();
+            let Some((m0, p0, t0)) = it.next() else { continue };
+            let mut base = kit.models[m0].parts[p0].mesh.clone().transformed_by(t0);
+            for (m, p, t) in it {
+                let part = kit.models[m].parts[p].mesh.clone().transformed_by(t);
+                if base.merge(&part).is_err() {
+                    warn!("realforest: chunk merge failed (attribute mismatch) — part skipped");
+                }
+            }
+            let far = if cover { COVER_FAR } else { PROPS_FAR };
+            let mut e = commands.spawn((
+                Mesh3d(meshes.add(base)),
+                MeshMaterial3d(kit.mats[mat].clone()),
+                Transform::from_translation(chunk_center(key)),
+                bevy::light::NotShadowCaster,
+                crate::biome::BiomeEntity,
+            ));
+            if cover {
+                e.insert(crate::biome::GroundCoverChunk);
+            }
+            if cull {
+                e.insert(VisibilityRange { start_margin: 0.0..0.0, end_margin: far..far, use_aabb: true });
+            }
+        }
+    }
+}
+
+// ── Loading ────────────────────────────────────────────────────────────────────────────────────
+
+pub struct RealForestPlugin;
+
+impl Plugin for RealForestPlugin {
+    fn build(&self, app: &mut App) {
+        if !enabled() {
+            return;
+        }
+        // Before the world build (Startup) reads the kit inside `biome::scatter_region`.
+        app.add_systems(PreStartup, build_kit).add_systems(Update, patch_terrain);
+    }
+}
+
+fn pbr_material(images: &mut Assets<Image>, set: &str, card: bool) -> Result<StandardMaterial, String> {
+    let albedo = images.add(load::texture(&format!("forest_pbr/{set}_albedo.png"), true, card.then_some(CARD_CUTOFF))?);
+    let normal = images.add(load::texture(&format!("forest_pbr/{set}_normal.png"), false, None)?);
+    if card {
+        return Ok(StandardMaterial {
+            base_color_texture: Some(albedo),
+            normal_map_texture: Some(normal),
+            alpha_mode: AlphaMode::Mask(CARD_CUTOFF),
+            // Draw both faces but keep ONE normal for both: the cards carry crown-outward bent
+            // normals, and `double_sided` would flip them on the back face (dark inner leaves).
+            cull_mode: None,
+            double_sided: false,
+            perceptual_roughness: 0.62,
+            reflectance: 0.32,
+            // Sun glowing through the leaves when you look up into a crown.
+            ..default()
+        });
+    }
+    let ormh = images.add(load::texture(&format!("forest_pbr/{set}_ormh.png"), false, None)?);
+    Ok(StandardMaterial {
+        base_color_texture: Some(albedo),
+        normal_map_texture: Some(normal),
+        occlusion_texture: Some(ormh.clone()),
+        metallic_roughness_texture: Some(ormh),
+        // Both act as multipliers on the texture channels (G roughness, B metal = 0).
+        perceptual_roughness: 1.0,
+        metallic: 1.0,
+        reflectance: 0.35,
+        ..default()
+    })
+}
+
+fn try_build(
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    images: &mut Assets<Image>,
+) -> Result<Kit, String> {
+    let mut mats = Vec::new();
+    let mut mat_index = HashMap::new();
+    for (name, set, card) in MATERIALS {
+        mat_index.insert(name.to_string(), mats.len());
+        mats.push(materials.add(pbr_material(images, set, card)?));
+    }
+    let mut models = Vec::new();
+    let mut by_name = HashMap::new();
+    for glb in ["forest_pbr/trees.glb", "forest_pbr/undergrowth.glb", "forest_pbr/props.glb"] {
+        let mut objs = load::read_glb(glb)?;
+        // `attach_tree` finds a tree's LOD1 at `lod0 + 1`, so keep each _lod0 / _lod1 pair adjacent.
+        objs.sort_by(|a, b| a.0.cmp(&b.0));
+        for (name, prims) in objs {
+            let mut parts = Vec::new();
+            for p in prims {
+                let mat = *mat_index.get(&p.material).ok_or_else(|| format!("{name}: unknown material {}", p.material))?;
+                parts.push(Part { handle: meshes.add(p.mesh.clone()), mesh: p.mesh, mat });
+            }
+            by_name.insert(name, models.len());
+            models.push(Model { parts });
+        }
+    }
+    let ground = GroundTextures {
+        albedo: images.add(load::texture_array(&LAYERS.map(|l| format!("forest_pbr/ground_{l}_albedo.png")).each_ref().map(|s| s.as_str()), true)?),
+        normal: images.add(load::texture_array(&LAYERS.map(|l| format!("forest_pbr/ground_{l}_normal.png")).each_ref().map(|s| s.as_str()), false)?),
+        ormh: images.add(load::texture_array(&LAYERS.map(|l| format!("forest_pbr/ground_{l}_ormh.png")).each_ref().map(|s| s.as_str()), false)?),
+    };
+    Ok(Kit { mats, models, by_name, ground })
+}
+
+/// Ground layers, in texture-array order (`terrain.wgsl` indexes them 0/1/2).
+const LAYERS: [&str; 3] = ["litter", "moss", "path"];
+
+fn build_kit(
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+) {
+    let t0 = std::time::Instant::now();
+    match try_build(&mut meshes, &mut materials, &mut images) {
+        Ok(kit) => {
+            info!("realforest: kit loaded ({} models) in {:.2}s", kit.models.len(), t0.elapsed().as_secs_f32());
+            let _ = KIT.set(kit);
+        }
+        Err(e) => warn!("realforest: kit failed to load, keeping the low-poly forest — {e}"),
+    }
+}
+
+// ── Terrain hook ───────────────────────────────────────────────────────────────────────────────
+
+/// Bind the forest-floor layers + the forest/road mask into every world terrain material once.
+/// Terrain materials are minted inside the world build (and again on every in-process rebuild),
+/// so this watches for unpatched ones instead of hooking each creation site.
+fn patch_terrain(
+    mut mats: ResMut<Assets<TerrainMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    mut mask: Local<Option<(Handle<Image>, Vec4)>>,
+) {
+    let Some(kit) = get() else { return };
+    let todo: Vec<_> = mats.iter().filter(|(_, m)| m.extension.params.pbr.x == 0.0).map(|(id, _)| id).collect();
+    for id in todo {
+        let Some(mut m) = mats.get_mut(id) else { continue };
+        // Ground without a road network = a single-biome viewer / ground test: leave it alone.
+        // `FOREST_PBR_GROUND=0` keeps the procedural floor (perf isolation / A-B).
+        if m.extension.params.rut_region.z <= 0.0 || std::env::var("FOREST_PBR_GROUND").is_ok_and(|v| v == "0") {
+            m.extension.params.pbr.x = -1.0;
+            continue;
+        }
+        let (mask_h, region) = mask.get_or_insert_with(|| bake_mask(&mut images)).clone();
+        let ext = &mut m.extension;
+        ext.fp_albedo = kit.ground.albedo.clone();
+        ext.fp_normal = kit.ground.normal.clone();
+        ext.fp_ormh = kit.ground.ormh.clone();
+        ext.fp_mask = mask_h;
+        ext.params.pbr = Vec4::new(1.0, 0.0, 0.0, 0.0);
+        ext.params.pbr_region = region;
+    }
+}
+
+/// RG8 mask over the whole tile grid at 2 texels / unit: R = forest tile (soft-edged),
+/// G = road strength (worn trail → the path layer). World→UV = `(w - xy) * zw`.
+fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
+    use crate::worldmap::{COLS, GX, GZ, ROWS};
+    const RES: f32 = 2.0;
+    let (x0, z0) = (-GX, -GZ);
+    let (w, h) = ((COLS as f32 * RES) as usize, (ROWS as f32 * RES) as usize);
+    let mut forest = vec![0.0f32; w * h];
+    let mut road = vec![0u8; w * h];
+    for j in 0..h {
+        let wz = z0 + (j as f32 + 0.5) / RES;
+        for i in 0..w {
+            let wx = x0 + (i as f32 + 0.5) / RES;
+            let k = j * w + i;
+            forest[k] = (crate::worldmap::tile_biome_world(wx, wz) == Some(crate::biome::Biome::Forest)) as u8 as f32;
+            road[k] = (crate::roads::road_strength(wx, wz).clamp(0.0, 1.0) * 255.0) as u8;
+        }
+    }
+    // Separable box blur (radius 3 texels = 1.5u) so the forest edge feathers instead of
+    // stair-stepping along tile borders.
+    let r = 3i32;
+    let blur = |src: &[f32], horiz: bool| -> Vec<f32> {
+        let mut out = vec![0.0f32; w * h];
+        for j in 0..h as i32 {
+            for i in 0..w as i32 {
+                let mut s = 0.0;
+                for d in -r..=r {
+                    let (x, y) = if horiz { ((i + d).clamp(0, w as i32 - 1), j) } else { (i, (j + d).clamp(0, h as i32 - 1)) };
+                    s += src[y as usize * w + x as usize];
+                }
+                out[j as usize * w + i as usize] = s / (2 * r + 1) as f32;
+            }
+        }
+        out
+    };
+    let forest = blur(&blur(&forest, true), false);
+    let mut data = vec![0u8; w * h * 2];
+    for k in 0..w * h {
+        data[k * 2] = (forest[k] * 255.0).round() as u8;
+        data[k * 2 + 1] = road[k];
+    }
+    let mut img = Image::new(
+        bevy::render::render_resource::Extent3d { width: w as u32, height: h as u32, depth_or_array_layers: 1 },
+        bevy::render::render_resource::TextureDimension::D2,
+        data,
+        bevy::render::render_resource::TextureFormat::Rg8Unorm,
+        bevy::asset::RenderAssetUsages::default(),
+    );
+    img.sampler = bevy::image::ImageSampler::Descriptor(bevy::image::ImageSamplerDescriptor {
+        mag_filter: bevy::image::ImageFilterMode::Linear,
+        min_filter: bevy::image::ImageFilterMode::Linear,
+        ..default()
+    });
+    (images.add(img), Vec4::new(x0, z0, 1.0 / COLS as f32, 1.0 / ROWS as f32))
+}

@@ -39,6 +39,12 @@ pub struct ForestParams {
     /// corner, `zw` = 1/extent. `zw == 0` disables the lookup (single-biome viewer ground /
     /// ground test have no roads).
     pub rut_region: Vec4,
+    /// Realistic forest floor (`realforest`): x = 1 when the scanned layers + mask are bound
+    /// (0 = not yet patched, -1 = skipped); yzw reserved.
+    pub pbr: Vec4,
+    /// World→UV mapping for the forest/road mask (`realforest::bake_mask`), same contract as
+    /// `rut_region`.
+    pub pbr_region: Vec4,
 }
 
 #[derive(Asset, AsBindGroup, Clone, TypePath, Debug)]
@@ -53,6 +59,19 @@ pub struct ForestExtension {
     #[texture(103)]
     #[sampler(104)]
     pub rut: Handle<Image>,
+    /// Forest-floor layers (litter / moss / path) as 2D arrays: sRGB albedo, OpenGL normal, and
+    /// linear AO-rough-metal-height. 1×1 placeholders until `realforest::patch_terrain` binds them.
+    #[texture(105, dimension = "2d_array")]
+    #[sampler(108)]
+    pub fp_albedo: Handle<Image>,
+    #[texture(106, dimension = "2d_array")]
+    pub fp_normal: Handle<Image>,
+    #[texture(107, dimension = "2d_array")]
+    pub fp_ormh: Handle<Image>,
+    /// RG8: R = forest weight, G = road strength (`realforest::bake_mask`).
+    #[texture(109)]
+    #[sampler(110)]
+    pub fp_mask: Handle<Image>,
 }
 
 impl MaterialExtension for ForestExtension {
@@ -113,11 +132,40 @@ pub fn make_material(
                 // (after the Startup world build) and on every preset toggle.
                 params2: Vec4::new(1.0, 1.0, 1.0, 0.0),
                 rut_region,
+                pbr: Vec4::ZERO,
+                pbr_region: Vec4::ZERO,
             },
             detail: detail_h,
             rut: rut_h,
+            fp_albedo: forest_floor_placeholder(images),
+            fp_normal: forest_floor_placeholder(images),
+            fp_ormh: forest_floor_placeholder(images),
+            fp_mask: forest_mask_placeholder(images),
         },
     })
+}
+
+/// 1×1×3 array bound before the forest-floor layers are (or when they never are). Process-cached
+/// with MAIN_WORLD usage for the same re-preparable-handle reason as the rut dummy above.
+fn forest_floor_placeholder(images: &mut Assets<Image>) -> Handle<Image> {
+    static CACHE: std::sync::Mutex<Option<Handle<Image>>> = std::sync::Mutex::new(None);
+    let mut c = CACHE.lock().expect("forest floor placeholder poisoned");
+    c.get_or_insert_with(|| images.add(crate::realforest::load::dummy_array(3, [128, 128, 255, 255]))).clone()
+}
+
+fn forest_mask_placeholder(images: &mut Assets<Image>) -> Handle<Image> {
+    static CACHE: std::sync::Mutex<Option<Handle<Image>>> = std::sync::Mutex::new(None);
+    let mut c = CACHE.lock().expect("forest mask placeholder poisoned");
+    c.get_or_insert_with(|| {
+        images.add(Image::new(
+            Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            TextureDimension::D2,
+            vec![0u8, 0u8],
+            TextureFormat::Rg8Unorm,
+            RenderAssetUsages::default(),
+        ))
+    })
+    .clone()
 }
 
 

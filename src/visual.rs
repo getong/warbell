@@ -264,8 +264,9 @@ fn apply_visual_settings(
             let c = m.base_color.to_linear();
             let white = c.red > 0.85 && c.green > 0.85 && c.blue > 0.85;
             // White, opaque, non-emissive prop mats only (skips clouds = emissive, wisps =
-            // unlit, tinted set-pieces = non-white).
-            (white && !m.unlit && m.emissive == LinearRgba::BLACK).then_some(id)
+            // unlit, tinted set-pieces = non-white). Textured PBR mats (the `realforest` kit) are
+            // left alone: their roughness lives in a texture and the scalar is its multiplier.
+            (white && !m.unlit && m.emissive == LinearRgba::BLACK && m.base_color_texture.is_none()).then_some(id)
         })
         .collect();
     for id in ids {

@@ -95,6 +95,7 @@ mod quadruped;
 mod quality;
 mod quest;
 mod phototrees; // FOREST_PHOTOTREES=1: experimental procedural/photographic trees (off by default)
+mod realforest; // Blender-authored PBR forest kit (trees / undergrowth / props / ground); FOREST_PBR=0 disables
 mod rc;
 mod roads;
 mod rival;
@@ -321,6 +322,7 @@ fn main() {
         // var is set. Standalone call for the same reason as godrays: the tuples above are at the
         // `Plugins` arity-15 cap, and appending to one is what broke the build first try.
         .add_plugins(phototrees::PhotoTreesPlugin)
+        .add_plugins(realforest::RealForestPlugin)
         // Cinematic atmospherics post pass (height fog + sun in-scatter + cloud light patches).
         // Toggled per-preset alongside god-rays in quality.rs; same custom-post-pass family.
         .add_plugins(atmospherics::AtmosphericsPlugin)
