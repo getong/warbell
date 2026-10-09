@@ -33,9 +33,39 @@ pub const LOD_NEAR: f32 = 30.0;
 const LOD_BAND: f32 = 4.0;
 /// Far cull, same as the low-poly trees (fog has them by then).
 const TREE_FAR: f32 = 180.0;
-/// Ground-cover / prop chunk cut-offs (mirror `biome::spawn_chunks`).
+/// Ground-cover / prop chunk cut-offs (mirror `biome::spawn_chunks`), plus the short-range
+/// floor clutter (fallen-leaf sheets, pebbles, twigs) that only matters near the camera.
 const COVER_FAR: f32 = 58.0;
 const PROPS_FAR: f32 = 75.0;
+const CLUTTER_FAR: f32 = 34.0;
+
+/// Which merge bucket a kit prop lands in - decides its cull distance and landmark clearing.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Tier {
+    /// Bushes / rocks / stumps / logs from the main scatter.
+    Props,
+    /// Ferns / grass / stalks from the cover scatter (cleared around landmarks).
+    Cover,
+    /// Dense near-camera floor clutter ([`Kit::scatter_clutter`]).
+    Clutter,
+}
+
+/// Contact-darkening splats (x, z, radius) around trunks and solid props, baked into the forest
+/// mask's B channel so the floor darkens where roots and stones meet it. Filled during the forest
+/// scatter; [`SCATTER_DONE`] tells the terrain hook the list is complete.
+static SPLATS: std::sync::Mutex<Vec<Vec3>> = std::sync::Mutex::new(Vec::new());
+static SCATTER_DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Called at the top of the forest scatter (also on an in-process world rebuild).
+pub fn begin_scatter() {
+    SPLATS.lock().expect("splats poisoned").clear();
+    SCATTER_DONE.store(false, std::sync::atomic::Ordering::Release);
+}
+
+/// Register a contact-darkening splat (world XZ + radius in world units).
+pub fn splat(x: f32, z: f32, r: f32) {
+    SPLATS.lock().expect("splats poisoned").push(Vec3::new(x, z, r));
+}
 /// Alpha-test cutoff for leaf / blade cards (mips keep this coverage, see `load::mip_chain`).
 const CARD_CUTOFF: f32 = 0.42;
 
@@ -205,12 +235,69 @@ pub fn rolls(x: f32, z: f32) -> (f32, f32) {
     (h(0x1234_5678), h(0x0BAD_F00D))
 }
 
+impl Kit {
+    /// Dense near-camera floor clutter over `[lo, hi]²` - the layer that stops a game forest floor
+    /// reading as a flat painted plane: overlapping fallen-leaf sheets, pebbles and twigs lying ON
+    /// the ground (real geometry with contact shadow), plus grass tufts colonising trail EDGES (the
+    /// main cover scatter keeps a clear apron around roads). Three hashed rolls per tile, all off the
+    /// scatter's RNG so the world layout is untouched. Cull distance [`CLUTTER_FAR`].
+    pub fn scatter_clutter(
+        &self,
+        chunks: &mut Chunks,
+        lo: f32,
+        hi: f32,
+        mask: &dyn Fn(f32, f32) -> bool,
+        height_fn: &dyn Fn(f32, f32) -> f32,
+    ) {
+        const LITTER: [&str; 4] = ["litter_a", "litter_b", "litter_c", "litter_d"];
+        const GRASS: [&str; 4] = ["grass_a", "grass_b", "grass_c", "grass_d"];
+        const PEBBLES: [&str; 6] = ["rock_01_a", "rock_01_c", "rock_01_e", "rock_02_b", "rock_02_d", "rock_02_f"];
+        let mut gx = lo;
+        while gx < hi {
+            let mut gz = lo;
+            while gz < hi {
+                for k in 0..3u32 {
+                    let (a, b) = rolls(gx + k as f32 * 0.37, gz - k as f32 * 0.61);
+                    let (c, d) = rolls(gx - k as f32 * 0.53, gz + k as f32 * 0.29);
+                    let (x, z) = (gx + a, gz + b);
+                    if !mask(x, z) || crate::ruins::near_landmark_visual_footprint(x, z) {
+                        continue;
+                    }
+                    let road = crate::roads::road_strength(x, z);
+                    let pick = |names: &[&str], s: f32| self.pick(names, d).map(|m| (m, s));
+                    let choice = if road > 0.55 {
+                        None // trail centre stays clean (the path layer + ruts carry it)
+                    } else if road > 0.12 {
+                        if c < 0.75 { pick(&GRASS, 0.75 + d * 0.4) } else { pick(&["stalks_a"], 0.9) }
+                    } else if c < 0.55 {
+                        pick(&LITTER, 0.8 + d * 0.5)
+                    } else if c < 0.67 && !crate::blockers::any_within(x, z, 0.35) {
+                        pick(&PEBBLES, 0.12 + d * 0.16)
+                    } else if c < 0.80 {
+                        pick(&["branches_a"], 0.35 + d * 0.25)
+                    } else if c < 0.90 {
+                        pick(&GRASS, 0.6 + d * 0.3)
+                    } else {
+                        None
+                    };
+                    if let Some((m, s)) = choice {
+                        let rot = Quat::from_rotation_y(c * 97.0 % std::f32::consts::TAU);
+                        chunks.push(self, m, Vec3::new(x, height_fn(x, z), z), rot, s, Tier::Clutter);
+                    }
+                }
+                gz += 1.0;
+            }
+            gx += 1.0;
+        }
+    }
+}
+
 // ── Chunk merging for passive props / ground cover ───────────────────────────────────────────
 
 /// Queued kit props, grouped by (16u chunk, cover?, material) so each group merges to one mesh.
 #[derive(Default)]
 pub struct Chunks {
-    groups: HashMap<((i32, i32), bool, usize), Vec<(usize, usize, Transform)>>,
+    groups: HashMap<((i32, i32), Tier, usize), Vec<(usize, usize, Transform)>>,
 }
 
 fn chunk_key(x: f32, z: f32) -> (i32, i32) {
@@ -224,16 +311,20 @@ fn chunk_center(k: (i32, i32)) -> Vec3 {
 }
 
 impl Chunks {
-    pub fn push(&mut self, kit: &Kit, model: usize, world: Vec3, rot: Quat, scale: f32, cover: bool) {
+    pub fn push(&mut self, kit: &Kit, model: usize, world: Vec3, rot: Quat, scale: f32, tier: Tier) {
         let key = chunk_key(world.x, world.z);
         let t = Transform { translation: world - chunk_center(key), rotation: rot, scale: Vec3::splat(scale) };
         for (pi, part) in kit.models[model].parts.iter().enumerate() {
-            self.groups.entry((key, cover, part.mat)).or_default().push((model, pi, t));
+            self.groups.entry((key, tier, part.mat)).or_default().push((model, pi, t));
+        }
+        if tier == Tier::Props {
+            splat(world.x, world.z, 0.55 * scale);
         }
     }
 
     pub fn spawn(self, kit: &Kit, commands: &mut Commands, meshes: &mut Assets<Mesh>, cull: bool) {
-        for ((key, cover, mat), items) in self.groups {
+        SCATTER_DONE.store(true, std::sync::atomic::Ordering::Release);
+        for ((key, tier, mat), items) in self.groups {
             let mut it = items.into_iter();
             let Some((m0, p0, t0)) = it.next() else { continue };
             let mut base = kit.models[m0].parts[p0].mesh.clone().transformed_by(t0);
@@ -243,7 +334,11 @@ impl Chunks {
                     warn!("realforest: chunk merge failed (attribute mismatch) — part skipped");
                 }
             }
-            let far = if cover { COVER_FAR } else { PROPS_FAR };
+            let far = match tier {
+                Tier::Props => PROPS_FAR,
+                Tier::Cover => COVER_FAR,
+                Tier::Clutter => CLUTTER_FAR,
+            };
             let mut e = commands.spawn((
                 Mesh3d(meshes.add(base)),
                 MeshMaterial3d(kit.mats[mat].clone()),
@@ -251,7 +346,7 @@ impl Chunks {
                 bevy::light::NotShadowCaster,
                 crate::biome::BiomeEntity,
             ));
-            if cover {
+            if tier != Tier::Props {
                 e.insert(crate::biome::GroundCoverChunk);
             }
             if cull {
@@ -289,7 +384,9 @@ fn pbr_material(images: &mut Assets<Image>, set: &str, card: bool) -> Result<Sta
             double_sided: false,
             perceptual_roughness: 0.62,
             reflectance: 0.32,
-            // Sun glowing through the leaves when you look up into a crown.
+            // No `diffuse_transmission`: on a crown of overlapping alpha-tested cards (no early-z,
+            // every layer shaded) the extra back-lobe light pass cost ~3.6ms of the opaque pass at
+            // 1080p (8.5 -> 4.9ms measured). Bent crown normals + vertex AO carry the volume.
             ..default()
         });
     }
@@ -371,6 +468,10 @@ fn patch_terrain(
     mut mask: Local<Option<(Handle<Image>, Vec4)>>,
 ) {
     let Some(kit) = get() else { return };
+    // The mask's contact-AO channel needs the forest scatter's splats - wait for it.
+    if !SCATTER_DONE.load(std::sync::atomic::Ordering::Acquire) {
+        return;
+    }
     let todo: Vec<_> = mats.iter().filter(|(_, m)| m.extension.params.pbr.x == 0.0).map(|(id, _)| id).collect();
     for id in todo {
         let Some(mut m) = mats.get_mut(id) else { continue };
@@ -391,8 +492,9 @@ fn patch_terrain(
     }
 }
 
-/// RG8 mask over the whole tile grid at 2 texels / unit: R = forest tile (soft-edged),
-/// G = road strength (worn trail → the path layer). World→UV = `(w - xy) * zw`.
+/// RGBA8 mask over the whole tile grid at 2 texels / unit: R = forest tile (soft-edged),
+/// G = road strength (worn trail -> the path layer), B = contact darkening around trunks and
+/// solid props (the root/stone <-> ground junction). World->UV = `(w - xy) * zw`.
 fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
     use crate::worldmap::{COLS, GX, GZ, ROWS};
     const RES: f32 = 2.0;
@@ -427,16 +529,36 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
         out
     };
     let forest = blur(&blur(&forest, true), false);
-    let mut data = vec![0u8; w * h * 2];
+    let mut occl = vec![0.0f32; w * h];
+    for sp in SPLATS.lock().expect("splats poisoned").iter() {
+        let (cx, cz, r) = (sp.x, sp.y, sp.z.max(0.2));
+        let reach = r * 2.6;
+        let i0 = ((cx - reach - x0) * RES).floor().max(0.0) as usize;
+        let i1 = (((cx + reach - x0) * RES).ceil().max(0.0) as usize).min(w);
+        let j0 = ((cz - reach - z0) * RES).floor().max(0.0) as usize;
+        let j1 = (((cz + reach - z0) * RES).ceil().max(0.0) as usize).min(h);
+        for j in j0..j1 {
+            let dz = z0 + (j as f32 + 0.5) / RES - cz;
+            for i in i0..i1 {
+                let dx = x0 + (i as f32 + 0.5) / RES - cx;
+                let v = (-(dx * dx + dz * dz) / (r * r * 1.6)).exp();
+                let o = &mut occl[j * w + i];
+                *o = 1.0 - (1.0 - *o) * (1.0 - v);
+            }
+        }
+    }
+    let mut data = vec![0u8; w * h * 4];
     for k in 0..w * h {
-        data[k * 2] = (forest[k] * 255.0).round() as u8;
-        data[k * 2 + 1] = road[k];
+        data[k * 4] = (forest[k] * 255.0).round() as u8;
+        data[k * 4 + 1] = road[k];
+        data[k * 4 + 2] = (occl[k].clamp(0.0, 1.0) * 255.0).round() as u8;
+        data[k * 4 + 3] = 255;
     }
     let mut img = Image::new(
         bevy::render::render_resource::Extent3d { width: w as u32, height: h as u32, depth_or_array_layers: 1 },
         bevy::render::render_resource::TextureDimension::D2,
         data,
-        bevy::render::render_resource::TextureFormat::Rg8Unorm,
+        bevy::render::render_resource::TextureFormat::Rgba8Unorm,
         bevy::asset::RenderAssetUsages::default(),
     );
     img.sampler = bevy::image::ImageSampler::Descriptor(bevy::image::ImageSamplerDescriptor {

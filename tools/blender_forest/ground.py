@@ -22,8 +22,8 @@ from common import ph_tex, write_pbr_set  # noqa: E402
 LAYERS = [
     # (name, poly haven id, saturation, brightness) - graded toward the game's slightly muted,
     # overcast-forest palette so the scans sit next to the existing biomes.
-    ("litter", "forest_leaves_02", 0.62, 0.92),
-    ("moss", "forrest_ground_01", 0.85, 0.86),
+    ("litter", "forest_leaves_02", 0.65, 1.05),
+    ("moss", "forrest_ground_01", 0.85, 1.0),
     ("path", "forest_ground_04", 0.55, 0.95),
 ]
 

@@ -16,7 +16,7 @@
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing, visibility_range_dither},
     pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
     forward_io::{VertexOutput, FragmentOutput},
-    mesh_view_bindings::view,
+    mesh_view_bindings::{view, lights},
 }
 
 struct ForestParams {
@@ -45,7 +45,8 @@ struct ForestParams {
 @group(#{MATERIAL_BIND_GROUP}) @binding(106) var fp_normal: texture_2d_array<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(107) var fp_ormh: texture_2d_array<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(108) var fp_samp: sampler;
-// RG8 mask: R = forest weight (soft-edged tile mask), G = road strength.
+// RGBA8 mask: R = forest weight (soft-edged tile mask), G = road strength, B = contact darkening
+// around trunks / solid props.
 @group(#{MATERIAL_BIND_GROUP}) @binding(109) var fp_mask: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(110) var fp_mask_samp: sampler;
 
@@ -54,7 +55,7 @@ struct ForestParams {
 const FP_T0: f32 = 2.7;
 const FP_T1: f32 = 3.3;
 const FP_T2: f32 = 2.3;
-const FP_DEPTH: f32 = 0.08;
+const FP_DEPTH: f32 = 0.17;
 
 fn fp_uv0(p: vec2<f32>) -> vec2<f32> { return p / FP_T0; }
 fn fp_uv1(p: vec2<f32>) -> vec2<f32> { return p / FP_T1 + vec2<f32>(0.37, 0.61); }
@@ -391,7 +392,7 @@ fn fragment(
     let wp_dx = dpdx(wp);
     let wp_dy = dpdy(wp);
     let fmask_uv = (wp - forest.pbr_region.xy) * forest.pbr_region.zw;
-    let fmask = textureSampleLevel(fp_mask, fp_mask_samp, fmask_uv, 0.0).rg;
+    let fmask = textureSampleLevel(fp_mask, fp_mask_samp, fmask_uv, 0.0).rgb;
     var fp_w = 0.0;
     var fp_nw = vec3<f32>(0.0, 1.0, 0.0);
     var fp_rough = 1.0;
@@ -407,7 +408,7 @@ fn fragment(
         // path in tongues instead of along the mask's straight iso-line.
         let edge = (ter_noise(wp * 0.45 + vec2<f32>(17.0, 3.0)) - 0.5) * 0.45
                  + (ter_noise(wp * 1.7 + vec2<f32>(4.0, 29.0)) - 0.5) * 0.25;
-        let path = smoothstep(0.12, 0.70, fmask.g + edge);
+        let path = smoothstep(0.24, 0.80, fmask.g + edge);
         let mossn = ter_noise_rot(wp * 0.05, 0.946, 0.326) * 0.65 + ter_noise(wp * 0.19 + vec2<f32>(5.0, 9.0)) * 0.35;
         let moss = smoothstep(0.44, 0.66, mossn);
         var w = vec3<f32>((1.0 - moss) * (1.0 - path), moss * (1.0 - path), path);
@@ -421,13 +422,15 @@ fn fragment(
         // Parallax occlusion mapping: march the view ray down through the height field
         // (linear search + one secant refine). High: 10 steps to 16u; Ultra: 18 steps to 26u.
         var pw = wp;
+        var hit_h = dot(w, h0);
+        var shift = vec2<f32>(0.0);
         let q = forest.params2.y;
         let dist = distance(view.world_position.xyz, in.world_position.xyz);
         let pom_far = select(0.0, select(16.0, 26.0, q >= 2.0), q >= 1.0);
         let depth = FP_DEPTH * fp_w * (1.0 - smoothstep(pom_far * 0.55, pom_far, dist));
         if depth > 0.002 {
             let vdir = normalize(view.world_position.xyz - in.world_position.xyz);
-            let shift = -vdir.xz / max(vdir.y, 0.2) * depth;
+            shift = -vdir.xz / max(vdir.y, 0.2) * depth;
             let steps = select(10, 18, q >= 2.0);
             var prev_d = 0.0;
             var prev_diff = 1.0 - dot(w, h0);
@@ -443,6 +446,26 @@ fn fragment(
                 prev_diff = diff;
             }
             pw = wp + shift * hit;
+            hit_h = 1.0 - hit;
+        }
+
+        // Height-field self-shadowing toward the sun: march from the parallax hit up the light
+        // direction; any texel standing above the ray shades this one. This is what makes the
+        // litter / pebbles throw their own tiny shadows (the RDR2 "every leaf has depth" read)
+        // instead of a lit decal. Same distance fade as the parallax; 6 taps.
+        var self_shadow = 0.0;
+        if depth > 0.002 && lights.n_directional_lights > 0u {
+            let ldir = lights.directional_lights[0].direction_to_light;
+            if ldir.y > 0.05 {
+                let lstep = ldir.xz / max(ldir.y, 0.25) * depth;
+                for (var k = 1; k <= 6; k += 1) {
+                    let t = f32(k) / 6.0;
+                    let ray_h = hit_h + t * (1.0 - hit_h);
+                    let hk = dot(w, fp_heights(pw + lstep * t * (1.0 - hit_h), w, wp_dx, wp_dy));
+                    self_shadow = max(self_shadow, (hk - ray_h) * 7.0);
+                }
+                self_shadow = clamp(self_shadow, 0.0, 1.0) * (depth / (FP_DEPTH * fp_w + 1e-4));
+            }
         }
 
         // Final layer taps at the displaced position.
@@ -475,16 +498,22 @@ fn fragment(
         }
         // Broad value drift so the repeats never read as a grid from a distance.
         alb *= 0.84 + 0.32 * (ter_noise(wp * 0.07 + vec2<f32>(9.0, 2.0)) * 0.6 + ter_noise(wp * 0.23) * 0.4);
+        // Micro self-shadow (above), contact darkening where roots / stones meet the floor (mask
+        // B), and the cart-wheel ruts pressed back into the scanned path as damp, darker grooves
+        // (the procedural rut tint applied earlier is overwritten by this mix).
+        alb *= 1.0 - 0.4 * self_shadow;
+        alb *= 1.0 - 0.35 * fmask.b;
+        alb *= 1.0 - 0.45 * rut * rut_wear;
         rgb = mix(rgb, alb, fp_w);
         // Tangent frame of the planar XZ mapping: u runs along +X, v along +Z, and an OpenGL
         // normal map's +Y (image up = decreasing v) therefore points toward -Z.
         let gn = normalize(in.world_normal);
         let tx = normalize(vec3<f32>(1.0, 0.0, 0.0) - gn * gn.x);
         let bz = cross(gn, tx);
-        let n_ts = vec3<f32>(nts.xy * 1.25, max(nts.z, 0.2));
+        let n_ts = vec3<f32>(nts.xy * 1.7, max(nts.z, 0.2));
         fp_nw = normalize(tx * n_ts.x + bz * n_ts.y + gn * n_ts.z);
         fp_ao = orm.r;
-        fp_rough = orm.g;
+        fp_rough = orm.g * mix(1.0, 0.62, rut * rut_wear);
     }
 
     // Clamp alpha ≥ 0 on write-back: the negative cliffness flag has served its purpose and

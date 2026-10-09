@@ -61,9 +61,10 @@ LEAVES = [(130, 100, 230, 330), (540, 75, 625, 335), (440, 410, 550, 640), (620,
           (240, 655, 335, 940), (385, 715, 490, 950), (565, 700, 650, 900), (55, 740, 150, 965)]
 
 
-def paste_leaf(cv, leaf, base, ang, length, squash, tint, tilt, shade):
+def paste_leaf(cv, leaf, base, ang, length, squash, tint, tilt, shade, src=None):
     """Paste leaf `leaf` with its petiole at `base` (x, y px), pointing along `ang`
-    (radians from canvas-up, clockwise positive), `length` px long."""
+    (radians from canvas-up, clockwise positive), `length` px long. `src` swaps the colour
+    source (e.g. the browned copy used for fallen litter)."""
     x0, y0, x1, y1 = leaf
     lw, lh = x1 - x0, y1 - y0
     s = length / lh
@@ -86,7 +87,7 @@ def paste_leaf(cv, leaf, base, ang, length, squash, tint, tilt, shade):
     a = bilinear(s_a, sx, sy) * inside
     if a.max() <= 0:
         return
-    rgb = bilinear(s_rgb, sx, sy) * tint * shade
+    rgb = bilinear(s_rgb if src is None else src, sx, sy) * tint * shade
     nl = bilinear(s_n, sx, sy)
     # Leaf normal: source detail rotated into place, plus a tilt about the midrib and a cupped
     # cross-section so each leaf catches light like a curved blade, not a flat sticker.
@@ -278,6 +279,46 @@ CELLS = [(1024, 0, 512, 256), (1536, 0, 512, 256), (1024, 256, 512, 256), (1536,
          (1024, 512, 512, 256)]
 layout["undergrowth"]["grass"] = [crop_fit(ug, ug_n, grass, grass_n, r, c) for r, c in zip(CLUMPS, CELLS)]
 layout["undergrowth"]["stalks"] = [crop_fit(ug, ug_n, grass, grass_n, (865, 10, 1000, 165), (1536, 512, 256, 512))]
+
+
+# Fallen litter: dead leaves (the same scans, browned) + a few twigs, drawn as if seen from
+# straight above, for cards that LIE on the floor - real overlapping geometry on top of the
+# ground texture, the "clutter" layer that keeps a game forest floor from reading flat.
+s_luma = (s_rgb * np.array([0.30, 0.59, 0.11], np.float32)).sum(-1, keepdims=True)
+s_brown = np.clip(s_luma * np.array([1.08, 0.82, 0.56], np.float32), 0, 1)
+
+
+def litter_sprite(seed, size=512):
+    lr = np.random.default_rng(seed)
+    cv = Canvas(size, size)
+    for _ in range(4):
+        x0, y0 = lr.uniform(0.3, 0.7, 2) * size
+        ang = lr.uniform(0, 6.3)
+        L = lr.uniform(0.15, 0.28) * size
+        draw_capsule(cv, (x0, y0), (x0 + math.cos(ang) * L, y0 + math.sin(ang) * L), 6, 2.5,
+                     (0.30 + lr.uniform(0, 0.08), 0.22, 0.15))
+    n = 46
+    for i in range(n):
+        r = lr.uniform(0, 0.42) ** 0.8 * size
+        a = lr.uniform(0, 6.3)
+        base = (size / 2 + math.cos(a) * r, size / 2 + math.sin(a) * r)
+        g = lr.uniform(0, 1)
+        tint = np.array([0.75 + 0.3 * g, 0.72 + 0.18 * g, 0.62 + 0.05 * g], np.float32)
+        paste_leaf(cv, LEAVES[lr.integers(len(LEAVES))], base, lr.uniform(0, 6.3),
+                   length=lr.uniform(55, 85) * size / 512, squash=lr.uniform(0.7, 1.0), tint=tint,
+                   tilt=lr.uniform(-0.3, 0.3), shade=0.6 + 0.4 * i / n, src=s_brown)
+    rgba, nrm = cv.finish()
+    return rgba, nrm * 2 - 1
+
+
+layout["undergrowth"]["litter"] = []
+for i in range(4):
+    rgba, nrm = litter_sprite(100 + i)
+    x, y = i * 512, 1024
+    ug[y:y + 512, x:x + 512] = rgba
+    ug_n[y:y + 512, x:x + 512] = nrm * 0.5 + 0.5
+    layout["undergrowth"]["litter"].append([x, y, 512, 512])
+
 ug[..., 3] = np.where(ug[..., 3] > 0.04, ug[..., 3], 0.0)
 ug[..., :3] = grade(bleed_alpha(ug[..., :3], ug[..., 3]), sat=1.05, gain=0.95)
 save(ug, OUT / "undergrowth_albedo.png")

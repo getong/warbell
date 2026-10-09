@@ -140,7 +140,7 @@ impl AtmoSample {
                 Biome::Swamp => 1.75,
                 // The realistic forest (`realforest`) has a closed leaf canopy: away from the trails
                 // the floor sees no sun at all, so without a lift it crushes to near-black.
-                Biome::Forest if crate::realforest::get().is_some() => 2.1,
+                Biome::Forest if crate::realforest::get().is_some() => 3.4,
                 _ => 1.0,
             },
         }
@@ -993,6 +993,9 @@ pub fn scatter_region(
     // layout is identical with the kit on or off.
     let kit = if cfg.biome == Biome::Forest { crate::realforest::get() } else { None };
     let mut kit_chunks = crate::realforest::Chunks::default();
+    if kit.is_some() {
+        crate::realforest::begin_scatter();
+    }
     let class_index = |c: &ClassHandles| classes.iter().position(|x| std::ptr::eq(x, c)).unwrap_or(usize::MAX);
 
     // ── Main per-tile scatter ──
@@ -1071,7 +1074,7 @@ pub fn scatter_region(
                                 if let Some(k) = kit {
                                     let (a, b) = crate::realforest::rolls(cx, cz);
                                     if let Some((m, sm)) = k.passive_for(class_index(fb), false, a, b) {
-                                        kit_chunks.push(k, m, Vec3::new(cx, py, cz), rot, fs * sm, false);
+                                        kit_chunks.push(k, m, Vec3::new(cx, py, cz), rot, fs * sm, crate::realforest::Tier::Props);
                                     }
                                 } else {
                                     queue(false, fb.variants[fi].clone(), Vec3::new(cx, py, cz), rot, fs);
@@ -1115,6 +1118,7 @@ pub fn scatter_region(
                                 BiomeEntity,
                             ));
                             k.attach_tree(&mut tree, lod0, scatter_cull_enabled());
+                            crate::realforest::splat(cx, cz, 0.35 * s);
                             gz += 1.0;
                             continue;
                         }
@@ -1173,7 +1177,7 @@ pub fn scatter_region(
                     if let Some(k) = kit {
                         let (a, b) = crate::realforest::rolls(cx, cz);
                         if let Some((m, sm)) = k.passive_for(class_index(c), false, a, b) {
-                            kit_chunks.push(k, m, Vec3::new(cx, py, cz), rot, s * sm, false);
+                            kit_chunks.push(k, m, Vec3::new(cx, py, cz), rot, s * sm, crate::realforest::Tier::Props);
                         }
                     } else {
                         queue(false, c.variants[vi].clone(), Vec3::new(cx, py, cz), rot, s);
@@ -1247,7 +1251,7 @@ pub fn scatter_region(
                                 if let Some(k) = kit {
                                     let (a, b) = crate::realforest::rolls(x, z);
                                     if let Some((m, sm)) = k.passive_for(i, true, a, b).filter(|_| !no_grass()) {
-                                        kit_chunks.push(k, m, Vec3::new(x, py, z), rot, s * sm, true);
+                                        kit_chunks.push(k, m, Vec3::new(x, py, z), rot, s * sm, crate::realforest::Tier::Cover);
                                     }
                                 } else {
                                     queue(true, c.variants[vi].clone(), Vec3::new(x, py, z), rot, s);
@@ -1269,6 +1273,10 @@ pub fn scatter_region(
     drop(queue);
     spawn_chunks(commands, meshes, &mat, chunks);
     if let Some(k) = kit {
+        if !no_grass() {
+            let clutter_mask = |x: f32, z: f32| mask(x, z) && !(river_guard && crate::water::on_river(x, z));
+            k.scatter_clutter(&mut kit_chunks, lo, hi, &clutter_mask, height_fn);
+        }
         kit_chunks.spawn(k, commands, meshes, scatter_cull_enabled());
     }
 }

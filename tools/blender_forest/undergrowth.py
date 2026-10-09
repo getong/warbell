@@ -3,6 +3,7 @@
   fern_a..c   6-8 arching frond strips (scanned `fern_02` fronds), ~40-60 tris
   grass_a..d  three crossed clump cards (scanned `grass_medium_01` tufts), 6 tris
   stalks_a    two crossed seed-head cards, 4 tris
+  litter_a..d fallen leaves + twigs lying on the floor (curled 3x3 sheet), 8 tris
 
 Everything shares ONE material (`undergrowth`) so the game merges a whole 16u chunk of
 floor plants into a single draw. Normals lean toward +Z (up) - the usual grass trick that
@@ -103,6 +104,28 @@ def crossed(b, rng, rects, width, n_cards, tint, sink=0.02, up_bias=0.7):
         b.face(tuple(b.v(q) for q in p), uvs, ns, [cb, cb, ct, ct], 0)
 
 
+def litter(seed, rect_i):
+    """A patch of fallen leaves + twigs LYING on the floor: a 3x3-vertex sheet with a little
+    random lift so leaf edges catch light and cast contact shadow on the ground texture."""
+    rng = np.random.default_rng(seed)
+    b = Builder()
+    u0, vb, u1, vt = rect_uv(LAYOUT["litter"][rect_i])
+    size = rng.uniform(0.75, 1.0)
+    grid = {}
+    for i in range(3):
+        for j in range(3):
+            x = (i / 2 - 0.5) * size
+            y = (j / 2 - 0.5) * size
+            lift = 0.01 + (0.025 * rng.uniform(0.3, 1.0) if (i, j) != (1, 1) else 0.015)
+            grid[(i, j)] = (Vector((x, y, lift)), (u0 + (u1 - u0) * i / 2, vb + (vt - vb) * j / 2))
+    for i in range(2):
+        for j in range(2):
+            q = [(i, j), (i + 1, j), (i + 1, j + 1), (i, j + 1)]
+            b.face(tuple(b.v(grid[k][0]) for k in q), [grid[k][1] for k in q], [UP] * 4,
+                   [(1.0, 1.0, 1.0)] * 4, 0)
+    return b
+
+
 def grass(seed):
     rng = np.random.default_rng(seed)
     b = Builder()
@@ -121,7 +144,9 @@ clear_scene()
 objs, report = [], {}
 for name, fn, seed in [("fern_a", fern, 1), ("fern_b", fern, 2), ("fern_c", fern, 3),
                        ("grass_a", grass, 4), ("grass_b", grass, 5), ("grass_c", grass, 6),
-                       ("grass_d", grass, 7), ("stalks_a", stalks, 8)]:
+                       ("grass_d", grass, 7), ("stalks_a", stalks, 8),
+                       ("litter_a", lambda s: litter(s, 0), 9), ("litter_b", lambda s: litter(s, 1), 10),
+                       ("litter_c", lambda s: litter(s, 2), 11), ("litter_d", lambda s: litter(s, 3), 12)]:
     b = fn(seed)
     objs.append(b.build(name, ["undergrowth"]))
     report[name] = b.tris()
