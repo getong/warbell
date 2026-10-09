@@ -173,8 +173,8 @@ const MATERIALS: [(&str, &str, bool); 18] = [
     ("s_thatch", "s_thatch", false),
     ("s_cloth", "s_cloth", false),
     ("s_iron", "s_iron", false),
-    // Creature parts (creatures.glb) — never drawn with this material (recoloured CPU meshes on
-    // the creature material); the entry only lets the loader accept the glb.
+    // Creature parts (creatures.glb, animals.glb, people.glb) — never drawn with this material
+    // (recoloured CPU meshes on the creature material); the entry only lets the loader accept them.
     ("creature", "", false),
 ];
 
@@ -764,7 +764,13 @@ fn try_build(
     let wind = [mat_index["canopy"], mat_index["undergrowth"]];
     let mut models = Vec::new();
     let mut by_name = HashMap::new();
-    for glb in ["forest_pbr/trees.glb", "forest_pbr/undergrowth.glb", "forest_pbr/props.glb", "forest_pbr/structures.glb", "forest_pbr/creatures.glb", "forest_pbr/animals.glb"] {
+    for glb in ["forest_pbr/trees.glb", "forest_pbr/undergrowth.glb", "forest_pbr/props.glb", "forest_pbr/structures.glb", "forest_pbr/creatures.glb", "forest_pbr/animals.glb", "forest_pbr/people.glb"] {
+        // The townsfolk parts (people.glb) are optional: without them the villagers keep their
+        // box-built bodies (`peasant_model`), the rest of the kit still loads.
+        if glb.ends_with("people.glb") && !load::asset_path(glb).exists() {
+            warn!("realforest: {glb} missing — townsfolk keep the box-built bodies");
+            continue;
+        }
         let mut objs = load::read_glb(glb)?;
         // `attach_tree` finds a tree's LOD1 at `lod0 + 1`, so keep each _lod0 / _lod1 pair adjacent.
         objs.sort_by(|a, b| a.0.cmp(&b.0));

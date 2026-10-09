@@ -12,6 +12,12 @@
 //! Every part carries a [`Surf`] code (baked into the vertex-colour alpha by [`crate::creature::surf`])
 //! so the shared `CreatureMaterial` shader textures cloth/metal/skin correctly — without it every part
 //! decodes as flat `Skin`.
+//!
+//! **Realistic body.** When the Blender forest kit loaded `people.glb`
+//! (`tools/blender_forest/people.py`), [`peasant_biped_meshes`] instead assembles an organic,
+//! realistically-proportioned human from sculpted per-joint parts (see `kit_peasant_meshes`): same
+//! joints and props, a slimmer frame — so spawn sites take the rig spacing from [`rig_dims`] — and a
+//! per-person `look` (face / hair / beard / everyday hood). The box builder below stays the fallback.
 
 use bevy::mesh::MeshBuilder;
 use bevy::prelude::*;
@@ -22,7 +28,7 @@ use crate::creature::Surf;
 use crate::palette::lin;
 
 /// Which worker the studio peasant builder makes (maps from `villagers::Kind`/`Trade`).
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PeasantKind {
     Woodcutter,
     Farmer,
@@ -190,8 +196,296 @@ fn tan_skin(c: u32) -> u32 {
     (r << 16) | (g << 8) | b
 }
 
-/// Build the per-joint peasant meshes for `kind` with the given body colours.
-pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u32, kid: bool, desert: bool) -> BipedMeshes {
+// ── Realistic kit body (Blender metaball parts, `people.glb`) ─────────────────────────────────
+//
+// `tools/blender_forest/people.py` builds a base human (tunic, trousers, boots, hands) plus
+// add-ons per rig joint — hair styles, beards, headgear, apron / plate + tabard / jerkin + quiver /
+// desert cloak, sash and robe, pauldrons, a bracer — each authored in its joint's frame. Here a
+// person is ASSEMBLED by merging the parts their trade + look call for, recoloured by one
+// per-person palette (vertex colour R = region code, see the region list in people.py).
+
+/// Number of distinct cosmetic looks (face / hair / beard / hair tone / everyday headgear) the
+/// kit body cycles through. Callers pass any u32 (the villager seed); it is taken mod this.
+pub const LOOKS: u32 = 12;
+/// Rig spacing the kit parts were authored against (`people.py` SDX / HDX): a realistic, slimmer
+/// frame than the stocky studio peasant (0.3 / 0.15).
+pub const KIT_SHOULDER_DX: f32 = 0.2;
+pub const KIT_HIP_DX: f32 = 0.1;
+/// The sculpted head is life-sized; a touch larger reads better at game distance.
+const KIT_HEAD_MUL: f32 = 1.1;
+const BOOT: u32 = 0x33241a; // dark boot leather
+/// Natural hair colours (brown / dark-brown / near-black / chestnut / auburn / sandy / ash /
+/// dark-ash), then two greys for the balding elders.
+const HAIR_TONES: [u32; 10] = [0x3a2418, 0x2a1c12, 0x1c1410, 0x6b4a2a, 0x7a3b1e, 0x8a7a5a, 0xa9854e, 0x5a4636, 0x9a9488, 0xc4beb4];
+/// Everyday hood / cap dyes: undyed wool, brown, moss, russet.
+const HOOD_DYES: [u32; 4] = [0x6a6152, 0x5a4632, 0x46553a, 0x7a4a2a];
+/// One row per look: (face, hair style, beard, `HAIR_TONES` index, the unemployed's everyday hat:
+/// 0 none · 1 hood · 2 cap). Face `c` is the lean/fine one, `b` the broad one.
+const LOOK_TABLE: [(&str, &str, Option<&str>, usize, u8); LOOKS as usize] = [
+    ("a", "crop", Some("short"), 0, 0),
+    ("b", "shag", Some("full"), 1, 1),
+    ("c", "long", None, 3, 0),
+    ("a", "bowl", Some("moustache"), 2, 2),
+    ("b", "bald", Some("full"), 8, 0),
+    ("c", "crop", None, 5, 1),
+    ("a", "shag", None, 4, 0),
+    ("b", "crop", Some("moustache"), 6, 2),
+    ("c", "bowl", Some("short"), 1, 0),
+    ("a", "long", Some("full"), 7, 1),
+    ("b", "shag", Some("short"), 2, 0),
+    ("c", "bald", Some("moustache"), 9, 2),
+];
+
+/// The realistic kit, when it loaded the townsfolk parts.
+fn kit_people() -> Option<&'static crate::realforest::Kit> {
+    crate::realforest::get().filter(|k| k.has("hu_torso"))
+}
+
+/// `(hip_dx, shoulder_dx, head_mul)` for [`crate::biped::spawn_biped`]: the kit body's slimmer
+/// frame (and head-scale multiplier) when `people.glb` is loaded, else the box peasant's spacing.
+/// Every peasant / villager spawn site must use this so the meshes and the joints agree.
+pub fn rig_dims() -> (f32, f32, f32) {
+    if kit_people().is_some() {
+        (KIT_HIP_DX, KIT_SHOULDER_DX, KIT_HEAD_MUL)
+    } else {
+        (0.15, 0.3, 1.0)
+    }
+}
+
+/// Per-channel sRGB-hex lerp.
+fn mix_hex(a: u32, b: u32, t: f32) -> u32 {
+    let ch = |s: u32| {
+        let (x, y) = (((a >> s) & 0xff) as f32, ((b >> s) & 0xff) as f32);
+        ((x + (y - x) * t).round().clamp(0.0, 255.0) as u32) << s
+    };
+    ch(16) | ch(8) | ch(0)
+}
+
+/// The realistic townsperson (Blender parts, `people.glb`) for the same biped joints as the box
+/// peasant: same trade marks (straw hat + apron, miner's helmet + lamp, steel helm + plate +
+/// livery tabard + shield, archer's hood + jerkin + quiver + bracer + bow, desert turban / cloak /
+/// sash / robe / sandals) and the same props (`peasant_tools`), recoloured with the caller's skin /
+/// tunic / trouser so the town keeps its variety; `look` adds face / hair / beard / hood variety.
+/// `None` without the kit → the box-built body.
+fn kit_peasant_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u32, kid: bool, desert: bool, look: u32) -> Option<BipedMeshes> {
+    use PeasantKind::*;
+    let kit = kit_people()?;
+    let (face, hair_style, beard, tone, everyday_hat) = LOOK_TABLE[(look % LOOKS) as usize];
+    let skin = if desert { tan_skin(skin) } else { skin };
+    let trouser = if desert { DESERT_PANT } else { trouser };
+    let worker = matches!(kind, Woodcutter | Farmer | Miner | Unemployed);
+    let hood = HOOD_DYES[(look as usize / 3) % HOOD_DYES.len()];
+
+    // Headgear marks the trade; the unemployed (and the caged captives) wear an everyday hood or
+    // cap by look, kids go bare-headed.
+    let hat: Option<&str> = match kind {
+        _ if desert && worker => Some("turban"),
+        Guard if desert => Some("warhelm"),
+        Archer if desert => Some("headwrap"),
+        Farmer => Some("straw"),
+        Miner => Some("miner"),
+        Guard => Some("helm"),
+        Archer => Some("archer"),
+        Woodcutter => Some(if look % 2 == 0 { "cap" } else { "hood" }),
+        Unemployed if kid => None,
+        Unemployed => [None, Some("hood"), Some("cap")][everyday_hat as usize],
+    };
+    // Hoods / wraps hide the hair; kids are never bald or bearded; woodcutters and desert men
+    // always wear a beard (the box peasant's woodcutter beard + the rival's look).
+    // (The steel helm counts: hair under it would be a hidden ~240 tris on every soldier.)
+    let covered = matches!(hat, Some("hood" | "archer" | "turban" | "headwrap" | "warhelm" | "helm"));
+    // Under a cap / helmet / brim only the crop (or the bald fringe) — a fringe or a long mane
+    // would poke through the headgear's front.
+    let hair_style = match hair_style {
+        "bald" if kid => "crop",
+        "bald" => "bald",
+        _ if hat.is_some() => "crop",
+        s => s,
+    };
+    let beard = match () {
+        _ if kid => None,
+        _ if kind == Woodcutter => beard.or(Some("full")),
+        _ if desert => beard.or(Some("short")),
+        _ => beard,
+    };
+    let face = if kid { "kid" } else { face };
+
+    // Region palette (order = people.py: SKIN, LIP, EYE, HAIR, TUNIC, TRIM, TROUSER, LEATHER, BOOT,
+    // METAL, HEADCLOTH, BAND, TABARD, FLETCH, CLOAK, HELM).
+    let (metal, metal_surf) = match kind {
+        Guard if desert => (DESERT_ARMOR, Surf::Scale), // sun-bleached lamellar, not steel
+        Guard => (PLATE, Surf::Metal),
+        _ => (IRON, Surf::Metal),
+    };
+    let headcloth = match hat {
+        Some("straw") => STRAW,
+        Some("turban" | "warhelm" | "headwrap") => DESERT_CLOTH,
+        Some("archer") => LEATHER,
+        _ => hood,
+    };
+    let band = match kind {
+        _ if desert => DESERT_BAND,
+        Archer => ARCHER_BAND,
+        Farmer => LEATHER,
+        _ => mix_hex(hood, 0x000000, 0.45),
+    };
+    let tabard = match kind {
+        Guard if desert => LIVERY_CRIMSON,
+        Guard => LIVERY_BLUE,
+        _ => PATCH,
+    };
+    let (accent, accent_surf) = match kind {
+        Miner => (LAMP, Surf::Metal),
+        _ if desert => (DESERT_FLETCH, Surf::Cloth),
+        _ => (FLETCH, Surf::Cloth),
+    };
+    let c = |hex: u32, s: Surf| (lin(hex), s);
+    let palette = [
+        c(skin, Surf::Skin),
+        c(mix_hex(skin, 0x7a3a34, 0.4), Surf::Skin),
+        c(0x241a14, Surf::Skin),
+        c(HAIR_TONES[tone], Surf::Fur),
+        c(tunic, Surf::Cloth),
+        (crate::palette::lin_scaled(tunic, 0.62), Surf::Cloth),
+        c(trouser, Surf::Cloth),
+        c(LEATHER, Surf::Scale),
+        c(BOOT, Surf::Scale),
+        c(metal, metal_surf),
+        c(headcloth, Surf::Cloth),
+        c(band, Surf::Cloth),
+        c(tabard, Surf::Cloth),
+        c(accent, accent_surf),
+        c(DESERT_CLOAK, Surf::Cloth),
+        c(if desert { DESERT_BRONZE } else { PLATE }, Surf::Metal),
+    ];
+    // One joint's mesh = its base part with the add-ons merged in (any missing part → no kit body).
+    let part = |names: &[&str]| -> Option<Mesh> {
+        let (first, rest) = names.split_first()?;
+        let mut m = kit.creature_part(first, &palette)?;
+        for n in rest {
+            m.merge(&kit.creature_part(n, &palette)?).ok()?;
+        }
+        Some(m)
+    };
+
+    let mut head = vec![format!("hu_head_{face}")];
+    if !covered {
+        head.push(format!("hu_hair_{hair_style}"));
+    }
+    if let Some(b) = beard {
+        head.push(format!("hu_beard_{b}_{face}"));
+    }
+    if let Some(h) = hat {
+        head.push(format!("hu_hat_{h}"));
+    }
+    let head: Vec<&str> = head.iter().map(String::as_str).collect();
+
+    let mut torso = vec!["hu_torso"];
+    let mut hips = vec!["hu_hips"];
+    match kind {
+        // The farmer's apron is his trade mark (a desert farmer's thobe + turban do that job).
+        Farmer if !desert => {
+            torso.push("hu_torso_apron");
+            hips.push("hu_hips_apron");
+        }
+        Guard => {
+            torso.push("hu_torso_guard");
+            hips.push("hu_hips_tabard");
+        }
+        Archer => torso.push("hu_torso_archer"),
+        _ => {}
+    }
+    if desert {
+        torso.push("hu_torso_cloak");
+        if worker {
+            torso.push("hu_torso_sash");
+            hips.push("hu_hips_robe");
+        }
+    }
+    // Workers roll their sleeves up; soldiers and the desert folk keep them down; the idle vary.
+    let fore = match kind {
+        Guard => "sleeve",
+        Archer => "bare",
+        Unemployed if look % 2 == 1 => "sleeve",
+        _ if desert => "sleeve",
+        _ => "bare",
+    };
+    let (fore_l, fore_r) = (format!("hu_forearm_{fore}_l"), format!("hu_forearm_{fore}_r"));
+    let (shoulder_l, shoulder_r) = if kind == Guard {
+        (part(&["hu_upper_arm_l", "hu_pauldron_l"])?, part(&["hu_upper_arm_r", "hu_pauldron_r"])?)
+    } else {
+        (part(&["hu_upper_arm_l"])?, part(&["hu_upper_arm_r"])?)
+    };
+    let elbow_l = if kind == Archer && fore == "bare" { part(&[&fore_l, "hu_bracer_l"])? } else { part(&[&fore_l])? };
+    let (shin, foot) = if desert { ("hu_shin_wrap", "hu_foot_sandal") } else { ("hu_shin", "hu_foot") };
+    let (weapon, shield) = kit_tools(kit, kind, desert);
+    Some(BipedMeshes {
+        hips: part(&hips)?,
+        torso: part(&torso)?,
+        neck: part(&["hu_neck"])?,
+        head: part(&head)?,
+        shoulder_l,
+        shoulder_r,
+        elbow_l,
+        elbow_r: part(&[&fore_r])?,
+        hip_l: part(&["hu_thigh"])?,
+        hip_r: part(&["hu_thigh"])?,
+        knee_l: part(&[shin])?,
+        knee_r: part(&[shin])?,
+        foot_l: part(&[foot])?,
+        foot_r: part(&[foot])?,
+        weapon,
+        shield,
+        lion: None,
+    })
+}
+
+/// The sculpted trade tool (`Sword` pivot) + off-hand prop (`Shield` pivot) for `kind` from
+/// `people.glb` — same grip origins / frames as the box props in [`peasant_tools`], so every pose
+/// holds them identically. A slot whose part is missing falls back to the box prop. Tools carry
+/// their own palette (region order = people.py `T_*`: wood, iron, leather, accent, bronze, string).
+fn kit_tools(kit: &crate::realforest::Kit, kind: PeasantKind, desert: bool) -> (Option<Mesh>, Option<Mesh>) {
+    use PeasantKind::*;
+    let livery = if desert { LIVERY_CRIMSON } else { LIVERY_BLUE };
+    let (wood, accent) = match kind {
+        Archer => (BOW_WOOD, if desert { DESERT_FLETCH } else { FLETCH }),
+        _ => (WOOD, livery),
+    };
+    let palette = [
+        (lin(wood), Surf::Stone),
+        (lin(0xb4b9c2), Surf::Metal),
+        (lin(LEATHER), Surf::Scale),
+        (lin(accent), Surf::Cloth),
+        (lin(DESERT_BRONZE), Surf::Metal),
+        (lin(BOW_STRING), Surf::Cloth),
+    ];
+    let weapon = match kind {
+        Woodcutter => Some("hu_tool_axe"),
+        Miner => Some("hu_tool_pick"),
+        Farmer => Some("hu_tool_hoe"),
+        Guard if desert => Some("hu_tool_scimitar"),
+        Guard => Some("hu_tool_sword"),
+        Archer => Some("hu_tool_arrow"),
+        Unemployed => None,
+    };
+    let (box_weapon, box_shield) = peasant_tools(kind, desert);
+    let weapon = weapon.and_then(|n| kit.creature_part(n, &palette).or(box_weapon));
+    let shield = match kind {
+        // Built facing +Z; the same yaw as the box buckler counters the hero's edge-on carry.
+        Guard => kit.creature_part("hu_tool_shield", &palette).map(|m| m.rotated_by(Quat::from_rotation_y(1.15))).or(box_shield),
+        Archer => kit.creature_part("hu_tool_bow", &palette).or(box_shield),
+        _ => None,
+    };
+    (weapon, shield)
+}
+
+/// Build the per-joint peasant meshes for `kind` with the given body colours. `look` (any u32,
+/// used mod [`LOOKS`]) picks the face / hair / beard / everyday headgear of the realistic kit
+/// body; the box-built fallback ignores it.
+pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u32, kid: bool, desert: bool, look: u32) -> BipedMeshes {
+    if let Some(m) = kit_peasant_meshes(kind, skin, tunic, trouser, kid, desert, look) {
+        return m;
+    }
     use PeasantKind::*;
     // Surfaces: leather/wood-trim/straw/hair/patches read as matte Cloth; iron + the brass lamp as
     // Metal; skin/eyes/mouth as Skin. (WOOD here is a pale trim hue on tool hafts — flat Skin avoids
@@ -407,6 +701,40 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
         }
     };
 
+    let (weapon, shield) = peasant_tools(kind, desert);
+
+    BipedMeshes {
+        hips,
+        torso,
+        neck,
+        head,
+        shoulder_l: shoulder(),
+        shoulder_r: shoulder(),
+        elbow_l: elbow(archer), // bow arm gets the bracer
+        elbow_r: elbow(false),
+        hip_l: hip(),
+        hip_r: hip(),
+        knee_l: knee(),
+        knee_r: knee(),
+        foot_l: foot(),
+        foot_r: foot(),
+        weapon,
+        shield,
+        lion: None,
+    }
+}
+
+/// The trade tool on the right hand's `Sword` pivot + the off-hand (`Shield` pivot) prop for
+/// `kind` — shared by the box-built peasant above and the realistic kit body
+/// ([`kit_peasant_meshes`]), so both carry the exact same, rest-pose-tuned props.
+fn peasant_tools(kind: PeasantKind, desert: bool) -> (Option<Mesh>, Option<Mesh>) {
+    use PeasantKind::*;
+    let woodcutter = kind == Woodcutter;
+    let farmer = kind == Farmer;
+    let miner = kind == Miner;
+    let guard = kind == Guard;
+    let archer = kind == Archer;
+    let fletch = if desert { DESERT_FLETCH } else { FLETCH };
     // Tool on the right hand (built +Y in sword-local; the shared `Sword` rest rotation carries it).
     let weapon = if woodcutter {
         Some(group(vec![
@@ -534,23 +862,5 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
         None
     };
 
-    BipedMeshes {
-        hips,
-        torso,
-        neck,
-        head,
-        shoulder_l: shoulder(),
-        shoulder_r: shoulder(),
-        elbow_l: elbow(archer), // bow arm gets the bracer
-        elbow_r: elbow(false),
-        hip_l: hip(),
-        hip_r: hip(),
-        knee_l: knee(),
-        knee_r: knee(),
-        foot_l: foot(),
-        foot_r: foot(),
-        weapon,
-        shield,
-        lion: None,
-    }
+    (weapon, shield)
 }
