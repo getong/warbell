@@ -135,17 +135,45 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         // Skin / bone grain is fine; fur strands are finer still and laid on softly (a strong
         // strand map reads as wood grain on a hairy leg).
         let sc = creature.pbr.x * select(select(1.0, 2.2, layer == 0 || layer == 6), 3.0, layer == 1);
-        let alb = cd_tri(cd_alb, layer, obj, on, sc).rgb;
-        let orm = cd_tri(cd_ormh, layer, obj, on, sc);
-        let k = creature.pbr.z * select(1.0, 0.45, layer == 1);
-        let rgb = pbr_input.material.base_color.rgb * mix(vec3<f32>(1.0), alb * 2.0, k);
+        var alb = cd_tri(cd_alb, layer, obj, on, sc).rgb;
+        var orm = cd_tri(cd_ormh, layer, obj, on, sc);
+        var k = creature.pbr.z * select(1.0, 0.45, layer == 1);
+        var rgb = pbr_input.material.base_color.rgb;
+        var bump = creature.pbr.y;
+#ifdef VERTEX_UVS_A
+        // The animal kit (animals.glb) bakes FUR-FLOW coordinates into UV0 (u = around the part's
+        // axis + 16 as the flag, v = along the hair from root to tip). There the strand / clump
+        // layer is laid along the flow at full strength — oriented clumps read as a coat, where
+        // triplanar strands crossing a flank read as wood grain. Sampled unconditionally (uniform
+        // control flow) and selected.
+        let fuv = in.uv * 5.0;
+        let f_alb = textureSample(cd_alb, cd_s, fuv, 1).rgb;
+        // The height feeds a screen-space derivative bump: take it from a blurrier mip, or the
+        // per-2x2-quad derivatives of sub-pixel strands stipple the coat.
+        let f_orm = textureSampleBias(cd_ormh, cd_s, fuv, 1, 1.5);
+        if (layer == 1 && in.uv.x > 8.0) {
+            alb = f_alb;
+            orm = f_orm;
+            k = 1.0;
+            bump = bump * 0.45;
+            // Fur sheen: hair tips catch light at grazing angles (a soft brighter rim) and the
+            // coat's depth shows face-on (slightly darker) — the velvet cue that separates fur
+            // from smooth plush. (The coat's broad patchy drift is baked into the vertex tone: an
+            // object-space noise here would jump at every joint's mesh seam.)
+            let vdir = normalize(view.world_position.xyz - in.world_position.xyz);
+            let ndv = clamp(abs(dot(normalize(pbr_input.N), vdir)), 0.0, 1.0);
+            let rim = pow(1.0 - ndv, 3.0);
+            rgb = rgb * (0.88 + 0.5 * rim);
+        }
+#endif
+        rgb = rgb * mix(vec3<f32>(1.0), alb * 2.0, k);
         pbr_input.material.base_color = vec4<f32>(max(rgb, vec3<f32>(0.0)), 1.0);
         pbr_input.material.perceptual_roughness = clamp(mix(pbr_input.material.perceptual_roughness, orm.g, 0.7), 0.08, 1.0);
         if (layer == 4) {
             pbr_input.material.metallic = clamp(spec_lift, 0.0, 1.0);
         }
         pbr_input.diffuse_occlusion *= mix(1.0, orm.r, 0.6);
-        let d_h = vec2<f32>(dpdx(orm.a), dpdy(orm.a)) * creature.pbr.y;
+        let d_h = vec2<f32>(dpdx(orm.a), dpdy(orm.a)) * bump;
         pbr_input.N = ft_perturb(in.world_position.xyz, pbr_input.N, d_h);
     } else if (creature.pbr.w > 0.5) {
         let on = ft_obj_normal(m, pbr_input.N);

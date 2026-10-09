@@ -1196,6 +1196,7 @@ pub fn populate(
                 Species::Deer,
                 Species::PolarBear,
                 Species::Camel,
+                Species::Boar, // the brown bear (boar plan on the bear rig)
             ];
             for (i, sp) in line.iter().enumerate() {
                 if let (Some(plan), Some((_, tmpl))) = (
