@@ -43,10 +43,12 @@ pub fn config() -> BiomeConfig {
         },
 
         // Lush home woodland: soft blue sky, warm dappled sun, a green-tinged canopy-bounce fill.
-        sky: 0xaed3e6,
-        fog_density: 0.009, // clearest on the map — the open-island fog baseline
-        sun_color: 0xffe9bb,
-        sun_illuminance: 10_500.0,
+        // The realistic forest (`realforest`) wants a clean, bright summer sun and clear air: the
+        // scanned materials read photographic only under strong key light and crisp shadows.
+        sky: if crate::realforest::enabled() { 0x9fcbee } else { 0xaed3e6 },
+        fog_density: if crate::realforest::enabled() { 0.006 } else { 0.009 }, // clearest on the map
+        sun_color: if crate::realforest::enabled() { 0xfff0d2 } else { 0xffe9bb },
+        sun_illuminance: if crate::realforest::enabled() { 15_500.0 } else { 10_500.0 },
         ambient_color: 0xd8ecd6,
         ambient_brightness: 85.0,
         sun_pos: Vec3::new(16.0, 40.0, 10.0),

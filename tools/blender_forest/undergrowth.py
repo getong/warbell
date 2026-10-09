@@ -133,6 +133,13 @@ def grass(seed):
     return b
 
 
+def flowers(seed, rect_i, width):
+    rng = np.random.default_rng(seed)
+    b = Builder()
+    crossed(b, rng, [LAYOUT["flowers"][rect_i]], width, 2, (1.0, 1.0, 1.0), up_bias=0.55)
+    return b
+
+
 def stalks(seed):
     rng = np.random.default_rng(seed)
     b = Builder()
@@ -146,7 +153,11 @@ for name, fn, seed in [("fern_a", fern, 1), ("fern_b", fern, 2), ("fern_c", fern
                        ("grass_a", grass, 4), ("grass_b", grass, 5), ("grass_c", grass, 6),
                        ("grass_d", grass, 7), ("stalks_a", stalks, 8),
                        ("litter_a", lambda s: litter(s, 0), 9), ("litter_b", lambda s: litter(s, 1), 10),
-                       ("litter_c", lambda s: litter(s, 2), 11), ("litter_d", lambda s: litter(s, 3), 12)]:
+                       ("litter_c", lambda s: litter(s, 2), 11), ("litter_d", lambda s: litter(s, 3), 12),
+                       ("flower_daisy", lambda s: flowers(s, 0, 0.55), 13),
+                       ("flower_lupine_a", lambda s: flowers(s, 1, 0.38), 14),
+                       ("flower_lupine_b", lambda s: flowers(s, 2, 0.38), 15),
+                       ("flower_yellow", lambda s: flowers(s, 3, 0.5), 16)]:
     b = fn(seed)
     objs.append(b.build(name, ["undergrowth"]))
     report[name] = b.tris()

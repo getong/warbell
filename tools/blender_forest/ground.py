@@ -24,7 +24,7 @@ LAYERS = [
     # overcast-forest palette so the scans sit next to the existing biomes.
     ("litter", "forest_leaves_02", 0.65, 1.05),
     ("moss", "forrest_ground_01", 0.85, 1.0),
-    ("path", "forest_ground_04", 0.55, 0.95),
+    ("path", "forest_ground_04", 0.70, 0.78),
 ]
 
 for name, aid, sat, gain in LAYERS:

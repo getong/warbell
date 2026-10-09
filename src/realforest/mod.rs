@@ -161,6 +161,7 @@ impl Kit {
     pub fn passive_for(&self, class: usize, cover: bool, roll: f32, roll2: f32) -> Option<(usize, f32)> {
         const GRASS: [&str; 4] = ["grass_a", "grass_b", "grass_c", "grass_d"];
         const FERN: [&str; 3] = ["fern_a", "fern_b", "fern_c"];
+        const FLOWERS: [&str; 4] = ["flower_daisy", "flower_lupine_a", "flower_lupine_b", "flower_yellow"];
         const ROCKS: [&str; 13] = [
             "rock_01_a", "rock_01_b", "rock_01_c", "rock_01_d", "rock_01_e", "rock_01_f", "rock_02_a",
             "rock_02_b", "rock_02_c", "rock_02_d", "rock_02_e", "rock_02_f", "rock_02_g",
@@ -172,7 +173,8 @@ impl Kit {
                 1 if roll < 0.35 => m(&GRASS, 1.0),
                 1 if roll < 0.55 => m(&FERN, 0.85),
                 2 if roll < 0.25 => m(&["branches_a"], 0.5),
-                3 if roll < 0.45 => m(&["stalks_a"], 1.0),
+                3 if roll < 0.70 => m(&FLOWERS, 1.0),
+                3 => m(&["stalks_a"], 1.0),
                 4 => m(&FERN, 1.0),
                 5 if roll < 0.5 => m(&["branches_a"], 0.7),
                 5 => m(&ROCKS, 0.35),
@@ -252,6 +254,8 @@ impl Kit {
         const LITTER: [&str; 4] = ["litter_a", "litter_b", "litter_c", "litter_d"];
         const GRASS: [&str; 4] = ["grass_a", "grass_b", "grass_c", "grass_d"];
         const PEBBLES: [&str; 6] = ["rock_01_a", "rock_01_c", "rock_01_e", "rock_02_b", "rock_02_d", "rock_02_f"];
+        const FERN: [&str; 3] = ["fern_a", "fern_b", "fern_c"];
+        const FLOWERS: [&str; 4] = ["flower_daisy", "flower_lupine_a", "flower_lupine_b", "flower_yellow"];
         let mut gx = lo;
         while gx < hi {
             let mut gz = lo;
@@ -268,15 +272,26 @@ impl Kit {
                     let choice = if road > 0.55 {
                         None // trail centre stays clean (the path layer + ruts carry it)
                     } else if road > 0.12 {
-                        if c < 0.75 { pick(&GRASS, 0.75 + d * 0.4) } else { pick(&["stalks_a"], 0.9) }
+                        // Trail verge: the lush band a forest path grows along — grass, ferns, flowers.
+                        if c < 0.42 {
+                            pick(&GRASS, 0.8 + d * 0.5)
+                        } else if c < 0.68 {
+                            pick(&FLOWERS, 0.85 + d * 0.4)
+                        } else if c < 0.90 {
+                            pick(&FERN, 0.9 + d * 0.5)
+                        } else {
+                            pick(&["stalks_a"], 0.9)
+                        }
                     } else if c < 0.55 {
                         pick(&LITTER, 0.8 + d * 0.5)
                     } else if c < 0.67 && !crate::blockers::any_within(x, z, 0.35) {
                         pick(&PEBBLES, 0.12 + d * 0.16)
                     } else if c < 0.80 {
                         pick(&["branches_a"], 0.35 + d * 0.25)
-                    } else if c < 0.90 {
+                    } else if c < 0.86 {
                         pick(&GRASS, 0.6 + d * 0.3)
+                    } else if c < 0.93 {
+                        pick(&FERN, 0.8 + d * 0.5)
                     } else {
                         None
                     };

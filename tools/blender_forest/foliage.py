@@ -172,7 +172,7 @@ def broadleaf_spray(size=1024):
                    length=rng.uniform(100, 150) * size / 1024, squash=rng.uniform(0.6, 1.0),
                    tint=tint, tilt=rng.uniform(-0.45, 0.45), shade=0.62 + 0.38 * depth)
     rgba, nrm = cv.finish()
-    rgba[..., :3] = grade(rgba[..., :3], sat=1.05, gain=1.0)
+    rgba[..., :3] = grade(rgba[..., :3], sat=1.25, gain=1.08)
     return rgba, nrm
 
 
@@ -318,6 +318,74 @@ for i in range(4):
     ug[y:y + 512, x:x + 512] = rgba
     ug_n[y:y + 512, x:x + 512] = nrm * 0.5 + 0.5
     layout["undergrowth"]["litter"].append([x, y, 512, 512])
+
+
+
+# Wildflowers for path edges and clearings: drawn procedurally (stems, petals, florets) so the
+# forest gets the white / purple / yellow accents a lush woodland reads by.
+GREEN = (0.20, 0.34, 0.11)
+
+
+def blade(cv, lr, base, height, lean):
+    tip = (base[0] + lean, base[1] - height)
+    draw_capsule(cv, base, tip, 5, 1.2, tuple(c * lr.uniform(0.8, 1.15) for c in GREEN), nscale=0.6)
+
+
+def daisy_head(cv, lr, c, r, petal=(0.93, 0.93, 0.88), disc=(0.95, 0.72, 0.12), n=13):
+    a0 = lr.uniform(0, 6.3)
+    for k in range(n):
+        a = a0 + k * 2 * math.pi / n
+        tip = (c[0] + math.cos(a) * r, c[1] + math.sin(a) * r * 0.75)
+        col = tuple(v * lr.uniform(0.85, 1.0) for v in petal)
+        draw_capsule(cv, c, tip, r * 0.38, r * 0.22, col, nscale=0.4)
+    draw_capsule(cv, c, (c[0] + 0.5, c[1]), r * 0.55, r * 0.55, disc, nscale=0.8)
+
+
+def daisy_sprite(seed, size=512, petal=(0.93, 0.93, 0.88), disc=(0.95, 0.72, 0.12), r_px=(16, 24), n=13):
+    lr = np.random.default_rng(seed)
+    cv = Canvas(size, size)
+    for _ in range(9):
+        blade(cv, lr, (lr.uniform(0.2, 0.8) * size, size - 2), lr.uniform(0.15, 0.35) * size, lr.uniform(-40, 40))
+    for _ in range(8):
+        bx = lr.uniform(0.15, 0.85) * size
+        hx, hy = bx + lr.uniform(-30, 30), lr.uniform(0.12, 0.6) * size
+        draw_capsule(cv, (bx, size - 2), (hx, hy), 4, 2.5, GREEN, nscale=0.6)
+        daisy_head(cv, lr, (hx, hy), lr.uniform(*r_px), petal, disc, n)
+    rgba, nrm = cv.finish()
+    return rgba, nrm * 2 - 1
+
+
+def lupine_sprite(seed, w=256, h=512, col=(0.46, 0.32, 0.78)):
+    lr = np.random.default_rng(seed)
+    cv = Canvas(w, h)
+    for _ in range(7):
+        blade(cv, lr, (w * 0.5 + lr.uniform(-20, 20), h - 2), lr.uniform(0.12, 0.22) * h, lr.uniform(-70, 70))
+    top = h * 0.05
+    draw_capsule(cv, (w * 0.5, h - 2), (w * 0.52, top), 6, 3, GREEN, nscale=0.6)
+    n = 34
+    for k in range(n):
+        t = k / (n - 1)
+        y = h * 0.55 - t * (h * 0.55 - top - 8)
+        x = w * 0.5 + (w * 0.02) * t
+        size = 26 * (1.0 - 0.6 * t)
+        side = -1 if k % 2 else 1
+        c = tuple(v * lr.uniform(0.8, 1.1) * (0.85 + 0.25 * t) for v in col)
+        draw_capsule(cv, (x, y), (x + side * size, y - size * 0.25), size * 0.6, size * 0.4, c, nscale=0.7)
+    rgba, nrm = cv.finish()
+    return rgba, nrm * 2 - 1
+
+
+layout["undergrowth"]["flowers"] = []
+for i, (rgba, nrm, cell) in enumerate([
+    (*daisy_sprite(201), (0, 1536, 512, 512)),
+    (*lupine_sprite(202), (512, 1536, 256, 512)),
+    (*lupine_sprite(203, col=(0.62, 0.36, 0.72)), (768, 1536, 256, 512)),
+    (*daisy_sprite(204, petal=(0.98, 0.82, 0.12), disc=(0.85, 0.55, 0.08), r_px=(9, 13), n=6), (1024, 1536, 512, 512)),
+]):
+    x, y, cw, ch = cell
+    ug[y:y + ch, x:x + cw] = rgba
+    ug_n[y:y + ch, x:x + cw] = nrm * 0.5 + 0.5
+    layout["undergrowth"]["flowers"].append([x, y, cw, ch])
 
 ug[..., 3] = np.where(ug[..., 3] > 0.04, ug[..., 3], 0.0)
 ug[..., :3] = grade(bleed_alpha(ug[..., :3], ug[..., 3]), sat=1.05, gain=0.95)

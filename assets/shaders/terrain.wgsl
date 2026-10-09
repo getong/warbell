@@ -504,6 +504,14 @@ fn fragment(
         alb *= 1.0 - 0.4 * self_shadow;
         alb *= 1.0 - 0.35 * fmask.b;
         alb *= 1.0 - 0.45 * rut * rut_wear;
+        // Wet mud + puddles on the trail: the path layer darkens toward damp earth, and water
+        // pools in its LOW texels (height below a noise-varied water line, deeper in the ruts).
+        // Puddles are near-black, glassy and flat, so the IBL sky and sun glint off them.
+        let damp = w.z * (0.55 + 0.45 * ter_noise(wp * 0.11 + vec2<f32>(41.0, 7.0)));
+        alb *= 1.0 - 0.32 * damp;
+        let water_line = smoothstep(0.55, 0.85, ter_noise(wp * 0.16 + vec2<f32>(13.0, 57.0))) * 0.55 + rut * 0.35;
+        let puddle = clamp((water_line - hit_h) * 9.0, 0.0, 1.0) * w.z * smoothstep(0.35, 0.6, path);
+        alb = mix(alb, alb * 0.30, puddle);
         rgb = mix(rgb, alb, fp_w);
         // Tangent frame of the planar XZ mapping: u runs along +X, v along +Z, and an OpenGL
         // normal map's +Y (image up = decreasing v) therefore points toward -Z.
@@ -511,9 +519,9 @@ fn fragment(
         let tx = normalize(vec3<f32>(1.0, 0.0, 0.0) - gn * gn.x);
         let bz = cross(gn, tx);
         let n_ts = vec3<f32>(nts.xy * 1.7, max(nts.z, 0.2));
-        fp_nw = normalize(tx * n_ts.x + bz * n_ts.y + gn * n_ts.z);
+        fp_nw = normalize(mix(tx * n_ts.x + bz * n_ts.y + gn * n_ts.z, gn, puddle));
         fp_ao = orm.r;
-        fp_rough = orm.g * mix(1.0, 0.62, rut * rut_wear);
+        fp_rough = mix(orm.g * mix(1.0, 0.62, rut * rut_wear) * (1.0 - 0.35 * damp), 0.05, puddle);
     }
 
     // Clamp alpha ≥ 0 on write-back: the negative cliffness flag has served its purpose and
