@@ -107,11 +107,27 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // hero's stocky rig scale): divide each local axis by its own length² (uniform scale ⇒ identical
     // to the old single-divide, so creatures are unaffected). Stops the texture warping/artifacts.
     let lp = transpose(m) * (in.world_position.xyz - origin);
-    let obj = vec3<f32>(
+    var obj = vec3<f32>(
         lp.x / max(dot(m[0], m[0]), 1e-5),
         lp.y / max(dot(m[1], m[1]), 1e-5),
         lp.z / max(dot(m[2], m[2]), 1e-5),
     );
+    // Triplanar projection normal (object space).
+    var on = ft_obj_normal(m, pbr_input.N);
+#ifdef VERTEX_UVS_A
+#ifdef VERTEX_UVS_B
+    // GPU-SKINNED bodies (the townsfolk, `peasant_model::skinned_body`) carry their REST-pose
+    // position in UV0.xy + UV1.x, flagged by UV1.y = 64: texture in that space so the detail layers
+    // ride a bending limb instead of swimming through it, and weight the projections by the
+    // rest-space facet normal (the skinned normal has turned with the limb). Derivatives are taken
+    // unconditionally (uniform control flow) and selected.
+    let rest = vec3<f32>(in.uv.x, in.uv.y, in.uv_b.x);
+    let rest_n = cross(dpdx(rest), dpdy(rest));
+    let skinned = in.uv_b.y > 32.0;
+    obj = select(obj, rest, skinned);
+    on = select(on, normalize(rest_n + vec3<f32>(1e-7, 0.0, 0.0)), skinned);
+#endif
+#endif
 
 #ifdef VERTEX_COLORS
     let surf = in.color.a;        // surface code (see Surf::surf_code)
@@ -131,7 +147,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         if (surf > 0.965) {
             layer = 0;
         }
-        let on = ft_obj_normal(m, pbr_input.N);
+        // (`on` / `obj`: the projection frame chosen above — rest pose for skinned bodies.)
         // Skin / bone grain is fine; fur strands are finer still and laid on softly (a strong
         // strand map reads as wood grain on a hairy leg).
         let sc = creature.pbr.x * select(select(1.0, 2.2, layer == 0 || layer == 6), 3.0, layer == 1);

@@ -555,7 +555,12 @@ fn spawn_viewer_peasant(
     let tris = |o: &Mesh| o.indices().map_or(o.count_vertices(), |i| i.len()) / 3;
     let body = [&m.hips, &m.torso, &m.neck, &m.head, &m.shoulder_l, &m.shoulder_r, &m.elbow_l, &m.elbow_r, &m.hip_l, &m.hip_r, &m.knee_l, &m.knee_r, &m.foot_l, &m.foot_r];
     let props = [&m.weapon, &m.shield].into_iter().flatten().map(tris).sum::<usize>();
-    info!("viewer person {kind:?} look {look} desert {desert} kid {kid}: {} body tris + {props} prop tris", body.into_iter().map(tris).sum::<usize>());
+    let skinned = m.skin.as_ref().map_or(0, tris);
+    info!(
+        "viewer person {kind:?} look {look} desert {desert} kid {kid}: {} body tris{} + {props} prop tris",
+        body.into_iter().map(tris).sum::<usize>() + skinned,
+        if m.skin.is_some() { " (skinned)" } else { "" }
+    );
     let h = m.upload(meshes);
     // A kid is the same body scaled down (villagers::KID_SCALE / SCALE) on its own biped root.
     let body = if kid {

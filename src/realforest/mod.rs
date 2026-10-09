@@ -317,6 +317,28 @@ impl Kit {
         Some(mesh)
     }
 
+    /// [`Self::creature_part`] for the townsfolk pieces (people.glb): vertex colour B is a baked
+    /// WEATHERING amount (ruddy cheeks and knuckles, grimy hems and knees, dusty boots) that pulls
+    /// each region's colour toward `palette[region] * weather[region]`. UV0 / UV1 (the skin
+    /// weights) are kept for `peasant_model` to decode.
+    pub fn people_part(&self, name: &str, palette: &[([f32; 4], crate::creature::Surf)], weather: &[[f32; 3]]) -> Option<Mesh> {
+        use bevy::mesh::VertexAttributeValues;
+        let m = self.model(name)?;
+        let mut mesh = self.models[m].parts.first()?.mesh.clone();
+        if let Some(VertexAttributeValues::Float32x4(cols)) = mesh.attribute_mut(Mesh::ATTRIBUTE_COLOR) {
+            for c in cols.iter_mut() {
+                let region = ((c[0] * 16.0).floor() as usize).min(palette.len().saturating_sub(1));
+                let (rgb, surf) = palette[region];
+                let w = weather.get(region).copied().unwrap_or([1.0; 3]);
+                let (cav, t) = (c[1], c[2].clamp(0.0, 1.0));
+                let k = |i: usize| rgb[i] * (1.0 + (w[i] - 1.0) * t) * cav;
+                *c = [k(0), k(1), k(2), crate::creature::surf_code(surf)];
+            }
+        }
+        mesh.remove_attribute(Mesh::ATTRIBUTE_TANGENT);
+        Some(mesh)
+    }
+
     /// A recoloured CPU copy of animal part `name` (animals.glb, `tools/blender_forest/animals.py`).
     /// Vertex colour R = region (region/16), G = baked cavity / AO, B = coat TONE, A = coat TINT.
     /// Region 0 is fur: its colour walks the `coat` ramp by tone (0 = `coat[0]` dark saddle /
