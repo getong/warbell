@@ -35,6 +35,10 @@ pub const LOD_NEAR: f32 = 30.0;
 const LOD_BAND: f32 = 2.0;
 /// Far cull, same as the low-poly trees (fog has them by then).
 const TREE_FAR: f32 = 180.0;
+/// A kit prop only blocks when it's at least this tall (scaled, ~knee height on the 1.3u hero)…
+const SOLID_MIN_H: f32 = 0.35;
+/// …and this wide (half-extent).
+const SOLID_MIN_R: f32 = 0.25;
 /// Kit trees are modelled at real proportions (4-6u); the forest scatter's per-class scale ranges
 /// were tuned for the ~1.5u low-poly trees. This brings a kit tree to ~2x the old tree's height
 /// (3-6u canopy, 6.5-8u old-growth giants) so the forest keeps its gameplay readability.
@@ -115,6 +119,8 @@ pub struct Model {
     pub trunk: f32,
     /// Rocks / logs / stumps: you walk around them, not through.
     pub solid: bool,
+    /// Top of the model above its base (unscaled).
+    pub height: f32,
 }
 
 pub struct GroundTextures {
@@ -260,16 +266,29 @@ impl Kit {
         (self.models[lod0].trunk * TREE_MODEL_SCALE * s).clamp(0.08, 0.8)
     }
 
-    /// Register the collision footprint of a solid kit prop (rock / log / stump) as an oriented
-    /// box sized from the model itself. Returns false for walk-through props (plants, twigs).
+    /// Register the collision of a solid kit prop (rock / stump) — only when it is a real obstacle:
+    /// at least [`SOLID_MIN_H`] tall (you step over anything lower — pebbles, twigs, lying logs)
+    /// and [`SOLID_MIN_R`] across. The shape is circles, not a box: one for a roundish rock, a row
+    /// along the long axis for an elongated one, so the hero's obstacle assist slides him round it
+    /// (boxes stop him dead on a diagonal). Returns false for walk-through props.
     pub fn register_solid(&self, model: usize, x: f32, z: f32, scale: f32, rot: Quat) -> bool {
         let m = &self.models[model];
-        let half = m.half * scale * 0.85;
-        if !m.solid || half.max_element() < 0.18 {
+        let half = m.half * scale;
+        if !m.solid || m.height * scale < SOLID_MIN_H || half.max_element() < SOLID_MIN_R {
             return false;
         }
-        let (yaw, _, _) = rot.to_euler(EulerRot::YXZ);
-        crate::blockers::add_obb(x, z, half.x, half.y, yaw);
+        let (major, minor, along) = if half.x >= half.y {
+            (half.x, half.y, rot * Vec3::X)
+        } else {
+            (half.y, half.x, rot * Vec3::Z)
+        };
+        let r = (minor * 0.8).clamp(0.12, 0.95);
+        let reach = (major * 0.85 - r).max(0.0);
+        let n = (reach / r).ceil() as i32;
+        for k in -n..=n {
+            let t = if n == 0 { 0.0 } else { k as f32 / n as f32 * reach };
+            crate::blockers::add(x + along.x * t, z + along.z * t, r);
+        }
         true
     }
 
@@ -763,10 +782,13 @@ fn try_build(
                 .into_iter()
                 .map(|(mesh, mat)| Part { handle: meshes.add(mesh.clone()), mesh, mat })
                 .collect();
-            let (half, trunk) = model_extents(&parts, &mats);
+            let (half, trunk, height) = model_extents(&parts, &mats);
             let solid = ["rock_", "log_", "stump_"].iter().any(|p| name.starts_with(p));
+            if std::env::var("FOREST_KITDUMP").is_ok() {
+                info!("kit model {name}: half {:.2}x{:.2} height {:.2} trunk {:.2}", half.x, half.y, height, trunk);
+            }
             by_name.insert(name, models.len());
-            models.push(Model { parts, half, trunk, solid });
+            models.push(Model { parts, half, trunk, solid, height });
         }
     }
     let ground = GroundTextures {
@@ -788,20 +810,21 @@ fn try_build(
 
 /// (XZ half-extent, trunk-base radius) of a model from its CPU meshes. The trunk radius is the
 /// widest bark vertex below 0.3u (root flare included) — the kit trees' only plain-PBR part.
-fn model_extents(parts: &[Part], mats: &[KitMat]) -> (Vec2, f32) {
+fn model_extents(parts: &[Part], mats: &[KitMat]) -> (Vec2, f32, f32) {
     use bevy::mesh::VertexAttributeValues;
-    let (mut half, mut trunk) = (Vec2::ZERO, 0.0f32);
+    let (mut half, mut trunk, mut height) = (Vec2::ZERO, 0.0f32, 0.0f32);
     for part in parts {
         let Some(VertexAttributeValues::Float32x3(p)) = part.mesh.attribute(Mesh::ATTRIBUTE_POSITION) else { continue };
         let bark = matches!(mats[part.mat], KitMat::Std(_)) && MATERIALS[part.mat].0.starts_with("bark_");
         for v in p {
             half = half.max(Vec2::new(v[0].abs(), v[2].abs()));
+            height = height.max(v[1]);
             if bark && v[1] < 0.3 {
                 trunk = trunk.max((v[0] * v[0] + v[2] * v[2]).sqrt());
             }
         }
     }
-    (half, trunk)
+    (half, trunk, height)
 }
 
 /// Ground layers, in texture-array order (`terrain.wgsl` indexes them 0/1/2).

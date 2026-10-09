@@ -39,6 +39,8 @@ use bevy::light::{CascadeShadowConfig, DirectionalLight, DirectionalLightShadowM
 use bevy::pbr::{ContactShadows, ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel};
 use bevy::post_process::bloom::Bloom;
 use bevy::post_process::effect_stack::{ChromaticAberration, Vignette};
+use bevy::light::ShadowFilteringMethod;
+use bevy::post_process::auto_exposure::{AutoExposure, AutoExposureCompensationCurve};
 use bevy::post_process::motion_blur::MotionBlur;
 use bevy::prelude::*;
 use bevy::render::renderer::RenderAdapterInfo;
@@ -238,6 +240,14 @@ pub struct GraphicsSettings {
     /// Forest undergrowth density. `#[serde(default)]` = Medium for configs saved before it existed.
     #[serde(default)]
     pub undergrowth: Undergrowth,
+    /// Eye adaptation: histogram auto-exposure that nudges the authored exposure up to +-1 stop
+    /// (deep forest shade <-> open glade) without flattening night into day.
+    #[serde(default = "default_true")]
+    pub eye_adaptation: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for GraphicsSettings {
@@ -264,9 +274,12 @@ pub fn preset_settings(quality: GraphicsQuality) -> GraphicsSettings {
             depth_of_field: true,
             outline: false, // crisp toon edges off by default (user preference)
             god_rays: true, // screen-space light shafts (godrays.rs) — cheap, so High carries them too
-            motion_blur: false, // opt-in only — see the field doc
+            // A real-shutter camera blur (180 deg): what makes motion read as one continuous image
+            // instead of a stack of razor-sharp frames. ~0.3 ms; the vector prepass is always on.
+            motion_blur: true,
             render_scale: 1.0,
             undergrowth: Undergrowth::Medium,
+            eye_adaptation: true,
         },
         GraphicsQuality::Ultra => GraphicsSettings {
             shadows: ShadowLevel::High, // 4096 / 4 cascades / 190 reach
@@ -277,10 +290,11 @@ pub fn preset_settings(quality: GraphicsQuality) -> GraphicsSettings {
             depth_of_field: true,
             outline: false, // crisp toon edges off by default (user preference)
             god_rays: true,
-            motion_blur: false,
+            motion_blur: true,
             // Native: TAA does the edge-AA the old 2x SSAA bought at 4x the fragment cost.
             render_scale: 1.0,
             undergrowth: Undergrowth::High,
+            eye_adaptation: true,
         },
         // Low: tuned for integrated GPUs — SSAO/bloom/DoF/outline off (each strips a whole pass),
         // 2 small shadow cascades, the cheap terrain lane, and a 0.6 render-scale (the big
@@ -297,8 +311,34 @@ pub fn preset_settings(quality: GraphicsQuality) -> GraphicsSettings {
             motion_blur: false,
             render_scale: 0.6,
             undergrowth: Undergrowth::Low,
+            eye_adaptation: false,
         },
         GraphicsQuality::Custom => preset_settings(GraphicsQuality::High),
+    }
+}
+
+/// The eye-adaptation compensation curve. Bevy's auto exposure drives the frame's average
+/// log-luminance `L` to the curve value: `correction = curve(L) - L`. This curve keeps the
+/// correction inside +-`range` stops around the authored look's average `ref`: flat at `ref`
+/// across `ref +- range` (full adaptation inside that band), slope 1 outside it (no further
+/// correction), so a dim forest interior lifts and a bright glade settles a little while night
+/// stays night. `FOREST_AE_REF` / `FOREST_AE_RANGE` tune it.
+#[derive(Resource)]
+pub struct EyeAdaptationCurve(pub Handle<AutoExposureCompensationCurve>);
+
+fn build_eye_adaptation_curve(mut commands: Commands, mut curves: ResMut<Assets<AutoExposureCompensationCurve>>) {
+    let env = |k: &str, d: f32| std::env::var(k).ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(d);
+    let (r, a) = (env("FOREST_AE_REF", -1.2), env("FOREST_AE_RANGE", 1.0));
+    // `FOREST_AE=0` (or a degenerate range) = no curve = eye adaptation unavailable (A/B).
+    if a < 0.05 || std::env::var("FOREST_AE").is_ok_and(|v| v == "0") {
+        return;
+    }
+    let pts = [Vec2::new(-12.0, -12.0 + a), Vec2::new(r - a, r), Vec2::new(r + a, r), Vec2::new(8.0, 8.0 - a)];
+    match AutoExposureCompensationCurve::from_curve(bevy::math::cubic_splines::LinearSpline::new(pts)) {
+        Ok(c) => {
+            commands.insert_resource(EyeAdaptationCurve(curves.add(c)));
+        }
+        Err(e) => warn!("eye adaptation curve: {e}"),
     }
 }
 
@@ -353,6 +393,8 @@ impl Plugin for QualityPlugin {
             // inserted RenderAdapterInfo into the main world. Overwrites the default only when no
             // env override / saved config locked the preset and the adapter is a weak device type.
             .add_systems(Startup, detect_adapter_quality)
+            .add_plugins(bevy::post_process::auto_exposure::AutoExposurePlugin) // not in DefaultPlugins
+            .add_systems(PreStartup, build_eye_adaptation_curve)
             // Weak-GPU stability: drop Bevy 0.19's GPU light-clustering readback (crash-prone under
             // device loss + a per-frame GPU→CPU stall). Runs before the first render extract.
             .add_systems(Startup, disable_gpu_clustering_on_weak_gpu)
@@ -565,6 +607,7 @@ fn apply_quality(
     mut cascades: Query<&mut CascadeShadowConfig>,
     mut shadowmap: ResMut<DirectionalLightShadowMap>,
     mut terrain_mats: ResMut<Assets<TerrainMaterial>>,
+    ae_curve: Option<Res<EyeAdaptationCurve>>,
 ) {
     // Snapshot the authored render values the first time we run (before any preset is applied,
     // so the live components still hold the scene defaults — even when FOREST_QUALITY starts the
@@ -688,10 +731,33 @@ fn apply_quality(
         // always-present texture, same as the outline/DoF effect toggles. Shutter > 0.5 over-blurs
         // past a true 24fps shutter on purpose — a clearly-visible artistic blur when enabled.
         if s.motion_blur {
-            e.insert(MotionBlur { shutter_angle: 1.0, samples: 2 });
+            // 180 deg shutter (film standard): natural smear on camera turns and fast movers.
+            e.insert(MotionBlur { shutter_angle: 0.5, samples: 3 });
         } else {
             e.remove::<MotionBlur>();
         }
+
+        // Eye adaptation (see `EyeAdaptationCurve`): limited +-1-stop histogram auto-exposure.
+        match (s.eye_adaptation, ae_curve.as_ref()) {
+            (true, Some(curve)) => {
+                e.insert(AutoExposure {
+                    range: -10.0..=6.0,
+                    filter: 0.25..=0.85,
+                    speed_brighten: 1.2,
+                    speed_darken: 0.9,
+                    exponential_transition_distance: 1.0,
+                    compensation_curve: curve.0.clone(),
+                    ..default()
+                });
+            }
+            _ => {
+                e.remove::<AutoExposure>();
+            }
+        }
+
+        // Shadow filtering: with TAA the temporal filter resolves soft, stable penumbrae (leaf
+        // shadows no longer crawl); otherwise the 9-tap Gaussian.
+        e.insert(if taa { ShadowFilteringMethod::Temporal } else { ShadowFilteringMethod::Gaussian });
 
         // Normal prepass: dead weight when nothing consumes it (SSAO + outline both off), so drop it.
         if normal_prepass {

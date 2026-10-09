@@ -140,7 +140,7 @@ impl AtmoSample {
                 Biome::Swamp => 1.75,
                 // The realistic forest (`realforest`) has a closed leaf canopy: away from the trails
                 // the floor sees no sun at all, so without a lift it crushes to near-black.
-                Biome::Forest if crate::realforest::get().is_some() => 3.6,
+                Biome::Forest if crate::realforest::get().is_some() => 2.6,
                 _ => 1.0,
             },
         }

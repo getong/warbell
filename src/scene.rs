@@ -655,7 +655,10 @@ fn setup_camera(
         cam_tf,
         Hdr,
         Exposure { ev100: 10.85 },
-        Tonemapping::AgX,
+        // TonyMcMapface (was AgX): neutral with natural highlight roll-off, but keeps saturation;
+        // AgX's built-in desaturation was a big part of the washed-out, flat read.
+        // `FOREST_TONEMAP=agx` restores the old curve (A/B).
+        if std::env::var("FOREST_TONEMAP").is_ok_and(|v| v == "agx") { Tonemapping::AgX } else { Tonemapping::TonyMcMapface },
         // SSAO + SMAA path (mutually exclusive with MSAA). Bevy's built-in DepthOfField is
         // gone — it silently no-op'd next to SSAO and only did a single focal plane. Depth
         // blur is now our own bokeh DoF post pass (`dof.rs`), which only READS the prepass

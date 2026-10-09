@@ -338,9 +338,11 @@ fn gait_at(v: f32) -> Gait {
     let k = |w: f32, j: f32, s: f32| lerp(lerp(w, j, run), s, sprint);
     Gait {
         sweep: k(walk_sweep, 0.78, 0.86),
-        front: k(0.44, 0.36, 0.30),
-        duty: k(0.6, 0.28, 0.22),
-        toe_off: k(0.38, 0.55, 0.75),
+        // Land closer in front / push off less far behind than a track sprinter: an armoured
+        // runner, not a 100 m dash (the trailing leg reading as a butt-kick drill).
+        front: k(0.44, 0.42, 0.40),
+        duty: k(0.6, 0.30, 0.25),
+        toe_off: k(0.38, 0.42, 0.52),
         strike: k(-0.22, -0.08, 0.0),
         run,
         sprint,
@@ -391,7 +393,9 @@ fn leg_track(u: f32, g: &Gait) -> (f32, f32, f32, f32) {
 fn swing_leg(s: f32, g: &Gait, off: (f32, f32), strike: (f32, f32)) -> (f32, f32) {
     let k = |w: f32, j: f32, sp: f32| lerp(lerp(w, j, g.run), sp, g.sprint).to_radians();
     let thigh = [off.0, k(8.0, 5.0, 12.0), k(22.0, 30.0, 48.0), k(28.0, 46.0, 68.0), strike.0];
-    let knee = [off.1, k(58.0, 88.0, 118.0), k(48.0, 92.0, 115.0), k(16.0, 50.0, 58.0), strike.1];
+    // Knee fold in the swing kept moderate (jog ≈70°, sprint ≈85°): the gait-lab peaks (90–120°)
+    // read as heels kicking the backside on this armoured figure.
+    let knee = [off.1, k(58.0, 68.0, 82.0), k(48.0, 70.0, 86.0), k(16.0, 40.0, 46.0), strike.1];
     let ends = |v: &[f32; 5]| ((v[1] - v[0]) / 0.25, (v[4] - v[3]) / 0.25);
     let (ts, te) = ends(&thigh);
     let (ks, ke) = ends(&knee);
@@ -603,7 +607,9 @@ fn footman_gait(c: f32, speed: f32, armed: f32) -> Pose {
     // Shield arm: a shield is CARRIED, not pumped — elbow held near 90° with the board upright on
     // the outside of the forearm, riding the stride with only a small swing (pumping it flailed
     // the board and drove it through the fist and thigh).
-    let (sl, el) = arm(-arm_swing, -late, -1.0, lerp(0.85, 0.3, run), 0.0, 0.0, lerp(0.0, 0.1, run), lerp(0.2, 1.0, run));
+    // (Fully fixed elbow + a near-dead shoulder read as a stiff, wrong-looking arm: keep a relaxed
+    // half-pump with some elbow give, the board tucked closer to the body.)
+    let (sl, el) = arm(-arm_swing, -late, -1.0, lerp(0.85, 0.5, run), 0.0, 0.15, lerp(0.0, 0.05, run), lerp(0.2, 0.6, run));
     // The shoulder girdle travels with its arm (forward + a hair up on the front swing, back on
     // the back swing) instead of the arm pivoting about a bolted-down socket.
     let girdle = |rest: Vec3, fwd: f32| {

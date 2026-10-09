@@ -50,10 +50,11 @@ const ACCEL: f32 = 14.0;
 const GAIT_FULL_SPEED: f32 = 1.0;
 const DECEL: f32 = 9.0;
 pub(super) const PLAYER_R: f32 = 0.22;
-/// How far outside a trunk's collision shell the player starts getting a gentle steer assist.
-const OBSTACLE_ASSIST_SENSE: f32 = 0.55;
-/// Max sideways bias mixed into raw input near a trunk. Kept low so it helps a snag, not drives.
-const OBSTACLE_ASSIST_TANGENT: f32 = 0.26;
+/// How far outside a trunk's / rock's collision shell the player starts getting the steer assist.
+const OBSTACLE_ASSIST_SENSE: f32 = 0.7;
+/// Sideways bias mixed into the input near an obstacle (on top of removing the into-obstacle
+/// component), so a run straight at a trunk or boulder curves round it instead of stopping.
+const OBSTACLE_ASSIST_TANGENT: f32 = 0.45;
 /// Tiny outward bias so the player separates from bark while the tangent finds a slide path.
 const OBSTACLE_ASSIST_OUTWARD: f32 = 0.06;
 /// Walking down a terrace drops the ground a full height class (`worldmap::GROUND_STEP` 0.5) under
@@ -145,7 +146,10 @@ fn obstacle_assisted_dir(pos: Vec2, input_dir: Vec2, current_vel: Vec2) -> Vec2 
     if tangent.dot(continuity) < 0.0 {
         tangent = -tangent;
     }
-    (input_dir
+    // Strip the part of the input that drives INTO the obstacle (fully at the shell, fading out
+    // across the sense band), then lean along the tangent: the hero flows round the blocker.
+    let into = input_dir.dot(away_dir);
+    (input_dir - away_dir * (into * strength)
         + tangent * (OBSTACLE_ASSIST_TANGENT * strength)
         + away_dir * (OBSTACLE_ASSIST_OUTWARD * strength))
         .normalize_or_zero()
