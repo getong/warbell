@@ -140,6 +140,14 @@ def flowers(seed, rect_i, width):
     return b
 
 
+def lush(seed):
+    """Carpet tuft: three crossed cards of fresh green blades, ~0.9u wide, normals mostly up."""
+    rng = np.random.default_rng(seed)
+    b = Builder()
+    crossed(b, rng, LAYOUT["lush"], rng.uniform(0.8, 1.0), 3, (1.0, 1.0, 1.0), up_bias=0.75)
+    return b
+
+
 def stalks(seed):
     rng = np.random.default_rng(seed)
     b = Builder()
@@ -157,7 +165,8 @@ for name, fn, seed in [("fern_a", fern, 1), ("fern_b", fern, 2), ("fern_c", fern
                        ("flower_daisy", lambda s: flowers(s, 0, 0.55), 13),
                        ("flower_lupine_a", lambda s: flowers(s, 1, 0.38), 14),
                        ("flower_lupine_b", lambda s: flowers(s, 2, 0.38), 15),
-                       ("flower_yellow", lambda s: flowers(s, 3, 0.5), 16)]:
+                       ("flower_yellow", lambda s: flowers(s, 3, 0.5), 16),
+                       ("lush_a", lush, 17), ("lush_b", lush, 18), ("lush_c", lush, 19)]:
     b = fn(seed)
     objs.append(b.build(name, ["undergrowth"]))
     report[name] = b.tris()

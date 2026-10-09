@@ -375,6 +375,34 @@ def lupine_sprite(seed, w=256, h=512, col=(0.46, 0.32, 0.78)):
     return rgba, nrm * 2 - 1
 
 
+def lush_grass_sprite(seed, w=512, h=256):
+    """A dense tuft of fresh green blades (drawn, not scanned): the carpet layer. Blades are
+    tapered capsules fanning from a base line, dark at the root, sun-yellowed at the tips."""
+    lr = np.random.default_rng(seed)
+    cv = Canvas(w, h)
+    n = 150
+    for i in range(n):
+        bx = lr.uniform(0.08, 0.92) * w
+        tall = lr.uniform(0.45, 0.97) * h
+        lean = lr.normal() * 0.18 * h + (bx - w / 2) * 0.25
+        g = lr.uniform(0, 1)
+        col = np.array([0.16 + 0.18 * g, 0.36 + 0.20 * g, 0.07 + 0.06 * g]) * (0.7 + 0.45 * i / n)
+        mid = (bx + lean * 0.4, h - 1 - tall * 0.55)
+        tip = (bx + lean, h - 1 - tall)
+        draw_capsule(cv, (bx, h - 1), mid, 7, 5, col * 0.8, nscale=0.6)
+        draw_capsule(cv, mid, tip, 5, 1.0, col, nscale=0.6)
+    rgba, nrm = cv.finish()
+    return rgba, nrm * 2 - 1
+
+
+layout["undergrowth"]["lush"] = []
+for seed, cell in [(301, (1536, 1536, 512, 256)), (302, (1536, 1792, 512, 256)), (303, (1024, 768, 512, 256))]:
+    rgba, nrm = lush_grass_sprite(seed)
+    x, y, cw, ch = cell
+    ug[y:y + ch, x:x + cw] = rgba
+    ug_n[y:y + ch, x:x + cw] = nrm * 0.5 + 0.5
+    layout["undergrowth"]["lush"].append([x, y, cw, ch])
+
 layout["undergrowth"]["flowers"] = []
 for i, (rgba, nrm, cell) in enumerate([
     (*daisy_sprite(201), (0, 1536, 512, 512)),

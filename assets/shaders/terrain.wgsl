@@ -413,7 +413,9 @@ fn fragment(
         let centre_strip = smoothstep(0.88, 0.97, fmask.g) * (1.0 - smoothstep(0.05, 0.3, rut)) * 0.85;
         let path = smoothstep(0.36, 0.86, fmask.g + edge) * (1.0 - centre_strip);
         let mossn = ter_noise_rot(wp * 0.05, 0.946, 0.326) * 0.65 + ter_noise(wp * 0.19 + vec2<f32>(5.0, 9.0)) * 0.35;
-        let moss = smoothstep(0.44, 0.66, mossn);
+        // Moss/grass is the dominant floor (it sits under the green carpet and IS the carpet past
+        // its draw range); leaf litter keeps the drier hollows.
+        let moss = smoothstep(0.30, 0.55, mossn);
         var w = vec3<f32>((1.0 - moss) * (1.0 - path), moss * (1.0 - path), path);
         // Height blend: the taller texel of the competing layers wins across a narrow band.
         let h0 = fp_heights(wp, w, wp_dx, wp_dy);
@@ -510,10 +512,12 @@ fn fragment(
         // Wet mud + puddles on the trail: the path layer darkens toward damp earth, and water
         // pools in its LOW texels (height below a noise-varied water line, deeper in the ruts).
         // Puddles are near-black, glassy and flat, so the IBL sky and sun glint off them.
-        let damp = w.z * (0.55 + 0.45 * ter_noise(wp * 0.11 + vec2<f32>(41.0, 7.0)));
-        alb *= 1.0 - 0.32 * damp;
-        let water_line = smoothstep(0.42, 0.80, ter_noise(wp * 0.16 + vec2<f32>(13.0, 57.0))) * 0.7 + rut * 0.5;
-        let puddle = clamp((water_line - hit_h) * 10.0, 0.0, 1.0) * w.z * smoothstep(0.3, 0.6, path);
+        let damp = w.z * (0.45 + 0.55 * ter_noise(wp * 0.11 + vec2<f32>(41.0, 7.0)));
+        alb *= 1.0 - 0.22 * damp;
+        // Small, scattered puddles: mostly IN the ruts, occasionally in a dip — never a flooded track.
+        let pocket = smoothstep(0.62, 0.85, ter_noise(wp * 0.33 + vec2<f32>(71.0, 5.0)));
+        let water_line = smoothstep(0.70, 0.92, ter_noise(wp * 0.16 + vec2<f32>(13.0, 57.0))) * 0.35 + rut * 0.32 * pocket;
+        let puddle = clamp((water_line - hit_h) * 10.0, 0.0, 1.0) * w.z * smoothstep(0.5, 0.8, path);
         alb = mix(alb, alb * 0.16, puddle);
         rgb = mix(rgb, alb, fp_w);
         // Tangent frame of the planar XZ mapping: u runs along +X, v along +Z, and an OpenGL
@@ -524,7 +528,8 @@ fn fragment(
         let n_ts = vec3<f32>(nts.xy * 1.7, max(nts.z, 0.2));
         fp_nw = normalize(mix(tx * n_ts.x + bz * n_ts.y + gn * n_ts.z, gn, puddle));
         fp_ao = orm.r;
-        fp_rough = mix(orm.g * mix(1.0, 0.62, rut * rut_wear) * (1.0 - 0.35 * damp), 0.03, puddle);
+        // Dry packed earth is matte: keep the trail rough so only real puddles glint.
+        fp_rough = mix(max(orm.g, 0.82 * w.z) * mix(1.0, 0.85, rut * rut_wear), 0.04, puddle);
     }
 
     // Clamp alpha ≥ 0 on write-back: the negative cliffness flag has served its purpose and

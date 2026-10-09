@@ -38,6 +38,11 @@ const TREE_FAR: f32 = 180.0;
 const COVER_FAR: f32 = 58.0;
 const PROPS_FAR: f32 = 75.0;
 const CLUTTER_FAR: f32 = 34.0;
+/// The green carpet is density-LOD'd like big open-world games do it: every tuft near the camera,
+/// a thinned set of bigger tufts in a ring beyond, nothing past that — where the ground shader's
+/// green moss layer under the carpet carries the read with zero geometry.
+const LUSH_NEAR: f32 = 22.0;
+const LUSH_FAR: f32 = 46.0;
 
 /// Which merge bucket a kit prop lands in - decides its cull distance and landmark clearing.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -48,6 +53,10 @@ pub enum Tier {
     Cover,
     /// Dense near-camera floor clutter ([`Kit::scatter_clutter`]).
     Clutter,
+    /// Green carpet, full density, `0..LUSH_NEAR`.
+    LushNear,
+    /// Green carpet, thinned + enlarged, `LUSH_NEAR..LUSH_FAR`.
+    LushFar,
 }
 
 /// Contact-darkening splats (x, z, radius) around trunks and solid props, baked into the forest
@@ -256,6 +265,7 @@ impl Kit {
         const PEBBLES: [&str; 6] = ["rock_01_a", "rock_01_c", "rock_01_e", "rock_02_b", "rock_02_d", "rock_02_f"];
         const FERN: [&str; 3] = ["fern_a", "fern_b", "fern_c"];
         const FLOWERS: [&str; 4] = ["flower_daisy", "flower_lupine_a", "flower_lupine_b", "flower_yellow"];
+        const LUSH: [&str; 3] = ["lush_a", "lush_b", "lush_c"];
         let mut gx = lo;
         while gx < hi {
             let mut gz = lo;
@@ -313,6 +323,40 @@ impl Kit {
                         chunks.push(self, m, Vec3::new(x, height_fn(x, z), z), rot, s, Tier::Clutter);
                     }
                 }
+                // Green carpet: up to 6 tufts per tile off the trails, thinned on the bare/worn
+                // patches the ground shader paints (same fertility field), so it grows in drifts.
+                // Every 3rd tuft also goes into the far ring at 1.35x scale.
+                let fert = crate::biome::ground_patch(gx + 0.5, gz + 0.5).fertility;
+                for k in 0..6u32 {
+                    let (a, b) = rolls(gx + 0.13 + k as f32 * 0.71, gz + 0.29 - k as f32 * 0.43);
+                    let (c, d) = rolls(gx - 0.31 - k as f32 * 0.17, gz + 0.47 + k as f32 * 0.59);
+                    if c > 0.35 + fert * 0.65 {
+                        continue;
+                    }
+                    let (x, z) = (gx + a, gz + b);
+                    if !mask(x, z)
+                        || crate::roads::road_strength(x, z) > 0.3
+                        || crate::blockers::any_within(x, z, 0.3)
+                        || crate::ruins::near_landmark_visual_footprint(x, z)
+                    {
+                        continue;
+                    }
+                    let pick = if d < 0.80 {
+                        self.pick(&LUSH, c)
+                    } else if d < 0.93 {
+                        self.pick(&FERN, c)
+                    } else {
+                        self.pick(&FLOWERS, c)
+                    };
+                    let Some(m) = pick else { continue };
+                    let s = 0.75 + c * 0.5;
+                    let pos = Vec3::new(x, height_fn(x, z), z);
+                    let rot = Quat::from_rotation_y(d * 131.0 % std::f32::consts::TAU);
+                    chunks.push(self, m, pos, rot, s, Tier::LushNear);
+                    if k % 3 == 0 && d < 0.93 {
+                        chunks.push(self, m, pos, rot, s * 1.35, Tier::LushFar);
+                    }
+                }
                 gz += 1.0;
             }
             gx += 1.0;
@@ -362,10 +406,12 @@ impl Chunks {
                     warn!("realforest: chunk merge failed (attribute mismatch) — part skipped");
                 }
             }
-            let far = match tier {
-                Tier::Props => PROPS_FAR,
-                Tier::Cover => COVER_FAR,
-                Tier::Clutter => CLUTTER_FAR,
+            let (near, far) = match tier {
+                Tier::Props => (0.0, PROPS_FAR),
+                Tier::Cover => (0.0, COVER_FAR),
+                Tier::Clutter => (0.0, CLUTTER_FAR),
+                Tier::LushNear => (0.0, LUSH_NEAR),
+                Tier::LushFar => (LUSH_NEAR, LUSH_FAR),
             };
             let mut e = commands.spawn((
                 Mesh3d(meshes.add(base)),
@@ -377,8 +423,9 @@ impl Chunks {
             if tier != Tier::Props {
                 e.insert(crate::biome::GroundCoverChunk);
             }
-            if cull {
-                e.insert(VisibilityRange { start_margin: 0.0..0.0, end_margin: far..far, use_aabb: true });
+            if cull || near > 0.0 {
+                let far = if cull { far } else { 1.0e6 };
+                e.insert(VisibilityRange { start_margin: near..near, end_margin: far..far, use_aabb: true });
             }
         }
     }

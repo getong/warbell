@@ -23,7 +23,7 @@ LAYERS = [
     # (name, poly haven id, saturation, brightness) - graded toward the game's slightly muted,
     # overcast-forest palette so the scans sit next to the existing biomes.
     ("litter", "forest_leaves_02", 0.65, 1.05),
-    ("moss", "forrest_ground_01", 0.85, 1.0),
+    ("moss", "forrest_ground_01", 1.15, 0.92),
     ("path", "forest_ground_04", 0.70, 0.78),
 ]
 
