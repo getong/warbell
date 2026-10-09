@@ -117,7 +117,8 @@ def grade(srgb, sat=1.0, gain=1.0):
     return lin_to_srgb((luma + (lin - luma) * sat) * gain)
 
 
-def write_pbr_set(name, diff, nor, rough, ao=None, disp=None, size=1024, sat=1.0, gain=1.0):
+def write_pbr_set(name, diff, nor, rough, ao=None, disp=None, size=1024, sat=1.0, gain=1.0,
+                  normalize=False):
     """Pack one material into `<name>_albedo.png` (sRGB), `<name>_normal.png` (OpenGL tangent
     space) and `<name>_ormh.png` (linear glTF ORM - R=AO, G=roughness, B=metallic 0 - plus
     A=height normalised to 0..1, read by the terrain parallax).
@@ -130,6 +131,8 @@ def write_pbr_set(name, diff, nor, rough, ao=None, disp=None, size=1024, sat=1.0
         return resize(load(path, 3), size, size)[:, :, ch]
 
     albedo = grade(resize(load(diff, 3), size, size), sat, gain)
+    if normalize:
+        albedo = np.clip(albedo / (albedo.mean(axis=(0, 1), keepdims=True) + 1e-4) * 0.5, 0, 1)
     n = resize(load(nor, 3), size, size) * 2.0 - 1.0
     n /= np.linalg.norm(n, axis=-1, keepdims=True) + 1e-6
     r = chan(rough)

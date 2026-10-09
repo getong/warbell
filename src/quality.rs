@@ -28,7 +28,10 @@
 //! recording — same idea as the other `FOREST_*` staging hooks). The env var wins over the
 //! hardware-aware default.
 
+use bevy::anti_alias::contrast_adaptive_sharpening::ContrastAdaptiveSharpening;
 use bevy::anti_alias::smaa::{Smaa, SmaaPreset};
+use bevy::anti_alias::taa::TemporalAntiAliasing;
+use bevy::render::camera::{MipBias, TemporalJitter};
 use bevy::camera::MainPassResolutionOverride;
 use bevy::core_pipeline::prepass::{DepthPrepass, NormalPrepass};
 use bevy::light::cluster::GlobalClusterSettings;
@@ -106,13 +109,17 @@ pub enum ShadowLevel {
     High,
 }
 
-/// Anti-aliasing (SMAA preset), or off.
+/// Anti-aliasing (SMAA preset), temporal AA, or off.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum AaLevel {
     Off,
     Low,
     High,
     Ultra,
+    /// Temporal AA + contrast-adaptive sharpening. The only mode that stabilises alpha-tested
+    /// foliage (leaf / grass cards shimmer under SMAA) and denoises GTAO, so the realistic
+    /// forest presets use it and turn SSAO on with it.
+    Taa,
 }
 
 /// Screen-space ambient occlusion quality, or off (off strips the whole depth-walk pass).
@@ -130,6 +137,27 @@ pub enum TerrainDetail {
     Low,
     High,
     Ultra,
+}
+
+/// Forest undergrowth density (`realforest` density slices): how much of the floor clutter and
+/// green carpet is drawn. The biggest forest-specific FPS lever after shadows.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, Default)]
+pub enum Undergrowth {
+    Low,
+    #[default]
+    Medium,
+    High,
+}
+
+impl Undergrowth {
+    /// How many of the three density slices are shown.
+    pub fn slices(self) -> u8 {
+        match self {
+            Undergrowth::Low => 1,
+            Undergrowth::Medium => 2,
+            Undergrowth::High => 3,
+        }
+    }
 }
 
 impl ShadowLevel {
@@ -160,6 +188,7 @@ impl AaLevel {
             AaLevel::Low => Some(SmaaPreset::Low),
             AaLevel::High => Some(SmaaPreset::High),
             AaLevel::Ultra => Some(SmaaPreset::Ultra),
+            AaLevel::Taa => None,
         }
     }
 }
@@ -206,6 +235,9 @@ pub struct GraphicsSettings {
     /// Internal-3D render resolution as a fraction of the window (0.30–1.0). 1.0 = native. The
     /// dominant fragment-cost lever on weak GPUs (cost ≈ scale²); UI/post stay full-res.
     pub render_scale: f32,
+    /// Forest undergrowth density. `#[serde(default)]` = Medium for configs saved before it existed.
+    #[serde(default)]
+    pub undergrowth: Undergrowth,
 }
 
 impl Default for GraphicsSettings {
@@ -220,11 +252,13 @@ pub fn preset_settings(quality: GraphicsQuality) -> GraphicsSettings {
     match quality {
         GraphicsQuality::High => GraphicsSettings {
             shadows: ShadowLevel::Medium, // 2048 / 3 cascades / 150 reach (authored look)
-            antialias: AaLevel::High,
+            antialias: AaLevel::Taa,
             // SSAO off: Bevy's GTAO temporal noise needs TAA to denoise; without it the AO pattern
             // crawls/flickers under camera motion (the "moving black patches on grass"). ContactShadows
             // on the sun/moon still give the contact-darkening read. Re-enableable via the menu.
-            ssao: AoLevel::Off,
+            // With TAA on, GTAO is denoised temporally (no crawl) — it grounds the forest floor
+            // clutter, trunks and props far better than contact shadows alone.
+            ssao: AoLevel::Medium,
             terrain: TerrainDetail::High,
             bloom: true,
             depth_of_field: true,
@@ -232,18 +266,21 @@ pub fn preset_settings(quality: GraphicsQuality) -> GraphicsSettings {
             god_rays: true, // screen-space light shafts (godrays.rs) — cheap, so High carries them too
             motion_blur: false, // opt-in only — see the field doc
             render_scale: 1.0,
+            undergrowth: Undergrowth::Medium,
         },
         GraphicsQuality::Ultra => GraphicsSettings {
             shadows: ShadowLevel::High, // 4096 / 4 cascades / 190 reach
-            antialias: AaLevel::Ultra,
-            ssao: AoLevel::Off, // off by default — see High preset (GTAO crawl without TAA)
+            antialias: AaLevel::Taa,
+            ssao: AoLevel::Ultra,
             terrain: TerrainDetail::Ultra,
             bloom: true,
             depth_of_field: true,
             outline: false, // crisp toon edges off by default (user preference)
             god_rays: true,
             motion_blur: false,
-            render_scale: 2.0, // SSAA ×2 — supersample for true edge-AA on the showcase preset
+            // Native: TAA does the edge-AA the old 2x SSAA bought at 4x the fragment cost.
+            render_scale: 1.0,
+            undergrowth: Undergrowth::High,
         },
         // Low: tuned for integrated GPUs — SSAO/bloom/DoF/outline off (each strips a whole pass),
         // 2 small shadow cascades, the cheap terrain lane, and a 0.6 render-scale (the big
@@ -259,6 +296,7 @@ pub fn preset_settings(quality: GraphicsQuality) -> GraphicsSettings {
             god_rays: false,
             motion_blur: false,
             render_scale: 0.6,
+            undergrowth: Undergrowth::Low,
         },
         GraphicsQuality::Custom => preset_settings(GraphicsQuality::High),
     }
@@ -556,9 +594,10 @@ fn apply_quality(
     // off we strip the prepass it fed, so the whole pass is skipped, not just run unused.
     let ao = s.ssao.level();
     let smaa = s.antialias.smaa();
+    let taa = s.antialias == AaLevel::Taa;
     let normal_prepass = ao.is_some() || s.outline;
     // god_rays counts: the atmospherics pass (gated with it) reads the prepass depth.
-    let needs_depth = s.depth_of_field || ao.is_some() || s.outline || god;
+    let needs_depth = s.depth_of_field || ao.is_some() || s.outline || god || taa;
     // Keep the Ultra (god-rays) bloom lift; otherwise the authored intensity.
     let bloom_intensity = if god { 0.42 } else { defaults.bloom_intensity };
 
@@ -660,6 +699,17 @@ fn apply_quality(
             None => {
                 e.remove::<Smaa>();
             }
+        }
+
+        // TAA + CAS: the jitter and mip bias TAA requires must leave with it, or the image keeps
+        // sub-pixel shaking with nothing resolving it.
+        if taa {
+            e.insert((
+                TemporalAntiAliasing::default(),
+                ContrastAdaptiveSharpening { enabled: true, sharpening_strength: 0.45, denoise: false },
+            ));
+        } else {
+            e.remove::<(TemporalAntiAliasing, TemporalJitter, MipBias, ContrastAdaptiveSharpening)>();
         }
 
         // Depth prepass + contact shadows ride one gate: contact shadows (0.19) read the prepass

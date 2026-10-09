@@ -140,7 +140,7 @@ impl AtmoSample {
                 Biome::Swamp => 1.75,
                 // The realistic forest (`realforest`) has a closed leaf canopy: away from the trails
                 // the floor sees no sun at all, so without a lift it crushes to near-black.
-                Biome::Forest if crate::realforest::get().is_some() => 4.2,
+                Biome::Forest if crate::realforest::get().is_some() => 3.6,
                 _ => 1.0,
             },
         }
@@ -741,7 +741,7 @@ fn chunk_center(key: (i32, i32)) -> Vec3 {
 /// with and once without, and compare the F2 `main_opaque_pass` timing. (A raw baseline-vs-after
 /// comparison at different camera positions confounds the number — opaque cost is view-dependent.)
 /// Read once via `OnceLock` so the per-tree spawn loop doesn't hit the environment each instance.
-fn scatter_cull_enabled() -> bool {
+pub(crate) fn scatter_cull_enabled() -> bool {
     use std::sync::OnceLock;
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var("FOREST_NOCULL").is_err())
@@ -1000,7 +1000,9 @@ pub fn scatter_region(
     // layout is identical with the kit on or off.
     let kit = if cfg.biome == Biome::Forest { crate::realforest::get() } else { None };
     let mut kit_chunks = crate::realforest::Chunks::default();
-    if kit.is_some() {
+    // Only the forest proper resets the contact-AO splats: the grass frontier's cover pass also
+    // runs as `Biome::Forest` and would otherwise wipe the forest's trunk/prop splats.
+    if kit.is_some() && cfg.name != "Grass" {
         crate::realforest::begin_scatter();
     }
     let class_index = |c: &ClassHandles| classes.iter().position(|x| std::ptr::eq(x, c)).unwrap_or(usize::MAX);

@@ -25,7 +25,7 @@ use bevy::ui_widgets::{
 use crate::player::FirstPerson;
 use crate::quality::{
     save_graphics_config, AaLevel, AoLevel, AudioPrefs, GraphicsQuality, GraphicsSettings,
-    ShadowLevel, TerrainDetail, WindowSettings,
+    ShadowLevel, TerrainDetail, Undergrowth, WindowSettings,
 };
 
 use super::fonts::{label, UiFonts};
@@ -59,6 +59,7 @@ impl Plugin for GraphicsMenuPlugin {
             .add_observer(on_slider_change)
             .add_observer(on_toggle_change)
             .add_systems(Startup, stage_open) // FOREST_GFXMENU=1 opens the menu at boot (shot harness)
+            .add_systems(Update, walk_menu_key)
             .add_systems(
                 Update,
                 (
@@ -136,6 +137,7 @@ enum Seg {
     Aa(AaLevel),
     Ao(AoLevel),
     Terrain(TerrainDetail),
+    Undergrowth(Undergrowth),
     Resolution(Option<[u32; 2]>),
     Fullscreen(bool),
     /// Camera mode — `true` = first person.
@@ -184,6 +186,25 @@ fn sync_overlay(
         // Persist on close — a natural commit point (not every slider tick).
         let prefs = AudioPrefs { master: audio.master, music: audio.music, sfx: audio.sfx, muted: audio.muted };
         save_graphics_config(&quality, &settings, &window, &prefs);
+    }
+}
+
+/// Forest-walk preview (`FOREST_WALK`): no pause menu there, so `O` opens / closes Settings
+/// directly (and frees the mouse so the panel can be used).
+fn walk_menu_key(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut open: ResMut<GraphicsMenuOpen>,
+    mut cursor: Query<&mut bevy::window::CursorOptions>,
+) {
+    if !crate::controls::walk_mode() || !keys.just_pressed(KeyCode::KeyO) {
+        return;
+    }
+    open.0 = !open.0;
+    if open.0 {
+        for mut c in &mut cursor {
+            c.grab_mode = bevy::window::CursorGrabMode::None;
+            c.visible = true;
+        }
     }
 }
 
@@ -330,6 +351,7 @@ fn graphics_pane(p: &mut Pane<'_>, fonts: &UiFonts, quality: GraphicsQuality, s:
         ("Low", Seg::Aa(AaLevel::Low)),
         ("High", Seg::Aa(AaLevel::High)),
         ("Ultra", Seg::Aa(AaLevel::Ultra)),
+        ("TAA", Seg::Aa(AaLevel::Taa)),
     ], Seg::Aa(s.antialias));
     seg_row(p, fonts, "Ambient occlusion", &[
         ("Off", Seg::Ao(AoLevel::Off)),
@@ -341,6 +363,11 @@ fn graphics_pane(p: &mut Pane<'_>, fonts: &UiFonts, quality: GraphicsQuality, s:
         ("High", Seg::Terrain(TerrainDetail::High)),
         ("Ultra", Seg::Terrain(TerrainDetail::Ultra)),
     ], Seg::Terrain(s.terrain));
+    seg_row(p, fonts, "Undergrowth", &[
+        ("Low", Seg::Undergrowth(Undergrowth::Low)),
+        ("Medium", Seg::Undergrowth(Undergrowth::Medium)),
+        ("High", Seg::Undergrowth(Undergrowth::High)),
+    ], Seg::Undergrowth(s.undergrowth));
     check_row(p, fonts, "Bloom", ToggleId::Bloom, s.bloom);
     check_row(p, fonts, "Depth of field", ToggleId::Dof, s.depth_of_field);
     check_row(p, fonts, "Outline", ToggleId::Outline, s.outline);
@@ -594,6 +621,7 @@ fn menu_buttons(
             Seg::Aa(l) => set_custom(&mut quality, || settings.antialias = l),
             Seg::Ao(l) => set_custom(&mut quality, || settings.ssao = l),
             Seg::Terrain(l) => set_custom(&mut quality, || settings.terrain = l),
+            Seg::Undergrowth(l) => set_custom(&mut quality, || settings.undergrowth = l),
             Seg::Resolution(r) => window.resolution = r,
             Seg::Fullscreen(fs) => window.fullscreen = fs,
             Seg::Camera(active) => first_person.active = active,
@@ -692,6 +720,7 @@ fn sync_segments(
             Seg::Aa(l) => settings.antialias == l,
             Seg::Ao(l) => settings.ssao == l,
             Seg::Terrain(l) => settings.terrain == l,
+            Seg::Undergrowth(l) => settings.undergrowth == l,
             Seg::Resolution(r) => window.resolution == r,
             Seg::Fullscreen(fs) => window.fullscreen == fs,
             Seg::Camera(active) => first_person.active == active,

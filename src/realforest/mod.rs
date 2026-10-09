@@ -19,6 +19,7 @@
 //! fails to load the game logs a warning and keeps the low-poly forest.
 
 pub mod load;
+pub mod reskin;
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -30,9 +31,14 @@ use crate::terrain::TerrainMaterial;
 
 /// LOD0 → LOD1 cross-fade distance (world units, dithered over ±[`LOD_BAND`]).
 pub const LOD_NEAR: f32 = 30.0;
-const LOD_BAND: f32 = 4.0;
+const LOD_BAND: f32 = 2.0;
 /// Far cull, same as the low-poly trees (fog has them by then).
 const TREE_FAR: f32 = 180.0;
+/// Kit trees are modelled at real proportions (4-6u); the forest scatter's per-class scale ranges
+/// were tuned for the ~1.5u low-poly trees. This brings a kit tree to ~2x the old tree's height
+/// (3-6u canopy, 6.5-8u old-growth giants) so the forest keeps its gameplay readability.
+const TREE_MODEL_SCALE: f32 = 0.62;
+
 /// Ground-cover / prop chunk cut-offs (mirror `biome::spawn_chunks`), plus the short-range
 /// floor clutter (fallen-leaf sheets, pebbles, twigs) that only matters near the camera.
 const COVER_FAR: f32 = 58.0;
@@ -118,7 +124,7 @@ pub struct Kit {
 }
 
 /// Material sets by the names Blender exported: (name, PBR set file stem, foliage card?).
-const MATERIALS: [(&str, &str, bool); 10] = [
+const MATERIALS: [(&str, &str, bool); 11] = [
     ("bark_oak", "bark_oak", false),
     ("bark_beech", "bark_beech", false),
     ("bark_pine", "bark_pine", false),
@@ -129,9 +135,15 @@ const MATERIALS: [(&str, &str, bool); 10] = [
     ("prop_branches", "prop_branches", false),
     ("prop_rock_a", "prop_rock_a", false),
     ("prop_rock_b", "prop_rock_b", false),
+    // Apples: untextured, colour from the mesh's vertex colours (see `pbr_material`).
+    ("fruit", "", false),
 ];
 
 impl Kit {
+    fn mat_by_name(&self, name: &str) -> Option<usize> {
+        MATERIALS.iter().position(|m| m.0 == name)
+    }
+
     fn model(&self, name: &str) -> Option<usize> {
         self.by_name.get(name).copied()
     }
@@ -145,6 +157,8 @@ impl Kit {
     /// its SOURCE variant (the variant index before `biome::upload_classes` tint expansion).
     /// The forest canopy class lists five living kinds × `trees::TREE_TINTS` then one dead tree
     /// (`biome_forest::config`), so the source variant encodes the old `TreeKind`.
+    /// (Apple trees are NOT scatter picks: they are the harvestable forage orchard, see
+    /// [`Self::apple_tree`] — a fruiting tree you can't pick from would read as a bug.)
     pub fn tree_for(&self, class: usize, src_variant: usize) -> Option<usize> {
         let tints = crate::trees::TREE_TINTS.len();
         let name = if class == 1 {
@@ -204,6 +218,18 @@ impl Kit {
     /// Hang tree `model` (its `_lod0`, plus the matching `_lod1`) under an already-spawned
     /// gameplay entity. The parent keeps `Transform` / `Sway` / `ChopTree`; the children only draw.
     pub fn attach_tree(&self, e: &mut EntityCommands, lod0: usize, cull: bool) {
+        self.attach_tree_tagged(e, lod0, cull, ());
+    }
+
+    /// The wild apple tree used by the forage orchard (`verbs::populate_apple_orchard`).
+    pub fn apple_tree(&self, roll: f32) -> Option<usize> {
+        self.model(if roll < 0.5 { "apple_a_lod0" } else { "apple_b_lod0" })
+    }
+
+    /// [`Self::attach_tree`], also inserting `fruit_tag` on every fruit part (both LODs) so
+    /// gameplay can hide / show the apples (harvest + regrow).
+    pub fn attach_tree_tagged<B: Bundle + Clone>(&self, e: &mut EntityCommands, lod0: usize, cull: bool, fruit_tag: B) {
+        let fruit = self.mat_by_name("fruit");
         let lod1 = self.models.get(lod0 + 1);
         e.insert(Visibility::default());
         let near = VisibilityRange {
@@ -217,13 +243,15 @@ impl Kit {
             end_margin: far_end..far_end,
             use_aabb: false,
         };
+        let tf = Transform::from_scale(Vec3::splat(TREE_MODEL_SCALE));
         e.with_children(|p| {
-            for part in &self.models[lod0].parts {
-                p.spawn((Mesh3d(part.handle.clone()), MeshMaterial3d(self.mats[part.mat].clone()), near.clone()));
-            }
-            if let Some(l1) = lod1 {
-                for part in &l1.parts {
-                    p.spawn((Mesh3d(part.handle.clone()), MeshMaterial3d(self.mats[part.mat].clone()), far.clone()));
+            let lods = std::iter::once((&self.models[lod0], near.clone())).chain(lod1.map(|l| (l, far.clone())));
+            for (model, range) in lods {
+                for part in &model.parts {
+                    let mut c = p.spawn((Mesh3d(part.handle.clone()), MeshMaterial3d(self.mats[part.mat].clone()), tf, range.clone()));
+                    if Some(part.mat) == fruit {
+                        c.insert((fruit_tag.clone(), Visibility::Visible));
+                    }
                 }
             }
         });
@@ -378,7 +406,46 @@ impl Kit {
 /// Queued kit props, grouped by (16u chunk, cover?, material) so each group merges to one mesh.
 #[derive(Default)]
 pub struct Chunks {
-    groups: HashMap<((i32, i32), Tier, usize), Vec<(usize, usize, Transform)>>,
+    groups: HashMap<((i32, i32), Tier, u8, usize), Vec<(usize, usize, Transform)>>,
+}
+
+/// Undergrowth density slice a merged chunk belongs to. Every plant / clutter piece is hashed into
+/// one of three slices (45% / 27% / 28%) and each slice merges into its own mesh, so the Settings
+/// "Undergrowth" level just shows or hides whole slices at runtime — no rebuild, and a hidden
+/// slice costs nothing. Props (rocks, logs, stumps, bushes) are always slice 0.
+#[derive(Component, Clone, Copy)]
+pub struct DensitySlice(pub u8);
+
+fn density_slice(tier: Tier, world: Vec3) -> u8 {
+    if tier == Tier::Props {
+        return 0;
+    }
+    let (e, _) = rolls(world.x * 1.7 + 0.13, world.z * 1.3 - 0.71);
+    if e < 0.45 {
+        0
+    } else if e < 0.72 {
+        1
+    } else {
+        2
+    }
+}
+
+/// Show the slices the Settings undergrowth level asks for (Low 1 / Medium 2 / High 3 slices).
+fn apply_undergrowth(
+    settings: Res<crate::quality::GraphicsSettings>,
+    mut q: Query<(Ref<DensitySlice>, &mut Visibility)>,
+) {
+    let all = settings.is_changed();
+    let keep = settings.undergrowth.slices();
+    for (slice, mut vis) in &mut q {
+        if !all && !slice.is_added() {
+            continue;
+        }
+        let want = if slice.0 < keep { Visibility::Inherited } else { Visibility::Hidden };
+        if *vis != want {
+            *vis = want;
+        }
+    }
 }
 
 fn chunk_key(x: f32, z: f32) -> (i32, i32) {
@@ -395,8 +462,9 @@ impl Chunks {
     pub fn push(&mut self, kit: &Kit, model: usize, world: Vec3, rot: Quat, scale: f32, tier: Tier) {
         let key = chunk_key(world.x, world.z);
         let t = Transform { translation: world - chunk_center(key), rotation: rot, scale: Vec3::splat(scale) };
+        let slice = density_slice(tier, world);
         for (pi, part) in kit.models[model].parts.iter().enumerate() {
-            self.groups.entry((key, tier, part.mat)).or_default().push((model, pi, t));
+            self.groups.entry((key, tier, slice, part.mat)).or_default().push((model, pi, t));
         }
         if tier == Tier::Props {
             splat(world.x, world.z, 0.55 * scale);
@@ -405,7 +473,7 @@ impl Chunks {
 
     pub fn spawn(self, kit: &Kit, commands: &mut Commands, meshes: &mut Assets<Mesh>, cull: bool) {
         SCATTER_DONE.store(true, std::sync::atomic::Ordering::Release);
-        for ((key, tier, mat), items) in self.groups {
+        for ((key, tier, slice, mat), items) in self.groups {
             let mut it = items.into_iter();
             let Some((m0, p0, t0)) = it.next() else { continue };
             let mut base = kit.models[m0].parts[p0].mesh.clone().transformed_by(t0);
@@ -428,6 +496,8 @@ impl Chunks {
                 Transform::from_translation(chunk_center(key)),
                 bevy::light::NotShadowCaster,
                 crate::biome::BiomeEntity,
+                DensitySlice(slice),
+                Visibility::default(),
             ));
             if tier != Tier::Props {
                 e.insert(crate::biome::GroundCoverChunk);
@@ -447,11 +517,12 @@ pub struct RealForestPlugin;
 impl Plugin for RealForestPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ForestLook>();
+        app.add_plugins(reskin::ReskinPlugin);
         if !enabled() {
             return;
         }
         // Before the world build (Startup) reads the kit inside `biome::scatter_region`.
-        app.add_systems(PreStartup, build_kit).add_systems(Update, (patch_terrain, drive_forest_look));
+        app.add_systems(PreStartup, build_kit).add_systems(Update, (patch_terrain, drive_forest_look, apply_undergrowth));
     }
 }
 
@@ -483,6 +554,10 @@ fn drive_forest_look(
 }
 
 fn pbr_material(images: &mut Assets<Image>, set: &str, card: bool) -> Result<StandardMaterial, String> {
+    if set.is_empty() {
+        // Waxy fruit skin: base colour comes from the vertex colours.
+        return Ok(StandardMaterial { perceptual_roughness: 0.42, reflectance: 0.45, ..default() });
+    }
     let albedo = images.add(load::texture(&format!("forest_pbr/{set}_albedo.png"), true, card.then_some(CARD_CUTOFF))?);
     let normal = images.add(load::texture(&format!("forest_pbr/{set}_normal.png"), false, None)?);
     if card {

@@ -55,7 +55,15 @@ impl Plugin for CapturePlugin {
     }
 }
 
-fn hide_hud(mut nodes: Query<&mut Visibility, With<Node>>) {
+fn hide_hud(
+    mut nodes: Query<&mut Visibility, With<Node>>,
+    menu: Option<Res<crate::ui::graphics_menu::GraphicsMenuOpen>>,
+) {
+    // The forest walk's Settings panel (key O) must stay usable: pause the hiding while it's up
+    // (the HUD nodes stay hidden from before; only the freshly spawned panel shows).
+    if menu.is_some_and(|m| m.0) {
+        return;
+    }
     for mut vis in &mut nodes {
         *vis = Visibility::Hidden;
     }

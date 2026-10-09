@@ -166,11 +166,42 @@ def taper(n, r0, r1, power=1.0):
     return [r0 + (r1 - r0) * (i / (n - 1)) ** power for i in range(n)]
 
 
+def apple(b, centre, r, rng, mat):
+    """One low-poly apple (6 sides x 4 rings), red-to-yellow blush in vertex colour."""
+    sides, rings = 6, 4
+    blush = rng.uniform(0.0, 1.0)
+    base = Vector((0.42, 0.035, 0.02)).lerp(Vector((0.45, 0.36, 0.05)), blush ** 3 * 0.7)
+    tilt = Vector((rng.normal() * 0.25, rng.normal() * 0.25, 1)).normalized()
+    rot = Vector((0, 0, 1)).rotation_difference(tilt)
+    grid = []
+    for i in range(rings + 1):
+        th = math.pi * i / rings
+        row = []
+        for j in range(sides + 1):
+            ph = 2 * math.pi * (j % sides) / sides
+            # Slightly squat, dimpled at the stalk end like a real apple.
+            n = Vector((math.sin(th) * math.cos(ph), math.sin(th) * math.sin(ph), math.cos(th)))
+            q = Vector((n.x, n.y, n.z * (0.82 if n.z > 0 else 0.9)))
+            p = centre + rot @ (q * r)
+            shade = 0.7 + 0.3 * (n.z * 0.5 + 0.5)
+            c = tuple(base[k] * shade for k in range(3))
+            row.append((b.v(p), tuple(rot @ n), (j / sides, i / rings), c))
+        grid.append(row)
+    for i in range(rings):
+        for j in range(sides):
+            q = (grid[i][j], grid[i][j + 1], grid[i + 1][j + 1], grid[i + 1][j])
+            if i == 0:
+                q = (q[0], q[2], q[3])
+            elif i == rings - 1:
+                q = (q[0], q[1], q[2])
+            b.face(tuple(e[0] for e in q), [e[2] for e in q], [e[1] for e in q], [e[3] for e in q], mat)
+
+
 def broadleaf(seed, lod, height, trunk_r, crown_w, bark, leaf_tint, bark_tint, n_limbs,
-              crown_base=0.38, leafy=True, cards_near=70, cards_far=26, upright=0.55):
+              crown_base=0.38, leafy=True, cards_near=70, cards_far=26, upright=0.55, fruit=0):
     rng = np.random.default_rng(seed)
     b = Builder()
-    mats = [bark, "canopy"]
+    mats = [bark, "canopy"] + (["fruit"] if fruit else [])
     trunk_len = height * 0.92
     tsegs = 7 if lod == 0 else 4
     trunk = Limb(grow_path((0, 0, 0), (0, 0, 1), trunk_len, tsegs, rng, bend=0.05),
@@ -239,6 +270,22 @@ def broadleaf(seed, lod, height, trunk_r, crown_w, bark, leaf_tint, bark_tint, n
                 nrm = up.orthogonal()
             s = size * rng.uniform(0.8, 1.2)
             card(b, p - up * s * 0.15, up, nrm, s, UV_BROAD, 1, crown_c, crown_r, leaf_tint, rng)
+        if fruit:
+            # Apples hang on the OUTER shell of the crown (where they'd see the sun), lower half
+            # heavier; a few windfalls lie half-sunk in the grass under the crown (LOD0 only).
+            n_fruit = fruit if lod == 0 else fruit // 3
+            fr_r = 0.048 if lod == 0 else 0.065
+            for _ in range(n_fruit):
+                d = Vector((rng.normal(), rng.normal(), rng.normal() * 0.8 - 0.25)).normalized()
+                p = crown_c + Vector((d.x * crown_r.x, d.y * crown_r.y, d.z * crown_r.z)) * rng.uniform(0.72, 0.95)
+                if p.z < trunk.pts[0].z + height * crown_base * 0.8:
+                    continue
+                apple(b, p, fr_r * rng.uniform(0.85, 1.15), rng, 2)
+            if lod == 0:
+                for _ in range(fruit // 5):
+                    a = rng.uniform(0, 2 * math.pi)
+                    rr = math.sqrt(rng.uniform(0.05, 1.0)) * crown_r.x * 0.9
+                    apple(b, Vector((math.cos(a) * rr, math.sin(a) * rr, fr_r * 0.45)), fr_r, rng, 2)
     return b, mats
 
 
@@ -346,6 +393,13 @@ SPECIES = {
                              leaf_tint=(1.05, 1.03, 0.95), bark_tint=(1.0, 1.0, 1.0))),
     "dead_a": (broadleaf, dict(seed=83, height=3.9, trunk_r=0.18, crown_w=2.8, bark="bark_oak", n_limbs=6,
                                leaf_tint=(1, 1, 1), bark_tint=(0.72, 0.70, 0.68), leafy=False)),
+    # Wild apples: short, low-forking, wide-crowned, grey-brown bark, fruit on the crown shell.
+    "apple_a": (broadleaf, dict(seed=101, height=3.4, trunk_r=0.13, crown_w=3.6, bark="bark_oak", n_limbs=7,
+                                leaf_tint=(0.95, 1.04, 0.84), bark_tint=(0.80, 0.76, 0.72), crown_base=0.30,
+                                upright=0.35, cards_near=60, cards_far=22, fruit=48)),
+    "apple_b": (broadleaf, dict(seed=113, height=3.0, trunk_r=0.12, crown_w=3.9, bark="bark_oak", n_limbs=8,
+                                leaf_tint=(0.90, 1.0, 0.80), bark_tint=(0.76, 0.72, 0.70), crown_base=0.27,
+                                upright=0.30, cards_near=62, cards_far=22, fruit=40)),
     "bush_a": (bush, dict(seed=91, size=1.1, leaf_tint=(0.85, 0.95, 0.80))),
     "bush_b": (bush, dict(seed=97, size=0.85, leaf_tint=(0.95, 1.0, 0.82))),
 }

@@ -21,6 +21,7 @@ const DIR: &str = "assets/forest_pbr";
 const CARD_CUTOFF: f32 = 0.42;
 const CARD_SETS: [&str; 2] = ["canopy", "undergrowth"];
 const GROUND: [&str; 3] = ["litter", "moss", "path"];
+const STRUCT: [&str; 3] = ["wood", "stone", "cloth"];
 const MAPS: [&str; 3] = ["albedo", "normal", "ormh"];
 
 fn srgb_to_lin(c: f32) -> f32 {
@@ -135,24 +136,29 @@ fn write_dds(out: &Path, layers: Vec<Vec<(Vec<u8>, u32, u32)>>, srgb: bool, alph
 
 fn main() {
     let dir = PathBuf::from(DIR);
-    // Ground: three layers per map → one array file.
-    for map in MAPS {
-        let srgb = map == "albedo";
-        let layers = GROUND
-            .iter()
-            .map(|l| {
-                let (px, w, h) = load(&dir.join(format!("ground_{l}_{map}.png")));
-                mips(px, w, h, srgb, None)
-            })
-            .collect();
-        write_dds(&dir.join(format!("ground_{map}.dds")), layers, srgb, map == "ormh");
+    // Ground + structure re-skin: three layers per map → one array file each.
+    for (prefix, names) in [("ground", GROUND), ("struct", STRUCT)] {
+        for map in MAPS {
+            let srgb = map == "albedo";
+            let layers = names
+                .iter()
+                .map(|l| {
+                    let (px, w, h) = load(&dir.join(format!("{prefix}_{l}_{map}.png")));
+                    mips(px, w, h, srgb, None)
+                })
+                .collect();
+            write_dds(&dir.join(format!("{prefix}_{map}.dds")), layers, srgb, map == "ormh");
+        }
     }
     // Everything else: one file per PNG.
     let mut pngs: Vec<PathBuf> = std::fs::read_dir(&dir)
         .expect("forest_pbr dir")
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.extension().is_some_and(|x| x == "png"))
-        .filter(|p| !p.file_name().unwrap().to_string_lossy().starts_with("ground_"))
+        .filter(|p| {
+            let n = p.file_name().unwrap().to_string_lossy().to_string();
+            !n.starts_with("ground_") && !n.starts_with("struct_")
+        })
         .collect();
     pngs.sort();
     for png in pngs {

@@ -45,4 +45,16 @@ for name, mid, pre, arm in PROPS:
     else:
         write_pbr_set(name, diff, nor, ph_model_tex(mid, f"{pre}_rough_1k.jpg"), sat=0.92)
 
+# Structure re-skin layers (`realforest::reskin`): wood / stone / cloth DETAIL textures laid
+# triplanar over the low-poly buildings' vertex colours. Albedo is normalised to a 0.5 per-channel
+# mean so the shader can multiply it onto the authored vertex colour (x2) without shifting it.
+STRUCT = [
+    ("struct_wood", "medieval_wood", 0.55),
+    ("struct_stone", "mossy_stone_wall", 0.70),
+    ("struct_cloth", "hessian_230", 0.35),
+]
+for name, aid, sat in STRUCT:
+    write_pbr_set(name, ph_tex(aid, "diff"), ph_tex(aid, "nor_gl"), ph_tex(aid, "rough"),
+                  ao=ph_tex(aid, "ao"), disp=ph_tex(aid, "disp"), sat=sat, normalize=True)
+
 print("MATERIALS_DONE")

@@ -933,7 +933,7 @@ struct AppleTree {
 }
 
 /// One apple hanging on a tree (a child of the [`AppleTree`] entity); hidden while regrowing.
-#[derive(Component)]
+#[derive(Component, Clone)]
 struct AppleFruit;
 
 /// Transient harvest wobble on an apple tree (inserted by [`apple_harvest`], driven + removed
@@ -996,14 +996,17 @@ fn populate_apple_orchard(
     apple_mesh: &Handle<Mesh>,
     apple_mat: &Handle<StandardMaterial>,
 ) {
-    const APPLE_TREES: u32 = 24;
+    // The realistic forest kit's wild apples are smaller and finer than the low-poly orchard tree,
+    // so the orchard grows denser with it (and those are the forest's only apple trees).
+    let kit = crate::realforest::get();
+    let apple_trees: u32 = if kit.is_some() { 40 } else { 24 };
     // Keep the apple tree's WHOLE canopy clear of any existing trunk/prop, not just its trunk
     // point: forest canopy (~1.3) + apple canopy (~0.65 × APPLE_TREE_SCALE ≈ 1.1). Without this
     // an apple tree lands a trunk-width from a pine and the two crowns interpenetrate.
     const APPLE_CLEAR: f32 = 2.8;
     let mut rng = 0xa9_71_3f_55u32 | 1;
     let (mut placed, mut attempts) = (0u32, 0u32);
-    while placed < APPLE_TREES && attempts < APPLE_TREES * 400 + 800 {
+    while placed < apple_trees && attempts < apple_trees * 400 + 800 {
         attempts += 1;
         let x = crate::wildlife::rng_range(&mut rng, -worldmap::GX + 5.0, worldmap::GX - 5.0);
         let z = crate::wildlife::rng_range(&mut rng, -worldmap::GZ + 5.0, worldmap::GZ - 5.0);
@@ -1032,6 +1035,22 @@ fn populate_apple_orchard(
         crate::blockers::add(x, z, 0.45);
         // Reserve the crown for later roadside scenery; only the trunk blocks movement.
         crate::blockers::reserve_visual(x, z, 0.66 * APPLE_TREE_SCALE);
+        if let Some(k) = kit {
+            let (roll, size) = crate::realforest::rolls(x, z);
+            if let Some(model) = k.apple_tree(roll) {
+                let mut e = commands.spawn((
+                    Transform::from_xyz(x, y, z)
+                        .with_rotation(Quat::from_rotation_y(yaw))
+                        .with_scale(Vec3::splat(1.3 + size * 0.35)),
+                    crate::biome::BiomeEntity,
+                    AppleTree { harvest_r: 2.6, apples: APPLES_PER_TREE as u32, ready: true, harvested_at: 0.0 },
+                ));
+                k.attach_tree_tagged(&mut e, model, crate::biome::scatter_cull_enabled(), AppleFruit);
+                crate::realforest::splat(x, z, 0.45);
+                placed += 1;
+                continue;
+            }
+        }
         commands
             .spawn((
                 Mesh3d(tree_mesh.clone()),
@@ -1097,7 +1116,13 @@ fn apple_harvest(
             if let Ok((ltf, mut vis)) = fruit.get_mut(c) {
                 *vis = Visibility::Hidden;
                 if let Some(a) = &assets {
-                    let wp = gt.transform_point(ltf.translation);
+                    // Kit fruit parts sit at the tree origin (the apples are baked into the
+                    // mesh): pop them from the crown instead of the roots.
+                    let wp = if ltf.translation == Vec3::ZERO {
+                        tp + Vec3::Y * 1.8
+                    } else {
+                        gt.transform_point(ltf.translation)
+                    };
                     crate::player::spawn_motes(&mut commands, &a.fruit_mesh, &a.fruit_mat, wp, 3, 2.4, 1.0, 0.55);
                 }
             }
