@@ -379,6 +379,8 @@ fn gpu(
                         },
                         albedo: Some(alb),
                         mr: Some(mr),
+                        detail: None,
+                        detail_ormh: None,
                     },
                 })
             })

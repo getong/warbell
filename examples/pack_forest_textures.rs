@@ -22,6 +22,8 @@ const CARD_CUTOFF: f32 = 0.42;
 const CARD_SETS: [&str; 2] = ["canopy", "undergrowth"];
 const GROUND: [&str; 3] = ["litter", "moss", "path"];
 const STRUCT: [&str; 3] = ["wood", "stone", "cloth"];
+/// Creature surface detail layers, in `creature::Surf` code order.
+const CREATURE: [&str; 7] = ["skin", "fur", "leather", "wood", "metal", "cloth", "bone"];
 const MAPS: [&str; 3] = ["albedo", "normal", "ormh"];
 
 fn srgb_to_lin(c: f32) -> f32 {
@@ -137,7 +139,7 @@ fn write_dds(out: &Path, layers: Vec<Vec<(Vec<u8>, u32, u32)>>, srgb: bool, alph
 fn main() {
     let dir = PathBuf::from(DIR);
     // Ground + structure re-skin: three layers per map → one array file each.
-    for (prefix, names) in [("ground", GROUND), ("struct", STRUCT)] {
+    for (prefix, names) in [("ground", &GROUND[..]), ("struct", &STRUCT[..]), ("creature", &CREATURE[..])] {
         for map in MAPS {
             let srgb = map == "albedo";
             let layers = names
@@ -157,7 +159,7 @@ fn main() {
         .filter(|p| p.extension().is_some_and(|x| x == "png"))
         .filter(|p| {
             let n = p.file_name().unwrap().to_string_lossy().to_string();
-            !n.starts_with("ground_") && !n.starts_with("struct_")
+            !n.starts_with("ground_") && !n.starts_with("struct_") && !n.starts_with("creature_")
         })
         .collect();
     pngs.sort();

@@ -24,6 +24,18 @@ struct CreatureParams {
 @group(#{MATERIAL_BIND_GROUP}) @binding(102) var ft_alb_s: sampler;
 @group(#{MATERIAL_BIND_GROUP}) @binding(103) var ft_mr: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(104) var ft_mr_s: sampler;
+// Scanned surface detail layers (mode 2), one layer per surface code.
+@group(#{MATERIAL_BIND_GROUP}) @binding(105) var cd_alb: texture_2d_array<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(106) var cd_s: sampler;
+@group(#{MATERIAL_BIND_GROUP}) @binding(107) var cd_ormh: texture_2d_array<f32>;
+
+fn cd_tri(t: texture_2d_array<f32>, layer: i32, p: vec3<f32>, n: vec3<f32>, sc: f32) -> vec4<f32> {
+    let w = ft_tri_w(n);
+    let q = p * sc;
+    return textureSample(t, cd_s, q.zy, layer) * w.x
+        + textureSample(t, cd_s, q.xz + vec2<f32>(0.37, 0.37), layer) * w.y
+        + textureSample(t, cd_s, q.xy + vec2<f32>(0.71, 0.71), layer) * w.z;
+}
 
 // Object-space normal. Bevy writes `world_normal = normalize(inverse_transpose(M) * objectNormal)`,
 // so `transpose(M) * world_normal` is parallel to the raw attribute — including on the footman's
@@ -113,7 +125,27 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // Footman (and any future textured hero part): real triplanar albedo / roughness / height,
     // multiplied onto the material tint. Orks, villagers and wildlife stay on the procedural
     // surf families below (`pbr.w == 0`) and never sample these textures.
-    if (creature.pbr.w > 0.5) {
+    if (creature.pbr.w > 1.5) {
+        // Mode 2: scanned surface layers picked by the surface code (untagged alpha 1 = skin).
+        var layer = i32(clamp(round((surf - 0.07) / 0.1433), 0.0, 6.0));
+        if (surf > 0.965) {
+            layer = 0;
+        }
+        let on = ft_obj_normal(m, pbr_input.N);
+        let sc = creature.pbr.x * select(1.0, 2.2, layer == 0 || layer == 6);
+        let alb = cd_tri(cd_alb, layer, obj, on, sc).rgb;
+        let orm = cd_tri(cd_ormh, layer, obj, on, sc);
+        let k = creature.pbr.z;
+        let rgb = pbr_input.material.base_color.rgb * mix(vec3<f32>(1.0), alb * 2.0, k);
+        pbr_input.material.base_color = vec4<f32>(max(rgb, vec3<f32>(0.0)), 1.0);
+        pbr_input.material.perceptual_roughness = clamp(mix(pbr_input.material.perceptual_roughness, orm.g, 0.7), 0.08, 1.0);
+        if (layer == 4) {
+            pbr_input.material.metallic = clamp(spec_lift, 0.0, 1.0);
+        }
+        pbr_input.diffuse_occlusion *= mix(1.0, orm.r, 0.6);
+        let d_h = vec2<f32>(dpdx(orm.a), dpdy(orm.a)) * creature.pbr.y;
+        pbr_input.N = ft_perturb(in.world_position.xyz, pbr_input.N, d_h);
+    } else if (creature.pbr.w > 0.5) {
         let on = ft_obj_normal(m, pbr_input.N);
         let sc = creature.pbr.x;
         let alb = ft_tri(ft_alb, ft_alb_s, obj, on, sc);

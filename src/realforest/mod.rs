@@ -109,6 +109,12 @@ pub struct Part {
 
 pub struct Model {
     pub parts: Vec<Part>,
+    /// XZ half-extents of the model about its origin (unscaled).
+    pub half: Vec2,
+    /// Radius of the trunk base incl. root flare (bark below 0.3u), 0 for non-trees.
+    pub trunk: f32,
+    /// Rocks / logs / stumps: you walk around them, not through.
+    pub solid: bool,
 }
 
 pub struct GroundTextures {
@@ -141,7 +147,7 @@ pub struct Kit {
 }
 
 /// Material sets by the names Blender exported: (name, PBR set file stem, foliage card?).
-const MATERIALS: [(&str, &str, bool); 11] = [
+const MATERIALS: [(&str, &str, bool); 17] = [
     ("bark_oak", "bark_oak", false),
     ("bark_beech", "bark_beech", false),
     ("bark_pine", "bark_pine", false),
@@ -154,6 +160,13 @@ const MATERIALS: [(&str, &str, bool); 11] = [
     ("prop_rock_b", "prop_rock_b", false),
     // Apples: untextured, colour from the mesh's vertex colours (see `pbr_material`).
     ("fruit", "", false),
+    // Structure sets (structures.glb: ork camp, mill).
+    ("s_planks", "s_planks", false),
+    ("s_stone", "s_stone", false),
+    ("s_hide", "s_hide", false),
+    ("s_thatch", "s_thatch", false),
+    ("s_cloth", "s_cloth", false),
+    ("s_iron", "s_iron", false),
 ];
 
 impl Kit {
@@ -236,6 +249,52 @@ impl Kit {
     /// gameplay entity. The parent keeps `Transform` / `Sway` / `ChopTree`; the children only draw.
     pub fn attach_tree(&self, e: &mut EntityCommands, lod0: usize, cull: bool) {
         self.attach_tree_tagged(e, lod0, cull, ());
+    }
+
+    /// Collision radius for a kit tree `lod0` planted at scale `s` (the trunk you see, not the old
+    /// low-poly tree's footprint).
+    pub fn trunk_radius(&self, lod0: usize, s: f32) -> f32 {
+        (self.models[lod0].trunk * TREE_MODEL_SCALE * s).clamp(0.08, 0.8)
+    }
+
+    /// Register the collision footprint of a solid kit prop (rock / log / stump) as an oriented
+    /// box sized from the model itself. Returns false for walk-through props (plants, twigs).
+    pub fn register_solid(&self, model: usize, x: f32, z: f32, scale: f32, rot: Quat) -> bool {
+        let m = &self.models[model];
+        let half = m.half * scale * 0.85;
+        if !m.solid || half.max_element() < 0.18 {
+            return false;
+        }
+        let (yaw, _, _) = rot.to_euler(EulerRot::YXZ);
+        crate::blockers::add_obb(x, z, half.x, half.y, yaw);
+        true
+    }
+
+    /// Is there a kit model called `name`?
+    pub fn has(&self, name: &str) -> bool {
+        self.by_name.contains_key(name)
+    }
+
+    /// Hang the static kit model `name` (all its material parts) under `e` as children.
+    /// Returns false when the kit has no such model.
+    pub fn attach_static(&self, e: &mut EntityCommands, name: &str, tf: Transform) -> bool {
+        let Some(m) = self.model(name) else { return false };
+        e.insert(Visibility::default());
+        e.with_children(|p| {
+            for part in &self.models[m].parts {
+                let mut c = p.spawn((Mesh3d(part.handle.clone()), tf));
+                self.mats[part.mat].insert(&mut c);
+            }
+        });
+        true
+    }
+
+    /// Spawn the static kit model `name` as a new root entity at `tf`.
+    pub fn spawn_static(&self, commands: &mut Commands, name: &str, tf: Transform) -> Option<Entity> {
+        self.model(name)?;
+        let mut e = commands.spawn((tf, Visibility::default()));
+        self.attach_static(&mut e, name, Transform::IDENTITY);
+        Some(e.id())
     }
 
     /// The wild apple tree used by the forage orchard (`verbs::populate_apple_orchard`).
@@ -366,7 +425,9 @@ impl Kit {
                     };
                     if let Some((m, s)) = choice {
                         let rot = Quat::from_rotation_y(c * 97.0 % std::f32::consts::TAU);
-                        chunks.push(self, m, Vec3::new(x, height_fn(x, z), z), rot, s, Tier::Clutter);
+                        if chunks.push(self, m, Vec3::new(x, height_fn(x, z), z), rot, s, Tier::Clutter) {
+                            self.register_solid(m, x, z, s, rot);
+                        }
                     }
                 }
                 // Undergrowth: up to 3 plants per tile off the trails, in DRIFTS — a broad noise field
@@ -490,8 +551,23 @@ fn chunk_center(k: (i32, i32)) -> Vec3 {
     Vec3::new(k.0 as f32 * c + c * 0.5, 0.0, k.1 as f32 * c + c * 0.5)
 }
 
+/// Kit scatter must stay out of the gameplay set-pieces placed later in the world build: ork
+/// camps (tents, cage, fire — plus a margin for guy ropes), roadside story clearings and the
+/// landmarks. Merged chunks can't be thinned afterwards the way single trees are, so it is
+/// decided here, at placement.
+pub fn keep_clear(x: f32, z: f32, r: f32) -> bool {
+    crate::camps::plan().iter().any(|c| Vec2::new(x - c.centre.x, z - c.centre.y).length() < 6.0 + r)
+        || crate::poi::overlaps_planned_clearing(x, z, r)
+        || crate::ruins::near_landmark_visual_footprint(x, z)
+}
+
 impl Chunks {
-    pub fn push(&mut self, kit: &Kit, model: usize, world: Vec3, rot: Quat, scale: f32, tier: Tier) {
+    /// Queue a kit prop for its chunk merge. Returns false (nothing queued) where the spot must
+    /// stay clear of a set-piece ([`keep_clear`]).
+    pub fn push(&mut self, kit: &Kit, model: usize, world: Vec3, rot: Quat, scale: f32, tier: Tier) -> bool {
+        if keep_clear(world.x, world.z, kit.models[model].half.max_element() * scale) {
+            return false;
+        }
         let key = chunk_key(world.x, world.z);
         let t = Transform { translation: world - chunk_center(key), rotation: rot, scale: Vec3::splat(scale) };
         let slice = density_slice(tier, world);
@@ -501,6 +577,7 @@ impl Chunks {
         if tier == Tier::Props {
             splat(world.x, world.z, 0.55 * scale);
         }
+        true
     }
 
     pub fn spawn(self, kit: &Kit, commands: &mut Commands, meshes: &mut Assets<Mesh>, cull: bool) {
@@ -637,15 +714,15 @@ fn try_build(
         // Leaf cards sway a little at the crown edge, undergrowth blades more at the tips; plus
         // crown / undergrowth colour variety (see `foliage`).
         mats.push(match name {
-            "canopy" => KitMat::Foliage(foliage_mats.add(foliage::material(m, 0.07, 1.2, 0.6))),
-            "undergrowth" => KitMat::Foliage(foliage_mats.add(foliage::material(m, 0.09, 2.5, 0.35))),
+            "canopy" => KitMat::Foliage(foliage_mats.add(foliage::material(m, 0.025, 1.2, 0.6))),
+            "undergrowth" => KitMat::Foliage(foliage_mats.add(foliage::material(m, 0.035, 2.5, 0.35))),
             _ => KitMat::Std(materials.add(m)),
         });
     }
     let wind = [mat_index["canopy"], mat_index["undergrowth"]];
     let mut models = Vec::new();
     let mut by_name = HashMap::new();
-    for glb in ["forest_pbr/trees.glb", "forest_pbr/undergrowth.glb", "forest_pbr/props.glb"] {
+    for glb in ["forest_pbr/trees.glb", "forest_pbr/undergrowth.glb", "forest_pbr/props.glb", "forest_pbr/structures.glb"] {
         let mut objs = load::read_glb(glb)?;
         // `attach_tree` finds a tree's LOD1 at `lod0 + 1`, so keep each _lod0 / _lod1 pair adjacent.
         objs.sort_by(|a, b| a.0.cmp(&b.0));
@@ -659,12 +736,14 @@ fn try_build(
                 let mut view: Vec<(&mut Mesh, bool)> = raw.iter_mut().map(|(m, i)| (m, wind.contains(i))).collect();
                 foliage::bake_weights(&mut view);
             }
-            let parts = raw
+            let parts: Vec<Part> = raw
                 .into_iter()
                 .map(|(mesh, mat)| Part { handle: meshes.add(mesh.clone()), mesh, mat })
                 .collect();
+            let (half, trunk) = model_extents(&parts, &mats);
+            let solid = ["rock_", "log_", "stump_"].iter().any(|p| name.starts_with(p));
             by_name.insert(name, models.len());
-            models.push(Model { parts });
+            models.push(Model { parts, half, trunk, solid });
         }
     }
     let ground = GroundTextures {
@@ -672,7 +751,34 @@ fn try_build(
         normal: images.add(load::texture_array("forest_pbr/ground_normal.dds", &LAYERS.map(|l| format!("forest_pbr/ground_{l}_normal.png")).each_ref().map(|s| s.as_str()), false)?),
         ormh: images.add(load::texture_array("forest_pbr/ground_ormh.dds", &LAYERS.map(|l| format!("forest_pbr/ground_{l}_ormh.png")).each_ref().map(|s| s.as_str()), false)?),
     };
+    // Scanned creature surface layers (orks, villagers, wildlife) — optional.
+    let creature = ["albedo", "ormh"].map(|m| {
+        let pngs = ["skin", "fur", "leather", "wood", "metal", "cloth", "bone"].map(|l| format!("forest_pbr/creature_{l}_{m}.png"));
+        load::texture_array(&format!("forest_pbr/creature_{m}.dds"), &pngs.each_ref().map(|s| s.as_str()), m == "albedo")
+    });
+    match creature {
+        [Ok(a), Ok(o)] => crate::creature::set_detail_layers(images.add(a), images.add(o)),
+        _ => warn!("realforest: creature detail layers missing — creatures keep the procedural surfaces"),
+    }
     Ok(Kit { mats, models, by_name, ground })
+}
+
+/// (XZ half-extent, trunk-base radius) of a model from its CPU meshes. The trunk radius is the
+/// widest bark vertex below 0.3u (root flare included) — the kit trees' only plain-PBR part.
+fn model_extents(parts: &[Part], mats: &[KitMat]) -> (Vec2, f32) {
+    use bevy::mesh::VertexAttributeValues;
+    let (mut half, mut trunk) = (Vec2::ZERO, 0.0f32);
+    for part in parts {
+        let Some(VertexAttributeValues::Float32x3(p)) = part.mesh.attribute(Mesh::ATTRIBUTE_POSITION) else { continue };
+        let bark = matches!(mats[part.mat], KitMat::Std(_)) && MATERIALS[part.mat].0.starts_with("bark_");
+        for v in p {
+            half = half.max(Vec2::new(v[0].abs(), v[2].abs()));
+            if bark && v[1] < 0.3 {
+                trunk = trunk.max((v[0] * v[0] + v[2] * v[2]).sqrt());
+            }
+        }
+    }
+    (half, trunk)
 }
 
 /// Ground layers, in texture-array order (`terrain.wgsl` indexes them 0/1/2).

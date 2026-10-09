@@ -57,4 +57,17 @@ for name, aid, sat in STRUCT:
     write_pbr_set(name, ph_tex(aid, "diff"), ph_tex(aid, "nor_gl"), ph_tex(aid, "rough"),
                   ao=ph_tex(aid, "ao"), disp=ph_tex(aid, "disp"), sat=sat, normalize=True)
 
+# Structure sets (structures.py: ork camp, mill) - plain tileable PBR, vertex colour tints them.
+SETS = [
+    ("s_planks", "medieval_wood", 0.85, 1.25),
+    ("s_stone", "mossy_stone_wall", 0.85, 1.2),
+    ("s_hide", "fabric_leather_02", 0.75, 1.35),
+    ("s_thatch", "thatch_roof_angled", 0.85, 1.15),
+    ("s_cloth", "hessian_230", 0.7, 1.15),
+    ("s_iron", "rusty_metal_02", 0.8, 1.0),
+]
+for name, aid, sat, gain in SETS:
+    write_pbr_set(name, ph_tex(aid, "diff"), ph_tex(aid, "nor_gl"), ph_tex(aid, "rough"),
+                  ao=ph_tex(aid, "ao"), disp=ph_tex(aid, "disp"), sat=sat, gain=gain)
+
 print("MATERIALS_DONE")

@@ -1077,6 +1077,8 @@ pub fn scatter_region(
                         || landmark_buffered
                         || landmark_core
                         || story_clearing
+                        // Realistic forest: no tree crowns over the ork camps / story clearings.
+                        || (kit.is_some() && crate::realforest::keep_clear(cx, cz, 1.6))
                         || tree_pts.iter().any(|q| q.distance_squared(p) < min_d2)
                         // Tree spacing follows trunks and solid scenery. Bush crowns and low
                         // rocks are understorey, not empty circles that evict future trees.
@@ -1093,12 +1095,16 @@ pub fn scatter_region(
                                 && !story_clearings.overlaps(cx, cz, footprint)
                             {
                                 let rot = yaw(&mut r);
-                                register_passive_blocker(cx, cz, fb.footprints[fi], fs, fb.block_radius, rot);
+                                if kit.is_none() {
+                                    register_passive_blocker(cx, cz, fb.footprints[fi], fs, fb.block_radius, rot);
+                                }
                                 crate::blockers::reserve_visual(cx, cz, footprint);
                                 if let Some(k) = kit {
                                     let (a, b) = crate::realforest::rolls(cx, cz);
                                     if let Some((m, sm)) = k.passive_for(class_index(fb), false, a, b) {
-                                        kit_chunks.push(k, m, Vec3::new(cx, py, cz), rot, fs * sm, crate::realforest::Tier::Props);
+                                        if kit_chunks.push(k, m, Vec3::new(cx, py, cz), rot, fs * sm, crate::realforest::Tier::Props) {
+                                            k.register_solid(m, cx, cz, fs * sm, rot);
+                                        }
                                     }
                                 } else {
                                     queue(false, fb.variants[fi].clone(), Vec3::new(cx, py, cz), rot, fs);
@@ -1131,6 +1137,10 @@ pub fn scatter_region(
                             k.tree_for(class_index(c), vi / PROP_TINTS.len()).map(|t| (k, t))
                         });
                         if let Some((k, lod0)) = kit_tree {
+                            // Collide on the kit trunk actually drawn, not the low-poly footprint.
+                            crate::blockers::remove_at(cx, cz);
+                            let trunk_r = k.trunk_radius(lod0, s);
+                            crate::blockers::add(cx, cz, trunk_r);
                             let mut tree = commands.spawn((
                                 Transform {
                                     translation: Vec3::new(cx, py, cz),
@@ -1196,12 +1206,16 @@ pub fn scatter_region(
                         continue;
                     }
                     let rot = yaw(&mut r);
-                    register_passive_blocker(cx, cz, c.footprints[vi], s, c.block_radius, rot);
+                    if kit.is_none() {
+                        register_passive_blocker(cx, cz, c.footprints[vi], s, c.block_radius, rot);
+                    }
                     crate::blockers::reserve_visual(cx, cz, footprint);
                     if let Some(k) = kit {
                         let (a, b) = crate::realforest::rolls(cx, cz);
                         if let Some((m, sm)) = k.passive_for(class_index(c), false, a, b) {
-                            kit_chunks.push(k, m, Vec3::new(cx, py, cz), rot, s * sm, crate::realforest::Tier::Props);
+                            if kit_chunks.push(k, m, Vec3::new(cx, py, cz), rot, s * sm, crate::realforest::Tier::Props) {
+                                k.register_solid(m, cx, cz, s * sm, rot);
+                            }
                         }
                     } else {
                         queue(false, c.variants[vi].clone(), Vec3::new(cx, py, cz), rot, s);

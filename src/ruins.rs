@@ -350,6 +350,19 @@ pub fn spawn_landmark_model(
     model: LandmarkModel,
     xf: Transform,
 ) -> Entity {
+    spawn_landmark_model_parts(commands, meshes, materials, white, model, xf).0
+}
+
+/// [`spawn_landmark_model`], also returning the animated part entities in `model.parts` order.
+pub fn spawn_landmark_model_parts(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    white: &Handle<StandardMaterial>,
+    model: LandmarkModel,
+    xf: Transform,
+) -> (Entity, Vec<Entity>) {
+    let mut part_ids = Vec::new();
     let root = commands
         .spawn((Mesh3d(meshes.add(model.base)), MeshMaterial3d(white.clone()), xf, Visibility::Inherited))
         .id();
@@ -384,6 +397,7 @@ pub fn spawn_landmark_model(
         let mesh = meshes.add(part.mesh);
         commands.entity(root).with_children(|p| {
             let mut e = p.spawn((Mesh3d(mesh), MeshMaterial3d(mat), part.xf, RestXf(part.xf)));
+            part_ids.push(e.id());
             if shadowless {
                 e.insert(NotShadowCaster);
             }
@@ -410,7 +424,7 @@ pub fn spawn_landmark_model(
             }
         });
     }
-    root
+    (root, part_ids)
 }
 
 // ── The cosmetic animators ─────────────────────────────────────────────────────
@@ -615,8 +629,22 @@ pub fn populate_landmarks(
         let xf = Transform::from_xyz(x, y, z)
             .with_rotation(Quat::from_rotation_y(yaw))
             .with_scale(Vec3::splat(scale));
-        let id = spawn_landmark_model(commands, meshes, materials, &white, model, xf);
+        let (id, parts) = spawn_landmark_model_parts(commands, meshes, materials, &white, model, xf);
         commands.entity(id).insert(BiomeEntity);
+        // Realistic forest: the Blender mill (same footprint, door, window and sail hub) replaces
+        // the low-poly body and sail cross; the vane and the lit window keep their parts.
+        if biome == Biome::Forest {
+            if let Some(k) = crate::realforest::get().filter(|k| k.has("mill_body")) {
+                let mut root = commands.entity(id);
+                root.remove::<Mesh3d>();
+                k.attach_static(&mut root, "mill_body", Transform::IDENTITY);
+                if let Some(&sail) = parts.first() {
+                    let mut s = commands.entity(sail);
+                    s.remove::<Mesh3d>();
+                    k.attach_static(&mut s, "mill_sails", Transform::IDENTITY);
+                }
+            }
+        }
         // Solid oriented boxes, offsets rotated by the placed yaw + scaled into world units.
         let (sin, cos) = yaw.sin_cos();
         for (dx, dz, hw, hd) in obbs {

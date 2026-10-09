@@ -43,6 +43,22 @@ pub struct CreatureExt {
     #[texture(103)]
     #[sampler(104)]
     pub mr: Option<Handle<Image>>,
+    /// Scanned surface DETAIL layers (`creature_*.dds`, 7-layer arrays in `Surf` code order):
+    /// albedo detail (mean 0.5), OpenGL normal (unused: height bump instead), AO-rough-0-height.
+    /// Bound when the realistic kit loaded ([`set_detail_layers`]); `pbr.w == 2` samples them.
+    #[texture(105, dimension = "2d_array")]
+    #[sampler(106)]
+    pub detail: Option<Handle<Image>>,
+    #[texture(107, dimension = "2d_array")]
+    pub detail_ormh: Option<Handle<Image>>,
+}
+
+/// The scanned creature detail layers (albedo, ormh), set once by `realforest` before the world
+/// spawns any creature. When present, every procedural creature material uses them (mode 2).
+static DETAIL: std::sync::OnceLock<(Handle<Image>, Handle<Image>)> = std::sync::OnceLock::new();
+
+pub fn set_detail_layers(albedo: Handle<Image>, ormh: Handle<Image>) {
+    let _ = DETAIL.set((albedo, ormh));
 }
 
 impl MaterialExtension for CreatureExt {
@@ -107,9 +123,16 @@ pub fn make_creature_material_with(
             ..default()
         },
         extension: CreatureExt {
-            params: CreatureParams { params, pbr: Vec4::ZERO },
+            // Mode 2 (scanned surface layers) when the kit provided them; x = repeats per model
+            // unit, y = height-bump strength, z = detail strength.
+            params: CreatureParams {
+                params,
+                pbr: if DETAIL.get().is_some() { Vec4::new(3.2, 0.9, 0.85, 2.0) } else { Vec4::ZERO },
+            },
             albedo: None,
             mr: None,
+            detail: DETAIL.get().map(|d| d.0.clone()),
+            detail_ormh: DETAIL.get().map(|d| d.1.clone()),
         },
     })
 }

@@ -106,27 +106,38 @@ pub fn spawn_cage(
 ) -> Entity {
     use crate::ork_fortress::{cage_door_mesh, cage_mesh, CAGE_SEATS, CAGE_W};
     let mut rng = seed | 1;
-    let root = commands
-        .spawn((
-            Mesh3d(meshes.add(cage_mesh(&mut rng))),
-            MeshMaterial3d(prop_mat.clone()),
-            tf,
-            Cage { key },
-            BiomeEntity,
-        ))
-        .id();
+    let kit = crate::realforest::get().filter(|k| k.has("ork_cage"));
+    let root = match kit {
+        // Realistic forest: the Blender cage (same 2.2 x 1.8 frame, open on +X, beds on the seats).
+        Some(k) => {
+            let mut e = commands.spawn((tf, Cage { key }, BiomeEntity));
+            k.attach_static(&mut e, "ork_cage", Transform::IDENTITY);
+            e.id()
+        }
+        None => commands
+            .spawn((Mesh3d(meshes.add(cage_mesh(&mut rng))), MeshMaterial3d(prop_mat.clone()), tf, Cage { key }, BiomeEntity))
+            .id(),
+    };
     // The door hangs just proud of the (+X, +Z) corner post. No BiomeEntity of its own — it
     // despawns with the frame (child cascade), and a second tag would double-despawn.
-    let door = commands
-        .spawn((
-            Mesh3d(meshes.add(cage_door_mesh(&mut rng))),
-            MeshMaterial3d(prop_mat.clone()),
-            Transform::from_translation(v(CAGE_W / 2.0 + 0.07, 0.0, CAGE_W / 2.0)),
-            // `open` pre-opens the door (the `FOREST_CAGETEST` after-state cage) — it eases
-            // from shut on the first frames, which is invisible during boot.
-            CageDoor { key, open, t: 0.0 },
-        ))
-        .id();
+    let door_tf = Transform::from_translation(v(CAGE_W / 2.0 + 0.07, 0.0, CAGE_W / 2.0));
+    // `open` pre-opens the door (the `FOREST_CAGETEST` after-state cage) — it eases from shut on
+    // the first frames, which is invisible during boot.
+    let door = match kit {
+        Some(k) => {
+            let mut e = commands.spawn((door_tf, CageDoor { key, open, t: 0.0 }));
+            k.attach_static(&mut e, "ork_cage_door", Transform::IDENTITY);
+            e.id()
+        }
+        None => commands
+            .spawn((
+                Mesh3d(meshes.add(cage_door_mesh(&mut rng))),
+                MeshMaterial3d(prop_mat.clone()),
+                door_tf,
+                CageDoor { key, open, t: 0.0 },
+            ))
+            .id(),
+    };
     commands.entity(root).add_child(door);
     // The captives: real peasants seated on the straw beds (roots of their own — they stand up
     // and WALK OUT on rescue, so they can't be children of the frame).
@@ -236,7 +247,7 @@ fn drift_smoke(time: Res<Time>, mut q: Query<(&CampSmoke, &mut Transform)>) {
 
 #[derive(Clone, Copy)]
 pub struct CampSite {
-    centre: Vec2,
+    pub(crate) centre: Vec2,
     biome: Biome,
     faction: Faction,
     rot: f32,
@@ -347,8 +358,10 @@ fn site_ok(cx: f32, cz: f32, biome: Biome, placed: &[CampSite]) -> bool {
     if h0 > 0.01 {
         return false; // flat base ground only (avoids plateaus + mountain terraces)
     }
-    for dz in -3..=3 {
-        for dx in -3..=3 {
+    // ±5: the tent's guy ropes and the cage reach ~4u from the centre — the whole camp must stand
+    // on dry land (±3 let the tent pitch half in the sea on a beach site).
+    for dz in -5..=5 {
+        for dx in -5..=5 {
             match worldmap::ground_at_world(cx + dx as f32, cz + dz as f32) {
                 Some(h) if (h - h0).abs() < 1e-3 => {}
                 _ => return false,
@@ -509,21 +522,23 @@ pub fn build(
         // Tent NW (−z), cage SW (+z), well apart so the bigger fortress models don't overlap
         // (they did at the old −2.4/+2.2 spots). Tent at 0.7× the fortress size to fit the camp.
         let mut prop_rng = site.seed | 1;
+        // In the realistic forest each prop is its Blender model (`structures.glb`, same footprint
+        // and anchors); `(kit model, kit scale)`.
+        let kit = crate::realforest::get().filter(|k| k.has("ork_tent"));
         let solids = vec![
-            (crate::ork_fortress::tent_mesh(0.7, &mut prop_rng), v(-2.3, 0.0, -2.1), 0.0_f32, (1.05_f32, 0.85_f32)),
-            (banner_mesh(site.faction), v(0.0, 0.0, 0.0), 0.0, (0.0, 0.0)),
-            (spikes_mesh(), v(0.0, 0.0, 0.0), 0.0, (0.0, 0.0)),
-            (fire_base_mesh(), v(0.2, 0.0, 0.0), 0.0, (0.32, 0.32)),
+            (crate::ork_fortress::tent_mesh(0.7, &mut prop_rng), v(-2.3, 0.0, -2.1), 0.0_f32, (1.05_f32, 0.85_f32), ("ork_tent", 0.7)),
+            (banner_mesh(site.faction), v(0.0, 0.0, 0.0), 0.0, (0.0, 0.0), ("ork_banner", 1.0)),
+            (spikes_mesh(), v(0.0, 0.0, 0.0), 0.0, (0.0, 0.0), ("ork_spikes", 1.0)),
+            (fire_base_mesh(), v(0.2, 0.0, 0.0), 0.0, (0.32, 0.32), ("ork_firepit", 1.0)),
         ];
-        for (m, local, lyaw, (hw, hd)) in solids {
-            let h = meshes.add(m);
+        for (m, local, lyaw, (hw, hd), (kit_name, kit_scale)) in solids {
             let world = place(local);
-            commands.spawn((
-                Mesh3d(h),
-                MeshMaterial3d(prop_mat.clone()),
-                Transform { translation: world, rotation: rot_q * ry(lyaw), scale: Vec3::ONE },
-                BiomeEntity,
-            ));
+            let tf = Transform { translation: world, rotation: rot_q * ry(lyaw), scale: Vec3::ONE };
+            if let Some(e) = kit.and_then(|k| k.spawn_static(commands, kit_name, tf.with_scale(Vec3::splat(kit_scale)))) {
+                commands.entity(e).insert(BiomeEntity);
+            } else {
+                commands.spawn((Mesh3d(meshes.add(m)), MeshMaterial3d(prop_mat.clone()), tf, BiomeEntity));
+            }
             if hw > 0.0 && hd > 0.0 {
                 crate::blockers::add_obb(world.x, world.z, hw, hd, site.rot + lyaw);
             }
@@ -553,6 +568,13 @@ pub fn build(
         for (i, local) in [v(1.25, 0.0, 0.5), v(-0.5, 0.0, 0.95), v(0.45, 0.0, -1.05)].into_iter().enumerate() {
             let w = place(local);
             let seed = site.seed.wrapping_add(i as u32 * 37).wrapping_add(7) | 1;
+            if let Some(e) = kit.and_then(|k| {
+                let tf = Transform { translation: w, rotation: ry((seed % 628) as f32 / 100.0), scale: Vec3::splat(0.55) };
+                k.spawn_static(commands, "stump_a", tf)
+            }) {
+                commands.entity(e).insert(BiomeEntity);
+                continue;
+            }
             commands.spawn((
                 Mesh3d(meshes.add(sit_stump_mesh(seed))),
                 MeshMaterial3d(prop_mat.clone()),
