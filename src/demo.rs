@@ -236,6 +236,8 @@ fn explore_drive(
     hero.moving = walking;
     hero.moving_amt = if walking { 1.0 } else { 0.0 };
     hero.gait_speed = 0.0;
+    // A sprint-paced demo is a held-Shift run: keeps the weapons slung (no drawing mid-sprint).
+    hero.sprint_held = walking && explore_speed() > crate::player::SPEED * 1.3;
     if walking {
         crate::player::anim::stage_gait(&mut hero, explore_speed(), dt);
     }

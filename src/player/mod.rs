@@ -93,6 +93,10 @@ pub struct HeroWeapon;
 #[derive(Component)]
 pub struct BackSword;
 
+/// The shield slung on the back (hand board hidden) while sprinting — both arms run free.
+#[derive(Component)]
+pub struct BackShield;
+
 /// The hero's hot per-frame state (mutated directly each frame, never via events).
 #[derive(Component)]
 pub struct Hero {
@@ -216,6 +220,12 @@ pub struct Hero {
     /// engages only while this holds (walking past a camp never squares you up; trading blows
     /// does), lingering [`COMBAT_LINGER`]s past the last exchange. Transient — not saved.
     pub combat_until: f32,
+    /// Shift held while moving (written by [`movement`]): a sprint is wanted. With the weapons
+    /// drawn it first puts them away ([`anim`]); only then does the hero actually sprint.
+    pub sprint_held: bool,
+    /// Sword (and shield) in hand for a fight — written by [`anim`] from the draw/sheathe state.
+    /// No sprinting while drawn.
+    pub weapons_drawn: bool,
 }
 
 /// Seconds the "in combat" state lingers past the last blow dealt/taken (drives the stance).
@@ -267,6 +277,8 @@ impl Hero {
             back_amt: 0.0,
             threats: 0,
             combat_until: 0.0,
+            sprint_held: false,
+            weapons_drawn: false,
         }
     }
 }

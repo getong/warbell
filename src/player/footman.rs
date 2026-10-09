@@ -18,7 +18,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, Face, TextureDimension, TextureFormat};
 
 use super::anim::sword_rest_r;
-use super::{BackSword, HeroMesh, HeroPart, HeroWeapon, Joint};
+use super::{BackShield, BackSword, HeroMesh, HeroPart, HeroWeapon, Joint};
 
 const BIN: &[u8] = include_bytes!("../../assets/models/footman.bin");
 
@@ -501,11 +501,69 @@ fn back_sword_transform(model: &Model) -> Transform {
     }
 }
 
+/// Where the slung shield sits in the torso joint's frame: board face-out (away from the back),
+/// its long axis up with the broad end on top, centred between the shoulder blades and standing off
+/// the backplate far enough to clear the slung sword. The board's axes are read off the mesh: the
+/// thinnest extent is the face normal, and the face is the side AWAY from the gripping hand.
+fn back_shield_transform(model: &Model) -> Transform {
+    let pts: Vec<Vec3> = model
+        .meshes
+        .iter()
+        .filter(|m| m.joint == "Shield")
+        .flat_map(|m| m.positions.iter().map(|p| m.xf.transform_point(Vec3::from_array(*p))))
+        .collect();
+    if pts.is_empty() {
+        return Transform::IDENTITY;
+    }
+    let (lo, hi) = pts.iter().fold((Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)), |(a, b), p| (a.min(*p), b.max(*p)));
+    let (ext, centre) = (hi - lo, (hi + lo) * 0.5);
+    let axes = [Vec3::X, Vec3::Y, Vec3::Z];
+    let mut order = [0usize, 1, 2];
+    order.sort_by(|&a, &b| ext[a].total_cmp(&ext[b]));
+    let (thin, long) = (axes[order[0]], axes[order[2]]);
+    // Face = away from the hand: the hand (shield parent origin) seen from the board's centre.
+    let hand = shield_rest_r().inverse() * -SHIELD_REST_T;
+    let face = if (hand - centre).dot(thin) > 0.0 { -thin } else { thin };
+    // Broad end up: compare the board's width across its top and bottom fifths.
+    let cross = axes[order[1]];
+    let width_near = |end: f32| {
+        let (mut a, mut b) = (f32::MAX, f32::MIN);
+        for p in pts.iter().filter(|p| ((p.dot(long) - centre.dot(long)) * end) > 0.3 * ext[order[2]]) {
+            a = a.min(p.dot(cross));
+            b = b.max(p.dot(cross));
+        }
+        (b - a).max(0.0)
+    };
+    let up = if width_near(1.0) >= width_near(-1.0) { long } else { -long };
+    let side = up.cross(face);
+    let local = Mat3::from_cols(side, up, face);
+    let target = Mat3::from_cols(Vec3::NEG_X, Vec3::Y, Vec3::NEG_Z);
+    // A casual sling: top canted toward the left shoulder and leaning a touch off the back.
+    let rot = Quat::from_rotation_z(0.18) * Quat::from_rotation_x(0.08) * Quat::from_mat3(&(target * local.transpose()));
+    let back_z = model
+        .meshes
+        .iter()
+        .filter(|m| m.joint == "Torso")
+        .flat_map(|m| m.positions.iter().map(|p| m.xf.transform_point(Vec3::from_array(*p)).z))
+        .fold(0.0_f32, f32::min);
+    let half_t = 0.5 * ext[order[0]];
+    let shoulder = pos_of(model, "ShoulderL");
+    let want = Vec3::new(0.0, shoulder.y - 0.2, back_z - 0.065 - half_t);
+    Transform { translation: want - rot * centre, rotation: rot, scale: Vec3::ONE }
+}
+
 /// Radius of the knee-pit mail filler (model metres; the greave's half-width is ~0.09).
 const KNEE_FILL_R: f32 = 0.08;
 
 /// Roll of the slung blade about its own axis (tuned against the viewer).
 const BACK_SWORD_ROLL: f32 = 0.0;
+
+/// Bind-pose arm joint offsets (elbow in shoulder, hand in elbow), right then left — test probes.
+#[cfg(test)]
+pub(crate) fn arm_bind() -> [(Vec3, Vec3); 2] {
+    let m = parse();
+    [(pos_of(&m, "ElbowR"), pos_of(&m, "Sword")), (pos_of(&m, "ElbowL"), pos_of(&m, "Shield"))]
+}
 
 fn pos_of(model: &Model, name: &str) -> Vec3 {
     model.joints.iter().find(|(n, _, _)| n == name).map(|(_, _, p)| *p).unwrap_or(Vec3::ZERO)
@@ -574,6 +632,20 @@ pub fn spawn(
     // blade trail and the Director's weapon hide keep tracking the hand one).
     if let Some(list) = by_joint.get("Sword") {
         let back = commands.spawn((back_sword_transform(&g.model), Visibility::Hidden, BackSword)).id();
+        commands.entity(torso).add_child(back);
+        for &i in list {
+            let m = &g.model.meshes[i];
+            let leaf = commands
+                .spawn((Mesh3d(g.meshes[i].clone()), MeshMaterial3d(g.mats[m.mat].clone()), m.xf, HeroMesh))
+                .id();
+            commands.entity(back).add_child(leaf);
+        }
+    }
+
+    // The shield slung on the back for a sprint (hidden until then): same meshes as the hand board,
+    // laid face-out over the slung sword, hilt still showing above the right shoulder.
+    if let Some(list) = by_joint.get("Shield") {
+        let back = commands.spawn((back_shield_transform(&g.model), Visibility::Hidden, BackShield)).id();
         commands.entity(torso).add_child(back);
         for &i in list {
             let m = &g.model.meshes[i];

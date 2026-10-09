@@ -543,8 +543,10 @@ pub fn player_move(
     hero.moving = moving;
 
     // ── Horizontal motion with axis-separated terrain + prop collision ──
-    let sprinting =
-        moving && (keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight));
+    // No sprinting with sword and shield drawn: holding Shift in a fight first puts the weapons
+    // away (`anim`'s sheathe, a moment's commitment), and only then does the hero break into a run.
+    hero.sprint_held = moving && (keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight));
+    let sprinting = hero.sprint_held && !hero.weapons_drawn;
     // Smooth walk⇄run blend so the run pose eases in/out instead of snapping (anim reads `run_amt`).
     let run_target = if sprinting { 1.0 } else { 0.0 };
     hero.run_amt += (run_target - hero.run_amt) * (dt * 8.0).min(1.0);
