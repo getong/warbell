@@ -1038,6 +1038,8 @@ pub fn build(
                 || p.distance(CENTRE) < 25.0
                 || on_gate_approach(p.x, p.y)
                 || crate::blockers::is_blocked(p.x, p.y)
+                // The gallows' clearing on the approach (`poi::plan_clearings`, phase 4).
+                || crate::poi::overlaps_planned_clearing(p.x, p.y, 0.6)
             {
                 continue;
             }

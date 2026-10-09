@@ -387,6 +387,8 @@ pub fn populate_chests(commands: &mut Commands, meshes: &mut Assets<Mesh>, mater
             // Roads stay unobstructed (map-character overhaul): a chest ON the trail blocks
             // the very route it should sit beside — loot belongs a step off the path.
             || crate::roads::near_road(x, z, 1.2)
+            // Planned story clearings (`poi::plan_clearings`) stay free for their set-pieces.
+            || crate::poi::overlaps_planned_clearing(x, z, 0.8)
         {
             continue;
         }
@@ -437,6 +439,7 @@ pub fn populate_chests(commands: &mut Commands, meshes: &mut Assets<Mesh>, mater
                     && !crate::camps::in_clearing(x, z)
                     && !crate::town::near_build_plot(x, z)
                     && !crate::bridges::near_bridge(x, z, 1.0)
+                    && !crate::poi::overlaps_planned_clearing(x, z, 0.8)
                 {
                     spot = Some((x, z));
                     break 'search;

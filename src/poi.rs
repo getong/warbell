@@ -12,9 +12,13 @@
 //! With the realistic forest kit loaded, the set-pieces and the gallows are Blender models instead
 //! (`wayside.glb`, see [`STORY_KIT`]) on the same footprints and blocker boxes.
 //!
-//! Placement: deterministic arc-length walk along the artery polylines (like `wayside`, but
-//! ~90–130u spacing and 6–11u OFF the road), rejecting water/roads/plots/clearings/mesa
-//! shelves/blockers. The gallows is special-cased onto the Gnashfang approach road.
+//! Placement is planned at build phase 4, before any scatter ([`plan_clearings`]): every story
+//! kind gets exactly ONE spot, reserved at once. The gallows goes first, onto the Gnashfang
+//! approach; then a deterministic arc-length walk along the artery polylines (like `wayside`, but
+//! ~90–130u spacing and 6–13u OFF the road) offers each stop to the kinds still waiting, rejecting
+//! water/roads/plots/camps/landmarks/mesa shelves/the Blight/blockers — a stop that can't take one
+//! kind takes the next, and denser fallback walks seat any kind the rhythm couldn't. At phase 32
+//! ([`populate`]) a site some later phase claimed after all is re-sited, never dropped.
 
 use std::f32::consts::{FRAC_PI_2, TAU};
 
@@ -266,10 +270,27 @@ fn field() -> Mesh {
 }
 
 // ── Placement ────────────────────────────────────────────────────────────────────────
-const STORY_FOOTPRINTS: [f32; 5] = [1.9, 1.4, 3.25, 2.4, 2.3];
+/// Reserved visual radius per story kind. Kinds `0..ROADSIDE_KINDS` are the roadside
+/// set-pieces; the last one is the gallows ([`GALLOWS`]), which belongs on the fortress approach.
+const STORY_FOOTPRINTS: [f32; 6] = [1.9, 1.4, 3.25, 2.4, 2.3, 2.0];
 /// The realistic kit's model for each story kind (`wayside.glb`, tools/blender_forest/wayside_models.py),
 /// authored to the same footprints and blocker boxes as the low-poly meshes above.
-const STORY_KIT: [&str; 5] = ["poi_burned_cabin", "poi_graves", "poi_stones", "poi_watchtower", "poi_shepherd_hut"];
+const STORY_KIT: [&str; 6] = ["poi_burned_cabin", "poi_graves", "poi_stones", "poi_watchtower", "poi_shepherd_hut", "poi_gallows"];
+/// Roadside kinds: each is planned exactly once along the arteries.
+const ROADSIDE_KINDS: usize = 5;
+/// The gallows' kind index (planned first, onto the Gnashfang approach).
+const GALLOWS: usize = 5;
+/// Keep-out around an ork camp centre beyond its flat clearing: tents, cage and guy ropes
+/// (`realforest::keep_clear` uses the same reach).
+const CAMP_KEEP: f32 = 7.0;
+/// Margin past the castle's grass safe ring (world radius `SAFE_R × MAP_SCALE` ≈ 32u): the town
+/// meadow — hay corner, beehives, rest campfire, tree clumps (`meadow.rs`, phase 29) — fills that
+/// ring without consulting the plan, and a story piece belongs on the road OUT, not in the village.
+const TOWN_KEEP: f32 = 4.0;
+/// Keep-out around a biome landmark's centre: its Rune-Trial arena (`landmarks::RUNE_R` = 8u, where
+/// the guardians spawn and the fight happens) plus a gap, so a story piece never crowds or competes
+/// with a landmark (the old walk put the burned cabin at the foot of the Sunken Pyramid).
+const LANDMARK_KEEP: f32 = 14.0;
 
 #[derive(Clone)]
 struct StorySite { kind: usize, pos: Vec2, yaw: f32 }
@@ -284,9 +305,9 @@ impl StoryClearings {
         self.0.iter().any(|(pos, foot)| p.distance_squared(*pos) < (foot + radius + 0.35).powi(2))
     }
 }
-/// Every spot the world build has planned for a later set-piece — the roadside story clearings,
-/// plus the wayside furniture and the forest vignette (`wayside::plan` / `vignettes::plan`) — so
-/// the biome scatter (trees, props, cover, in every biome) leaves them free.
+/// Every spot the world build has planned for a later set-piece — the roadside story clearings
+/// and the gallows, plus the wayside furniture and the forest vignette (`wayside::plan` /
+/// `vignettes::plan`) — so the biome scatter (trees, props, cover, in every biome) leaves them free.
 pub fn story_clearings() -> StoryClearings {
     let mut spots: Vec<(Vec2, f32)> =
         STORY_SITES.lock().unwrap().iter().map(|site| (site.pos, STORY_FOOTPRINTS[site.kind])).collect();
@@ -294,6 +315,8 @@ pub fn story_clearings() -> StoryClearings {
     spots.extend(crate::vignettes::planned_footprint());
     StoryClearings(spots)
 }
+/// Does a circle at `(x, z)` of radius `radius` overlap a planned story clearing (gallows
+/// included)? Every placer that runs between the phase-4 plan and phase 32 must ask this.
 pub fn overlaps_planned_clearing(x: f32, z: f32, radius: f32) -> bool {
     let p = Vec2::new(x, z);
     STORY_SITES.lock().unwrap().iter().any(|site| {
@@ -309,7 +332,7 @@ fn rng_next(state: &mut u32) -> f32 {
     ((t ^ (t >> 14)) as f32) / 4_294_967_296.0
 }
 
-/// Flat, unclaimed, off-road land — same discipline as `wayside::spot_ok` but with a wider
+/// Flat, unclaimed, dry, off-road land — same discipline as `wayside::spot_ok` but with a wider
 /// flatness probe (these set-pieces have real footprints).
 fn spot_ok(x: f32, z: f32, probe: f32) -> bool {
     !crate::blockers::any_visual_within(x, z, probe + 0.2) && site_ok(x, z, probe)
@@ -319,19 +342,26 @@ fn spot_ok(x: f32, z: f32, probe: f32) -> bool {
 /// at plan time, so at spawn only the ground rules and later SOLIDS are re-checked.
 fn site_ok(x: f32, z: f32, probe: f32) -> bool {
     let Some(y0) = crate::worldmap::ground_at_world(x, z) else { return false };
-    for k in 0..6 {
-        let a = k as f32 * (TAU / 6.0);
-        let (px, pz) = (x + a.cos() * probe, z + a.sin() * probe);
-        match crate::worldmap::ground_at_world(px, pz) {
-            Some(y) if (y - y0).abs() <= 0.30 => {}
-            _ => return false,
+    // An outer ring at the footprint edge (flatness + every keep-out) and an inner one at half
+    // radius, so a river channel, pool or trail can't slip between the outer probes.
+    for (n, r) in [(12, probe), (6, probe * 0.5)] {
+        for k in 0..n {
+            let a = k as f32 * (TAU / n as f32);
+            let (px, pz) = (x + a.cos() * r, z + a.sin() * r);
+            match crate::worldmap::ground_at_world(px, pz) {
+                Some(y) if (y - y0).abs() <= 0.30 => {}
+                _ => return false,
+            }
+            if crate::roads::on_road(px, pz)
+                || crate::worldmap::is_river_world(px, pz)
+                || crate::worldmap::is_pool_world(px, pz)
+                || crate::town::near_build_plot(px, pz)
+                || crate::castle::in_footprint(px, pz)
+                || crate::camps::in_clearing(px, pz)
+                || crate::rival::near_fort(px, pz)
+                || crate::ruins::near_landmark_visual_footprint(px, pz)
+            { return false; }
         }
-        if crate::roads::on_road(px, pz)
-            || crate::town::near_build_plot(px, pz)
-            || crate::castle::in_footprint(px, pz)
-            || crate::camps::in_clearing(px, pz)
-            || crate::ruins::near_landmark_visual_footprint(px, pz)
-        { return false; }
     }
     !crate::roads::on_road(x, z)
         && !crate::town::near_build_plot(x, z)
@@ -341,7 +371,8 @@ fn site_ok(x: f32, z: f32, probe: f32) -> bool {
         && !crate::worldmap::cliff_shelf_world(x, z)
         && !crate::ruins::near_landmark_visual_footprint(x, z)
         && !crate::worldmap::is_pool_world(x, z)
-        && !crate::bridges::near_bridge(x, z, 2.0)
+        && !crate::worldmap::is_river_world(x, z)
+        && !crate::bridges::near_bridge(x, z, probe + 0.5)
 }
 
 /// Register each solid mass in model-local space, rotated together with the visible mesh.
@@ -371,53 +402,205 @@ fn register_story_blockers(kind: usize, p: Vec2, yaw: f32) {
             local_box(1.0, 1.0, 0.84, 0.055, 0.0);
             local_box(1.8, 0.0, 0.055, 1.05, 0.0);
         }
+        // The gallows platform + frame (one box, as before it joined the plan).
+        GALLOWS => local_box(0.0, 0.0, 1.2, 0.9, 0.0),
         _ => {}
     }
 }
 
-/// Reserve deterministic roadside story spots before biome scatter can fill their edges.
-pub fn plan_clearings() {
-    reset_plan();
+/// Ground rules shared by every story kind on top of [`spot_ok`]: clear of the ork camps' tents
+/// and guy ropes (their flat clearing is smaller than what they draw), of the castle's town
+/// meadow, and of the landmarks' trial arenas.
+fn clear_of_settlements(q: Vec2, foot: f32) -> bool {
+    q.length() > crate::worldmap::SAFE_R * crate::worldmap::MAP_SCALE + TOWN_KEEP + foot
+        && crate::camps::plan().iter().all(|c| c.centre.distance(q) > CAMP_KEEP + foot)
+        && crate::ruins::landmark_sites().iter().all(|l| l.pos.distance(q) > LANDMARK_KEEP + foot)
+}
+
+/// A ROADSIDE kind's spot: [`spot_ok`], clear of camps, and well clear of the Blight — Gnashfang
+/// Hold's walls, gate approach and mire dressing are built at phase 25 from fixed coordinates
+/// and claim that ground whatever was planned there (an artery runs past the hold's west wall:
+/// the old walk planned the watchtower INSIDE the palisade, and it was always "claimed").
+fn roadside_spot_ok(kind: usize, q: Vec2, foot: f32) -> bool {
+    crate::ork_fortress::blight_edge_world(q.x, q.y) < -(foot + 4.0)
+        && terrain_suits(kind, q, foot)
+        && clear_of_settlements(q, foot)
+        && spot_ok(q.x, q.y, foot)
+}
+
+/// Biome fit: the roadside pieces are dry-land scenes, so none stands on the marsh (the bog has its
+/// own drowned-tower / stilt-hut dressing, `bog.rs`); the shepherd's hut and its pen want pasture —
+/// grass or forest edge, not dunes or snowfield.
+fn terrain_suits(kind: usize, q: Vec2, foot: f32) -> bool {
+    use crate::biome::Biome;
+    let at = |dx: f32, dz: f32| crate::worldmap::biome_at_world(q.x + dx, q.y + dz);
+    let probes = [at(0.0, 0.0), at(foot, 0.0), at(-foot, 0.0), at(0.0, foot), at(0.0, -foot)];
+    probes.iter().all(|b| *b != Some(Biome::Swamp))
+        && (kind != 4 || probes.iter().all(|b| matches!(b, None | Some(Biome::Forest))))
+}
+
+/// The gallows' spot: outside the palisade, off the gate apron (the orks' own wayposts stand
+/// there), clear of camps, and [`spot_ok`].
+fn gallows_spot_ok(q: Vec2) -> bool {
+    let foot = STORY_FOOTPRINTS[GALLOWS];
+    q.distance(crate::ork_fortress::CENTRE) > 30.0
+        && (0..8).all(|k| {
+            let a = k as f32 * (TAU / 8.0);
+            !crate::ork_fortress::on_gate_approach(q.x + a.cos() * foot, q.y + a.sin() * foot)
+        })
+        && !crate::ork_fortress::on_gate_approach(q.x, q.y)
+        && clear_of_settlements(q, foot)
+        && spot_ok(q.x, q.y, foot)
+}
+
+/// One roadside walk over every artery: `(first stop, its jitter, gap, gap jitter, min spacing
+/// between set-pieces)`. Pass 1 is the designed rhythm — a set-piece every ~90–130u of road,
+/// ≥55u apart. The denser passes only run for a kind the rhythm couldn't seat (the 3.25u stone
+/// circle on a cramped stretch) and trade spacing for coverage instead of dropping the kind.
+const ROADSIDE_PASSES: [(f32, f32, f32, f32, f32); 3] = [
+    (45.0, 60.0, 90.0, 40.0, 55.0),
+    (15.0, 20.0, 20.0, 10.0, 40.0),
+    (4.0, 4.0, 6.0, 2.0, 24.0),
+];
+
+/// Seat each of `kinds` once along the arteries, appending to `planned` (whose sites the spacing
+/// also respects). Each stop is offered to the kinds still waiting, in order, so a stop too
+/// cramped for the stone circle still takes the graves and the circle tries the next stop —
+/// nothing is skipped and no kind is planned twice. Deterministic: the walk, the side picks and
+/// the yaws come from fixed seeds. Returns the kinds that found no spot at all.
+fn seat_roadside(mut pending: Vec<usize>, planned: &mut Vec<StorySite>) -> Vec<usize> {
+    let arteries = crate::roads::artery_polylines();
     let mut rng: u32 = 0x9017_44aa;
-    let mut planned: Vec<StorySite> = Vec::new();
-    let mut ki = 0;
-    for poly in crate::roads::artery_polylines() {
-        let mut next_at = 45.0 + rng_next(&mut rng) * 60.0;
-        let mut travelled = 0.0_f32;
-        for w in poly.windows(2) {
-            let seg = w[0].distance(w[1]);
-            if seg < 1e-3 { continue; }
-            while travelled + seg >= next_at {
-                let t = (next_at - travelled) / seg;
-                let p = w[0].lerp(w[1], t);
-                let dir = (w[1] - w[0]) / seg;
-                let perp = Vec2::new(-dir.y, dir.x);
-                next_at += 90.0 + rng_next(&mut rng) * 40.0;
-                let side = if rng_next(&mut rng) < 0.5 { 1.0 } else { -1.0 };
-                let kind = ki % STORY_FOOTPRINTS.len();
-                // A failed large circle must not suppress every later smaller story kind.
-                ki += 1;
-                let foot = STORY_FOOTPRINTS[kind];
-                let Some(q) = [(side, 6.5_f32), (-side, 6.5), (side, 9.5), (-side, 9.5), (side, 12.5), (-side, 12.5)]
-                    .into_iter()
-                    .flat_map(|(s, d)| [0.0_f32, -6.0, 6.0].into_iter().map(move |along| p + perp * d * s + dir * along))
-                    .find(|q| spot_ok(q.x, q.y, foot) && planned.iter().all(|site| site.pos.distance(*q) >= 55.0))
-                else { continue; };
-                planned.push(StorySite { kind, pos: q, yaw: rng_next(&mut rng) * TAU });
+    'passes: for (first, first_jitter, gap, gap_jitter, spacing) in ROADSIDE_PASSES {
+        for poly in &arteries {
+            let mut next_at = first + rng_next(&mut rng) * first_jitter;
+            let mut travelled = 0.0_f32;
+            for w in poly.windows(2) {
+                let seg = w[0].distance(w[1]);
+                if seg < 1e-3 { continue; }
+                while travelled + seg >= next_at {
+                    if pending.is_empty() { break 'passes; }
+                    let t = (next_at - travelled) / seg;
+                    let p = w[0].lerp(w[1], t);
+                    let dir = (w[1] - w[0]) / seg;
+                    let perp = Vec2::new(-dir.y, dir.x);
+                    next_at += gap + rng_next(&mut rng) * gap_jitter;
+                    let side = if rng_next(&mut rng) < 0.5 { 1.0 } else { -1.0 };
+                    let seat = pending.iter().enumerate().find_map(|(i, &kind)| {
+                        let foot = STORY_FOOTPRINTS[kind];
+                        [(side, 6.5_f32), (-side, 6.5), (side, 9.5), (-side, 9.5), (side, 12.5), (-side, 12.5)]
+                            .into_iter()
+                            .flat_map(|(s, d)| [0.0_f32, -6.0, 6.0].into_iter().map(move |along| p + perp * d * s + dir * along))
+                            .find(|q| planned.iter().all(|site| site.pos.distance(*q) >= spacing) && roadside_spot_ok(kind, *q, foot))
+                            .map(|q| (i, q))
+                    });
+                    if let Some((i, q)) = seat {
+                        let kind = pending.remove(i);
+                        planned.push(StorySite { kind, pos: q, yaw: site_yaw(kind, q) });
+                    }
+                }
+                travelled += seg;
             }
-            travelled += seg;
         }
     }
-    info!("poi: planned {} roadside clearings", planned.len());
-    // Reserve each clearing now: the scatter (via `story_clearings`) and every placer before
-    // phase 32 (ore, chests, forage, wayside, …) then leaves it free for its set-piece.
+    pending
+}
+
+/// A stable per-site yaw, hashed from the kind and spot (independent of the walk order).
+fn site_yaw(kind: usize, q: Vec2) -> f32 {
+    let mut s = q.x.to_bits() ^ q.y.to_bits().rotate_left(16) ^ (kind as u32).wrapping_mul(0x9e37_79b9);
+    rng_next(&mut s) * TAU
+}
+
+/// The gallows on the Gnashfang approach: just off the road on the way in, ~30u out from the
+/// gate — the message you read before the walls. The fortress spur itself is short (it forks off
+/// the nearest artery right outside the hold), so every artery point in the approach band
+/// counts, nearest the designed ~30u first. Tried in widening rings — the designed band and
+/// offsets, then further out and further off the road (the approach is uneven and partly
+/// waterlogged) — rather than dropping the piece. Faces the gate.
+fn seat_gallows(planned: &[StorySite]) -> Option<StorySite> {
+    let gate = crate::ork_fortress::GATE;
+    let arteries = crate::roads::artery_polylines();
+    // `(band from the gate, offsets off the road, in front of the wall line only)`. The hold
+    // faces north (the castle side): "the way in" is the ground north of the gate.
+    let tiers: [(f32, f32, &[f32], bool); 3] = [
+        (18.0, 50.0, &[4.5, 6.5], true),
+        (12.0, 80.0, &[4.5, 6.5, 8.5, 10.5], true),
+        (8.0, 130.0, &[4.5, 6.5, 8.5, 10.5, 13.0], false),
+    ];
+    for (near, far, offsets, front_only) in tiers {
+        let mut stops: Vec<(f32, Vec2, Vec2)> = Vec::new();
+        for poly in &arteries {
+            for w in poly.windows(2) {
+                let d = w[1].distance(gate);
+                if (near..=far).contains(&d)
+                    && w[1].distance(crate::ork_fortress::CENTRE) > 30.0
+                    && (!front_only || w[1].y < gate.y - 4.0)
+                {
+                    stops.push(((d - 30.0).abs(), w[1], (w[1] - w[0]).normalize_or_zero()));
+                }
+            }
+        }
+        // Total order on (band distance, x, z) so equal keys can't depend on the artery order.
+        stops.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.x.total_cmp(&b.1.x)).then(a.1.y.total_cmp(&b.1.y)));
+        for (_, p, dir) in stops {
+            let perp = Vec2::new(-dir.y, dir.x);
+            for &d in offsets {
+                for side in [1.0_f32, -1.0] {
+                    let q = p + perp * d * side;
+                    if planned.iter().all(|site| site.pos.distance(q) >= 24.0) && gallows_spot_ok(q) {
+                        return Some(StorySite { kind: GALLOWS, pos: q, yaw: (gate.x - q.x).atan2(gate.y - q.y) });
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Reserve every story set-piece's spot (build phase 4, before any scatter): the gallows on the
+/// fortress approach, then each roadside kind exactly once. Biome scatter (via
+/// [`story_clearings`]) and every placer before phase 32 (ore, chests, forage, the Blight mire,
+/// the bog, wayside, …) then leave these clearings free for their set-pieces.
+pub fn plan_clearings() {
+    reset_plan();
+    let mut planned: Vec<StorySite> = Vec::new();
+    match seat_gallows(&planned) {
+        Some(site) => planned.push(site),
+        None => warn!("poi: no spot for the gallows on the fortress approach"),
+    }
+    for kind in seat_roadside((0..ROADSIDE_KINDS).collect(), &mut planned) {
+        warn!("poi: no roadside spot for {}", STORY_KIT[kind]);
+    }
     for site in &planned {
         crate::blockers::reserve_visual(site.pos.x, site.pos.y, STORY_FOOTPRINTS[site.kind]);
+        info!("poi: planned {} at {:.1},{:.1}", STORY_KIT[site.kind], site.pos.x, site.pos.y);
     }
+    info!("poi: planned {} story clearings", planned.len());
     *STORY_SITES.lock().unwrap() = planned;
 }
 
-/// Build-phase 32 entry: set-pieces along the arteries + the gallows + fortress flags + fields.
+/// Is a planned site still usable at spawn time? Its own reservation is there by design, so only
+/// the ground rules and solids placed since the plan are re-checked.
+fn still_free(site: &StorySite) -> bool {
+    let (q, foot) = (site.pos, STORY_FOOTPRINTS[site.kind]);
+    site_ok(q.x, q.y, foot) && !crate::blockers::any_within(q.x, q.y, foot + 0.2)
+}
+
+/// A replacement spot for a planned site some later phase claimed after all — the same search,
+/// run against the finished world (the visual test now sees everything spawned so far).
+fn resite(kind: usize, others: &[StorySite]) -> Option<StorySite> {
+    if kind == GALLOWS {
+        return seat_gallows(others);
+    }
+    let mut seated = others.to_vec();
+    if !seat_roadside(vec![kind], &mut seated).is_empty() {
+        return None;
+    }
+    seated.pop()
+}
+
+/// Build-phase 32 entry: the planned set-pieces (roadside kinds + the gallows) + fortress flags + fields.
 pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) {
     let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.9, ..default() });
     let range = VisibilityRange { start_margin: 0.0..0.0, end_margin: 120.0..120.0, use_aabb: true };
@@ -425,16 +608,32 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
     // realistic forest kit loaded each set-piece is its Blender model (`wayside.glb`: same
     // footprint, masses under the same blocker boxes); otherwise the low-poly mesh.
     let kit = crate::realforest::get().filter(|k| k.has(STORY_KIT[0]));
-    let handles: Vec<Handle<Mesh>> = [burned_cabin(), graves(), standing_stones(), fallen_watchtower(), shepherd_hut()]
-        .into_iter().map(|mesh| meshes.add(mesh)).collect();
+    let handles: Vec<Handle<Mesh>> =
+        [burned_cabin(), graves(), standing_stones(), fallen_watchtower(), shepherd_hut(), gallows()]
+            .into_iter().map(|mesh| meshes.add(mesh)).collect();
     let planned = STORY_SITES.lock().unwrap().clone();
-    let mut placed = 0;
-    for site in planned {
+    let mut final_sites: Vec<StorySite> = Vec::with_capacity(planned.len());
+    // 1. The story set-pieces, each on its planned clearing.
+    for (i, site) in planned.iter().enumerate() {
+        let site = if still_free(site) {
+            site.clone()
+        } else {
+            // Not a skip: re-site the kind (against every other planned or placed piece).
+            let others: Vec<StorySite> = final_sites.iter().chain(&planned[i + 1..]).cloned().collect();
+            match resite(site.kind, &others) {
+                Some(moved) => {
+                    info!("poi: planned {} at {:.1},{:.1} was claimed, moved to {:.1},{:.1}",
+                        STORY_KIT[site.kind], site.pos.x, site.pos.y, moved.pos.x, moved.pos.y);
+                    moved
+                }
+                None => {
+                    warn!("poi: planned {} at {:.1},{:.1} was claimed and no other spot is free",
+                        STORY_KIT[site.kind], site.pos.x, site.pos.y);
+                    continue;
+                }
+            }
+        };
         let (q, foot) = (site.pos, STORY_FOOTPRINTS[site.kind]);
-        if !site_ok(q.x, q.y, foot) || crate::blockers::any_within(q.x, q.y, foot + 0.2) {
-            info!("poi: planned {} at {:.1},{:.1} was claimed, skipped", STORY_KIT[site.kind], q.x, q.y);
-            continue;
-        }
         let y = crate::worldmap::ground_at_world(q.x, q.y).unwrap_or(0.0);
         let tf = Transform::from_xyz(q.x, y, q.y).with_rotation(Quat::from_rotation_y(site.yaw));
         match kit.and_then(|k| k.spawn_static_with(commands, STORY_KIT[site.kind], tf, range.clone())) {
@@ -444,64 +643,13 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
         register_story_blockers(site.kind, q, site.yaw);
         crate::blockers::reserve_visual(q.x, q.y, foot);
         info!("poi: {} at {:.1},{:.1}", STORY_KIT[site.kind], q.x, q.y);
-        placed += 1;
+        final_sites.push(site);
     }
+    let placed = final_sites.len();
+    // Keep the plan in step with what actually stands (anything reading the clearings later).
+    *STORY_SITES.lock().unwrap() = final_sites;
 
-    // 2. The GALLOWS on the Gnashfang approach: walk back up the fortress spur from the gate
-    //    and stand it just off the road — the message you read on the way in.
-    let gate = crate::ork_fortress::GATE;
-    let mut best: Option<Vec2> = None;
-    for poly in crate::roads::artery_polylines() {
-        let Some(end) = poly.last() else { continue };
-        if end.distance(gate) > 12.0 && poly.first().map_or(true, |f| f.distance(gate) > 12.0) {
-            continue; // not the fortress spur
-        }
-        // Walk ~30u back from the gate end.
-        let pts: Vec<Vec2> = if poly.last().unwrap().distance(gate) <= 12.0 {
-            poly.iter().rev().copied().collect()
-        } else {
-            poly.clone()
-        };
-        // Scan a WINDOW of the approach (18–50u back from the gate), several offsets per stop —
-        // the Blight approach is uneven and partly waterlogged, and a single rigid 30u probe
-        // never found footing (verification: "no spot for the gallows" every run).
-        let mut acc = 0.0;
-        'walk: for w in pts.windows(2) {
-            acc += w[0].distance(w[1]);
-            if !(18.0..=50.0).contains(&acc) {
-                continue;
-            }
-            let dir = (w[1] - w[0]).normalize_or_zero();
-            let perp = Vec2::new(-dir.y, dir.x);
-            for (side, d) in [(1.0_f32, 4.5_f32), (-1.0, 4.5), (1.0, 6.5), (-1.0, 6.5)] {
-                let q = w[1] + perp * d * side;
-                if spot_ok(q.x, q.y, 2.0) {
-                    best = Some(q);
-                    break 'walk;
-                }
-            }
-        }
-        if best.is_some() {
-            break;
-        }
-    }
-    if let Some(q) = best {
-        let y = crate::worldmap::ground_at_world(q.x, q.y).unwrap_or(0.0);
-        // Face the frame across the road (rotation roughly toward the gate).
-        let yaw = (gate.x - q.x).atan2(gate.y - q.y);
-        let tf = Transform::from_xyz(q.x, y, q.y).with_rotation(Quat::from_rotation_y(yaw));
-        match kit.and_then(|k| k.spawn_static_with(commands, "poi_gallows", tf, range.clone())) {
-            Some(e) => { commands.entity(e).insert(BiomeEntity); }
-            None => { commands.spawn((Mesh3d(meshes.add(gallows())), MeshMaterial3d(mat.clone()), tf, BiomeEntity, range.clone())); }
-        }
-        crate::blockers::add_obb(q.x, q.y, 1.2, 0.9, yaw);
-        crate::blockers::reserve_visual(q.x, q.y, 2.0);
-        info!("poi: gallows at {:.1},{:.1}", q.x, q.y);
-    } else {
-        warn!("poi: no spot for the gallows on the fortress approach");
-    }
-
-    // 3. FLAGS over Gnashfang Hold: a tall smoke column + wheeling crows, visible far across
+    // 2. FLAGS over Gnashfang Hold: a tall smoke column + wheeling crows, visible far across
     //    the island (sightline weenies — cheap particles/meshes, no lighting cost).
     let hold = crate::ork_fortress::CENTRE;
     // Near-black, denser, taller than the first cut — grey-on-grey it vanished against the
@@ -549,7 +697,7 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
         ));
     }
 
-    // 4. Farmland around the castle: tilled fields in the diagonal gaps outside the build-plot
+    // 3. Farmland around the castle: tilled fields in the diagonal gaps outside the build-plot
     //    corner ring (still on the forced-flat grass apron), so the meadow reads worked.
     let field_mesh = meshes.add(field());
     let mut fields = 0;
@@ -658,6 +806,81 @@ mod tests {
         assert!(!crate::blockers::is_blocked(40.0, 39.0));
         crate::blockers::reset();
     }
+    fn planned_sites() -> Vec<(usize, Vec2)> {
+        STORY_SITES.lock().unwrap().iter().map(|s| (s.kind, s.pos)).collect()
+    }
+
+    /// The phase-4 plan seats every story kind exactly once on the Home map — five roadside
+    /// set-pieces + the gallows — on legal dry ground, apart from each other, the roadside ones
+    /// out of the Blight (Gnashfang Hold's dressing never consults the plan), the gallows on the
+    /// fortress approach; and a rebuild re-plans the very same spots.
+    #[test]
+    fn plan_seats_every_story_kind_exactly_once() {
+        let _g = crate::blockers::TEST_LOCK.lock().unwrap();
+        crate::blockers::reset();
+        plan_clearings();
+        let first = planned_sites();
+        for (kind, p) in &first {
+            eprintln!("planned {} at {:.1},{:.1}", STORY_KIT[*kind], p.x, p.y);
+        }
+        let mut kinds: Vec<usize> = first.iter().map(|s| s.0).collect();
+        kinds.sort_unstable();
+        assert_eq!(kinds, (0..STORY_KIT.len()).collect::<Vec<_>>(), "each kind exactly once");
+        for (i, &(kind, p)) in first.iter().enumerate() {
+            let foot = STORY_FOOTPRINTS[kind];
+            assert!(site_ok(p.x, p.y, foot) && clear_of_settlements(p, foot), "{} on illegal ground at {p}", STORY_KIT[kind]);
+            if kind != GALLOWS {
+                assert!(crate::ork_fortress::blight_edge_world(p.x, p.y) < -foot, "{} inside the Blight at {p}", STORY_KIT[kind]);
+                assert!(terrain_suits(kind, p, foot), "{} on unfit terrain at {p}", STORY_KIT[kind]);
+            }
+            for &(other, q) in &first[i + 1..] {
+                assert!(p.distance(q) > foot + STORY_FOOTPRINTS[other] + 2.0, "{} crowds {}", STORY_KIT[kind], STORY_KIT[other]);
+            }
+        }
+        let gallows = first.iter().find(|s| s.0 == GALLOWS).unwrap().1;
+        assert!(gallows.distance(crate::ork_fortress::GATE) < 60.0, "the gallows belongs on the approach, not at {gallows}");
+        assert!(gallows.distance(crate::ork_fortress::CENTRE) > 30.0, "the gallows stands outside the palisade");
+
+        crate::blockers::reset();
+        plan_clearings();
+        assert_eq!(planned_sites(), first, "planning must be deterministic across rebuilds");
+        crate::blockers::reset();
+        reset_plan();
+    }
+
+    /// A planned spot a later build phase claims after all is re-sited at spawn rather than
+    /// dropped: every kind still stands exactly once, collision included.
+    #[test]
+    fn claimed_site_is_resited_not_skipped() {
+        let _g = crate::blockers::TEST_LOCK.lock().unwrap();
+        crate::blockers::reset();
+        plan_clearings();
+        let victim = STORY_SITES.lock().unwrap().iter().find(|s| s.kind == 3).cloned().expect("watchtower planned");
+        crate::blockers::add_box(victim.pos.x, victim.pos.y, 0.5, 0.5); // a late solid on its spot
+
+        let world = World::new();
+        let mut queue = bevy::ecs::world::CommandQueue::default();
+        let mut commands = Commands::new(&mut queue, &world);
+        let (mut meshes, mut materials) = (Assets::<Mesh>::default(), Assets::<StandardMaterial>::default());
+        populate(&mut commands, &mut meshes, &mut materials);
+
+        let placed = planned_sites();
+        let mut kinds: Vec<usize> = placed.iter().map(|s| s.0).collect();
+        kinds.sort_unstable();
+        assert_eq!(kinds, (0..STORY_KIT.len()).collect::<Vec<_>>(), "nothing dropped, nothing doubled");
+        let moved = placed.iter().find(|s| s.0 == 3).unwrap().1;
+        assert!(moved.distance(victim.pos) > STORY_FOOTPRINTS[3], "the claimed watchtower must move");
+        for site in STORY_SITES.lock().unwrap().iter() {
+            // Each kind's first blocker box, in model space (graves: the cross; circle: stone 0).
+            let local = match site.kind { 1 => Vec3::new(-0.7, 0.0, -0.75), 2 => Vec3::new(2.3, 0.0, 0.0), 3 => Vec3::new(0.6, 0.0, 0.0), 4 => Vec3::new(-1.0, 0.0, 0.0), _ => Vec3::ZERO };
+            let at = Quat::from_rotation_y(site.yaw) * local;
+            assert!(crate::blockers::is_blocked(site.pos.x + at.x, site.pos.y + at.z),
+                "{} at {} registered no collision", STORY_KIT[site.kind], site.pos);
+        }
+        crate::blockers::reset();
+        reset_plan();
+    }
+
     #[test]
     fn planned_clearings_reject_overhanging_scatter_and_reset_between_maps() {
         let _g = crate::blockers::TEST_LOCK.lock().unwrap();
