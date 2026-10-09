@@ -81,6 +81,106 @@ fn explore_speed() -> f32 {
     std::env::var("FOREST_DEMO_SPEED").ok().and_then(|v| v.parse().ok()).unwrap_or(EXPLORE_SPEED)
 }
 
+/// The explore route. `FOREST_DEMO_TO="x,z"` swaps the fixed lawn stroll for a real ROAD run: the
+/// shortest way over the artery network from the castle end of the roads to the point nearest the
+/// target (minus `FOREST_DEMO_SKIP` units of the yard, default 20) — so the clip shows the hero
+/// running the actual network out into the biome. Built once (the road field bakes lazily).
+fn explore_route() -> &'static [Vec2] {
+    static ROUTE: std::sync::OnceLock<Vec<Vec2>> = std::sync::OnceLock::new();
+    ROUTE.get_or_init(|| {
+        let env2 = |k: &str| {
+            let v: Vec<f32> = std::env::var(k).ok()?.split(',').filter_map(|p| p.trim().parse().ok()).collect();
+            (v.len() == 2).then(|| Vec2::new(v[0], v[1]))
+        };
+        let Some(to) = env2("FOREST_DEMO_TO") else {
+            return EXPLORE_PATH.to_vec();
+        };
+        let Some(mut road) = road_path(&crate::roads::artery_polylines(), to) else {
+            return EXPLORE_PATH.to_vec();
+        };
+        let skip: f32 = std::env::var("FOREST_DEMO_SKIP").ok().and_then(|v| v.parse().ok()).unwrap_or(20.0);
+        let mut walked = 0.0;
+        let mut start = 0;
+        while start + 2 < road.len() && walked < skip {
+            walked += road[start].distance(road[start + 1]);
+            start += 1;
+        }
+        let route = road.split_off(start);
+        let len: f32 = route.windows(2).map(|w| w[0].distance(w[1])).sum();
+        info!("demo: road route {:?} → {:?}, {len:.0}u, {} pts", route[0], route[route.len() - 1], route.len());
+        route
+    })
+}
+
+/// Shortest polyline over the road `lines` from the point nearest the castle (origin) to the point
+/// nearest `to`. Lines join where an endpoint lies within 4u of another line (spurs fork off
+/// mid-artery). Dijkstra over the centreline samples; `None` if the two aren't connected.
+fn road_path(lines: &[Vec<Vec2>], to: Vec2) -> Option<Vec<Vec2>> {
+    let pts: Vec<Vec2> = lines.iter().flatten().copied().collect();
+    if pts.len() < 2 {
+        return None;
+    }
+    let mut adj: Vec<Vec<(usize, f32)>> = vec![Vec::new(); pts.len()];
+    let mut link = |a: usize, b: usize| {
+        let d = pts[a].distance(pts[b]);
+        adj[a].push((b, d));
+        adj[b].push((a, d));
+    };
+    let mut base = 0;
+    let mut ends = Vec::new();
+    for l in lines {
+        for i in 1..l.len() {
+            link(base + i - 1, base + i);
+        }
+        if !l.is_empty() {
+            ends.push((base, base..base + l.len()));
+            ends.push((base + l.len() - 1, base..base + l.len()));
+        }
+        base += l.len();
+    }
+    for (e, own) in ends {
+        for j in 0..pts.len() {
+            if !own.contains(&j) && pts[e].distance(pts[j]) < 4.0 {
+                link(e, j);
+            }
+        }
+    }
+    let nearest = |q: Vec2| (0..pts.len()).min_by(|&a, &b| pts[a].distance(q).total_cmp(&pts[b].distance(q)));
+    let (src, dst) = (nearest(Vec2::ZERO)?, nearest(to)?);
+    let mut dist = vec![f32::MAX; pts.len()];
+    let mut prev = vec![usize::MAX; pts.len()];
+    let mut heap = std::collections::BinaryHeap::new();
+    dist[src] = 0.0;
+    heap.push(std::cmp::Reverse((0u32, src)));
+    while let Some(std::cmp::Reverse((dbits, u))) = heap.pop() {
+        if f32::from_bits(dbits) > dist[u] {
+            continue;
+        }
+        if u == dst {
+            break;
+        }
+        for &(v, w) in &adj[u] {
+            let nd = dist[u] + w;
+            if nd < dist[v] {
+                dist[v] = nd;
+                prev[v] = u;
+                heap.push(std::cmp::Reverse((nd.to_bits(), v))); // non-negative f32 bits sort like the value
+            }
+        }
+    }
+    if dist[dst] == f32::MAX {
+        return None;
+    }
+    let mut path = vec![pts[dst]];
+    let mut u = dst;
+    while prev[u] != usize::MAX {
+        u = prev[u];
+        path.push(pts[u]);
+    }
+    path.reverse();
+    Some(path)
+}
+
 /// Position + unit tangent at arc-length `d` along the polyline; `arrived` once past the end.
 fn sample_path(path: &[Vec2], d: f32) -> (Vec2, Vec2, bool) {
     let mut rem = d;
@@ -117,12 +217,16 @@ fn explore_drive(
     if rec {
         // Only step forward onto solid land — never walk out over a river (no terrain there).
         let next = *dist + explore_speed() * dt;
-        let (np, _, _) = sample_path(&EXPLORE_PATH, next);
+        let (np, _, _) = sample_path(explore_route(), next);
         if crate::worldmap::ground_at_world(np.x, np.y).is_some() {
             *dist = next;
         }
     }
-    let (pos, dir, arrived) = sample_path(&EXPLORE_PATH, *dist);
+    let (pos, dir, arrived) = sample_path(explore_route(), *dist);
+    // Face a point a stride ahead rather than the current segment, so the heading eases round the
+    // road's bends instead of snapping at every centreline sample.
+    let (ahead, _, _) = sample_path(explore_route(), *dist + 1.5);
+    let dir = if arrived { dir } else { (ahead - pos).try_normalize().unwrap_or(dir) };
 
     let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(hero.y);
     let walking = rec && !arrived;
