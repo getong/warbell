@@ -43,6 +43,11 @@ const SHRINE_CD: f32 = 120.0;
 const SHRINE_BUFF_MS: f64 = 45_000.0;
 /// Motes per beacon column.
 const BEACON_MOTES: u32 = 22;
+/// Beacon mote radius (before the per-mote 0.7–1.4 scale): a spark, not a ball — the column's
+/// reach comes from its HDR glow + bloom ([`BEACON_GLOW`]), not from mote size.
+const BEACON_MOTE_R: f32 = 0.08;
+/// Linear HDR gain on a beacon's tint — what makes a mote glow (see `spawn_beacon`).
+const BEACON_GLOW: f32 = 8.0;
 
 // ── Rune-Trial — the gear gate ──────────────────────────────────────────────────────
 // Each biome landmark hoards one signature gear piece, SEALED until the hero earns it with a
@@ -281,14 +286,18 @@ fn spawn_beacon(
     pos: Vec3,
     color: Color,
 ) {
-    let mesh = meshes.add(Sphere::new(0.24).mesh().ico(1).unwrap());
-    // Strong emissive → blooms into a glowing column that punches through the haze.
+    let mesh = meshes.add(Sphere::new(BEACON_MOTE_R).mesh().ico(1).unwrap());
+    // The glow rides the BASE colour, in HDR. An unlit StandardMaterial outputs `base_color`
+    // verbatim — Bevy never adds `emissive` to an unlit surface — so the old `emissive × 16` never
+    // reached the frame: every mote drew as a flat, near-opaque sRGB disc 0.3–0.7u across (the
+    // "large orange discs floating over the forest camp"). Now each mote is a small point of
+    // light: values > 1 feed the bloom, and additive blending sums overlapping motes like light
+    // instead of stacking discs.
+    let glow = LinearRgba::from(color) * BEACON_GLOW;
     let mat = materials.add(StandardMaterial {
-        base_color: color.with_alpha(0.95),
-        emissive: LinearRgba::from(color) * 16.0,
+        base_color: Color::LinearRgba(glow.with_alpha(1.0)),
         unlit: true,
-        alpha_mode: AlphaMode::Blend,
-        cull_mode: None,
+        alpha_mode: AlphaMode::Add,
         ..default()
     });
     let y_lo = pos.y + 1.5;

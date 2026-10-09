@@ -1181,6 +1181,7 @@ fn seed_forage(
             || crate::blockers::is_blocked(x, z)
             || crate::camps::in_clearing(x, z)
             || crate::bridges::near_bridge(x, z, 1.0)
+            || crate::poi::overlaps_planned_clearing(x, z, 0.5)
         {
             continue;
         }

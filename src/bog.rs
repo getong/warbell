@@ -196,6 +196,7 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
             && !crate::camps::in_clearing(x, z)
             && !crate::roads::near_road(x, z, 1.5)
             && !crate::blockers::is_blocked(x, z)
+            && !crate::poi::overlaps_planned_clearing(x, z, 1.0)
     };
 
     // 1. Dead trees + drowned stumps standing IN the water: want genuinely wet spots so the
