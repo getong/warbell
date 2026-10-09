@@ -544,9 +544,9 @@ fn try_build(
         }
     }
     let ground = GroundTextures {
-        albedo: images.add(load::texture_array(&LAYERS.map(|l| format!("forest_pbr/ground_{l}_albedo.png")).each_ref().map(|s| s.as_str()), true)?),
-        normal: images.add(load::texture_array(&LAYERS.map(|l| format!("forest_pbr/ground_{l}_normal.png")).each_ref().map(|s| s.as_str()), false)?),
-        ormh: images.add(load::texture_array(&LAYERS.map(|l| format!("forest_pbr/ground_{l}_ormh.png")).each_ref().map(|s| s.as_str()), false)?),
+        albedo: images.add(load::texture_array("forest_pbr/ground_albedo.dds", &LAYERS.map(|l| format!("forest_pbr/ground_{l}_albedo.png")).each_ref().map(|s| s.as_str()), true)?),
+        normal: images.add(load::texture_array("forest_pbr/ground_normal.dds", &LAYERS.map(|l| format!("forest_pbr/ground_{l}_normal.png")).each_ref().map(|s| s.as_str()), false)?),
+        ormh: images.add(load::texture_array("forest_pbr/ground_ormh.dds", &LAYERS.map(|l| format!("forest_pbr/ground_{l}_ormh.png")).each_ref().map(|s| s.as_str()), false)?),
     };
     Ok(Kit { mats, models, by_name, ground })
 }

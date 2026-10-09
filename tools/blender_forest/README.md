@@ -13,6 +13,8 @@ B=path/to/blender.exe
 for s in ground materials foliage trees undergrowth props; do
   "$B" -b --factory-startup --python tools/blender_forest/$s.py
 done
+# pack the PNG maps into the shipped BC7 DDS files (mips + alpha-coverage, ground arrays):
+cargo run --release --example pack_forest_textures
 # optional studio render of a lineup (Eevee):
 "$B" -b --factory-startup --python tools/blender_forest/preview.py -- shots/realforest/trees.png trees.glb
 ```
@@ -32,6 +34,11 @@ done
 | `preview.py` | PNG | Eevee lineup render with the same material binding as the game |
 
 ## Texture contract
+
+The Blender scripts write PNGs (gitignored intermediates); the game loads the packed `.dds`
+twins (BC7, full mip chain; the three ground layers per map as one 3-layer array
+`ground_<map>.dds`) and falls back to the PNGs only if a `.dds` is missing.
+
 
 - `<set>_albedo.png`: sRGB, alpha = coverage for card sets (colour bled under alpha 0).
 - `<set>_normal.png`: tangent space, OpenGL (+Y up).

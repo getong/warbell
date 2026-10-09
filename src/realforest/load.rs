@@ -124,8 +124,39 @@ fn format(srgb: bool) -> TextureFormat {
     if srgb { TextureFormat::Rgba8UnormSrgb } else { TextureFormat::Rgba8Unorm }
 }
 
-/// A mip-mapped, repeat-sampled 2D texture from a PNG under `assets/`.
+/// A pre-packed BC7 DDS (`examples/pack_forest_textures.rs`): mips included, ~4x smaller than
+/// RGBA8 in VRAM, no CPU mip build. `None` when the file isn't there (PNG fallback).
+fn dds(rel: &str, array: bool) -> Option<Result<Image, String>> {
+    let path = asset_path(rel);
+    let bytes = std::fs::read(&path).ok()?;
+    Some(
+        Image::from_buffer(
+            &bytes,
+            bevy::image::ImageType::Extension("dds"),
+            bevy::image::CompressedImageFormats::BC,
+            true,
+            repeat_sampler(),
+            RenderAssetUsages::default(),
+        )
+        .map(|mut img| {
+            if array {
+                img.texture_view_descriptor = Some(TextureViewDescriptor {
+                    dimension: Some(TextureViewDimension::D2Array),
+                    ..default()
+                });
+            }
+            img
+        })
+        .map_err(|e| format!("{}: {e}", path.display())),
+    )
+}
+
+/// A mip-mapped, repeat-sampled 2D texture under `assets/`: the packed `.dds` twin of `rel` when
+/// present, else the PNG (with a CPU-built, coverage-preserving mip chain).
 pub fn texture(rel: &str, srgb: bool, cutoff: Option<f32>) -> Result<Image, String> {
+    if let Some(img) = dds(&rel.replace(".png", ".dds"), false) {
+        return img;
+    }
     let src = read_png(rel)?;
     let (data, levels) = mip_chain(&src.px, src.w, src.h, srgb, cutoff);
     let mut img = Image::new(
@@ -142,8 +173,12 @@ pub fn texture(rel: &str, srgb: bool, cutoff: Option<f32>) -> Result<Image, Stri
     Ok(img)
 }
 
-/// A mip-mapped 2D texture ARRAY (one layer per PNG, all the same size), layer-major data order.
-pub fn texture_array(rels: &[&str], srgb: bool) -> Result<Image, String> {
+/// A mip-mapped 2D texture ARRAY: the packed multi-layer `.dds` at `packed` when present, else one
+/// layer per PNG (all the same size), layer-major data order.
+pub fn texture_array(packed: &str, rels: &[&str], srgb: bool) -> Result<Image, String> {
+    if let Some(img) = dds(packed, true) {
+        return img;
+    }
     let mut data = Vec::new();
     let mut base = Vec::new();
     let (mut w, mut h, mut levels) = (0, 0, 1);

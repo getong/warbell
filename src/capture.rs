@@ -49,7 +49,7 @@ impl Plugin for CapturePlugin {
         }
         // FOREST_NOHUD=1: hide every UI node each frame (HUD, prompts, quick-bar) so a
         // staged shot shows only the world — for marketing/store captures.
-        if std::env::var("FOREST_NOHUD").is_ok() {
+        if std::env::var("FOREST_NOHUD").is_ok() || crate::controls::walk_mode() {
             app.add_systems(Update, hide_hud);
         }
     }

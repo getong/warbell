@@ -42,3 +42,8 @@ trace-*.json
 
 # Brainstorming visual-companion mockups (local only)
 .superpowers/
+
+# Blender forest kit: the PNG maps are an intermediate (tools/blender_forest writes them,
+# examples/pack_forest_textures packs them to the shipped BC7 .dds). Not shipped, not committed.
+/assets/forest_pbr/*.png
+/assets/forest_pbr/*_report.json

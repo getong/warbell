@@ -14,7 +14,7 @@ edition = "2024"
 # without it the in-memory WAV `AudioSource`s panic on play with `UnrecognizedFormat`.
 # `bevy_ui_widgets` (new in 0.19) brings the headless core widgets — Slider / Checkbox /
 # RadioButton — used by the graphics Settings page (`ui/graphics_menu.rs`).
-bevy = { version = "0.19.1", features = ["wav", "bevy_ui_widgets"] }
+bevy = { version = "0.19.1", features = ["wav", "bevy_ui_widgets", "dds"] }
 bevy_egui = "0.41" # live debug-tuning panel (egui), targets bevy 0.19
 # Pure, deterministic game logic vendored from the ditched port (zero deps, edition 2024).
 # Source of the parity-tested stores: pathfinding, waves, upgrades, inventory, animals, etc.
@@ -42,6 +42,11 @@ gltf = { version = "1.4", default-features = false, features = ["names", "utils"
 # (`trace-<ts>.json`). `cargo run --features profiling` then `tools/trace_summary.py <file>` gives an
 # EXACT CPU-time-per-system breakdown (pairs with the GPU per-pass timings the F2/PERF logs already
 # show). Off in normal builds — the tracing has real overhead.
+# Offline texture packer (`examples/pack_forest_textures.rs`): BC7 encoder + DDS writer.
+[dev-dependencies]
+intel_tex_2 = "0.4"
+ddsfile = "0.5"
+
 [features]
 profiling = ["bevy/trace_chrome"]
 

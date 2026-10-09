@@ -253,12 +253,18 @@ fn track_biome_atmo(
     hero: Option<Res<HeroState>>,
     ambiences: Option<Res<BiomeAmbiences>>,
     mut state: ResMut<SmoothBiomeAtmo>,
+    cams: Query<&GlobalTransform, With<Camera3d>>,
 ) {
     let (Some(hero), Some(ambiences)) = (hero, ambiences) else { return };
+    // The forest walk preview (`FOREST_WALK`) has no hero to follow — the mood tracks the walker.
+    let at = match cams.iter().next().filter(|_| crate::controls::walk_mode()) {
+        Some(cam) => Vec2::new(cam.translation().x, cam.translation().z),
+        None => hero.pos,
+    };
     // World-space lookup: the Blight (ork castle) eases toward its own red-ember mood; every other
     // region eases toward its biome's atmosphere. (`sample_world`, not `sample`, is what stops the
     // ork castle inheriting swamp's grey-green sky.)
-    let target = ambiences.sample_world(hero.pos.x, hero.pos.y).atmo;
+    let target = ambiences.sample_world(at.x, at.y).atmo;
     let k = 1.0 - (-time.delta_secs() * BIOME_ATMO_LERP).exp();
     match &mut state.0 {
         None => state.0 = Some(target), // snap on the first frame the world exists

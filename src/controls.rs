@@ -1,4 +1,8 @@
 //! Free-look fly camera. WASD move · Space/Ctrl up·down · Shift sprint · RMB look.
+//!
+//! `FOREST_WALK=1` turns it into a ground-hugging WALKER for looking around the world as a
+//! static map (the forest preview build): mouse-look with a locked cursor (click to capture,
+//! Esc to release), WASD on the ground at eye height, Shift to run — no gameplay, no HUD.
 
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::prelude::*;
@@ -54,6 +58,18 @@ impl FlyCam {
     }
 }
 
+/// Eye height above the ground in walk mode (the hero is ~1.3u tall).
+const WALK_EYE: f32 = 1.25;
+const WALK_SPEED: f32 = 3.6;
+const RUN_SPEED: f32 = 8.0;
+
+/// `FOREST_WALK=1`: the fly-cam walks on the terrain (see module docs). Read once.
+pub fn walk_mode() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("FOREST_WALK").is_ok())
+}
+
 pub struct ControlsPlugin;
 
 impl Plugin for ControlsPlugin {
@@ -99,19 +115,34 @@ fn fly_camera(
     // Don't grab the cursor / look around while the debug panel owns the pointer (so dragging
     // a slider can't rotate the view).
     let over_ui = egui_wants.0;
-    // Grab/hide the cursor only while the right button is held, restore on release.
+    let walk = walk_mode();
+    let mut locked = false;
     if let Ok(mut cursor) = cursor_q.single_mut() {
-        if buttons.just_pressed(MouseButton::Right) && !over_ui {
-            cursor.grab_mode = CursorGrabMode::Locked;
-            cursor.visible = false;
-        }
-        if buttons.just_released(MouseButton::Right) {
-            cursor.grab_mode = CursorGrabMode::None;
-            cursor.visible = true;
+        if walk {
+            // Walker: click to capture the mouse, Esc to let it go.
+            if buttons.just_pressed(MouseButton::Left) && !over_ui {
+                cursor.grab_mode = CursorGrabMode::Locked;
+                cursor.visible = false;
+            }
+            if keys.just_pressed(KeyCode::Escape) {
+                cursor.grab_mode = CursorGrabMode::None;
+                cursor.visible = true;
+            }
+            locked = cursor.grab_mode == CursorGrabMode::Locked;
+        } else {
+            // Grab/hide the cursor only while the right button is held, restore on release.
+            if buttons.just_pressed(MouseButton::Right) && !over_ui {
+                cursor.grab_mode = CursorGrabMode::Locked;
+                cursor.visible = false;
+            }
+            if buttons.just_released(MouseButton::Right) {
+                cursor.grab_mode = CursorGrabMode::None;
+                cursor.visible = true;
+            }
         }
     }
 
-    let looking = buttons.pressed(MouseButton::Right) && !over_ui;
+    let looking = if walk { locked } else { buttons.pressed(MouseButton::Right) && !over_ui };
     let dt = time.delta_secs();
     // Cinematic mode swaps in the slow, floaty constants (crawl speed + long glide, lighter mouse).
     let (look_smooth, move_smooth, move_speed, sens) = if cine.0 {
@@ -136,8 +167,13 @@ fn fly_camera(
         cam.pitch += (cam.target_pitch - cam.pitch) * look_a;
         tf.rotation = Quat::from_euler(EulerRot::YXZ, cam.yaw, cam.pitch, 0.0);
 
-        let forward = tf.forward();
-        let right = tf.right();
+        let mut forward = tf.forward();
+        let mut right = tf.right();
+        if walk {
+            // Walk on the ground plane: look direction flattened, no fly.
+            forward = Dir3::new(Vec3::new(forward.x, 0.0, forward.z)).unwrap_or(Dir3::NEG_Z);
+            right = Dir3::new(Vec3::new(right.x, 0.0, right.z)).unwrap_or(Dir3::X);
+        }
         let mut dir = Vec3::ZERO;
         if keys.pressed(KeyCode::KeyW) {
             dir += *forward;
@@ -151,18 +187,34 @@ fn fly_camera(
         if keys.pressed(KeyCode::KeyA) {
             dir -= *right;
         }
-        if keys.pressed(KeyCode::Space) {
+        if !walk && keys.pressed(KeyCode::Space) {
             dir += Vec3::Y;
         }
-        if keys.pressed(KeyCode::ControlLeft) {
+        if !walk && keys.pressed(KeyCode::ControlLeft) {
             dir -= Vec3::Y;
         }
 
-        let speed = if keys.pressed(KeyCode::ShiftLeft) { move_speed * SPRINT_MULT } else { move_speed };
+        let speed = if walk {
+            if keys.pressed(KeyCode::ShiftLeft) { RUN_SPEED } else { WALK_SPEED }
+        } else if keys.pressed(KeyCode::ShiftLeft) {
+            move_speed * SPRINT_MULT
+        } else {
+            move_speed
+        };
         let desired = dir.normalize_or_zero() * speed;
         let new_vel = cam.vel + (desired - cam.vel) * move_a;
         cam.vel = new_vel;
         tf.translation += cam.vel * dt;
+        if walk {
+            // Follow the terrain at eye height, eased so terrace steps read as a stride, not a pop.
+            if let Some(g) = crate::steer::footing(tf.translation.x, tf.translation.z) {
+                let target = g + WALK_EYE;
+                let k = (1.0 - (-10.0 * dt).exp()).clamp(0.0, 1.0);
+                tf.translation.y += (target - tf.translation.y) * k;
+            }
+            cam.vel.y = 0.0;
+            continue;
+        }
         if tf.translation.y < MIN_Y {
             tf.translation.y = MIN_Y;
             if cam.vel.y < 0.0 {
