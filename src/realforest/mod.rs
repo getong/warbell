@@ -153,7 +153,7 @@ pub struct Kit {
 }
 
 /// Material sets by the names Blender exported: (name, PBR set file stem, foliage card?).
-const MATERIALS: [(&str, &str, bool); 18] = [
+const MATERIALS: [(&str, &str, bool); 21] = [
     ("bark_oak", "bark_oak", false),
     ("bark_beech", "bark_beech", false),
     ("bark_pine", "bark_pine", false),
@@ -173,6 +173,11 @@ const MATERIALS: [(&str, &str, bool); 18] = [
     ("s_thatch", "s_thatch", false),
     ("s_cloth", "s_cloth", false),
     ("s_iron", "s_iron", false),
+    // Wayside furniture / story set-pieces (wayside.glb): weathered rock, trodden earth, and
+    // nail-free hewn timber (the s_planks scan with its nail rows cut out).
+    ("s_rock", "s_rock", false),
+    ("s_earth", "s_earth", false),
+    ("s_timber", "s_timber", false),
     // Creature parts (creatures.glb) — never drawn with this material (recoloured CPU meshes on
     // the creature material); the entry only lets the loader accept the glb.
     ("creature", "", false),
@@ -317,18 +322,37 @@ impl Kit {
         self.by_name.contains_key(name)
     }
 
+    /// (XZ half-extents, height) of kit model `name`, unscaled.
+    pub fn extents(&self, name: &str) -> Option<(Vec2, f32)> {
+        self.model(name).map(|m| (self.models[m].half, self.models[m].height))
+    }
+
     /// Hang the static kit model `name` (all its material parts) under `e` as children.
     /// Returns false when the kit has no such model.
     pub fn attach_static(&self, e: &mut EntityCommands, name: &str, tf: Transform) -> bool {
+        self.attach_static_with(e, name, tf, ())
+    }
+
+    /// [`Self::attach_static`], also inserting `extra` on every part (e.g. a `VisibilityRange`,
+    /// which Bevy evaluates per mesh entity, not per hierarchy).
+    pub fn attach_static_with<B: Bundle + Clone>(&self, e: &mut EntityCommands, name: &str, tf: Transform, extra: B) -> bool {
         let Some(m) = self.model(name) else { return false };
         e.insert(Visibility::default());
         e.with_children(|p| {
             for part in &self.models[m].parts {
-                let mut c = p.spawn((Mesh3d(part.handle.clone()), tf));
+                let mut c = p.spawn((Mesh3d(part.handle.clone()), tf, extra.clone()));
                 self.mats[part.mat].insert(&mut c);
             }
         });
         true
+    }
+
+    /// Spawn the static kit model `name` as a new root entity at `tf`, `extra` on every part.
+    pub fn spawn_static_with<B: Bundle + Clone>(&self, commands: &mut Commands, name: &str, tf: Transform, extra: B) -> Option<Entity> {
+        self.model(name)?;
+        let mut e = commands.spawn((tf, Visibility::default()));
+        self.attach_static_with(&mut e, name, Transform::IDENTITY, extra);
+        Some(e.id())
     }
 
     /// Spawn the static kit model `name` as a new root entity at `tf`.
@@ -594,12 +618,15 @@ fn chunk_center(k: (i32, i32)) -> Vec3 {
 }
 
 /// Kit scatter must stay out of the gameplay set-pieces placed later in the world build: ork
-/// camps (tents, cage, fire — plus a margin for guy ropes), roadside story clearings and the
+/// camps (tents, cage, fire — plus a margin for guy ropes), roadside story clearings, the planned
+/// wayside furniture (signposts / cairns / fences / shrines) and forest vignette, and the
 /// landmarks. Merged chunks can't be thinned afterwards the way single trees are, so it is
 /// decided here, at placement.
 pub fn keep_clear(x: f32, z: f32, r: f32) -> bool {
     crate::camps::plan().iter().any(|c| Vec2::new(x - c.centre.x, z - c.centre.y).length() < 6.0 + r)
         || crate::poi::overlaps_planned_clearing(x, z, r)
+        || crate::wayside::overlaps_planned(x, z, r)
+        || crate::vignettes::overlaps_planned(x, z, r)
         || crate::ruins::near_landmark_visual_footprint(x, z)
 }
 
@@ -764,7 +791,7 @@ fn try_build(
     let wind = [mat_index["canopy"], mat_index["undergrowth"]];
     let mut models = Vec::new();
     let mut by_name = HashMap::new();
-    for glb in ["forest_pbr/trees.glb", "forest_pbr/undergrowth.glb", "forest_pbr/props.glb", "forest_pbr/structures.glb", "forest_pbr/creatures.glb", "forest_pbr/animals.glb"] {
+    for glb in ["forest_pbr/trees.glb", "forest_pbr/undergrowth.glb", "forest_pbr/props.glb", "forest_pbr/structures.glb", "forest_pbr/wayside.glb", "forest_pbr/creatures.glb", "forest_pbr/animals.glb"] {
         let mut objs = load::read_glb(glb)?;
         // `attach_tree` finds a tree's LOD1 at `lod0 + 1`, so keep each _lod0 / _lod1 pair adjacent.
         objs.sort_by(|a, b| a.0.cmp(&b.0));

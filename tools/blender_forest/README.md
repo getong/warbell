@@ -31,6 +31,8 @@ cargo run --release --example pack_forest_textures
 | `trees.py` | `trees.glb` | procedurally grown oaks, beeches, pines, a dead snag, bushes — 2 LODs each |
 | `undergrowth.py` | `undergrowth.glb` | ferns (arching frond strips), grass clumps, seed stalks |
 | `props.py` | `props.glb` | Poly Haven stump / log / deadfall / mossy rocks, decimated |
+| `structures.py` | `structures.glb` | ork camp (tent, cage + door, stakes, banner, fire pit), the old mill |
+| `wayside_models.py` | `wayside.glb` | wayside signpost / cairn / fence / shrine, story set-pieces (burned cabin, graves, stone circle, fallen watchtower, shepherd's hut + pen, gallows), the Abandoned Camp vignette. Preview in game: `FOREST_VIEW=kit:<name>[,<name>…]` |
 | `preview.py` | PNG | Eevee lineup render with the same material binding as the game |
 
 ## Texture contract

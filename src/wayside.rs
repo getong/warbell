@@ -7,10 +7,14 @@
 //!
 //! Build contract: each piece is one merged, vertex-coloured, flat-shaded mesh from primitives
 //! (`ruins.rs`/`vignettes.rs` contract — base at y=0, one shared white material, so the whole
-//! layer auto-batches per kind). Placement is deterministic (mulberry32 on a fixed seed) and
-//! rejects water / roads themselves / build plots / clearings / blocked or steep ground. Pieces
-//! reserve their full visual footprint and register tight solid colliders. Road clearance keeps
-//! the furniture beside the highway without letting actors walk through its posts and rails.
+//! layer auto-batches per kind). With the realistic forest kit loaded, each piece is its Blender
+//! model instead (`wayside.glb`, tools/blender_forest/wayside_models.py) — same footprint,
+//! collider, heading and scale. Placement is deterministic (mulberry32 on a fixed seed), planned
+//! at build phase 4 (before the scatter, so the kit's ground cover keeps clear of every piece) and
+//! re-checked at spawn; it rejects water / roads themselves / build plots / clearings / blocked or
+//! steep ground. Pieces reserve their full visual footprint and register tight solid colliders.
+//! Road clearance keeps the furniture beside the highway without letting actors walk through its
+//! posts and rails.
 //!
 //! Signpost boards are unlabeled arrows (world-space text is out of scope for the pass); the
 //! post itself marking "a fork with destinations" is the legibility win.
@@ -136,9 +140,15 @@ fn rng_next(state: &mut u32) -> f32 {
 /// Reject overhanging pieces, not just occupied centres. The whole footprint must sit on flat,
 /// unclaimed ground, and visually broad props must stay clear even when they have no collider.
 fn spot_ok(x: f32, z: f32, footprint: f32) -> bool {
+    !crate::blockers::any_visual_within(x, z, footprint) && site_ok(x, z, footprint)
+}
+
+/// [`spot_ok`] minus the blocker test — everything that is already known when the world build
+/// plans its clearings (phase 4, before the biome scatter has planted anything).
+fn site_ok(x: f32, z: f32, footprint: f32) -> bool {
     let Some(y0) = crate::worldmap::ground_at_world(x, z) else { return false };
-    if crate::blockers::any_visual_within(x, z, footprint)
-        || crate::poi::overlaps_planned_clearing(x, z, footprint)
+    if crate::poi::overlaps_planned_clearing(x, z, footprint)
+        || crate::vignettes::overlaps_planned(x, z, footprint)
         || crate::bridges::near_bridge(x, z, footprint + 0.2)
     {
         return false;
@@ -165,7 +175,7 @@ fn spot_ok(x: f32, z: f32, footprint: f32) -> bool {
     hi - lo <= 0.30
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Furniture {
     Signpost,
     Cairn,
@@ -185,6 +195,17 @@ impl Furniture {
         radius * scale
     }
 
+    /// The Blender model (`wayside.glb`) drawn in its place when the realistic kit is loaded —
+    /// same footprint, collider and heading as the low-poly mesh.
+    fn kit_model(self) -> &'static str {
+        match self {
+            Self::Signpost => "wayside_signpost",
+            Self::Cairn => "wayside_cairn",
+            Self::Fence => "wayside_fence",
+            Self::Shrine => "wayside_shrine",
+        }
+    }
+
     fn register(self, x: f32, z: f32, yaw: f32, scale: f32) {
         let (hw, hd, offset) = match self {
             Self::Signpost => (0.065, 0.065, Vec2::ZERO),
@@ -198,49 +219,72 @@ impl Furniture {
     }
 }
 
-/// Plant signposts at road junctions + cairn/fence/shrine furniture along the arteries.
-/// Called from `worldmap::build_step` (phase 30) — after roads, camps, plots and landmarks, so
-/// every rejection query above is baked.
-pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) {
-    use crate::biome::BiomeEntity;
-    let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.9, ..default() });
-    let range = bevy::camera::visibility::VisibilityRange {
-        start_margin: 0.0..0.0,
-        end_margin: 95.0..95.0, // abrupt, inside the fog ramp (see biome.rs cover_range notes)
-        use_aabb: true,
-    };
-    let h_sign = meshes.add(signpost());
-    let h_cairn = meshes.add(cairn());
-    let h_fence = meshes.add(fence());
-    let h_shrine = meshes.add(shrine());
-    let mut rng: u32 = 0x3a5f_11d7;
-    let spawn = |commands: &mut Commands, handle: &Handle<Mesh>, kind: Furniture, x: f32, y: f32, z: f32, yaw: f32, s: f32| {
-        commands.spawn((
-            Mesh3d(handle.clone()),
-            MeshMaterial3d(mat.clone()),
-            Transform::from_xyz(x, y, z).with_rotation(Quat::from_rotation_y(yaw)).with_scale(Vec3::splat(s)),
-            BiomeEntity,
-            range.clone(),
-        ));
-        kind.register(x, z, yaw, s);
-    };
+/// One planned piece: what, where, facing, size — and, for a signpost, the junction it marks (so
+/// a spot claimed by something later in the build can be re-probed around the same fork).
+#[derive(Clone, Copy, Debug)]
+struct Planned {
+    kind: Furniture,
+    pos: Vec2,
+    yaw: f32,
+    scale: f32,
+    junction: Option<Vec2>,
+}
 
-    // 1. Signposts: one just off each junction (probe a ring of offsets for a legal spot).
-    let mut posts = 0;
+/// The wayside plan, made at build phase 4 ([`plan`]) and spawned at phase 30 ([`populate`]).
+/// Planning early lets the biome scatter keep clear of every piece (`poi::story_clearings`,
+/// `realforest::keep_clear`) — a fern can't poke through a cairn it was never planted under — and
+/// each planned spot reserves its visual footprint at once, so the placers in between (ore,
+/// chests, forage, …) don't take the clearing either.
+static PLAN: std::sync::Mutex<Option<Vec<Planned>>> = std::sync::Mutex::new(None);
+
+pub fn reset_plan() {
+    *PLAN.lock().expect("wayside plan poisoned") = None;
+}
+
+/// Does a circle at `(x, z)` of radius `r` overlap a planned wayside piece's visual footprint?
+pub fn overlaps_planned(x: f32, z: f32, r: f32) -> bool {
+    let p = Vec2::new(x, z);
+    PLAN.lock().expect("wayside plan poisoned").as_ref().is_some_and(|plan| {
+        plan.iter().any(|w| p.distance_squared(w.pos) < (w.kind.visual_radius(w.scale) + r + 0.2).powi(2))
+    })
+}
+
+/// `(centre, visual radius)` of every planned piece — folded into `poi::story_clearings`, which
+/// the biome scatter honours in every biome.
+pub fn planned_footprints() -> Vec<(Vec2, f32)> {
+    PLAN.lock()
+        .expect("wayside plan poisoned")
+        .as_ref()
+        .map(|plan| plan.iter().map(|w| (w.pos, w.kind.visual_radius(w.scale))).collect())
+        .unwrap_or_default()
+}
+
+/// Signpost probe ring around a junction: two radii, eight headings from `base`.
+fn junction_probe(j: Vec2, base: f32, k: usize) -> Vec2 {
+    let (a, r) = (base + (k % 8) as f32 * (TAU / 8.0), if k < 8 { 2.3 } else { 3.6 });
+    Vec2::new(j.x + a.cos() * r, j.y + a.sin() * r)
+}
+
+/// Decide every signpost (one just off each road junction) and every artery piece (a cairn / fence
+/// run / shrine every ~26–40u, alternating sides, just past the road shoulder). Deterministic
+/// (mulberry32 on a fixed seed). Called from `worldmap::bs_sea_and_boats` (phase 4) right after
+/// the camp, story-clearing and vignette plans, so it routes around all three.
+pub fn plan() {
+    let mut rng: u32 = 0x3a5f_11d7;
+    let mut out: Vec<Planned> = Vec::new();
+
+    // 1. Signposts: probe a ring of offsets for a legal spot (two rings — a handful of junctions
+    //    (deep swamp / dune forks) fail the whole inner ring on slope/water).
     for j in crate::roads::junctions() {
         let base = rng_next(&mut rng) * TAU;
         let mut placed = false;
-        // Two probe rings — a handful of junctions (deep swamp / dune forks) fail the whole
-        // inner ring on slope/water and went bare with a single-radius probe.
         for k in 0..16 {
-            let (a, r) = (base + (k % 8) as f32 * (TAU / 8.0), if k < 8 { 2.3 } else { 3.6 });
-            let (x, z) = (j.x + a.cos() * r, j.y + a.sin() * r);
+            let q = junction_probe(j, base, k);
             let yaw = rng_next(&mut rng) * TAU;
             let scale = 0.95 + rng_next(&mut rng) * 0.15;
-            if spot_ok(x, z, Furniture::Signpost.visual_radius(scale)) {
-                let y = crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
-                spawn(commands, &h_sign, Furniture::Signpost, x, y, z, yaw, scale);
-                posts += 1;
+            if spot_ok(q.x, q.y, Furniture::Signpost.visual_radius(scale)) {
+                out.push(Planned { kind: Furniture::Signpost, pos: q, yaw, scale, junction: Some(j) });
+                crate::blockers::reserve_visual(q.x, q.y, Furniture::Signpost.visual_radius(scale));
                 placed = true;
                 break;
             }
@@ -250,9 +294,8 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
         }
     }
 
-    // 2. Furniture along the arteries: arc-length walk, one piece every ~26–40u, alternating
-    //    sides, offset just past the road shoulder.
-    let mut pieces = 0;
+    // 2. Furniture along the arteries: arc-length walk, alternating sides, offset just past the
+    //    road shoulder.
     let mut last: Vec<Vec2> = Vec::new();
     for poly in crate::roads::artery_polylines() {
         let mut next_at = 14.0 + rng_next(&mut rng) * 18.0;
@@ -274,23 +317,91 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
                 next_at += 26.0 + rng_next(&mut rng) * 14.0;
                 let roll = rng_next(&mut rng);
                 let road_yaw = dir.y.atan2(dir.x); // world yaw aligning local X with the road
-                let (handle, kind, yaw, scale) = if roll < 0.38 {
-                    (&h_cairn, Furniture::Cairn, rng_next(&mut rng) * TAU, 0.85 + rng_next(&mut rng) * 0.4)
+                let (kind, yaw, scale) = if roll < 0.38 {
+                    (Furniture::Cairn, rng_next(&mut rng) * TAU, 0.85 + rng_next(&mut rng) * 0.4)
                 } else if roll < 0.72 {
-                    (&h_fence, Furniture::Fence, -road_yaw, 0.9 + rng_next(&mut rng) * 0.25)
+                    (Furniture::Fence, -road_yaw, 0.9 + rng_next(&mut rng) * 0.25)
                 } else {
-                    (&h_shrine, Furniture::Shrine, -road_yaw + FRAC_PI_2, 0.95 + rng_next(&mut rng) * 0.2)
+                    (Furniture::Shrine, -road_yaw + FRAC_PI_2, 0.95 + rng_next(&mut rng) * 0.2)
                 };
                 if !spot_ok(q.x, q.y, kind.visual_radius(scale)) || last.iter().any(|l| l.distance(q) < 9.0) {
                     continue;
                 }
-                let y = crate::worldmap::ground_at_world(q.x, q.y).unwrap_or(0.0);
-                spawn(commands, handle, kind, q.x, y, q.y, yaw, scale);
+                out.push(Planned { kind, pos: q, yaw, scale, junction: None });
+                crate::blockers::reserve_visual(q.x, q.y, kind.visual_radius(scale));
                 last.push(q);
-                pieces += 1;
             }
             travelled += seg;
         }
     }
-    info!("wayside: {posts} signposts, {pieces} roadside pieces");
+    *PLAN.lock().expect("wayside plan poisoned") = Some(out);
+}
+
+/// Plant the planned signposts + roadside furniture. Called from `worldmap::build_step` (phase 30)
+/// — after camps, plots, landmarks, vignettes and bridges, so a planned spot that something else
+/// has since claimed is re-checked: a signpost re-probes round its junction, an artery piece is
+/// dropped. Each piece reserves its full visual footprint and registers its tight solid collider.
+/// With the realistic forest kit loaded each piece is its Blender model (`wayside.glb`);
+/// otherwise the low-poly mesh above.
+pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) {
+    use crate::biome::BiomeEntity;
+    let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.9, ..default() });
+    let range = bevy::camera::visibility::VisibilityRange {
+        start_margin: 0.0..0.0,
+        end_margin: 95.0..95.0, // abrupt, inside the fog ramp (see biome.rs cover_range notes)
+        use_aabb: true,
+    };
+    if PLAN.lock().expect("wayside plan poisoned").is_none() {
+        plan(); // a build that skipped the phase-4 planning step
+    }
+    let planned = PLAN.lock().expect("wayside plan poisoned").clone().unwrap_or_default();
+    let kit = crate::realforest::get().filter(|k| k.has("wayside_signpost"));
+    let handles = [signpost(), cairn(), fence(), shrine()].map(|m| meshes.add(m));
+    let spawn = |commands: &mut Commands, kind: Furniture, q: Vec2, yaw: f32, s: f32| {
+        let y = crate::worldmap::ground_at_world(q.x, q.y).unwrap_or(0.0);
+        let tf = Transform::from_xyz(q.x, y, q.y).with_rotation(Quat::from_rotation_y(yaw)).with_scale(Vec3::splat(s));
+        match kit.and_then(|k| k.spawn_static_with(commands, kind.kit_model(), tf, range.clone())) {
+            Some(e) => {
+                commands.entity(e).insert(BiomeEntity);
+            }
+            None => {
+                commands.spawn((Mesh3d(handles[kind as usize].clone()), MeshMaterial3d(mat.clone()), tf, BiomeEntity, range.clone()));
+            }
+        }
+        kind.register(q.x, q.y, yaw, s);
+        info!("wayside: {kind:?} at {:.1},{:.1},{:.1} yaw {yaw:.2}", q.x, y, q.y);
+    };
+
+    let (mut posts, mut pieces, mut dropped) = (0, 0, 0);
+    for w in planned {
+        let r = w.kind.visual_radius(w.scale);
+        // The plan reserved its own visual footprint (so later placers keep off it): re-check
+        // the ground rules and any SOLID that has landed there since, not that reservation.
+        if site_ok(w.pos.x, w.pos.y, r) && !crate::blockers::any_within(w.pos.x, w.pos.y, r) {
+            spawn(commands, w.kind, w.pos, w.yaw, w.scale);
+        } else if let Some(j) = w.junction {
+            // Claimed since the plan: walk the junction's probe ring again.
+            let base = (j.x * 12.9898 + j.y * 78.233).sin().abs() * TAU;
+            match (0..16).map(|k| junction_probe(j, base, k)).find(|q| spot_ok(q.x, q.y, r)) {
+                Some(q) => spawn(commands, w.kind, q, w.yaw, w.scale),
+                None => {
+                    info!("wayside: signpost spot at junction {:.0},{:.0} claimed, none left", j.x, j.y);
+                    dropped += 1;
+                    continue;
+                }
+            }
+        } else {
+            dropped += 1;
+            continue;
+        }
+        if w.kind == Furniture::Signpost {
+            posts += 1;
+        } else {
+            pieces += 1;
+        }
+    }
+    info!(
+        "wayside: {posts} signposts, {pieces} roadside pieces ({dropped} planned spots claimed later){}",
+        if kit.is_some() { " [kit models]" } else { "" }
+    );
 }

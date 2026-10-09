@@ -1,7 +1,9 @@
-//! **Structure re-skin** — the realistic forest's answer to the hand-built low-poly scenery that
-//! still stands in it (wayside signposts / fences / shrines, roadside set-pieces, the abandoned
-//! camp, the ork camp, the old mill, chests). Those are gameplay landmarks assembled from
-//! primitives in code with flat vertex colours; next to scanned trees and ground they read as toys.
+//! **Structure re-skin** — the realistic forest's stop-gap for hand-built low-poly scenery that
+//! still stands in it (chests, the meadow / bog dressing, anything not yet re-authored). Those
+//! are assembled from primitives in code with flat vertex colours; next to scanned trees and
+//! ground they read as toys. (The ork camp, the old mill, the wayside furniture, the roadside
+//! story set-pieces and the Abandoned Camp are real Blender models now — `structures.glb`,
+//! `wayside.glb` — textured, so this pass leaves them alone.)
 //!
 //! Rather than re-authoring each one, every opaque vertex-coloured `StandardMaterial` mesh that
 //! lands in (or right at the edge of) the forest is switched to [`ReskinMaterial`]: the same

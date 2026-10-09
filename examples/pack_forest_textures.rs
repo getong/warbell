@@ -140,6 +140,14 @@ fn main() {
     let dir = PathBuf::from(DIR);
     // Ground + structure re-skin: three layers per map → one array file each.
     for (prefix, names) in [("ground", &GROUND[..]), ("struct", &STRUCT[..]), ("creature", &CREATURE[..])] {
+        // A layer group whose PNGs aren't all present (only one material script was re-run) keeps
+        // its existing packed array.
+        if let Some(miss) =
+            names.iter().flat_map(|l| MAPS.map(|m| dir.join(format!("{prefix}_{l}_{m}.png")))).find(|p| !p.exists())
+        {
+            println!("{prefix}: skipped ({} missing)", miss.display());
+            continue;
+        }
         for map in MAPS {
             let srgb = map == "albedo";
             let layers = names
