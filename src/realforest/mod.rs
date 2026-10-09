@@ -312,6 +312,35 @@ impl Kit {
         Some(mesh)
     }
 
+    /// A recoloured CPU copy of animal part `name` (animals.glb, `tools/blender_forest/animals.py`).
+    /// Vertex colour R = region (region/16), G = baked cavity / AO, B = coat TONE, A = coat TINT.
+    /// Region 0 is fur: its colour walks the `coat` ramp by tone (0 = `coat[0]` dark saddle /
+    /// points, 0.5 = `coat[1]` base coat, 1 = `coat[2]` pale belly) and then blends toward
+    /// `coat[3]` (the warm tint) by the tint amount. Other regions take `palette[region]`. The
+    /// mesh keeps its UV0 — the fur-flow coordinates the creature shader lays the strands along.
+    pub fn coat_part(&self, name: &str, coat: &[[f32; 4]; 4], palette: &[([f32; 4], crate::creature::Surf)]) -> Option<Mesh> {
+        use bevy::mesh::VertexAttributeValues;
+        let m = self.model(name)?;
+        let mut mesh = self.models[m].parts.first()?.mesh.clone();
+        let mix = |a: [f32; 4], b: [f32; 4], t: f32| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+        if let Some(VertexAttributeValues::Float32x4(cols)) = mesh.attribute_mut(Mesh::ATTRIBUTE_COLOR) {
+            for c in cols.iter_mut() {
+                let region = ((c[0] * 16.0).floor() as usize).min(palette.len().saturating_sub(1));
+                let (flat, surf) = palette[region];
+                let (tone, tint, cav) = (c[2].clamp(0.0, 1.0), c[3].clamp(0.0, 1.0), c[1]);
+                let rgb = if region == 0 {
+                    let ramp = if tone < 0.5 { mix(coat[0], coat[1], tone * 2.0) } else { mix(coat[1], coat[2], tone * 2.0 - 1.0) };
+                    mix([ramp[0], ramp[1], ramp[2], 1.0], coat[3], tint)
+                } else {
+                    [flat[0], flat[1], flat[2]]
+                };
+                *c = [rgb[0] * cav, rgb[1] * cav, rgb[2] * cav, crate::creature::surf_code(surf)];
+            }
+        }
+        mesh.remove_attribute(Mesh::ATTRIBUTE_TANGENT);
+        Some(mesh)
+    }
+
     /// Is there a kit model called `name`?
     pub fn has(&self, name: &str) -> bool {
         self.by_name.contains_key(name)

@@ -32,6 +32,9 @@ cargo run --release --example pack_forest_textures
 | `undergrowth.py` | `undergrowth.glb` | ferns (arching frond strips), grass clumps, seed stalks |
 | `props.py` | `props.glb` | Poly Haven stump / log / deadfall / mossy rocks, decimated |
 | `preview.py` | PNG | Eevee lineup render with the same material binding as the game |
+| `creatures.py` | `creatures.glb` | organic ork parts (metaballs) for the biped rig, region-coded vertex colour |
+| `animals.py` (+ `sdfkit.py`) | `animals.glb` | quadrupeds (wolf, bear, dog, deer, horse, camel) sculpted as signed-distance models on the `quad_config` joints: per-joint meshes, left legs only (the game mirrors them), baked region / AO / coat tone / tint + a fur-flow UV0. `-- [species ...] out.png` renders a CPU Cycles lineup preview instead of exporting (`ANIMALS_EXPORT=1` does both) |
+| `creature_tex.py` | `creature_*` | the creature detail layers (skin, fur clumps, leather, wood, metal, cloth, bone); repack just these with `PACK_ONLY=creature cargo run --release --example pack_forest_textures` |
 
 ## Texture contract
 

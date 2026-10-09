@@ -176,9 +176,10 @@ def clear_scene():
     bpy.ops.wm.read_factory_settings(use_empty=True)
 
 
-def export_glb(path, objects):
+def export_glb(path, objects, tangents=True):
     """Export only `objects` as a geometry GLB: positions, normals, UV0, tangents, vertex colour.
-    Materials export as NAMES only (no textures) - the game binds its own PBR sets by name."""
+    Materials export as NAMES only (no textures) - the game binds its own PBR sets by name.
+    `tangents=False` skips them (meshes whose UV0 is data, not a texture mapping)."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     bpy.ops.object.select_all(action="DESELECT")
@@ -193,7 +194,7 @@ def export_glb(path, objects):
         export_yup=True,
         export_texcoords=True,
         export_normals=True,
-        export_tangents=True,
+        export_tangents=tangents,
         export_vertex_color="ACTIVE",
         export_all_vertex_colors=False,
         export_materials="EXPORT",

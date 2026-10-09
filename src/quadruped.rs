@@ -49,8 +49,9 @@ pub enum AttackStyle {
     Charge,
 }
 
-/// One species' geometry + gait + colour table (studio `QuadrupedSpeciesConfig` + the four
-/// customization colours baked per species: fur/belly/accent/detail).
+/// One species' geometry + gait + colour table (studio `QuadrupedSpeciesConfig` + the species'
+/// [`Coat`]). Joint layout (body, chest_z, neck, legs, spread, tail) must stay in sync with
+/// `RIG` in `tools/blender_forest/animals.py`, which sculpts the kit meshes on these joints.
 #[derive(Clone, Copy)]
 pub struct QuadConfig {
     pub root_y: f32,
@@ -85,10 +86,24 @@ pub struct QuadConfig {
     sit_root_y: f32,
     lie_root_y: f32,
     pub attack: AttackStyle,
-    fur: u32,
-    belly: u32,
-    accent: u32,
+    coat: Coat,
+}
+
+/// A species' coat (sRGB hex). The realistic kit meshes bake a per-vertex coat TONE (0 = `dark`
+/// saddle / points, 0.5 = `base`, 1 = `light` belly / throat) and a TINT amount (toward `tint`:
+/// tan legs, pale muzzle, white socks …), so one mesh set gives a countershaded, marked coat and
+/// the polar bear can reuse the bear's mesh in white. `skin` = nose leather / lips / pads,
+/// `detail` = claws / hooves, `horn` = antlers, `accent` = collar / mane / horse tail.
+#[derive(Clone, Copy)]
+struct Coat {
+    dark: u32,
+    base: u32,
+    light: u32,
+    tint: u32,
+    skin: u32,
     detail: u32,
+    horn: u32,
+    accent: u32,
 }
 
 /// The per-species config (studio `SPECIES` table dims; colours chosen to match our wildlife).
@@ -99,56 +114,63 @@ pub fn quad_config(s: QuadSpecies) -> QuadConfig {
         QuadSpecies::Dog => QuadConfig {
             root_y: 0.42, body: Vec3::new(0.26, 0.26, 0.55), chest_z: 0.25,
             neck_h: 0.25, neck_angle: 0.6, neck_w: 0.16, head: Vec3::new(0.2, 0.2, 0.22),
-            snout: Vec3::new(0.12, 0.1, 0.15), leg_upper: 0.18, leg_lower: 0.18, leg_width: 0.07, paw_w: 0.09, paw_h: 0.05, spread: 0.11,
+            snout: Vec3::new(0.12, 0.1, 0.15), leg_upper: 0.24, leg_lower: 0.12, leg_width: 0.07, paw_w: 0.09, paw_h: 0.05, spread: 0.11,
             tail_h: 0.25, tail_angle: 0.5, tail_vis: true, ears: Pointed, antlers: false, hump: false, shoulder_hump: false, mane: false, collar: true,
             walk_speed: 6.5, run_speed: 11.0, walk_amp: 1.0, run_amp: 1.5, sit_root_y: 0.25, lie_root_y: 0.12, attack: Bite,
-            fur: 0x9a6b3f, belly: 0xc8a070, accent: 0xa02a26, detail: 0x201810, // accent = red collar
+            // German-shepherd-like: tan with a black saddle + mask, red collar.
+            coat: Coat { dark: 0x1e1812, base: 0xa0703e, light: 0xd9b98a, tint: 0xb5824a, skin: 0x151110, detail: 0x2a2420, horn: 0x2a2420, accent: 0xa02a26 },
         },
         QuadSpecies::Wolf => QuadConfig {
+            // Long-legged and narrow: carpus / hock as the mid joint (upper 0.27 + lower 0.13), the
+            // head carried forward near the withers' height (neck 0.95 rad off vertical).
             root_y: 0.48, body: Vec3::new(0.24, 0.22, 0.62), chest_z: 0.28,
-            neck_h: 0.28, neck_angle: 0.55, neck_w: 0.14, head: Vec3::new(0.19, 0.18, 0.24),
-            snout: Vec3::new(0.11, 0.09, 0.18), leg_upper: 0.2, leg_lower: 0.2, leg_width: 0.07, paw_w: 0.08, paw_h: 0.05, spread: 0.1,
+            neck_h: 0.24, neck_angle: 0.95, neck_w: 0.14, head: Vec3::new(0.19, 0.18, 0.24),
+            snout: Vec3::new(0.11, 0.09, 0.18), leg_upper: 0.27, leg_lower: 0.13, leg_width: 0.07, paw_w: 0.08, paw_h: 0.05, spread: 0.09,
             tail_h: 0.32, tail_angle: 0.45, tail_vis: true, ears: Pointed, antlers: false, hump: false, shoulder_hump: false, mane: false, collar: false,
             walk_speed: 6.8, run_speed: 12.0, walk_amp: 1.1, run_amp: 1.6, sit_root_y: 0.28, lie_root_y: 0.14, attack: Bite,
-            fur: 0x6b6f78, belly: 0x8a8e96, accent: 0x494d55, detail: 0x141414,
+            // Grey wolf agouti: grizzled grey-brown, black-tipped saddle, cream belly / cheeks, tan legs.
+            coat: Coat { dark: 0x29251f, base: 0x786e60, light: 0xdad2c2, tint: 0x9c8264, skin: 0x1a1715, detail: 0x2a2420, horn: 0x2a2420, accent: 0x494d55 },
         },
         QuadSpecies::Horse => QuadConfig {
             root_y: 0.68, body: Vec3::new(0.3, 0.28, 0.72), chest_z: 0.32,
             neck_h: 0.38, neck_angle: 0.45, neck_w: 0.18, head: Vec3::new(0.18, 0.2, 0.28),
-            snout: Vec3::new(0.1, 0.08, 0.2), leg_upper: 0.28, leg_lower: 0.26, leg_width: 0.07, paw_w: 0.1, paw_h: 0.05, spread: 0.13,
+            snout: Vec3::new(0.1, 0.08, 0.2), leg_upper: 0.33, leg_lower: 0.21, leg_width: 0.07, paw_w: 0.1, paw_h: 0.05, spread: 0.13,
             tail_h: 0.35, tail_angle: 0.3, tail_vis: true, ears: Long, antlers: false, hump: false, shoulder_hump: false, mane: true, collar: false,
             walk_speed: 5.5, run_speed: 9.5, walk_amp: 1.2, run_amp: 1.8, sit_root_y: 0.42, lie_root_y: 0.22, attack: Charge,
-            fur: 0x6b4a2e, belly: 0x7a5a3a, accent: 0x241810, detail: 0x1a140e,
+            // Bay: red-brown body, black points (legs, mane, tail), white socks / blaze (tint).
+            coat: Coat { dark: 0x1c1510, base: 0x7a4a2a, light: 0x9a6a44, tint: 0xe2dccf, skin: 0x2a2220, detail: 0x2a241e, horn: 0x2a241e, accent: 0x17120e },
         },
         QuadSpecies::Deer => QuadConfig {
             root_y: 0.55, body: Vec3::new(0.2, 0.2, 0.58), chest_z: 0.26,
             neck_h: 0.22, neck_angle: 0.5, neck_w: 0.12, head: Vec3::new(0.14, 0.16, 0.2),
-            snout: Vec3::new(0.08, 0.07, 0.12), leg_upper: 0.22, leg_lower: 0.22, leg_width: 0.07, paw_w: 0.06, paw_h: 0.04, spread: 0.09,
+            snout: Vec3::new(0.08, 0.07, 0.12), leg_upper: 0.28, leg_lower: 0.16, leg_width: 0.07, paw_w: 0.06, paw_h: 0.04, spread: 0.08,
             tail_h: 0.12, tail_angle: 0.6, tail_vis: true, ears: Long, antlers: true, hump: false, shoulder_hump: false, mane: false, collar: false,
             walk_speed: 6.0, run_speed: 10.5, walk_amp: 0.9, run_amp: 1.4, sit_root_y: 0.32, lie_root_y: 0.16, attack: Charge,
-            fur: 0xa9794a, belly: 0xd8c0a0, accent: 0x8a5a32, detail: 0x6b4a2a,
+            // Summer red deer: russet coat, dark dorsal line, cream belly / rump / throat, grey face.
+            coat: Coat { dark: 0x4a3322, base: 0x8e5c36, light: 0xe6dccb, tint: 0x6f6152, skin: 0x161210, detail: 0x2a2420, horn: 0x8a7a62, accent: 0x8a5a32 },
         },
         QuadSpecies::Camel => QuadConfig {
             root_y: 0.72, body: Vec3::new(0.28, 0.26, 0.7), chest_z: 0.3,
-            neck_h: 0.42, neck_angle: 0.35, neck_w: 0.14, head: Vec3::new(0.16, 0.16, 0.22),
-            snout: Vec3::new(0.09, 0.08, 0.14), leg_upper: 0.3, leg_lower: 0.28, leg_width: 0.07, paw_w: 0.1, paw_h: 0.05, spread: 0.12,
+            neck_h: 0.42, neck_angle: 0.75, neck_w: 0.14, head: Vec3::new(0.16, 0.16, 0.22),
+            snout: Vec3::new(0.09, 0.08, 0.14), leg_upper: 0.34, leg_lower: 0.24, leg_width: 0.07, paw_w: 0.1, paw_h: 0.05, spread: 0.12,
             tail_h: 0.15, tail_angle: 0.4, tail_vis: true, ears: Round, antlers: false, hump: true, shoulder_hump: false, mane: false, collar: false,
             walk_speed: 5.0, run_speed: 8.5, walk_amp: 0.85, run_amp: 1.2, sit_root_y: 0.48, lie_root_y: 0.28, attack: Bite,
-            fur: 0xc2a06a, belly: 0xd8c098, accent: 0x8a6a40, detail: 0x4a3a22,
+            coat: Coat { dark: 0x8a6a42, base: 0xc29f6a, light: 0xe2cfa6, tint: 0xa98457, skin: 0x3a2c22, detail: 0x4a3a28, horn: 0x4a3a28, accent: 0x8a6a40 },
         },
         QuadSpecies::Bear => QuadConfig {
-            // A bear reads as a big LOW barrel on short thick legs with a heavy forward head. Earlier
-            // it was a tall box on thin gappy stilts ("incomprehensible") — now: long wide body, short
-            // chunky legs (width 0.18), low stance, big snouted head.
+            // A bear reads as a big LOW barrel on short thick legs with a heavy forward head: long
+            // wide body, shoulder hump, head hung low and forward (neck 0.8 rad off vertical),
+            // wrist / hock as the mid joint (upper 0.2 + lower 0.11).
             root_y: 0.52, body: Vec3::new(0.46, 0.42, 0.78), chest_z: 0.26,
-            neck_h: 0.1, neck_angle: 0.45, neck_w: 0.26, head: Vec3::new(0.32, 0.27, 0.32),
-            snout: Vec3::new(0.2, 0.14, 0.18), leg_upper: 0.16, leg_lower: 0.15, leg_width: 0.18, paw_w: 0.18, paw_h: 0.08, spread: 0.18,
+            neck_h: 0.12, neck_angle: 0.8, neck_w: 0.26, head: Vec3::new(0.32, 0.27, 0.32),
+            snout: Vec3::new(0.2, 0.14, 0.18), leg_upper: 0.2, leg_lower: 0.11, leg_width: 0.18, paw_w: 0.18, paw_h: 0.08, spread: 0.18,
             tail_h: 0.08, tail_angle: 0.3, tail_vis: true, ears: Round, antlers: false, hump: false, shoulder_hump: true, mane: false, collar: false,
             walk_speed: 5.5, run_speed: 9.0, walk_amp: 0.8, run_amp: 1.3, sit_root_y: 0.24, lie_root_y: 0.1, attack: Swipe,
-            fur: 0x5a4632, belly: 0x6b5640, accent: 0x3a2c1e, detail: 0x141414,
+            // Brown bear: dark chocolate, grizzled lighter back, near-black legs, pale muzzle, horn claws.
+            coat: Coat { dark: 0x1c120b, base: 0x46291a, light: 0x704d33, tint: 0x8f6b4c, skin: 0x121010, detail: 0xb5a890, horn: 0xb5a890, accent: 0x3a2c1e },
         },
         QuadSpecies::PolarBear => QuadConfig {
-            fur: 0xe8eaf0, belly: 0xd0d4dc, accent: 0xb8bcc8, detail: 0x2a2a30,
+            coat: Coat { dark: 0xc9c0ad, base: 0xebe5d8, light: 0xf5f1e8, tint: 0xdcd0b4, skin: 0x1e1c1e, detail: 0x3a3632, horn: 0x3a3632, accent: 0xb8bcc8 },
             ..quad_config(QuadSpecies::Bear)
         },
     }
@@ -659,15 +681,31 @@ fn group(parts: Vec<Mesh>) -> Mesh {
     surf(base, Surf::Fur)
 }
 
-/// A per-joint mesh set for one quadruped (the legs share one upper/lower/paw mesh across all four).
+/// One leg's three joint meshes (upper → lower → paw), in joint-local space.
+#[derive(Clone)]
+pub struct LegMeshes {
+    upper: Mesh,
+    lower: Mesh,
+    paw: Mesh,
+}
+
+/// A per-joint mesh set for one quadruped. Four legs: the kit sculpts distinct front / hind legs
+/// for the LEFT side and mirrors them for the right (so inner and outer faces can differ); the
+/// box-built fallback shares one leg everywhere.
 pub struct QuadMeshes {
     spine: Mesh,
     neck: Mesh,
     head: Mesh,
     tail: Option<Mesh>,
-    leg_upper: Mesh,
-    leg_lower: Mesh,
-    paw: Mesh,
+    /// Front-left, front-right, back-left, back-right.
+    legs: [LegMeshes; 4],
+}
+
+#[derive(Clone)]
+struct LegHandles {
+    upper: Handle<Mesh>,
+    lower: Handle<Mesh>,
+    paw: Handle<Mesh>,
 }
 
 /// Pre-uploaded handles for a [`QuadMeshes`] set.
@@ -677,9 +715,7 @@ pub struct QuadHandles {
     neck: Handle<Mesh>,
     head: Handle<Mesh>,
     tail: Option<Handle<Mesh>>,
-    leg_upper: Handle<Mesh>,
-    leg_lower: Handle<Mesh>,
-    paw: Handle<Mesh>,
+    legs: [LegHandles; 4],
 }
 
 impl QuadMeshes {
@@ -689,9 +725,7 @@ impl QuadMeshes {
             neck: meshes.add(self.neck),
             head: meshes.add(self.head),
             tail: self.tail.map(|m| meshes.add(m)),
-            leg_upper: meshes.add(self.leg_upper),
-            leg_lower: meshes.add(self.leg_lower),
-            paw: meshes.add(self.paw),
+            legs: self.legs.map(|l| LegHandles { upper: meshes.add(l.upper), lower: meshes.add(l.lower), paw: meshes.add(l.paw) }),
         }
     }
 }
@@ -702,38 +736,39 @@ pub fn quad_meshes(species: QuadSpecies) -> QuadMeshes {
         return m;
     }
     let c = quad_config(species);
+    let k = c.coat;
     let (bw, bh, bl) = (c.body.x, c.body.y, c.body.z);
 
     // Spine: body box + belly slab + optional hump.
     let mut spine = vec![
-        bx(bw, bh, bl, v(0.0, 0.0, 0.0), c.fur),
-        bx(bw - 0.02, 0.05, bl - 0.02, v(0.0, -bh / 2.0 + 0.025, 0.0), c.belly),
+        bx(bw, bh, bl, v(0.0, 0.0, 0.0), k.base),
+        bx(bw - 0.02, 0.05, bl - 0.02, v(0.0, -bh / 2.0 + 0.025, 0.0), k.light),
     ];
     if c.hump {
-        spine.push(bx(0.22, 0.18, 0.28, v(0.0, bh / 2.0 + 0.04, -0.05), c.fur));
+        spine.push(bx(0.22, 0.18, 0.28, v(0.0, bh / 2.0 + 0.04, -0.05), k.base));
     }
     if c.shoulder_hump {
         // A bear's muscular shoulder hump: a low WIDE rise sunk into the back over the front shoulders
         // (was a tall narrow box that poked up behind the head and read as a separate lump).
-        spine.push(bx(bw * 0.9, 0.16, bl * 0.4, v(0.0, bh / 2.0 + 0.01, bl * 0.22), c.fur));
+        spine.push(bx(bw * 0.9, 0.16, bl * 0.4, v(0.0, bh / 2.0 + 0.01, bl * 0.22), k.base));
     }
     let spine = group(spine);
 
     // Neck (built in neck-local: mesh sits above the joint) + optional mane / collar.
-    let mut neck = vec![bx(c.neck_w, c.neck_h, c.neck_w, v(0.0, c.neck_h / 2.0, 0.0), c.fur)];
+    let mut neck = vec![bx(c.neck_w, c.neck_h, c.neck_w, v(0.0, c.neck_h / 2.0, 0.0), k.base)];
     if c.mane {
-        neck.push(bx(0.06, c.neck_h * 0.9, 0.04, v(0.0, c.neck_h * 0.45, -c.neck_w / 2.0 - 0.02), c.accent));
+        neck.push(bx(0.06, c.neck_h * 0.9, 0.04, v(0.0, c.neck_h * 0.45, -c.neck_w / 2.0 - 0.02), k.accent));
     }
     if c.collar {
-        neck.push(bx(c.neck_w + 0.02, 0.05, c.neck_w + 0.02, v(0.0, c.neck_h * 0.75, 0.0), c.accent));
+        neck.push(bx(c.neck_w + 0.02, 0.05, c.neck_w + 0.02, v(0.0, c.neck_h * 0.75, 0.0), k.accent));
     }
     let neck = group(neck);
 
     // Head: skull + snout + nose + ears + optional antlers (head-local).
-    let mut head = vec![bx(c.head.x, c.head.y, c.head.z, v(0.0, 0.0, c.head.z * 0.2), c.fur)];
+    let mut head = vec![bx(c.head.x, c.head.y, c.head.z, v(0.0, 0.0, c.head.z * 0.2), k.base)];
     let (sw, sh, sl) = (c.snout.x, c.snout.y, c.snout.z);
-    head.push(bx(sw, sh, sl, v(0.0, -sh * 0.4, c.head.z * 0.5 + sl / 2.0), c.belly));
-    head.push(bx(0.06, 0.04, 0.04, v(0.0, -sh * 0.4 + sh * 0.15, c.head.z * 0.5 + sl), c.detail)); // nose
+    head.push(bx(sw, sh, sl, v(0.0, -sh * 0.4, c.head.z * 0.5 + sl / 2.0), k.light));
+    head.push(bx(0.06, 0.04, 0.04, v(0.0, -sh * 0.4 + sh * 0.15, c.head.z * 0.5 + sl), k.skin)); // nose
     // Eyes: a dark box on each side of the upper face (the studio quad builder omits these; our old
     // critters had them). Sized + spread by the head so every species reads with a face.
     let (ew, eh, ex, ez, ey) = (c.head.x * 0.22, c.head.y * 0.16, c.head.x * 0.33, c.head.z * 0.5 + 0.03, c.head.y * 0.12);
@@ -746,19 +781,42 @@ pub fn quad_meshes(species: QuadSpecies) -> QuadMeshes {
     let head = group(head);
 
     // Tail (tail-local: above the joint).
-    let tail = c.tail_vis.then(|| group(vec![bx(0.05, c.tail_h, 0.05, v(0.0, c.tail_h / 2.0, 0.0), c.fur)]));
+    let tail = c.tail_vis.then(|| group(vec![bx(0.05, c.tail_h, 0.05, v(0.0, c.tail_h / 2.0, 0.0), k.base)]));
 
     // Legs (joint-local, hanging down from each joint); `leg_width` thickens the bear's limbs.
     let lw = c.leg_width;
-    let leg_upper = group(vec![bx(lw, c.leg_upper, lw, v(0.0, -c.leg_upper / 2.0, 0.0), c.fur)]);
-    let leg_lower = group(vec![bx(lw, c.leg_lower, lw, v(0.0, -c.leg_lower / 2.0, 0.0), c.fur)]);
-    let paw = group(vec![bx(c.paw_w, c.paw_h, c.paw_w + 0.02, v(0.0, -c.paw_h / 2.0, 0.02), c.detail)]);
+    let leg = LegMeshes {
+        upper: group(vec![bx(lw, c.leg_upper, lw, v(0.0, -c.leg_upper / 2.0, 0.0), k.base)]),
+        lower: group(vec![bx(lw, c.leg_lower, lw, v(0.0, -c.leg_lower / 2.0, 0.0), k.base)]),
+        paw: group(vec![bx(c.paw_w, c.paw_h, c.paw_w + 0.02, v(0.0, -c.paw_h / 2.0, 0.02), k.detail)]),
+    };
 
-    QuadMeshes { spine, neck, head, tail, leg_upper, leg_lower, paw }
+    QuadMeshes { spine, neck, head, tail, legs: [leg.clone(), leg.clone(), leg.clone(), leg] }
 }
 
-/// The realistic animal (Blender metaball parts, `animals.glb`) for the same joints and dimensions,
-/// recoloured with the species' coat table. `None` without the kit → the box-built animal.
+/// Mirror a joint-local mesh across its X = 0 plane (left leg → right leg): negate X of positions
+/// and normals and flip the triangle winding so the faces stay front-facing.
+fn mirror_x(mut m: Mesh) -> Mesh {
+    use bevy::mesh::{Indices, VertexAttributeValues as V};
+    for attr in [Mesh::ATTRIBUTE_POSITION, Mesh::ATTRIBUTE_NORMAL] {
+        if let Some(V::Float32x3(vs)) = m.attribute_mut(attr) {
+            for p in vs.iter_mut() {
+                p[0] = -p[0];
+            }
+        }
+    }
+    match m.indices_mut() {
+        Some(Indices::U32(ix)) => ix.chunks_exact_mut(3).for_each(|t| t.swap(1, 2)),
+        Some(Indices::U16(ix)) => ix.chunks_exact_mut(3).for_each(|t| t.swap(1, 2)),
+        None => {}
+    }
+    m
+}
+
+/// The realistic animal (Blender SDF sculpt, `animals.glb` — `tools/blender_forest/animals.py`)
+/// on the same joints and dimensions, coloured from the species' [`Coat`]: the baked tone / tint
+/// channels walk the coat ramp, so saddle, pale belly, tan legs and face markings come out per
+/// species. `None` without the kit → the box-built animal.
 fn kit_quad_meshes(species: QuadSpecies) -> Option<QuadMeshes> {
     let name = match species {
         QuadSpecies::Dog => "dog",
@@ -768,32 +826,39 @@ fn kit_quad_meshes(species: QuadSpecies) -> Option<QuadMeshes> {
         QuadSpecies::Camel => "camel",
         QuadSpecies::Bear | QuadSpecies::PolarBear => "bear",
     };
-    let kit = crate::realforest::get().filter(|k| k.has(&format!("q_{name}_spine")))?;
+    let kit = crate::realforest::get().filter(|k| k.has(&format!("q_{name}_hind_upper")))?;
     let c = quad_config(species);
+    let k = c.coat;
     let l = crate::palette::lin;
-    // Region order = animals.py: FUR, BELLY, ACCENT, DETAIL, EYE.
+    let coat = [l(k.dark), l(k.base), l(k.light), l(k.tint)];
+    // Region order = animals.py: FUR (coat ramp), SKIN, DETAIL, EYE, ACCENT, HORN.
     let accent_surf = if c.collar { Surf::Cloth } else { Surf::Fur };
     let palette = [
-        (l(c.fur), Surf::Fur),
-        (l(c.belly), Surf::Fur),
-        (l(c.accent), accent_surf),
-        (l(c.detail), Surf::Bone),
+        (l(k.base), Surf::Fur),
+        (l(k.skin), Surf::Skin),
+        (l(k.detail), Surf::Bone),
         (l(0x0c0a08), Surf::Bone),
+        (l(k.accent), accent_surf),
+        (l(k.horn), Surf::Bone),
     ];
-    let part = |p: &str| kit.creature_part(&format!("q_{name}_{p}"), &palette);
+    let part = |p: &str| kit.coat_part(&format!("q_{name}_{p}"), &coat, &palette);
+    let leg = |prefix: &str, paw: &str| -> Option<LegMeshes> {
+        Some(LegMeshes { upper: part(&format!("{prefix}_upper"))?, lower: part(&format!("{prefix}_lower"))?, paw: part(paw)? })
+    };
+    let mirror = |l: &LegMeshes| LegMeshes { upper: mirror_x(l.upper.clone()), lower: mirror_x(l.lower.clone()), paw: mirror_x(l.paw.clone()) };
+    let (front, hind) = (leg("leg", "paw")?, leg("hind", "hind_paw")?);
+    let (front_r, hind_r) = (mirror(&front), mirror(&hind));
     Some(QuadMeshes {
         spine: part("spine")?,
         neck: part("neck")?,
         head: part("head")?,
         tail: if c.tail_vis { part("tail") } else { None },
-        leg_upper: part("leg_upper")?,
-        leg_lower: part("leg_lower")?,
-        paw: part("paw")?,
+        legs: [front, front_r, hind, hind_r],
     })
 }
 
 fn add_ears(head: &mut Vec<Mesh>, c: &QuadConfig) {
-    let mat = if c.ears == Ears::Round { c.detail } else { c.fur };
+    let mat = if c.ears == Ears::Round { c.coat.detail } else { c.coat.base };
     let hw = c.head.x / 2.0;
     match c.ears {
         Ears::Long => {
@@ -813,8 +878,8 @@ fn add_ears(head: &mut Vec<Mesh>, c: &QuadConfig) {
 
 fn add_antlers(head: &mut Vec<Mesh>, c: &QuadConfig) {
     let mut branch = |x: f32, rot_z: f32| {
-        head.push(bxr(0.03, 0.22, 0.03, v(x, 0.22, -0.02), Quat::from_rotation_z(rot_z), c.detail));
-        head.push(bxr(0.025, 0.1, 0.025, v(x + rot_z * 0.06, 0.28, 0.02), Quat::from_rotation_z(rot_z * 0.8), c.detail));
+        head.push(bxr(0.03, 0.22, 0.03, v(x, 0.22, -0.02), Quat::from_rotation_z(rot_z), c.coat.horn));
+        head.push(bxr(0.025, 0.1, 0.025, v(x + rot_z * 0.06, 0.28, 0.02), Quat::from_rotation_z(rot_z * 0.8), c.coat.horn));
     };
     branch(0.07, -0.25);
     branch(-0.07, 0.25);
@@ -855,15 +920,16 @@ pub fn spawn_quad(commands: &mut Commands, root: Entity, mat: &Handle<CreatureMa
     let front_z = c.chest_z * 0.35;
     let back_z = -c.body.z / 2.0 + 0.15;
     // Front legs parent to the chest; back legs to the spine (studio `addLegs`).
-    let mut leg = |parent: Entity, sh: QuadJoint, el: QuadJoint, pw: QuadJoint, x: f32, z: f32| {
-        let s = joint(commands, parent, sh, Vec3::new(x, leg_y, z), Some(h.leg_upper.clone()));
-        let e = joint(commands, s, el, Vec3::new(0.0, -c.leg_upper, 0.0), Some(h.leg_lower.clone()));
-        joint(commands, e, pw, Vec3::new(0.0, -c.leg_lower, 0.0), Some(h.paw.clone()));
+    let mut leg = |parent: Entity, sh: QuadJoint, el: QuadJoint, pw: QuadJoint, x: f32, z: f32, m: &LegHandles| {
+        let s = joint(commands, parent, sh, Vec3::new(x, leg_y, z), Some(m.upper.clone()));
+        let e = joint(commands, s, el, Vec3::new(0.0, -c.leg_upper, 0.0), Some(m.lower.clone()));
+        joint(commands, e, pw, Vec3::new(0.0, -c.leg_lower, 0.0), Some(m.paw.clone()));
     };
-    leg(chest, FlShoulder, FlElbow, FlPaw, c.spread, front_z);
-    leg(chest, FrShoulder, FrElbow, FrPaw, -c.spread, front_z);
-    leg(spine, BlHip, BlKnee, BlPaw, c.spread, back_z);
-    leg(spine, BrHip, BrKnee, BrPaw, -c.spread, back_z);
+    let [fl, fr, bl, br] = &h.legs;
+    leg(chest, FlShoulder, FlElbow, FlPaw, c.spread, front_z, fl);
+    leg(chest, FrShoulder, FrElbow, FrPaw, -c.spread, front_z, fr);
+    leg(spine, BlHip, BlKnee, BlPaw, c.spread, back_z, bl);
+    leg(spine, BrHip, BrKnee, BrPaw, -c.spread, back_z, br);
 }
 
 pub struct QuadrupedPlugin;

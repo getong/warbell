@@ -138,8 +138,14 @@ fn write_dds(out: &Path, layers: Vec<Vec<(Vec<u8>, u32, u32)>>, srgb: bool, alph
 
 fn main() {
     let dir = PathBuf::from(DIR);
+    // `PACK_ONLY=creature` (or `ground` / `struct`) re-packs just that array set and skips every
+    // other file — for regenerating one set when the other PNG intermediates aren't on disk.
+    let only = std::env::var("PACK_ONLY").ok();
     // Ground + structure re-skin: three layers per map → one array file each.
     for (prefix, names) in [("ground", &GROUND[..]), ("struct", &STRUCT[..]), ("creature", &CREATURE[..])] {
+        if only.as_deref().is_some_and(|o| o != prefix) {
+            continue;
+        }
         for map in MAPS {
             let srgb = map == "albedo";
             let layers = names
@@ -151,6 +157,9 @@ fn main() {
                 .collect();
             write_dds(&dir.join(format!("{prefix}_{map}.dds")), layers, srgb, map == "ormh");
         }
+    }
+    if only.is_some() {
+        return;
     }
     // Everything else: one file per PNG.
     let mut pngs: Vec<PathBuf> = std::fs::read_dir(&dir)
