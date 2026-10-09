@@ -323,14 +323,16 @@ impl Kit {
                         chunks.push(self, m, Vec3::new(x, height_fn(x, z), z), rot, s, Tier::Clutter);
                     }
                 }
-                // Green carpet: up to 6 tufts per tile off the trails, thinned on the bare/worn
-                // patches the ground shader paints (same fertility field), so it grows in drifts.
-                // Every 3rd tuft also goes into the far ring at 1.35x scale.
+                // Undergrowth: up to 3 plants per tile off the trails, in DRIFTS — a broad noise field
+                // opens real clearings (a forest floor is mostly litter with plant patches, not a
+                // lawn), and the ground fertility thins it further on the bare/worn patches. Every
+                // 2nd plant also goes into the far ring at 1.35x scale.
                 let fert = crate::biome::ground_patch(gx + 0.5, gz + 0.5).fertility;
-                for k in 0..6u32 {
+                let drift = crate::biome::forest_drift(gx + 0.5, gz + 0.5);
+                for k in 0..3u32 {
                     let (a, b) = rolls(gx + 0.13 + k as f32 * 0.71, gz + 0.29 - k as f32 * 0.43);
                     let (c, d) = rolls(gx - 0.31 - k as f32 * 0.17, gz + 0.47 + k as f32 * 0.59);
-                    if c > 0.35 + fert * 0.65 {
+                    if c > fert * drift {
                         continue;
                     }
                     let (x, z) = (gx + a, gz + b);
@@ -341,19 +343,26 @@ impl Kit {
                     {
                         continue;
                     }
-                    let pick = if d < 0.80 {
-                        self.pick(&LUSH, c)
-                    } else if d < 0.93 {
-                        self.pick(&FERN, c)
+                    // Variety over volume: grass, ferns, short dry stalks, a low shrub, a fallen-leaf
+                    // sheet, the occasional flower — each patch reads as a mixed understorey.
+                    let (pick, s) = if d < 0.42 {
+                        (self.pick(&LUSH, c), 0.65 + c * 0.5)
+                    } else if d < 0.68 {
+                        (self.pick(&FERN, c), 0.8 + c * 0.6)
+                    } else if d < 0.78 {
+                        (self.pick(&["stalks_a"], c), 0.9)
+                    } else if d < 0.85 {
+                        (self.pick(&["bush_a", "bush_b"], c), 0.45 + c * 0.35)
+                    } else if d < 0.94 {
+                        (self.pick(&LITTER, c), 0.9 + c * 0.4)
                     } else {
-                        self.pick(&FLOWERS, c)
+                        (self.pick(&FLOWERS, c), 0.85)
                     };
                     let Some(m) = pick else { continue };
-                    let s = 0.75 + c * 0.5;
                     let pos = Vec3::new(x, height_fn(x, z), z);
                     let rot = Quat::from_rotation_y(d * 131.0 % std::f32::consts::TAU);
                     chunks.push(self, m, pos, rot, s, Tier::LushNear);
-                    if k % 3 == 0 && d < 0.93 {
+                    if k % 2 == 0 && d < 0.85 {
                         chunks.push(self, m, pos, rot, s * 1.35, Tier::LushFar);
                     }
                 }

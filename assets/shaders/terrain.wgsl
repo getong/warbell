@@ -52,10 +52,11 @@ struct ForestParams {
 
 // World units covered by one repeat of each forest-floor layer (different on purpose so the
 // three repeats never line up), and the deepest parallax displacement in world units.
-const FP_T0: f32 = 2.7;
-const FP_T1: f32 = 3.3;
-const FP_T2: f32 = 2.3;
-const FP_DEPTH: f32 = 0.17;
+// The layers are 2048² composites, so one repeat covers a wider patch at the same texel density.
+const FP_T0: f32 = 4.6;
+const FP_T1: f32 = 5.3;
+const FP_T2: f32 = 4.2;
+const FP_DEPTH: f32 = 0.20;
 
 fn fp_uv0(p: vec2<f32>) -> vec2<f32> { return p / FP_T0; }
 fn fp_uv1(p: vec2<f32>) -> vec2<f32> { return p / FP_T1 + vec2<f32>(0.37, 0.61); }

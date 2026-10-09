@@ -919,6 +919,13 @@ pub fn ground_patch(x: f32, z: f32) -> GroundPatch {
     }
 }
 
+/// 0..1 forest-understorey drift field: broad (~40u) patches where the plants clump, opening to
+/// near-bare clearings between them. Used by the realistic forest's undergrowth layer.
+pub fn forest_drift(x: f32, z: f32) -> f32 {
+    let n = ter_noise(x * 0.028 + 7.0, z * 0.028 + 31.0) * 0.7 + ter_noise(x * 0.09 + 3.0, z * 0.09 + 17.0) * 0.3;
+    fg_smoothstep(0.30, 0.72, n)
+}
+
 /// The grid scatter over `[lo, hi]²`. One roll per tile; classes consume cumulative
 /// probability slices (the rest stays empty). Trees are spacing-checked + wind-swayed.
 /// `mask(x,z)` gates placement (the world map uses it to keep each biome inside its
