@@ -11,7 +11,19 @@ outer sides can differ (pale inner legs, the elbow tucked to the chest).
 
 Baked per-vertex data (see sdfkit.py): region (R), cavity / AO (G), coat tone (B), coat tint (A)
 and a fur-flow UV. The game maps tone / tint onto each species' coat colours (dark, base, light,
-tint) — the polar bear reuses the bear mesh with a white coat.
+tint) — the polar bear reuses the bear's body with a white coat and only ships its own neck and
+head (`q_polar_neck`, `q_polar_head`, on its longer `RIG["polar"]` neck).
+
+Where two joint meshes meet, nothing should read as a seam:
+  - leg joints are "pill" joints (the upper segment's end cap centred on the pivot, the lower one
+    starting there at 0.995 x its radius) kept densely tessellated through decimation (`KEEP_*`);
+  - vertex normals are the SDF gradient, smooth-unioned with the neighbouring parts (`NEIGHBOURS`),
+    and the coat reads those normals, so shading and colour run on across the crossing;
+  - legs take the body's coat at the shoulder / hip and turn into their own pattern below;
+  - the head and neck share one fur flow (axis + hair-scale profile), and the head's nape sleeve
+    matches the neck tube, so the skull grows out of the neck instead of sitting on a collar;
+  - small dark details (nose leather, lip lines) are their own finely meshed bodies laid onto the
+    blended surface (`sdfkit.to_surface`) rather than per-face colour on the decimated head.
 
     blender -b --factory-startup --python tools/blender_forest/animals.py [-- preview.png]
 """
@@ -26,7 +38,7 @@ import numpy as np  # noqa: E402
 from common import OUT, clear_scene, export_glb, name_material  # noqa: E402
 from sdfkit import (  # noqa: E402
     Body, Chain, Cone, Ellipsoid, RBox, Sphere, Squash, Tufts, ambient_occlusion, axis_uv,
-    gradient, mesh_body, norm, rot_x, rot_y, rot_z, smoothstep, v3,
+    gradient, mesh_body, norm, resample, rot_x, rot_y, rot_z, smoothstep, to_surface, v3,
 )
 
 # Regions (vertex colour R): the game's palette order (quadruped.rs `kit_quad_meshes`).
@@ -46,7 +58,12 @@ RIG = {
                   lu=0.34, ll=0.24, spread=0.12, tail_angle=0.4),
     "bear": dict(root_y=0.52, body=(0.46, 0.42, 0.78), chest_z=0.26, neck_h=0.12, neck_angle=0.8,
                  lu=0.2, ll=0.11, spread=0.18, tail_angle=0.3),
+    # The bear's body on a longer neck carried further forward (only its neck + head are built).
+    "polar": dict(root_y=0.52, body=(0.46, 0.42, 0.78), chest_z=0.26, neck_h=0.36, neck_angle=1.15,
+                  lu=0.2, ll=0.11, spread=0.18, tail_angle=0.3),
 }
+# Species whose kit only overrides some parts of another (the rest come from that species' meshes).
+ONLY = {"polar": ("neck", "head")}
 
 
 def P(x, y, z):
@@ -94,6 +111,24 @@ class Part:
         self.joint, self.bodies, self.axis, self.up = joint, bodies, axis, up
         # Short hair on legs and face: a finer clump scale than the body's guard hair.
         self.uv_scale = 1.8 if joint in LEGS else 2.2 if joint == "head" else 1.0
+        # Optional fur-scale profile along the axis: [(arc length, scale)], piecewise linear (the
+        # head and neck share one, so the short face hair grows into the ruff without a seam).
+        self.profile = None
+
+    def flow_uv(self, uu, vv):
+        """Fur-flow UV from axis coordinates: v integrates the scale along the axis (no stretch),
+        u is scaled by the local scale."""
+        if self.profile is None:
+            return uu * self.uv_scale, vv * self.uv_scale
+        t, sc = (np.array(a, dtype=np.float64) for a in zip(*self.profile))
+        cum = np.concatenate([[0.0], np.cumsum((sc[1:] + sc[:-1]) * 0.5 * np.diff(t))])
+        s = np.interp(vv, t, sc)
+        i = np.clip(np.searchsorted(t, vv) - 1, 0, len(t) - 2)
+        dv = np.clip(vv - t[i], 0.0, None)
+        slope = (sc[i + 1] - sc[i]) / np.maximum(t[i + 1] - t[i], 1e-9)
+        integ = np.where(vv <= t[0], vv * sc[0], cum[i] + sc[i] * dv + 0.5 * slope * dv * dv)
+        integ = np.where(vv >= t[-1], cum[-1] + (vv - t[-1]) * sc[-1], integ)
+        return uu * s, integ
 
 
 class Coat:
@@ -102,6 +137,7 @@ class Coat:
     def __init__(self, base):
         self.base = base
         self.ops = []
+        self.leg_top = None  # leg joint height: legs take the body's coat there (set in species_parts)
 
     def tone(self, mask, value, soft=0.02, k=1.0):
         self.ops.append((0, mask, value, soft, k))
@@ -113,6 +149,12 @@ class Coat:
 
     def __call__(self, p, n, part):
         tone, tint = self.base(p, n, part)
+        if part in LEGS and self.leg_top is not None:
+            # Legs start in the body's own coat and turn into their leg pattern below the joint,
+            # so the colour runs continuously where a leg comes out of the body.
+            bt, bn = self.base(p, n, "spine")
+            w = smoothstep(self.leg_top + 0.01, self.leg_top - 0.11, p[:, 1])
+            tone, tint = bt + (tone - bt) * w, bn + (tint - bn) * w
         for ch, mask, value, soft, k in self.ops:
             w = smoothstep(soft, -soft, mask.d(p)) * k
             if ch == 0:
@@ -125,6 +167,18 @@ class Coat:
 def ground_cut(body, ground_y):
     """Flatten a paw's sole on the ground plane."""
     return body.cut(RBox(P(0, ground_y + 1.0, 0), P(5, 1.0, 5)))
+
+
+def arm_sleeves(b, J, top, bot, r_top, r_bot, k):
+    """Upper-arm sleeve on the BODY over both front-leg tops (`J` = the left leg's tucked shoulder
+    joint; `top` / `bot` offsets from it, mirrored for the right): a tapered capsule along the
+    humerus, from the point of shoulder down-back toward the elbow. The leg's own humerus starts
+    inside it and is slightly thinner at the top / thicker lower down, so the leg slides out of the
+    sleeve at a shallow angle - no ball-shaped leg top sitting on the shoulder. (The rig swings
+    legs about X only, so the leg top stays inside however it strides.)"""
+    for sx in (-1, 1):
+        m = P(sx, 1, 1)
+        b.add(Cone((J + top) * m, (J + bot) * m, r_top, r_bot), FUR, k)
 
 
 # ───────────────────────────────────────────────────────────────── canines
@@ -142,7 +196,7 @@ def canine(name, r, opt):
     parts = {}
 
     # Torso
-    b = Body(h=0.005, budget=2300)
+    b = Body(h=0.005, budget=2200)
     w = bw * 0.42 * s
     b.add(Ellipsoid(P(0, top * 0.29, zc - 0.178), (w * 0.94, top * 0.78, 0.19)), FUR)  # ribcage
     b.add(Ellipsoid(P(0, keel * 0.38, zc - 0.108), (w * 0.67, -keel * 0.62, 0.13)), FUR, 0.05)  # keel
@@ -150,6 +204,8 @@ def canine(name, r, opt):
     b.add(Ellipsoid(P(0, top * 0.62, zc - 0.088), (w * 0.74, top * 0.45, 0.11)), FUR, 0.05)  # withers
     for sx in (-1, 1):
         b.add(Ellipsoid(P(sx * w * 0.7, top * 0.25, zc - 0.048), (0.026 * s, 0.08, 0.05), rot_x(-0.7)), FUR, 0.04)
+    arm_sleeves(b, F["leg_upper"][1] + P(opt["tuck"], 0, 0), P(-0.002, 0.045, 0.01), P(-0.004, -0.075, -0.025),
+                0.033 * s, 0.018 * s, 0.03)
     b.add(Ellipsoid(P(0, top * 0.33, (zc + zh) * 0.5 - 0.089), (w * 0.71, top * 0.62, 0.17)), FUR, 0.06)  # loin
     b.add(Ellipsoid(P(0, top * 0.29, zh - 0.04), (w * 0.84, top * 0.73, 0.115)), FUR, 0.05)  # croup
     for sx in (-1, 1):
@@ -167,14 +223,19 @@ def canine(name, r, opt):
     # Neck (thick, with a ruff on wolves)
     nt = F["neck"][1]
     ht = F["head"][1]
-    b = Body(h=0.0045, budget=1700)
-    b.add(Chain([(nt + P(0, 0.02, -0.06), 0.068 * s), ((nt + ht) / 2 + P(0, 0.005, -0.015), 0.058 * s),
-                 (ht + P(0, -0.008, -0.038), 0.042 * s)]), FUR)
-    b.add(Cone(P(0, keel * 0.18, zc + 0.05), ht + P(0, -0.045, 0.02), 0.042 * s, 0.03 * s), FUR, 0.05)  # throat
+    # The neck widens from the head back to the shoulders; its last segment (E -> M) is matched by
+    # a sleeve on the head (`canine_head`) of almost the same radius, so the head's back flows into
+    # the neck with only a ~3 degree crossing instead of a collar where a thin neck met the skull.
+    nE, nM = canine_neck_axis(nt, ht)
+    b = Body(h=0.0045, budget=1800 if opt["ruff"] else 1460)  # ruff clumps need the extra
+    b.add(Chain([(nt + P(0, 0.02, -0.06), 0.068 * s), (nM, 0.06 * s), (nE, 0.054 * s)]), FUR)
+    b.add(Cone(P(0, keel * 0.18, zc + 0.05), ht + P(0, -0.03, -0.012), 0.042 * s, 0.028 * s), FUR, 0.05)  # throat
     b.add(Ellipsoid(nt + P(0, 0.04, -0.07), (0.06 * s, 0.06, 0.08)), FUR, 0.05)  # crest onto the withers
     if opt["ruff"]:
-        b.add(Ellipsoid((nt + ht) / 2 + P(0, -0.005, -0.01), (0.074, 0.088, 0.08), rot_x(-0.6)), FUR, 0.04)
-        b.shag(Sphere((nt + ht) / 2, 0.13), 0.012, Tuft(38, (0, -0.6, -0.8), seed=5), soft=0.04)
+        # Ruff / mane: a thick collar of guard hair from behind the ears down to the throat that
+        # the head emerges from; clumped (soft ridges) toward its front edge.
+        b.add(Ellipsoid((nt + ht) / 2 + P(0, -0.008, 0.018), (0.08, 0.09, 0.088), rot_x(-0.6)), FUR, 0.045)
+        b.shag(Sphere((nt + ht) / 2 + P(0, 0.0, 0.02), 0.13), 0.011, Tuft(34, (0, -0.6, -0.8), seed=5), soft=0.04)
     else:
         b.shag(Sphere((nt + ht) / 2, 0.1), 0.005, Tuft(45, (0, -0.6, -0.8), seed=5), soft=0.03)
     bodies = [b]
@@ -192,12 +253,12 @@ def canine(name, r, opt):
     parts["neck"] = Part("neck", bodies, [ht + P(0, 0.0, 0.0), nt + P(0, -0.04, -0.06)])
 
     # Head
-    parts["head"] = Part("head", canine_head(ht, opt), [ht + P(0, 0.0, 0.2), ht + P(0, 0.0, -0.06)],
+    parts["head"] = Part("head", canine_head(nt, ht, opt, s), [ht + P(0, 0.0, 0.2), ht + P(0, 0.0, -0.06)],
                          up=(0, 1, 0))
 
     # Tail: wolf hangs bushy toward the hocks; dog carries it up in a curve.
     tt = F["tail"][1]
-    b = Body(h=0.004, budget=750)
+    b = Body(h=0.004, budget=690)
     knots = [(tt + P(0, 0.0, -0.02), 0.026)] + [(tt + P(*o), rr) for o, rr in opt["tail"]]
     b.add(Chain(knots), FUR)
     b.shag(Chain(knots), 0.013 * opt["tail_shag"], Tuft(55, v3(knots[-1][0]) - v3(knots[1][0]), seed=6), soft=0.02)
@@ -212,7 +273,7 @@ def canine(name, r, opt):
     ox = opt["tuck"]  # the whole leg column sits this far inside the joint (narrow track)
     o = P(ox, 0, 0)
     b = Body(h=0.0035, budget=900)
-    b.add(Cone(J + o + P(0.0, 0.01, 0.006), J + o + P(-0.004, -0.1, -0.035), 0.03 * s, 0.023 * lw), FUR)  # humerus
+    b.add(Cone(J + o + P(0.0, 0.03, 0.006), J + o + P(-0.004, -0.1, -0.035), 0.024 * s, 0.0235 * lw), FUR)  # humerus
     b.add(Ellipsoid(J + o + P(-0.002, -0.06, -0.028), (0.023 * s, 0.048, 0.03)), FUR, 0.015)  # triceps
     b.add(Sphere(J + o + P(-0.005, -0.108, -0.045), 0.016 * lw), FUR, 0.01)  # elbow point
     b.add(Chain([(J + o + P(-0.005, -0.1, -0.026), 0.022 * lw), (J + o + P(-0.002, -0.19, -0.004), 0.0175 * lw),
@@ -223,13 +284,14 @@ def canine(name, r, opt):
     pf = P(W[0] + ox, g, W[2] + 0.014)
     axis = [J + o + P(0, 0.1, 0), W + o, pf]  # shared by the leg's three parts: strands run on
     parts["leg_upper"] = Part("leg_upper", [b], axis, up=(0, 0, 1))
-    b = Body(h=0.003, budget=480)
-    # Starts a little above the joint, just inside the forearm's end: no cap ring at the carpus.
-    b.add(Chain([(W + o + P(0, 0.01, 0), 0.0146 * lw), (W + o, 0.0146 * lw), (W + o + P(0, -0.075, 0.008), 0.0135 * lw),
+    b = Body(h=0.003, budget=450)
+    # Pill joint at the carpus: starts on the pivot at 0.995 x the forearm's end radius (tangent to
+    # its cap: no ring) and ends where the paw takes over at the same radius.
+    b.add(Chain([(W + o, 0.015 * lw * 0.995), (W + o + P(0, -0.075, 0.008), 0.0135 * lw),
                  (P(W[0] + ox, g + 0.04, W[2] + 0.014), 0.0135 * lw)]), FUR)
     b.add(Sphere(W + o + P(0, -0.014, -0.013 * lw), 0.007 * lw), FUR, 0.005)  # carpal pad
     parts["leg_lower"] = Part("leg_lower", [b], axis, up=(0, 0, 1))
-    parts["paw"] = Part("paw", [canine_paw(pf, opt["paw"], front=True)], axis, up=(0, 0, 1))
+    parts["paw"] = Part("paw", [canine_paw(pf, opt["paw"], 0.0135 * lw * 0.995, front=True)], axis, up=(0, 0, 1))
 
     # Hind leg: thigh around the hip (mostly inside the haunch), stifle forward, gaskin sloping
     # back to the hock (rig knee) with the Achilles tendon behind, vertical metatarsus.
@@ -243,27 +305,46 @@ def canine(name, r, opt):
     b.add(Sphere(H + oh + P(0, -lu * 0.42, 0.03), 0.023 * s), FUR, 0.025)  # stifle
     b.add(Chain([(H + oh + P(0, -lu * 0.4, 0.02), 0.027 * s), (H + oh + P(0, -lu * 0.74, -0.018), 0.018 * lw),
                  (K + oh, 0.0155 * lw)]), FUR, 0.025)  # gaskin
-    b.add(Cone(H + oh + P(0, -lu * 0.63, -0.036), K + oh + P(0, 0.006, -0.024), 0.0105 * lw, 0.0095 * lw), FUR, 0.012)
+    b.add(Cone(H + oh + P(0, -lu * 0.63, -0.034), K + oh + P(0, 0.012, -0.02), 0.0105 * lw, 0.0085 * lw), FUR, 0.016)  # Achilles
     b.shag(Ellipsoid(H + oh + P(0, -0.07, -0.045), (0.045, 0.075, 0.035)), 0.005 * opt["shag"],
            Tuft(60, (0, -1, -0.2), seed=9), soft=0.02)  # breeches
     ph = P(K[0] + oh[0], g, K[2] + 0.006)
     axis = [H + oh + P(0, 0.1, 0), K + oh, ph]
     parts["hind_upper"] = Part("hind_upper", [b], axis, up=(0, 0, 1))
-    b = Body(h=0.003, budget=480)
-    b.add(Chain([(K + oh + P(0, 0.01, 0), 0.015 * lw), (K + oh, 0.015 * lw), (K + oh + P(0, -0.07, 0.003), 0.0135 * lw),
+    b = Body(h=0.003, budget=450)
+    b.add(Chain([(K + oh, 0.0155 * lw * 0.995), (K + oh + P(0, -0.07, 0.003), 0.0135 * lw),
                  (P(K[0] + oh[0], g + 0.04, K[2] + 0.006), 0.0135 * lw)]), FUR)
-    b.add(Sphere(K + oh + P(0, 0.0, -0.022), 0.0098 * lw), FUR, 0.01)  # point of hock
+    # Point of hock: a rounded bump behind the pivot that covers the Achilles' end and fairs down the
+    # back of the metatarsus (no ledge where the broad hock met the thin cannon).
+    b.add(Sphere(K + oh + P(0, -0.002, -0.019), 0.0108 * lw), FUR, 0.018)
     parts["hind_lower"] = Part("hind_lower", [b], axis, up=(0, 0, 1))
-    parts["hind_paw"] = Part("hind_paw", [canine_paw(ph, opt["paw"] * 0.93, front=False)], axis, up=(0, 0, 1))
+    parts["hind_paw"] = Part("hind_paw", [canine_paw(ph, opt["paw"] * 0.93, 0.0135 * lw * 0.995, front=False)], axis,
+                             up=(0, 0, 1))
     return parts
 
 
-def canine_head(ht, opt):
+def canine_neck_axis(nt, ht):
+    """The neck's last segment, E (just behind the head joint) -> M (mid-neck): shared by the neck
+    tube and the head's nape sleeve so the two surfaces line up."""
+    nd = (nt - ht) / np.linalg.norm(nt - ht)
+    return ht + nd * 0.03 + P(0, -0.006, 0), (nt + ht) / 2 + P(0, 0.005, -0.012)
+
+
+def canine_head(nt, ht, opt, s):
     hs = opt["head"]
     ml = opt["muzzle"]  # muzzle length
-    b = Body(h=0.0032, budget=1500)
+    b = Body(h=0.0032, budget=1280)
     c = lambda x, y, z: ht + P(x * hs, y * hs, z * hs)  # noqa: E731
     b.add(Ellipsoid(c(0, 0.014, 0.0), (0.062 * hs, 0.052 * hs, 0.064 * hs)), FUR)  # cranium
+    # Nape sleeve along the neck axis: radius r_n(t0) at t0 = 2 cm behind E where it crosses the
+    # neck tube (0.054 s at E -> 0.06 s at M), tapering 6 % slower so the neck takes over beyond.
+    nE, nM = canine_neck_axis(nt, ht)
+    L = float(np.linalg.norm(nM - nE))
+    u = (nM - nE) / L
+    slope = 0.006 * s / L
+    rn = lambda t: 0.054 * s + slope * t  # noqa: E731
+    rh = lambda t: rn(0.02) + (slope - 0.06) * (t - 0.02)  # noqa: E731
+    b.add(Cone(nE - u * 0.032, nE + u * 0.05, rh(-0.032), rh(0.05)), FUR, 0.03)
     for sx in (-1, 1):
         b.add(Ellipsoid(c(sx * 0.044, -0.01, 0.032), (0.028 * hs, 0.028 * hs, 0.038 * hs)), FUR, 0.02)  # cheekbone
     b.add(Ellipsoid(c(0, 0.036, 0.052), (0.042 * hs, 0.024 * hs, 0.036 * hs)), FUR, 0.018)  # brow / stop
@@ -274,22 +355,25 @@ def canine_head(ht, opt):
     b.add(Cone(c(0, 0.016, 0.07), ht + P(0, 0.002 * hs, tip - 0.012), 0.02 * hs, 0.013 * hs), FUR, 0.016)  # nose bridge
     b.add(Cone(c(0, -0.036, 0.045), ht + P(0, -0.038 * hs, tip - 0.018), 0.026 * hs, 0.012 * hs), FUR, 0.02)  # jaw
     nz = tip + 0.003
-    b.add(RBox(ht + P(0, -0.004 * hs, nz), (0.014 * hs, 0.011 * hs, 0.009 * hs), 0.0075 * hs), SKIN, 0.004)  # nose
+    # Nose leather, nostrils and the lip line as their own finely meshed surface laid on the muzzle
+    # (on the decimated head the per-face colour turned the nostrils into two black fangs).
+    d = Body(h=0.0015, budget=240)
+    d.add(RBox(ht + P(0, -0.004 * hs, nz), (0.014 * hs, 0.011 * hs, 0.009 * hs), 0.0075 * hs), SKIN)  # nose
     for sx in (-1, 1):
-        b.sub(Sphere(ht + P(sx * 0.006 * hs, -0.006 * hs, nz + 0.008 * hs), 0.004 * hs), SKIN, 0.002)  # nostril
-        # Lip line: a dark seam along the muzzle side.
-        b.add(Cone(ht + P(sx * 0.016 * hs, -0.031 * hs, zm + 0.01), ht + P(sx * 0.01 * hs, -0.03 * hs, tip - 0.012),
-                   0.0045 * hs, 0.0035 * hs), SKIN, 0.003)
+        d.sub(Sphere(ht + P(sx * 0.0062 * hs, -0.0062 * hs, nz + 0.0085 * hs), 0.0036 * hs), SKIN, 0.0015)  # nostril
+        line = to_surface(b, resample([ht + P(sx * 0.017 * hs, -0.031 * hs, zm + 0.008),
+                                       ht + P(sx * 0.01 * hs, -0.03 * hs, tip - 0.01)], 8), inset=0.0022 * hs)
+        d.add(Chain([(q, 0.003 * hs) for q in line]), SKIN, 0.0015)  # lip line
+    for sx in (-1, 1):
         # Almond eyes set obliquely, slightly sunk.
         e = c(sx * 0.031, 0.017, 0.074)
         b.sub(Sphere(e + P(sx * 0.004, 0, 0), 0.011 * hs), FUR, 0.006)
         b.add(Squash(Sphere(P(0, 0, 0), 0.0095 * hs), e, (0.75, 0.62, 1.15), rot_y(sx * 0.55) @ rot_z(sx * 0.25)), EYE)
-        # Cheek ruff tufts behind the jaw.
-        if opt["ruff"]:  # cheek ruff flaring out and back behind the jaw
-            b.add(Ellipsoid(c(sx * 0.048, -0.03, -0.004), (0.014 * hs, 0.024 * hs, 0.026 * hs), rot_z(sx * 0.5)), FUR, 0.016)
+        if opt["ruff"]:  # cheek fur sweeping out, back and down from below the eye into the ruff
+            b.add(Cone(c(sx * 0.04, -0.012, 0.036), c(sx * 0.049, -0.026, -0.03), 0.015 * hs, 0.018 * hs), FUR, 0.04)
     if opt["ruff"]:
-        b.shag(Ellipsoid(c(0, -0.03, -0.006), (0.09 * hs, 0.05 * hs, 0.045 * hs)), 0.016 * hs,
-               Tuft(55, (0, -0.6, -1), seed=11), soft=0.015)
+        b.shag(Ellipsoid(c(0, -0.03, -0.02), (0.09 * hs, 0.055 * hs, 0.06 * hs)), 0.012 * hs,
+               Tuft(40, (0, -0.6, -1), seed=11), soft=0.02)
     # Ears: upright pointed triangles, cupped toward the front (separate body: thin).
     e = Body(h=0.0025, budget=420)
     for sx in (-1, 1):
@@ -301,14 +385,15 @@ def canine_head(ht, opt):
         e.sub(Squash(Cone(P(0, 0.006, 0), P(0, hgt * 0.92, -0.004), 0.022 * hs, 0.002), base + R @ P(0, 0, 0.007),
                      (0.3, 1.0, 1.0), R @ rot_y(math.pi / 2)), FUR, 0.002)
         e.add(Sphere(base + P(0, -0.004, 0), 0.02 * hs), FUR, 0.01)  # ear root into the skull
-    return [b, e]
+    return [b, d, e]
 
 
-def canine_paw(o, sz, front):
-    """Oval paw standing on the ground at `o` (spine frame): pad mass, four toes, dark claws."""
-    b = Body(h=0.0025, budget=420 if front else 380)
+def canine_paw(o, sz, rj, front):
+    """Oval paw standing on the ground at `o` (spine frame): pad mass, four toes, dark claws; its
+    top starts inside the pastern's end (radius `rj`) so the two meet without a ring."""
+    b = Body(h=0.0025, budget=400 if front else 360)
     b.add(Ellipsoid(o + P(0, 0.018 * sz, 0.008 * sz), (0.026 * sz, 0.02 * sz, 0.032 * sz)), FUR)
-    b.add(Cone(o + P(0, 0.042, 0.0), o + P(0, 0.02 * sz, 0.006 * sz), 0.0122, 0.02 * sz), FUR, 0.01)
+    b.add(Cone(o + P(0, 0.04, 0.0), o + P(0, 0.02 * sz, 0.006 * sz), rj, 0.02 * sz), FUR, 0.01)
     for x, z, rr in ((-0.0105, 0.037, 0.011), (0.0105, 0.037, 0.011), (-0.026, 0.026, 0.0098), (0.026, 0.026, 0.0098)):
         t = o + P(x * sz, 0.0105 * sz, z * sz)
         b.add(Sphere(t, rr * sz), FUR, 0.008)
@@ -322,8 +407,8 @@ def canine_paw(o, sz, front):
 def bear(name, r):
     """Brown bear: long heavy body with a muscular shoulder hump (the highest point), the back
     sloping to a lower rump, shoulders / thighs hanging down over the leg tops, thick tapering
-    limbs (no joint bulges), big plantigrade paws with long pale claws, a massive head with a
-    short muzzle and small round ears."""
+    limbs (no joint bulges), big plantigrade paws with long pale claws; the head in `bear_head`.
+    `name == "polar"` swaps in the polar bear's neck and head (everything else is shared)."""
     F = frames(r)
     g = -r["root_y"]
     bw, bh, bl = r["body"]
@@ -331,7 +416,7 @@ def bear(name, r):
     zh = -bl / 2 + 0.15
     parts = {}
 
-    b = Body(h=0.0065, budget=2700)
+    b = Body(h=0.0065, budget=2500)
     b.add(Ellipsoid(P(0, 0.01, -0.03), (0.195, 0.17, 0.36)), FUR)  # barrel
     b.add(Ellipsoid(P(0, -0.03, zc - 0.12), (0.185, 0.19, 0.19)), FUR, 0.08)  # chest
     b.add(Ellipsoid(P(0, 0.17, zc - 0.15), (0.14, 0.11, 0.17)), FUR, 0.08)  # shoulder hump
@@ -351,43 +436,7 @@ def bear(name, r):
     b.shag(Ellipsoid(P(0, -0.19, -0.02), (0.2, 0.06, 0.32)), 0.011, Tuft(26, (0, -1, -0.3), seed=23), soft=0.04)
     parts["spine"] = Part("spine", [b], [P(0, 0.0, zc + 0.15), P(0, 0.0, zh - 0.3)])
 
-    nt = F["neck"][1]
-    ht = F["head"][1]
-    hs = 1.3
-    b = Body(h=0.0055, budget=1100)
-    hc = ht + P(0, -0.05, 0.02)  # the head hangs low and forward of its joint
-    b.add(Chain([(nt + P(0, -0.02, -0.06), 0.14), (hc + P(0, -0.01, -0.04), 0.115)]), FUR)
-    b.add(Ellipsoid(nt + P(0, 0.07, -0.04), (0.12, 0.1, 0.12)), FUR, 0.06)
-    b.add(Cone(nt + P(0, 0.1, -0.08), hc + P(0, 0.05, -0.04), 0.1, 0.088), FUR, 0.06)  # crest: hump -> poll
-    b.shag(Sphere((nt + ht) / 2, 0.2), 0.014, Tuft(26, (0, -0.4, -1), seed=24), soft=0.05)
-    parts["neck"] = Part("neck", [b], [ht, nt + P(0, -0.05, -0.08)])
-
-    # Head: massive skull, broad cheeks, short muzzle, small round ears.
-    b = Body(h=0.0042, budget=1700)
-    c = lambda x, y, z: hc + P(x * hs, y * hs, z * hs)  # noqa: E731
-    b.add(Ellipsoid(c(0, 0.025, 0.02), (0.105 * hs, 0.092 * hs, 0.108 * hs)), FUR)  # cranium
-    b.add(Ellipsoid(c(0, 0.055, 0.085), (0.072 * hs, 0.048 * hs, 0.062 * hs)), FUR, 0.04)  # brow
-    for sx in (-1, 1):
-        b.add(Ellipsoid(c(sx * 0.074, -0.025, 0.035), (0.058 * hs, 0.068 * hs, 0.072 * hs)), FUR, 0.05)  # jowls
-    b.add(Squash(Cone(P(0, 0, 0), P(0, -0.012 * hs, 0.095 * hs), 0.06 * hs, 0.045 * hs), c(0, -0.012, 0.12),
-                 (1.05, 0.95, 1.0)), FUR, 0.04)  # muzzle
-    b.add(Cone(c(0, -0.06, 0.085), c(0, -0.06, 0.195), 0.04 * hs, 0.027 * hs), FUR, 0.035)  # lower jaw
-    b.add(RBox(c(0, -0.012, 0.226), (0.031 * hs, 0.021 * hs, 0.015 * hs), 0.012 * hs), SKIN, 0.006)  # nose
-    for sx in (-1, 1):
-        b.sub(Sphere(c(sx * 0.013, -0.018, 0.24), 0.0062 * hs), SKIN, 0.003)
-        b.add(Cone(c(sx * 0.04, -0.054, 0.14), c(sx * 0.028, -0.049, 0.208), 0.0058 * hs, 0.0048 * hs), SKIN, 0.004)
-        e = c(sx * 0.05, 0.034, 0.118)
-        b.sub(Sphere(e + P(sx * 0.004, 0.002, 0), 0.012 * hs), FUR, 0.008)
-        b.add(Sphere(e, 0.0098 * hs), EYE)
-    b.shag(Ellipsoid(c(0, -0.03, 0.0), (0.15 * hs, 0.09 * hs, 0.09 * hs)), 0.015, Tuft(32, (0, -0.6, -1), seed=25),
-           soft=0.03)
-    e = Body(h=0.003, budget=380)
-    for sx in (-1, 1):
-        base = c(sx * 0.08, 0.1, -0.008)
-        R = rot_y(sx * 0.4) @ rot_z(-sx * 0.3)
-        e.add(Squash(Sphere(P(0, 0, 0), 0.037 * hs), base, (1.0, 0.92, 0.42), R), FUR)
-        e.sub(Squash(Sphere(P(0, 0, 0), 0.026 * hs), base + R @ P(0, 0.005, 0.015), (1.0, 0.9, 0.4), R), FUR, 0.003)
-    parts["head"] = Part("head", [b, e], [c(0, 0, 0.27), c(0, 0, -0.08)])
+    parts.update(bear_head(F, polar=name == "polar"))
 
     tt = F["tail"][1]
     b = Body(h=0.004, budget=200)
@@ -395,58 +444,152 @@ def bear(name, r):
     b.shag(Sphere(tt, 0.08), 0.008, Tuft(50, (0, -0.5, -1), seed=26), soft=0.02)
     parts["tail"] = Part("tail", [b], [tt, tt + P(0, -0.03, -0.07)])
 
-    # Legs: thick, tapering columns whose tops hide inside the shoulder / thigh masses; no joint
-    # bulges (each joint is capped by exactly the limb's radius there).
+    # Legs: thick, tapering columns whose tops hide inside the shoulder / thigh masses. Every rig
+    # joint (wrist / hock, paw) is a "pill" joint: the upper segment ends in a cap of radius r
+    # centred on the pivot and the lower one starts there at 0.995 r, so the surfaces meet
+    # tangentially (no ring where a thinner segment poked out of a fatter cap) and stay closed
+    # however far the joint bends; the shading normals blend across (`NEIGHBOURS`).
     o = P(-0.032, 0, 0)
     J = F["leg_upper"][1] + o
     W = F["leg_lower"][1] + o
+    Pj = F["paw"][1] + o
     b = Body(h=0.005, budget=950)
     b.add(Chain([(J + P(0, 0.05, -0.005), 0.07), (J + P(0, -0.07, -0.006), 0.067), (J + P(0, -0.145, 0.003), 0.06),
-                 (W, 0.056)]), FUR)
-    b.shag(Sphere(W, 0.06), 0.009, Tuft(38, (0, -1, 0.0), seed=33), soft=0.02)  # wrist fringe over the seam
+                 (W, 0.057)]), FUR)
     b.add(Ellipsoid(J + P(0, -0.09, -0.035), (0.055, 0.075, 0.05)), FUR, 0.04)  # fur behind the elbow
-    b.shag(Cone(J + P(0, -0.03, -0.05), W + P(0, 0.03, -0.035), 0.065, 0.045), 0.02,
-           Tuft(32, (0, -1, -0.2), seed=27), soft=0.03)  # long fur behind the forearm
+    b.shag(Cone(J + P(0, -0.03, -0.05), W + P(0, 0.07, -0.035), 0.065, 0.04), 0.02,
+           Tuft(32, (0, -1, -0.2), seed=27), soft=0.03)  # long fur behind the forearm (fades out above the wrist)
     pf = P(W[0], g, W[2] + 0.02)
     axis = [J + P(0, 0.12, 0), W, pf]
     parts["leg_upper"] = Part("leg_upper", [b], axis, up=(0, 0, 1))
-    b = Body(h=0.004, budget=420)
-    b.add(Chain([(W + P(0, 0.025, 0), 0.054), (W, 0.054), (W + P(0, -0.07, 0.016), 0.056)]), FUR)
-    b.shag(Sphere(W + P(0, -0.075, 0.016), 0.05), 0.008, Tuft(40, (0, -1, 0.0), seed=34), soft=0.02)
+    b = Body(h=0.004, budget=400)
+    b.add(Chain([(W, 0.057 * 0.995), (W + (Pj - W) * 0.5 + P(0, 0, 0.004), 0.0555), (Pj, 0.056)]), FUR)
     parts["leg_lower"] = Part("leg_lower", [b], axis, up=(0, 0, 1))
-    parts["paw"] = Part("paw", [bear_paw(pf, front=True)], axis, up=(0, 0, 1))
+    parts["paw"] = Part("paw", [bear_paw(pf, Pj, 0.056 * 0.995, front=True)], axis, up=(0, 0, 1))
 
     H = F["hind_upper"][1] + o
     K = F["hind_lower"][1] + o
+    Ph = F["hind_paw"][1] + o
     b = Body(h=0.005, budget=950)
     b.add(Chain([(H + P(0, 0.05, -0.01), 0.078), (H + P(0, -0.07, 0.01), 0.072), (H + P(0, -0.15, 0.0), 0.06),
                  (K, 0.057)]), FUR)
-    b.add(Sphere(K + P(0, 0.012, -0.03), 0.04), FUR, 0.03)  # heel
-    b.shag(Sphere(K, 0.062), 0.009, Tuft(38, (0, -1, 0.0), seed=35), soft=0.02)
     b.shag(Ellipsoid(H + P(0, -0.06, -0.05), (0.07, 0.1, 0.05)), 0.012, Tuft(36, (0, -1, -0.2), seed=28), soft=0.03)
     ph = P(K[0], g, K[2])
     axis = [H + P(0, 0.12, 0), K, ph]
     parts["hind_upper"] = Part("hind_upper", [b], axis, up=(0, 0, 1))
-    b = Body(h=0.004, budget=420)
-    b.add(Chain([(K + P(0, 0.025, 0), 0.055), (K, 0.055), (K + P(0, -0.07, 0.01), 0.056)]), FUR)
-    b.shag(Sphere(K + P(0, -0.075, 0.01), 0.05), 0.008, Tuft(40, (0, -1, 0.0), seed=36), soft=0.02)
-    b.add(Sphere(K + P(0, -0.045, -0.038), 0.042), FUR, 0.03)  # heel down to the sole
+    b = Body(h=0.004, budget=400)
+    b.add(Chain([(K, 0.057 * 0.995), (K + (Ph - K) * 0.5, 0.0555), (Ph, 0.056)]), FUR)
+    b.add(Cone(Ph + P(0, 0.0, -0.034), K + P(0, -0.04, -0.022), 0.034, 0.026), FUR, 0.02)  # heel / Achilles
     parts["hind_lower"] = Part("hind_lower", [b], axis, up=(0, 0, 1))
-    parts["hind_paw"] = Part("hind_paw", [bear_paw(ph, front=False)], axis, up=(0, 0, 1))
+    parts["hind_paw"] = Part("hind_paw", [bear_paw(ph, Ph, 0.056 * 0.995, front=False)], axis, up=(0, 0, 1))
     return parts
 
 
-def bear_paw(o, front):
-    """Bear paw standing on the ground at `o`: broad pad mass, five toes in an arc, long pale
-    claws in front, short ones behind; the hind foot is a long plantigrade sole."""
-    b = Body(h=0.0032, budget=650)
+def bear_head(F, polar):
+    """Neck + head, authored around the head centre `hc` (in metres, spine axes).
+
+    Brown bear: a broad skull widened by furred cheeks, a long tapering muzzle on a straight-to-
+    slightly-dished line from the forehead to the nose, small deep-set eyes under a brow ridge, a
+    big dark nose pad over a dark lip line, small round ears set wide on the skull corners.
+    Polar bear (its own rig: a longer neck carried forward): a longer, narrower, flatter head with
+    no stop, a slight Roman (convex) nose and small ears set low and back."""
+    nt = F["neck"][1]
+    ht = F["head"][1]
+    hc = ht + P(0, -0.05, 0.02)  # the head hangs low and forward of its joint
+    c = lambda x, y, z: hc + P(x, y, z)  # noqa: E731
+    parts = {}
+
+    b = Body(h=0.0055, budget=1050)
+    if polar:
+        mid = (nt + hc) / 2
+        b.add(Chain([(nt + P(0, -0.02, -0.07), 0.135), (mid + P(0, -0.01, 0.0), 0.098), (c(0, -0.012, -0.05), 0.078)]), FUR)
+        b.add(Ellipsoid(nt + P(0, 0.06, -0.05), (0.115, 0.095, 0.11)), FUR, 0.06)
+        b.add(Cone(nt + P(0, 0.09, -0.09), c(0, 0.03, -0.075), 0.088, 0.058), FUR, 0.07)  # crest: withers -> poll
+        b.add(Cone(nt + P(0, -0.06, 0.0), c(0, -0.05, -0.02), 0.08, 0.052), FUR, 0.06)  # throat
+        b.shag(Chain([(nt, 0.2), (hc, 0.13)]), 0.01, Tuft(28, (0, -0.4, -1), seed=24), soft=0.04)
+    else:
+        b.add(Chain([(nt + P(0, -0.02, -0.06), 0.14), (c(0, -0.012, -0.035), 0.108)]), FUR)
+        b.add(Ellipsoid(nt + P(0, 0.07, -0.04), (0.12, 0.1, 0.12)), FUR, 0.06)
+        b.add(Cone(nt + P(0, 0.1, -0.08), c(0, 0.045, -0.06), 0.1, 0.08), FUR, 0.06)  # crest: hump -> poll
+        b.shag(Sphere((nt + ht) / 2, 0.2), 0.014, Tuft(26, (0, -0.4, -1), seed=24), soft=0.05)
+    parts["neck"] = Part("neck", [b], [ht, nt + P(0, -0.05, -0.08)])
+
+    b = Body(h=0.0036, budget=1450)
+    if polar:
+        b.add(Ellipsoid(c(0, 0.022, -0.03), (0.074, 0.074, 0.112)), FUR)  # long low cranium
+        b.add(Ellipsoid(c(0, 0.048, 0.055), (0.056, 0.04, 0.075)), FUR, 0.045)  # flat forehead, no stop
+        for sx in (-1, 1):
+            b.add(Ellipsoid(c(sx * 0.047, -0.012, 0.015), (0.04, 0.052, 0.07)), FUR, 0.04)  # cheeks
+        b.add(Ellipsoid(c(0, -0.048, -0.02), (0.058, 0.045, 0.085)), FUR, 0.045)  # under the jaw
+        # Roman nose: the bridge arches up a little between the eyes and the nose pad.
+        b.add(Chain([(c(0, 0.044, 0.08), 0.034), (c(0, 0.043, 0.18), 0.029), (c(0, 0.026, 0.285), 0.021)]), FUR, 0.03)
+        b.add(Squash(Cone(P(0, 0, 0), P(0, 0.0, 0.2), 0.047, 0.029), c(0, -0.013, 0.095), (0.95, 0.88, 1.0)), FUR, 0.03)
+        b.add(Cone(c(0, -0.052, 0.04), c(0, -0.04, 0.265), 0.032, 0.016), FUR, 0.025)  # lower jaw
+        nose, nbox = c(0, 0.016, 0.31), (0.026, 0.02, 0.014)
+        nostril, nr = c(0, 0.014, 0.322), 0.0068
+        lip = [(0.036, -0.048, 0.12), (0.031, -0.042, 0.17), (0.02, -0.034, 0.285), (0.007, -0.036, 0.304)]
+        eye, er = (0.04, 0.05, 0.098), 0.0085
+        ear = dict(base=(0.064, 0.082, -0.06), r=0.022)
+    else:
+        b.add(Ellipsoid(c(0, 0.035, -0.02), (0.095, 0.095, 0.115)), FUR)  # broad cranium
+        b.add(Ellipsoid(c(0, 0.072, 0.065), (0.07, 0.048, 0.065)), FUR, 0.045)  # forehead
+        for sx in (-1, 1):
+            b.add(Ellipsoid(c(sx * 0.066, -0.008, 0.025), (0.06, 0.068, 0.074)), FUR, 0.05)  # furred cheeks
+            b.add(Ellipsoid(c(sx * 0.044, 0.083, 0.098), (0.026, 0.013, 0.022)), FUR, 0.015)  # brow ridge
+        b.add(Ellipsoid(c(0, -0.06, -0.01), (0.078, 0.05, 0.09)), FUR, 0.05)  # under the jaw
+        # Straight bridge: the forehead slopes into it with only a slight dish at the eyes.
+        b.add(Cone(c(0, 0.046, 0.1), c(0, 0.03, 0.275), 0.042, 0.024), FUR, 0.03)
+        b.add(Squash(Cone(P(0, 0, 0), P(0, 0.0, 0.16), 0.058, 0.035), c(0, -0.012, 0.11), (1.0, 0.9, 1.0)), FUR, 0.035)
+        b.add(Cone(c(0, -0.066, 0.04), c(0, -0.048, 0.245), 0.04, 0.019), FUR, 0.03)  # lower jaw / chin
+        nose, nbox = c(0, 0.018, 0.29), (0.032, 0.025, 0.017)
+        nostril, nr = c(0, 0.016, 0.304), 0.0078
+        lip = [(0.044, -0.058, 0.12), (0.035, -0.048, 0.16), (0.022, -0.036, 0.265), (0.008, -0.039, 0.284)]
+        eye, er = (0.05, 0.066, 0.108), 0.0095
+        ear = dict(base=(0.086, 0.12, -0.045), r=0.031)
+    # Nose pad, nostrils, philtrum and the dark lip line (mouth corner round under the nose) as their
+    # own finely meshed surface laid onto the blended muzzle: crisp edges where it emerges instead
+    # of per-face colour stair-steps across the decimated head.
+    lr = 0.0038 if polar else 0.0048  # lip radius (thinner on the white polar face, where it reads far stronger)
+    lips = [to_surface(b, resample([c(sx * x, y, z) for x, y, z in lip], 12), inset=lr * 0.65) for sx in (-1, 1)]
+    phil = to_surface(b, resample([nose + P(0, -nbox[1] * 0.7, nbox[2] * 0.4), c(0, lip[-1][1] + 0.002, lip[-1][2] + 0.008)],
+                                  4), inset=0.0022)
+    d = Body(h=0.0018, budget=500)
+    d.add(RBox(nose, nbox, nbox[0] * 0.38, rot_x(-0.25)), SKIN)
+    d.add(Chain([(q, 0.0036) for q in phil]), SKIN, 0.002)
+    for sx, line in zip((-1, 1), lips):
+        d.add(Chain([(q, lr) for q in line]), SKIN, 0.002)
+        d.sub(Squash(Sphere(P(0, 0, 0), nr), nostril + P(sx * nr * 1.9, 0, 0), (1.0, 0.75, 1.0), rot_z(sx * 0.5)), SKIN, 0.002)
+    for sx in (-1, 1):
+        e = c(sx * eye[0], eye[1], eye[2])
+        b.sub(Sphere(e + P(sx * 0.003, 0.002, 0.005), er * 1.35), FUR, 0.008)  # deep socket
+        b.add(Squash(Sphere(P(0, 0, 0), er), e, (1.0, 0.8, 1.0), rot_y(sx * 0.6)), EYE)
+    b.shag(Ellipsoid(c(0, -0.04, -0.045), (0.15, 0.085, 0.085)), 0.012 if not polar else 0.008,
+           Tuft(30, (0, -0.6, -1), seed=25), soft=0.03)  # cheek ruff
+    e = Body(h=0.0028, budget=300)
+    for sx in (-1, 1):
+        base = c(sx * ear["base"][0], ear["base"][1], ear["base"][2])
+        R = rot_y(sx * 0.5) @ rot_z(-sx * 0.35)
+        e.add(Squash(Sphere(P(0, 0, 0), ear["r"]), base, (1.0, 0.9, 0.45), R), FUR)
+        e.sub(Squash(Sphere(P(0, 0, 0), ear["r"] * 0.7), base + R @ P(0, 0.004, ear["r"] * 0.42), (1.0, 0.88, 0.42), R),
+              FUR, 0.003)
+        e.add(Sphere(base + R @ P(0, -ear["r"] * 0.3, -0.01), ear["r"] * 0.6), FUR, 0.01)  # ear root into the skull
+    parts["head"] = Part("head", [b, d, e], [c(0, 0, 0.32), c(0, 0, -0.1)])
+    return parts
+
+
+def bear_paw(o, pj, rj, front):
+    """Bear paw standing on the ground at `o`, hung from the paw joint `pj` (leg radius `rj` there):
+    broad pad mass, five toes in an arc, long pale claws in front, short ones behind; the hind
+    foot is a long plantigrade sole with the heel behind the joint."""
+    b = Body(h=0.0032, budget=540)
     if front:
         b.add(Ellipsoid(o + P(0, 0.035, 0.03), (0.064, 0.04, 0.08)), FUR)
-        b.add(Cone(o + P(0, 0.085, -0.004), o + P(0, 0.045, 0.02), 0.052, 0.06), FUR, 0.03)
+        b.add(Cone(pj, o + P(0, 0.04, 0.022), rj, 0.06), FUR, 0.03)
+        b.add(Ellipsoid(pj + P(0, -0.018, -0.008), (0.058, 0.035, 0.062)), FUR, 0.025)  # carpal pad behind
         zt, claw = 0.095, 0.045
     else:
         b.add(Ellipsoid(o + P(0, 0.03, 0.0), (0.058, 0.035, 0.11)), FUR)
-        b.add(Cone(o + P(0, 0.08, -0.03), o + P(0, 0.04, -0.01), 0.052, 0.057), FUR, 0.03)
+        b.add(Cone(pj, o + P(0, 0.04, -0.01), rj, 0.057), FUR, 0.03)
         zt, claw = 0.095, 0.025
     for x in (-0.046, -0.023, 0.0, 0.023, 0.046):
         zz = zt - abs(x) * 0.35
@@ -491,11 +634,14 @@ def camel_foot(o, sz, budget=360):
     return b
 
 
-def ungulate_leg(parts, F, r, g, front, upper, cannon, foot, budget=(800, 480), tuck=0.0):
-    """One leg (left): `upper(b, J, W)` sculpts the upper segment between its joints; `cannon` =
-    (r_top, r_mid, r_fetlock, fetlock_h, r_pastern, pastern_z) for the lower; `foot(o)` the hoof.
-    `tuck` slides the whole column inward so its top hides inside the body's shoulder / haunch
-    (the rig only rotates about X, so the offset survives every pose)."""
+def ungulate_leg(parts, F, r, g, front, upper, cannon, foot, budget=(800, 480), tuck=0.0, knee=0.0):
+    """One leg (left): `upper(b, J, W)` sculpts the upper segment between its joints (ending at W
+    with radius r_top); `cannon` = (r_top, r_mid, r_fetlock, fetlock_h, r_pastern, pastern_z) for
+    the lower; `foot(o)` the hoof. `tuck` slides the whole column inward so its top hides inside
+    the body's shoulder / haunch (the rig only rotates about X, so the offset survives every pose).
+    The knee / hock is a pill joint centred on the pivot W: the lower starts there at 0.995 r_top
+    (tangent to the upper's end cap, no ring), and a `knee` knob is a sphere on W in the upper with
+    a slightly smaller twin in the lower, so it stays closed and seamless at any bend."""
     key = ("leg", "paw") if front else ("hind", "hind_paw")
     J = F[f"{key[0]}_upper"][1] + P(tuck, 0, 0)
     W = F[f"{key[0]}_lower"][1] + P(tuck, 0, 0)
@@ -504,11 +650,15 @@ def ungulate_leg(parts, F, r, g, front, upper, cannon, foot, budget=(800, 480), 
     axis = [J + P(0, 0.12, 0), W, o]
     b = Body(h=0.0032, budget=budget[0])
     upper(b, J, W)
+    if knee:
+        b.add(Sphere(W, knee), FUR, 0.01)
     parts[f"{key[0]}_upper"] = Part(f"{key[0]}_upper", [b], axis, up=(0, 0, 1))
     b = Body(h=0.0026, budget=budget[1])
     fet = P(W[0], g + fh, W[2] + pz * 0.35)
-    b.add(Chain([(W + P(0, 0.012, 0), rt * 0.97), (W, rt * 0.97), (W + (fet - W) * 0.55, rm), (fet, rf),
+    b.add(Chain([(W, rt * 0.995), (W + (fet - W) * 0.55, rm), (fet, rf),
                  (P(W[0], g + fh * 0.55, W[2] + pz * 0.8), rp)]), FUR)
+    if knee:
+        b.add(Sphere(W, knee * 0.96), FUR, 0.012)
     parts[f"{key[0]}_lower"] = Part(f"{key[0]}_lower", [b], axis, up=(0, 0, 1))
     parts[key[1]] = Part(key[1], [foot(o)], axis, up=(0, 0, 1))
 
@@ -532,6 +682,7 @@ def deer(name, r):
     for sx in (-1, 1):
         b.add(Ellipsoid(P(sx * 0.056, 0.02, zc - 0.05), (0.022, 0.07, 0.045), rot_x(-0.6)), FUR, 0.035)
         b.add(Ellipsoid(P(sx * 0.044, -0.02, zh - 0.04), (0.05, 0.095, 0.085)), FUR, 0.04)  # haunch
+    arm_sleeves(b, F["leg_upper"][1] + P(-0.01, 0, 0), P(-0.005, 0.045, 0.01), P(-0.006, -0.07, -0.022), 0.028, 0.015, 0.03)
     b.add(Ellipsoid(P(0, 0.028, 0.0), (0.074, 0.08, 0.17)), FUR, 0.06)  # loin / belly
     b.add(Ellipsoid(P(0, 0.038, zh - 0.04), (0.075, 0.085, 0.11)), FUR, 0.05)  # croup
     b.add(Sphere(P(0, 0.012, zh - 0.12), 0.055), FUR, 0.05)  # buttocks
@@ -596,12 +747,11 @@ def deer(name, r):
     parts["tail"] = Part("tail", [b], [tt + P(0, 0.01, -0.01), tt + P(0, -0.08, -0.06)])
 
     def fore(b, J, W):
-        b.add(Cone(J + P(-0.004, 0.01, 0.006), J + P(-0.006, -0.09, -0.03), 0.028, 0.02), FUR)  # humerus
+        b.add(Cone(J + P(-0.004, 0.03, 0.006), J + P(-0.006, -0.09, -0.03), 0.021, 0.02), FUR)  # humerus
         b.add(Ellipsoid(J + P(-0.004, -0.05, -0.024), (0.019, 0.045, 0.025)), FUR, 0.012)  # triceps
         b.add(Sphere(J + P(-0.006, -0.095, -0.037), 0.013), FUR, 0.008)  # elbow point
         b.add(Chain([(J + P(-0.006, -0.09, -0.022), 0.019), (J + P(-0.003, -0.19, -0.004), 0.0135), (W, 0.0118)]), FUR, 0.012)
         b.add(Ellipsoid(J + P(-0.003, -0.13, 0.0), (0.016, 0.045, 0.019)), FUR, 0.012)  # forearm muscle
-        b.add(Ellipsoid(W + P(0, 0.006, 0.002), (0.0125, 0.016, 0.014)), FUR, 0.006)  # knee (carpus)
 
     def hind(b, H, K):
         lu = r["lu"]
@@ -613,7 +763,7 @@ def deer(name, r):
         b.add(Sphere(K + P(0, 0.0, -0.018), 0.0085), FUR, 0.006)  # point of hock
 
     ungulate_leg(parts, F, r, g, True, fore, (0.0118, 0.0098, 0.0122, 0.05, 0.0105, 0.01), lambda o: hoof_cloven(o, 1.0),
-                 tuck=-0.01)
+                 tuck=-0.01, knee=0.0128)  # carpus
     ungulate_leg(parts, F, r, g, False, hind, (0.0118, 0.0098, 0.0122, 0.05, 0.0105, 0.006), lambda o: hoof_cloven(o, 0.96),
                  tuck=-0.008)
     return parts
@@ -634,8 +784,9 @@ def horse(name, r):
     b.add(Ellipsoid(P(0, -0.01, zc - 0.12), (0.118, 0.142, 0.15)), FUR, 0.06)  # chest
     b.add(Ellipsoid(P(0, 0.1, zc - 0.1), (0.075, 0.06, 0.12)), FUR, 0.05)  # withers
     for sx in (-1, 1):
-        b.add(Ellipsoid(P(sx * 0.094, -0.03, zc - 0.04), (0.05, 0.15, 0.08), rot_x(-0.45)), FUR, 0.05)  # shoulders
+        b.add(Ellipsoid(P(sx * 0.094, -0.03, zc - 0.04), (0.04, 0.15, 0.08), rot_x(-0.45)), FUR, 0.07)  # shoulders
         b.add(Ellipsoid(P(sx * 0.082, -0.05, zh - 0.03), (0.076, 0.15, 0.115)), FUR, 0.05)  # haunch
+    arm_sleeves(b, F["leg_upper"][1] + P(-0.022, 0, 0), P(-0.005, 0.06, 0.012), P(-0.004, -0.09, -0.016), 0.037, 0.022, 0.045)
     b.add(Ellipsoid(P(0, 0.035, zh - 0.05), (0.125, 0.12, 0.14)), FUR, 0.06)  # hindquarters
     b.add(Sphere(P(0, 0.0, zh - 0.15), 0.088), FUR, 0.06)  # buttocks
     b.add(Ellipsoid(P(0, 0.08, zc + 0.02), (0.085, 0.09, 0.08)), FUR, 0.05)  # neck root
@@ -686,11 +837,10 @@ def horse(name, r):
     parts["tail"] = Part("tail", [b], [tt, tt + P(0, -0.2, -0.13), tt + P(0, -0.5, -0.11)])
 
     def fore(b, J, W):
-        b.add(Cone(J + P(0.0, 0.02, 0.005), J + P(-0.002, -0.12, -0.02), 0.036, 0.031), FUR)  # upper arm
+        b.add(Cone(J + P(0.0, 0.04, 0.008), J + P(-0.002, -0.12, -0.02), 0.028, 0.031), FUR)  # upper arm
         b.add(Sphere(J + P(-0.008, -0.135, -0.045), 0.02), FUR, 0.012)  # elbow
         b.add(Chain([(J + P(-0.008, -0.12, -0.02), 0.033), (J + P(-0.004, -0.25, -0.002), 0.023), (W, 0.0195)]), FUR, 0.015)
         b.add(Ellipsoid(J + P(-0.004, -0.18, 0.004), (0.026, 0.06, 0.03)), FUR, 0.015)  # forearm muscle
-        b.add(Ellipsoid(W + P(0, 0.008, 0.004), (0.021, 0.025, 0.023)), FUR, 0.008)  # knee
 
     def hind(b, H, K):
         lu = r["lu"]
@@ -702,7 +852,7 @@ def horse(name, r):
         b.add(Sphere(K + P(0, 0.004, -0.028), 0.0145), FUR, 0.008)  # point of hock
 
     ungulate_leg(parts, F, r, g, True, fore, (0.0195, 0.0158, 0.0195, 0.078, 0.016, 0.018), lambda o: hoof_solid(o, 1.0),
-                 tuck=-0.022)
+                 tuck=-0.022, knee=0.0215)
     ungulate_leg(parts, F, r, g, False, hind, (0.0195, 0.0158, 0.0195, 0.078, 0.016, 0.014), lambda o: hoof_solid(o, 0.97),
                  tuck=-0.02)
     return parts
@@ -727,6 +877,7 @@ def camel(name, r):
     for sx in (-1, 1):
         b.add(Ellipsoid(P(sx * 0.07, -0.04, zh - 0.03), (0.055, 0.13, 0.09)), FUR, 0.05)  # haunch
         b.add(Ellipsoid(P(sx * 0.072, -0.03, zc - 0.05), (0.04, 0.13, 0.07), rot_x(-0.4)), FUR, 0.05)  # shoulder
+    arm_sleeves(b, F["leg_upper"][1] + P(-0.02, 0, 0), P(-0.002, 0.05, 0.01), P(-0.003, -0.08, -0.02), 0.036, 0.019, 0.04)
     b.add(Ellipsoid(P(0, 0.06, zc + 0.02), (0.07, 0.085, 0.08)), FUR, 0.06)  # neck root
     b.shag(Ellipsoid(P(0, 0.3, -0.04), (0.1, 0.06, 0.15)), 0.008, Tuft(40, (0, -0.4, -1), seed=61), soft=0.04)
     parts["spine"] = Part("spine", [b], [P(0, 0.02, zc + 0.15), P(0, 0.02, zh - 0.3)])
@@ -761,10 +912,9 @@ def camel(name, r):
     parts["tail"] = Part("tail", [b], [tt, tt + P(0, -0.3, -0.045)])
 
     def fore(b, J, W):
-        b.add(Cone(J + P(0.0, 0.015, 0.005), J + P(-0.002, -0.11, -0.025), 0.03, 0.026), FUR)
+        b.add(Cone(J + P(0.0, 0.035, 0.006), J + P(-0.002, -0.11, -0.025), 0.024, 0.026), FUR)
         b.add(Sphere(J + P(-0.008, -0.125, -0.04), 0.018), FUR, 0.01)  # elbow callus
         b.add(Chain([(J + P(-0.008, -0.11, -0.02), 0.026), (J + P(-0.004, -0.25, -0.002), 0.018), (W, 0.0165)]), FUR, 0.012)
-        b.add(Sphere(W + P(0, 0.004, 0.006), 0.022), FUR, 0.012)  # knobby knee
 
     def hind(b, H, K):
         lu = r["lu"]
@@ -775,7 +925,7 @@ def camel(name, r):
         b.add(Sphere(K + P(0, 0.003, -0.022), 0.0125), FUR, 0.008)
 
     ungulate_leg(parts, F, r, g, True, fore, (0.0165, 0.0135, 0.019, 0.075, 0.016, 0.02), lambda o: camel_foot(o, 1.0),
-                 tuck=-0.02)
+                 tuck=-0.02, knee=0.0215)  # knobby knee
     ungulate_leg(parts, F, r, g, False, hind, (0.0165, 0.0135, 0.019, 0.075, 0.016, 0.016), lambda o: camel_foot(o, 0.95),
                  tuck=-0.018)
     return parts
@@ -817,6 +967,8 @@ def wolf_coat(F, r):
     c.tone(Ellipsoid(ht + P(0, -0.045, 0.04), (0.06, 0.035, 0.09)), 0.95, soft=0.03)  # throat / lower jaw
     for sx in (-1, 1):
         c.tone(Ellipsoid(ht + P(sx * 0.047, -0.022, 0.03), (0.03, 0.03, 0.05)), 0.9, soft=0.02)  # cheeks
+        # ... fading back over the sides of the ruff (no colour step where the head meets the neck)
+        c.tone(Ellipsoid(ht + P(sx * 0.05, -0.035, -0.035), (0.04, 0.045, 0.06)), 0.8, soft=0.045, k=0.8)
         c.tone(Ellipsoid(ht + P(sx * 0.03, 0.027, 0.078), (0.016, 0.009, 0.018)), 0.86, soft=0.008)  # brow spot
         c.tone(Ellipsoid(ht + P(sx * 0.033, 0.0, 0.085), (0.014, 0.01, 0.02)), 0.82, soft=0.008)  # under the eye
     c.tint(Cone(ht + P(0, 0.02, 0.07), ht + P(0, 0.0, 0.2), 0.034, 0.022), 0.55, soft=0.02)  # tan muzzle
@@ -861,10 +1013,11 @@ def dog_coat(F, r):
     return c
 
 
-def bear_coat(F, r):
+def bear_coat(F, r, polar=False):
     """Brown bear: chocolate body with grizzled lighter tips over the hump and back, near-black
-    legs and paws, a pale muzzle; ears and crown a touch darker."""
-    ht = F["head"][1]
+    legs and paws, a pale tan muzzle; ears a touch darker. The polar bear (white palette in game)
+    gets a faintly yellowed muzzle instead."""
+    hc = F["head"][1] + P(0, -0.05, 0.02)  # bear_head's head centre
 
     def base(p, n, part):
         y = p[:, 1]
@@ -879,9 +1032,13 @@ def bear_coat(F, r):
         return tone, tint
 
     c = Coat(base)
-    c.tint(Cone(ht + P(0, -0.066, 0.18), ht + P(0, -0.072, 0.3), 0.08, 0.06), 0.85, soft=0.03)  # pale muzzle
+    if polar:
+        c.tint(Cone(hc + P(0, -0.012, 0.16), hc + P(0, -0.01, 0.31), 0.05, 0.04), 0.45, soft=0.03)  # ivory muzzle
+        return c
+    c.tint(Cone(hc + P(0, -0.016, 0.14), hc + P(0, -0.01, 0.29), 0.064, 0.046), 0.8, soft=0.035)  # pale tan muzzle
+    c.tone(Cone(hc + P(0, 0.07, 0.11), hc + P(0, 0.05, 0.25), 0.022, 0.016), 0.4, soft=0.02, k=0.6)  # darker bridge
     for sx in (-1, 1):
-        c.tone(Sphere(ht + P(sx * 0.104, 0.085, 0.01), 0.055), 0.3, soft=0.02, k=0.6)  # darker ears
+        c.tone(Sphere(hc + P(sx * 0.086, 0.12, -0.045), 0.045), 0.3, soft=0.02, k=0.6)  # darker ears
     return c
 
 
@@ -976,6 +1133,12 @@ def camel_coat(F, r):
 
 # ───────────────────────────────────────────────────────────────── build
 def species_parts(name):
+    parts, coat = _species_parts(name)
+    coat.leg_top = frames(RIG[name])["leg_upper"][1][1]
+    return parts, coat
+
+
+def _species_parts(name):
     r = RIG[name]
     F = frames(r)
     if name == "wolf":
@@ -990,8 +1153,8 @@ def species_parts(name):
                    tail=[((0, -0.03, -0.065), 0.034), ((0, -0.11, -0.11), 0.038), ((0, -0.2, -0.125), 0.034),
                          ((0, -0.27, -0.105), 0.02), ((0, -0.29, -0.09), 0.01)])
         return canine(name, r, opt), dog_coat(F, r)
-    if name == "bear":
-        return bear(name, r), bear_coat(F, r)
+    if name in ("bear", "polar"):
+        return bear(name, r), bear_coat(F, r, polar=name == "polar")
     if name == "deer":
         return deer(name, r), deer_coat(F, r)
     if name == "horse":
@@ -1010,9 +1173,27 @@ DRIFT = Tufts(9, (0, 0, -1), seed=99, n=8, stretch=0.5)
 # Global triangle budget scale: ~9k tris per animal (the box-era kit was ~7.2k); the coat reads
 # from tone + the fur layer, so the silhouette only needs moderate density.
 BUDGET_SCALE = 0.66
+# Leg joint slabs kept dense through decimation: half height (m, per species: thick bear legs need
+# a taller band), the decimate vertex-group factor, and the peak weight (< 1: a weight that inverts
+# to exactly 0 locks the vertex outright, which starves the rest of the part of triangles).
+KEEP_BAND = {"bear": 0.02, "polar": 0.02}
+KEEP_FACTOR = 0.15
+KEEP_MAX = 0.6
 
 
-def build_object(name, part, frame, animal_sdf, coat):
+def blend_sdf(d, q, neighbours, k=0.022):
+    """Smooth union of distance `d` (at points q) with the neighbouring parts' SDFs."""
+    for nb in neighbours:
+        di = nb(q)
+        hh = np.clip(0.5 + 0.5 * (di - d) / k, 0.0, 1.0)
+        d = di * (1 - hh) + d * hh - k * hh * (1 - hh)
+    return d
+
+
+def build_object(name, part, frame, animal_sdf, coat, neighbours=(), keep=(), band=0.012):
+    """Mesh, decimate and bake one part. `keep` = rig joint pivots (spine frame) where this part
+    meets the next leg segment: a slab around each stays densely tessellated through decimation so
+    the two segments' nearly coincident surfaces at the pill joint don't zig-zag through each other."""
     R, t = frame
     pieces = []
     for bi, body in enumerate(part.bodies):
@@ -1026,6 +1207,19 @@ def build_object(name, part, frame, animal_sdf, coat):
         if tris > budget:
             m = ob.modifiers.new("dec", "DECIMATE")
             m.ratio = budget / tris
+            if keep and bi == 0:
+                ps = verts @ R.T + t
+                w = np.zeros(len(ps))
+                for kp in keep:
+                    dy = np.abs(ps[:, 1] - kp[1])
+                    dh = norm(ps[:, [0, 2]] - kp[[0, 2]])
+                    w = np.maximum(w, smoothstep(band, band * 0.5, dy) * smoothstep(0.12, 0.09, dh))
+                vg = ob.vertex_groups.new(name="keep")
+                for vi in np.nonzero(w > 1e-3)[0]:
+                    vg.add([int(vi)], float(w[vi]) * KEEP_MAX, "REPLACE")
+                m.vertex_group = "keep"
+                m.invert_vertex_group = True  # weight 1 -> 0 inside: extra collapse cost = kept
+                m.vertex_group_factor = KEEP_FACTOR
             dg = bpy.context.evaluated_depsgraph_get()
             dme = bpy.data.meshes.new_from_object(ob.evaluated_get(dg))
             ob.modifiers.clear()
@@ -1060,17 +1254,25 @@ def build_object(name, part, frame, animal_sdf, coat):
     for fi, f in enumerate(faces):
         vowner[f] = owner[fi]
     nrm = np.zeros_like(ps)
+    snrm = np.zeros_like(ps)
     for bi, (body, _) in enumerate(pieces):
         sel = vowner == bi
         if sel.any():
             g = gradient(body.eval, ps[sel])
             nrm[sel] = g / np.maximum(norm(g), 1e-9)[:, None]
+            # Shading normals: the SDF gradient (smooth whatever the decimation left), with the
+            # neighbouring joints' surfaces smooth-unioned in so where two joint meshes cross
+            # (wrist, hock, head into neck ...) both sides shade alike instead of showing a seam.
+            g = gradient(lambda q, body=body: blend_sdf(body.eval(q), q, neighbours), ps[sel], e=1e-3)
+            snrm[sel] = g / np.maximum(norm(g), 1e-9)[:, None]
+    me.normals_split_custom_set_from_vertices(bl(snrm @ R).tolist())
     ao = ambient_occlusion(animal_sdf, ps + nrm * 0.002, nrm, step=0.011, k=1.5)
     ao = 0.5 + 0.5 * ao
-    tone, tint = coat(ps, nrm, part.joint)
+    tone, tint = coat(ps, snrm, part.joint)  # blended normals: no colour step at joint seams
     # Broad patchy drift (continuous across parts: evaluated in the shared spine frame).
     tone = np.clip(tone + 0.09 * (DRIFT(ps) - 0.5), 0.0, 1.0)
     uu, vv = axis_uv(ps, part.axis, part.up)
+    fu, fv = part.flow_uv(uu, vv)
     # Face regions at the (projected) face centres.
     cen = np.array([ps[f].mean(0) for f in faces])
     freg = np.zeros(len(faces), np.int64)
@@ -1086,7 +1288,7 @@ def build_object(name, part, frame, animal_sdf, coat):
         for li in poly.loop_indices:
             vi = me.loops[li].vertex_index
             cols += [rg / 16.0 + 1.0 / 32.0, ao[vi], tone[vi], tint[vi]]
-            uvs += [16.0 + uu[vi] * part.uv_scale, 1.0 - vv[vi] * part.uv_scale]
+            uvs += [16.0 + fu[vi], 1.0 - fv[vi]]
     me.color_attributes.new("Col", "FLOAT_COLOR", "CORNER")
     me.color_attributes["Col"].data.foreach_set("color", cols)
     me.color_attributes.active_color = me.color_attributes["Col"]
@@ -1095,8 +1297,21 @@ def build_object(name, part, frame, animal_sdf, coat):
     return ob
 
 
+# Parts whose meshes meet at a joint (shading normals blend across these seams).
+NEIGHBOURS = {
+    "spine": ("neck", "tail", "leg_upper", "hind_upper"), "neck": ("spine", "head"), "head": ("neck",),
+    "tail": ("spine",), "leg_upper": ("spine", "leg_lower"), "leg_lower": ("leg_upper", "paw"), "paw": ("leg_lower",),
+    "hind_upper": ("spine", "hind_lower"), "hind_lower": ("hind_upper", "hind_paw"), "hind_paw": ("hind_lower",),
+}
+
+# Leg pivots each leg part shares with the next segment (kept dense through decimation).
+KEEP_JOINTS = {
+    "leg_upper": ("leg_lower",), "leg_lower": ("leg_lower", "paw"), "paw": ("paw",),
+    "hind_upper": ("hind_lower",), "hind_lower": ("hind_lower", "hind_paw"), "hind_paw": ("hind_paw",),
+}
+
 # Coat length per species: a multiplier on the fur-flow UVs (bigger = finer, shorter hair).
-HAIR = {"wolf": 1.0, "bear": 0.85, "dog": 1.25, "deer": 1.8, "horse": 2.4, "camel": 1.5}
+HAIR = {"wolf": 1.0, "bear": 0.85, "polar": 0.85, "dog": 1.25, "deer": 1.8, "horse": 2.4, "camel": 1.5}
 
 
 def build_species(name):
@@ -1105,12 +1320,25 @@ def build_species(name):
         p.uv_scale *= HAIR[name]
     F = frames(RIG[name])
     chains = (("leg_upper", "leg_lower", "paw"), ("hind_upper", "hind_lower", "hind_paw"))
+    # One fur flow from the nose over the head and down the neck, shared by both parts, with the
+    # short face hair lengthening into the neck coat across the back of the skull: a head mesh
+    # with its own flow and hair scale read as a collar where it met the neck.
+    head, neck = parts["head"], parts["neck"]
+    axis = [head.axis[0]] + list(neck.axis)
+    L0 = float(np.linalg.norm(v3(axis[1]) - v3(axis[0])))
+    for p in (head, neck):
+        p.axis = axis
+        p.profile = [(0.0, head.uv_scale), (L0 - 0.02, head.uv_scale), (L0 + 0.08, neck.uv_scale), (L0 + 5.0, neck.uv_scale)]
 
     def ao_field(own):
         """The whole animal's SDF for baking AO into part `own` — the left legs mirrored so the body
         sees both sides — minus `own`'s sibling segments in the same leg: their overlap at the
         joint would ring the leg with a dark band."""
         sib = next((c for c in chains if own in c), ())
+        # The head and neck overlap where the skull sinks into the neck / ruff: seen only 8 mm
+        # shallower by each other, so the overlap rim isn't inked in as a dark collar line while
+        # the real crease under the jaw keeps its shadow.
+        soft = {"head": "neck", "neck": "head"}.get(own)
 
         def sdf(q):
             d = np.full(len(q), 1e9)
@@ -1118,27 +1346,43 @@ def build_species(name):
                 if pn in sib and pn != own:
                     continue
                 for b in p.bodies:
-                    d = np.minimum(d, b.eval(q))
+                    d = np.minimum(d, b.eval(q) + (0.008 if pn == soft else 0.0))
                     if p.joint in LEGS:
                         d = np.minimum(d, b.eval(q * np.array([-1.0, 1.0, 1.0])))
             return d
         return sdf
 
+    def neighbours(own):
+        """SDFs of the parts whose meshes meet `own` at a joint (for continuous shading normals);
+        the body sees the left legs mirrored as well."""
+        out = []
+        for pn in NEIGHBOURS[own]:
+            for b in parts[pn].bodies[:1]:  # main body only (not collars / ears / antlers)
+                out.append(b.eval)
+                if own == "spine" and pn in LEGS:
+                    out.append(lambda q, b=b: b.eval(q * np.array([-1.0, 1.0, 1.0])))
+        return out
+
     objs = []
     for pname, part in parts.items():
-        ob = build_object(f"q_{name}_{pname}", part, F[part.joint], ao_field(pname), coat)
+        if name in ONLY and pname not in ONLY[name]:
+            continue
+        keep = [F[j][1] for j in KEEP_JOINTS.get(pname, ())]
+        ob = build_object(f"q_{name}_{pname}", part, F[part.joint], ao_field(pname), coat, neighbours(pname), keep,
+                          KEEP_BAND.get(name, 0.012))
         objs.append(ob)
         print(f"  {ob.name}: {len(ob.data.polygons)} faces")
     return objs
 
 
-SPECIES = ["wolf", "bear", "dog", "deer", "horse", "camel"]
+SPECIES = ["wolf", "bear", "polar", "dog", "deer", "horse", "camel"]
 
 # Preview-only coat colours (sRGB hex) — the game's coat table in quadruped.rs is the source of truth.
 PREVIEW = {
     "wolf": dict(dark=0x2b2722, base=0x7b6f5e, light=0xd9cfbd, tint=0xa47a50, skin=0x1a1614, detail=0x2a2420),
     "dog": dict(dark=0x1c1610, base=0xa5733f, light=0xd8b88a, tint=0xb8844c, skin=0x141010, detail=0x2a2420),
     "bear": dict(dark=0x22170f, base=0x4f3726, light=0x7d5c40, tint=0x9a7a58, skin=0x121010, detail=0xb8ab90),
+    "polar": dict(dark=0xc9c0ad, base=0xebe5d8, light=0xf5f1e8, tint=0xdcd0b4, skin=0x1e1c1e, detail=0x3a3632),
     "deer": dict(dark=0x4a3322, base=0x8e5c36, light=0xe6dccb, tint=0x6f6152, skin=0x161210, detail=0x2a2420),
     "horse": dict(dark=0x1c1510, base=0x7a4a2a, light=0x9a6a44, tint=0xe2dccf, skin=0x2a2220, detail=0x2a241e),
     "camel": dict(dark=0x8a6a42, base=0xc29f6a, light=0xe2cfa6, tint=0xa98457, skin=0x3a2c22, detail=0x4a3a28),

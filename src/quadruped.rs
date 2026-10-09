@@ -21,8 +21,8 @@ use crate::meshkit::tinted_hex as tinted;
 
 // ── Species + config (port of `quadrupedSpecies.ts`) ──────────────────────────────────
 
-/// A studio quadruped model. `PolarBear` reuses the bear's dimensions with a white coat (the studio
-/// `resolveQuadrupedSpecies` maps it to `bear`; we keep it distinct for the colour).
+/// A studio quadruped model. `PolarBear` reuses the bear's body with a white coat on its own longer
+/// neck and head (the studio `resolveQuadrupedSpecies` maps it to `bear`; we keep it distinct).
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum QuadSpecies {
     Dog,
@@ -84,6 +84,9 @@ pub struct QuadConfig {
     walk_amp: f32,
     run_amp: f32,
     sit_root_y: f32,
+    /// Extra tail lift in the sit clip (added to `tail_angle`; studio 0.7). Long hanging tails
+    /// (wolf, dog, horse) need more so they rest on the ground behind instead of sinking into it.
+    sit_tail: f32,
     lie_root_y: f32,
     pub attack: AttackStyle,
     coat: Coat,
@@ -92,7 +95,7 @@ pub struct QuadConfig {
 /// A species' coat (sRGB hex). The realistic kit meshes bake a per-vertex coat TONE (0 = `dark`
 /// saddle / points, 0.5 = `base`, 1 = `light` belly / throat) and a TINT amount (toward `tint`:
 /// tan legs, pale muzzle, white socks …), so one mesh set gives a countershaded, marked coat and
-/// the polar bear can reuse the bear's mesh in white. `skin` = nose leather / lips / pads,
+/// the polar bear can reuse the bear's body mesh in white. `skin` = nose leather / lips / pads,
 /// `detail` = claws / hooves, `horn` = antlers, `accent` = collar / mane / horse tail.
 #[derive(Clone, Copy)]
 struct Coat {
@@ -116,7 +119,7 @@ pub fn quad_config(s: QuadSpecies) -> QuadConfig {
             neck_h: 0.25, neck_angle: 0.6, neck_w: 0.16, head: Vec3::new(0.2, 0.2, 0.22),
             snout: Vec3::new(0.12, 0.1, 0.15), leg_upper: 0.24, leg_lower: 0.12, leg_width: 0.07, paw_w: 0.09, paw_h: 0.05, spread: 0.11,
             tail_h: 0.25, tail_angle: 0.5, tail_vis: true, ears: Pointed, antlers: false, hump: false, shoulder_hump: false, mane: false, collar: true,
-            walk_speed: 6.5, run_speed: 11.0, walk_amp: 1.0, run_amp: 1.5, sit_root_y: 0.25, lie_root_y: 0.12, attack: Bite,
+            walk_speed: 6.5, run_speed: 11.0, walk_amp: 1.0, run_amp: 1.5, sit_root_y: 0.25, sit_tail: 0.95, lie_root_y: 0.12, attack: Bite,
             // German-shepherd-like: tan with a black saddle + mask, red collar.
             coat: Coat { dark: 0x1e1812, base: 0xa0703e, light: 0xd9b98a, tint: 0xb5824a, skin: 0x151110, detail: 0x2a2420, horn: 0x2a2420, accent: 0xa02a26 },
         },
@@ -127,7 +130,7 @@ pub fn quad_config(s: QuadSpecies) -> QuadConfig {
             neck_h: 0.24, neck_angle: 0.95, neck_w: 0.14, head: Vec3::new(0.19, 0.18, 0.24),
             snout: Vec3::new(0.11, 0.09, 0.18), leg_upper: 0.27, leg_lower: 0.13, leg_width: 0.07, paw_w: 0.08, paw_h: 0.05, spread: 0.09,
             tail_h: 0.32, tail_angle: 0.45, tail_vis: true, ears: Pointed, antlers: false, hump: false, shoulder_hump: false, mane: false, collar: false,
-            walk_speed: 6.8, run_speed: 12.0, walk_amp: 1.1, run_amp: 1.6, sit_root_y: 0.28, lie_root_y: 0.14, attack: Bite,
+            walk_speed: 6.8, run_speed: 12.0, walk_amp: 1.1, run_amp: 1.6, sit_root_y: 0.28, sit_tail: 1.05, lie_root_y: 0.14, attack: Bite,
             // Grey wolf agouti: grizzled grey-brown, black-tipped saddle, cream belly / cheeks, tan legs.
             coat: Coat { dark: 0x29251f, base: 0x786e60, light: 0xdad2c2, tint: 0x9c8264, skin: 0x1a1715, detail: 0x2a2420, horn: 0x2a2420, accent: 0x494d55 },
         },
@@ -136,7 +139,7 @@ pub fn quad_config(s: QuadSpecies) -> QuadConfig {
             neck_h: 0.38, neck_angle: 0.45, neck_w: 0.18, head: Vec3::new(0.18, 0.2, 0.28),
             snout: Vec3::new(0.1, 0.08, 0.2), leg_upper: 0.33, leg_lower: 0.21, leg_width: 0.07, paw_w: 0.1, paw_h: 0.05, spread: 0.13,
             tail_h: 0.35, tail_angle: 0.3, tail_vis: true, ears: Long, antlers: false, hump: false, shoulder_hump: false, mane: true, collar: false,
-            walk_speed: 5.5, run_speed: 9.5, walk_amp: 1.2, run_amp: 1.8, sit_root_y: 0.42, lie_root_y: 0.22, attack: Charge,
+            walk_speed: 5.5, run_speed: 9.5, walk_amp: 1.2, run_amp: 1.8, sit_root_y: 0.42, sit_tail: 1.05, lie_root_y: 0.22, attack: Charge,
             // Bay: red-brown body, black points (legs, mane, tail), white socks / blaze (tint).
             coat: Coat { dark: 0x1c1510, base: 0x7a4a2a, light: 0x9a6a44, tint: 0xe2dccf, skin: 0x2a2220, detail: 0x2a241e, horn: 0x2a241e, accent: 0x17120e },
         },
@@ -145,7 +148,7 @@ pub fn quad_config(s: QuadSpecies) -> QuadConfig {
             neck_h: 0.22, neck_angle: 0.5, neck_w: 0.12, head: Vec3::new(0.14, 0.16, 0.2),
             snout: Vec3::new(0.08, 0.07, 0.12), leg_upper: 0.28, leg_lower: 0.16, leg_width: 0.07, paw_w: 0.06, paw_h: 0.04, spread: 0.08,
             tail_h: 0.12, tail_angle: 0.6, tail_vis: true, ears: Long, antlers: true, hump: false, shoulder_hump: false, mane: false, collar: false,
-            walk_speed: 6.0, run_speed: 10.5, walk_amp: 0.9, run_amp: 1.4, sit_root_y: 0.32, lie_root_y: 0.16, attack: Charge,
+            walk_speed: 6.0, run_speed: 10.5, walk_amp: 0.9, run_amp: 1.4, sit_root_y: 0.32, sit_tail: 0.7, lie_root_y: 0.16, attack: Charge,
             // Summer red deer: russet coat, dark dorsal line, cream belly / rump / throat, grey face.
             coat: Coat { dark: 0x4a3322, base: 0x8e5c36, light: 0xe6dccb, tint: 0x6f6152, skin: 0x161210, detail: 0x2a2420, horn: 0x8a7a62, accent: 0x8a5a32 },
         },
@@ -154,7 +157,7 @@ pub fn quad_config(s: QuadSpecies) -> QuadConfig {
             neck_h: 0.42, neck_angle: 0.75, neck_w: 0.14, head: Vec3::new(0.16, 0.16, 0.22),
             snout: Vec3::new(0.09, 0.08, 0.14), leg_upper: 0.34, leg_lower: 0.24, leg_width: 0.07, paw_w: 0.1, paw_h: 0.05, spread: 0.12,
             tail_h: 0.15, tail_angle: 0.4, tail_vis: true, ears: Round, antlers: false, hump: true, shoulder_hump: false, mane: false, collar: false,
-            walk_speed: 5.0, run_speed: 8.5, walk_amp: 0.85, run_amp: 1.2, sit_root_y: 0.48, lie_root_y: 0.28, attack: Bite,
+            walk_speed: 5.0, run_speed: 8.5, walk_amp: 0.85, run_amp: 1.2, sit_root_y: 0.48, sit_tail: 0.7, lie_root_y: 0.28, attack: Bite,
             coat: Coat { dark: 0x8a6a42, base: 0xc29f6a, light: 0xe2cfa6, tint: 0xa98457, skin: 0x3a2c22, detail: 0x4a3a28, horn: 0x4a3a28, accent: 0x8a6a40 },
         },
         QuadSpecies::Bear => QuadConfig {
@@ -165,11 +168,15 @@ pub fn quad_config(s: QuadSpecies) -> QuadConfig {
             neck_h: 0.12, neck_angle: 0.8, neck_w: 0.26, head: Vec3::new(0.32, 0.27, 0.32),
             snout: Vec3::new(0.2, 0.14, 0.18), leg_upper: 0.2, leg_lower: 0.11, leg_width: 0.18, paw_w: 0.18, paw_h: 0.08, spread: 0.18,
             tail_h: 0.08, tail_angle: 0.3, tail_vis: true, ears: Round, antlers: false, hump: false, shoulder_hump: true, mane: false, collar: false,
-            walk_speed: 5.5, run_speed: 9.0, walk_amp: 0.8, run_amp: 1.3, sit_root_y: 0.24, lie_root_y: 0.1, attack: Swipe,
+            walk_speed: 5.5, run_speed: 9.0, walk_amp: 0.8, run_amp: 1.3, sit_root_y: 0.24, sit_tail: 0.7, lie_root_y: 0.1, attack: Swipe,
             // Brown bear: dark chocolate, grizzled lighter back, near-black legs, pale muzzle, horn claws.
             coat: Coat { dark: 0x1c120b, base: 0x46291a, light: 0x704d33, tint: 0x8f6b4c, skin: 0x121010, detail: 0xb5a890, horn: 0xb5a890, accent: 0x3a2c1e },
         },
         QuadSpecies::PolarBear => QuadConfig {
+            // The bear's body on a longer neck carried further forward (its own neck + head
+            // meshes in the kit, `q_polar_*`; must match `RIG["polar"]` in animals.py).
+            neck_h: 0.36,
+            neck_angle: 1.15,
             coat: Coat { dark: 0xc9c0ad, base: 0xebe5d8, light: 0xf5f1e8, tint: 0xdcd0b4, skin: 0x1e1c1e, detail: 0x3a3632, horn: 0x3a3632, accent: 0xb8bcc8 },
             ..quad_config(QuadSpecies::Bear)
         },
@@ -318,7 +325,7 @@ impl P {
     fn sit(c: &QuadConfig) -> P {
         P {
             root_y: c.sit_root_y, root_rx: -0.4,
-            neck_rx: c.neck_angle + 0.2, head_rx: -c.neck_angle + 0.2, tail_rx: c.tail_angle + 0.7,
+            neck_rx: c.neck_angle + 0.2, head_rx: -c.neck_angle + 0.2, tail_rx: c.tail_angle + c.sit_tail,
             fl_sh_x: 0.4, fr_sh_x: 0.4,
             bl_hp_x: -0.8, bl_kn_x: 1.2, bl_pw_x: -0.4,
             br_hp_x: -0.8, br_kn_x: 1.2, br_pw_x: -0.4,
@@ -842,6 +849,11 @@ fn kit_quad_meshes(species: QuadSpecies) -> Option<QuadMeshes> {
         (l(k.horn), Surf::Bone),
     ];
     let part = |p: &str| kit.coat_part(&format!("q_{name}_{p}"), &coat, &palette);
+    // The polar bear shares the bear's body / legs / tail but has its own longer neck and head.
+    let front_part = |p: &str| match species {
+        QuadSpecies::PolarBear => kit.coat_part(&format!("q_polar_{p}"), &coat, &palette),
+        _ => part(p),
+    };
     let leg = |prefix: &str, paw: &str| -> Option<LegMeshes> {
         Some(LegMeshes { upper: part(&format!("{prefix}_upper"))?, lower: part(&format!("{prefix}_lower"))?, paw: part(paw)? })
     };
@@ -850,8 +862,8 @@ fn kit_quad_meshes(species: QuadSpecies) -> Option<QuadMeshes> {
     let (front_r, hind_r) = (mirror(&front), mirror(&hind));
     Some(QuadMeshes {
         spine: part("spine")?,
-        neck: part("neck")?,
-        head: part("head")?,
+        neck: front_part("neck")?,
+        head: front_part("head")?,
         tail: if c.tail_vis { part("tail") } else { None },
         legs: [front, front_r, hind, hind_r],
     })
