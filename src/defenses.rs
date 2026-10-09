@@ -519,6 +519,7 @@ pub fn populate_defenders(
             0x3a2a18,
             false,
             false,
+            i as u32 * 5, // a different face / beard per sentry (realistic kit body)
         )
         .upload(meshes);
         // Off-hand bow mount — same transform the townsfolk use (`villagers::build_biped_body`).
@@ -527,7 +528,8 @@ pub fn populate_defenders(
             rotation: Quat::from_euler(EulerRot::XYZ, 0.15, -0.45, 0.1),
             ..default()
         };
-        crate::biped::spawn_biped(commands, root, &sentry_mat, h, 1.06, 1.0, 0.15, 0.3, -0.06, Some(shield_xf));
+        let (hip_dx, shoulder_dx, head_mul) = crate::peasant_model::rig_dims();
+        crate::biped::spawn_biped(commands, root, &sentry_mat, h, 1.06 * head_mul, 1.0, hip_dx, shoulder_dx, -0.06, Some(shield_xf));
     }
     // Ballista flanking the north gate (offset off the gate axis so it doesn't sit on the hero
     // spawn / follow-cam line — the hero spawns at the gate centre, `gate.y - 3.0`).

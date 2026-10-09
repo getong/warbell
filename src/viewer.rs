@@ -172,23 +172,30 @@ fn quad_anim_drive(time: Res<Time>, mut q: Query<&mut crate::quadruped::QuadDriv
 /// Drive a previewed ork/peasant biped's [`crate::biped::BipedDrive`] from `FOREST_VIEW_ANIM`
 /// (walk/run/carry/hoe/chop/attack/sit; else idle). Inert for the hero/quad models.
 fn biped_anim_drive(time: Res<Time>, mut q: Query<&mut crate::biped::BipedDrive>) {
-    let Ok(mut d) = q.single_mut() else { return };
+    // Every previewed rig (the `peasant:lineup` row has several), each keeping its own phase.
+    for mut d in &mut q {
+        let phase = d.phase;
+        *d = crate::biped::BipedDrive { phase, ..default() };
+        drive_biped_clip(&time, &mut d);
+    }
+}
+
+fn drive_biped_clip(time: &Time, d: &mut crate::biped::BipedDrive) {
     let now = time.elapsed_secs();
-    *d = crate::biped::BipedDrive::default();
     match std::env::var("FOREST_VIEW_ANIM").unwrap_or_default().as_str() {
         "walk" => {
             d.moving_amt = 1.0;
-            d.walk_phase = now * 8.0;
+            d.walk_phase = now * 8.0 + d.phase;
         }
         "run" => {
             d.moving_amt = 1.0;
             d.run_amt = 1.0;
-            d.walk_phase = now * 14.0;
+            d.walk_phase = now * 14.0 + d.phase;
         }
         "carry" => {
             d.carrying = true;
             d.moving_amt = 1.0;
-            d.walk_phase = now * 8.0;
+            d.walk_phase = now * 8.0 + d.phase;
         }
         "hoe" | "work" => d.work = 1,
         "chop" | "pick" => d.work = 2,
@@ -249,7 +256,13 @@ fn setup(
 ) {
     // Camera — framed on a ~1.8u-tall model standing at the origin (chest-height look-at).
     // The landmark path below re-frames from the model's real bounds instead.
-    let (mut eye, mut target) = parse_cam().unwrap_or((Vec3::new(0.0, 1.0, 3.0), Vec3::new(0.0, 0.85, 0.0)));
+    let view_name = std::env::var("FOREST_VIEW").unwrap_or_default();
+    let default_cam = if matches!(view_name.as_str(), "peasant:lineup" | "people") {
+        (Vec3::new(1.2, 1.3, 7.6), Vec3::new(0.0, 0.85, 0.0))
+    } else {
+        (Vec3::new(0.0, 1.0, 3.0), Vec3::new(0.0, 0.85, 0.0))
+    };
+    let (mut eye, mut target) = parse_cam().unwrap_or(default_cam);
 
     // `FOREST_VIEW=landmark:<name>` — a full landmark set-piece: merged base on the white
     // vertex-colour material + its animated parts (RuinsFxPlugin drives them here too).
@@ -383,8 +396,33 @@ fn spawn_model(
                 });
             }
         }
+        // A row of townsfolk (every trade + desert + a kid, varied looks) for one-shot review of
+        // the realistic kit bodies. Frame it with the default lineup camera or `FOREST_CAM`.
+        "peasant:lineup" | "people" => {
+            use crate::peasant_model::PeasantKind::*;
+            let row: [(crate::peasant_model::PeasantKind, bool, bool, u32, u32, u32); 10] = [
+                (Unemployed, false, false, 0, 0xd8a06a, 0x6a4a2a),
+                (Unemployed, false, false, 1, 0xc08866, 0x5a8fc8),
+                (Farmer, false, false, 4, 0xe8c4a0, 0x4a6a3a),
+                (Woodcutter, false, false, 9, 0xa36b4a, 0x7a3a26),
+                (Miner, false, false, 3, 0xdca78a, 0x8a6a3a),
+                (Guard, false, false, 6, 0xc89070, 0x7a3a26),
+                (Archer, false, false, 5, 0xe8c4a0, 0x4a6a3a),
+                (Farmer, true, false, 7, 0xd8a06a, 0xbf9a55),
+                (Guard, true, false, 10, 0xc08866, 0xbf9a55),
+                (Unemployed, false, true, 2, 0xdca78a, 0x3a7a72),
+            ];
+            let n = row.len() as f32;
+            for (i, (kind, desert, kid, look, skin, tunic)) in row.into_iter().enumerate() {
+                let x = (i as f32 - (n - 1.0) * 0.5) * 0.85;
+                let e = commands.spawn((Transform::from_xyz(x, 0.0, 0.0), Visibility::Visible)).id();
+                commands.entity(root).add_child(e);
+                spawn_viewer_peasant(commands, e, meshes, mat, kind, desert, kid, look, skin, tunic);
+            }
+        }
         // The peasant worker types on the shared skeleton (Phase 3). `FOREST_VIEW=peasant:farmer|
-        // miner|unemployed|guard` picks the type (default woodcutter).
+        // miner|unemployed|guard` picks the type (default woodcutter); `:desert` the rival's garb,
+        // `:kid` a child; `FOREST_VIEW_LOOK=<n>` the realistic body's face / hair / beard look.
         s if s.starts_with("peasant") => {
             use crate::peasant_model::PeasantKind::*;
             // Order-independent so `peasant:guard:desert` still reads as a guard (a plain `rsplit`
@@ -405,18 +443,10 @@ fn spawn_model(
             // `FOREST_VIEW=peasant:guard:desert` (any `desert` in the spec) inspects the rival's
             // desert-garbed variant (turban + cloak, sandy tunic).
             let desert = s.contains("desert");
+            let kid = s.contains("kid");
             let tunic = if desert { 0xbf9a55 } else { 0x6a4a2a };
-            let m = crate::peasant_model::peasant_biped_meshes(kind, 0xd8a06a, tunic, 0x3a2a18, false, desert);
-            let h = m.upload(meshes);
-            commands.entity(root).insert(crate::biped::BipedDrive::default());
-            // Off-hand mount matches `villagers::build_biped_body` — only the guard mesh set
-            // carries a shield, so this stays empty-handed for the worker kinds.
-            let shield_xf = Transform {
-                translation: Vec3::new(0.0, 0.0, 0.14),
-                rotation: Quat::from_euler(EulerRot::XYZ, 0.15, -0.45, 0.1),
-                ..default()
-            };
-            crate::biped::spawn_biped(commands, root, mat, h, 1.06, 1.0, 0.15, 0.3, -0.06, Some(shield_xf));
+            let look = std::env::var("FOREST_VIEW_LOOK").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+            spawn_viewer_peasant(commands, root, meshes, mat, kind, desert, kid, look, 0xd8a06a, tunic);
         }
         // The studio quadruped animals on the shared quad skeleton (Phase 4). `FOREST_VIEW=
         // animal:wolf|dog|horse|deer|camel|bear|polar` picks the species (default wolf). Rest/idle
@@ -470,6 +500,49 @@ fn spawn_model(
             crate::player::spawn_hero_meshes(commands, root, meshes, images, creature_mats);
         }
     }
+}
+
+/// One previewed townsperson under `root`, built exactly like `villagers::build_biped_body`
+/// (same rig spacing via `peasant_model::rig_dims`, same off-hand mount, kid head + scale).
+#[allow(clippy::too_many_arguments)]
+fn spawn_viewer_peasant(
+    commands: &mut Commands,
+    root: Entity,
+    meshes: &mut Assets<Mesh>,
+    mat: &Handle<crate::creature::CreatureMaterial>,
+    kind: crate::peasant_model::PeasantKind,
+    desert: bool,
+    kid: bool,
+    look: u32,
+    skin: u32,
+    tunic: u32,
+) {
+    let m = crate::peasant_model::peasant_biped_meshes(kind, skin, tunic, 0x3a2a18, kid, desert, look);
+    // Budget check: the whole person as drawn (both limbs of each pair, tool + off-hand prop).
+    let tris = |o: &Mesh| o.indices().map_or(o.count_vertices(), |i| i.len()) / 3;
+    let body = [&m.hips, &m.torso, &m.neck, &m.head, &m.shoulder_l, &m.shoulder_r, &m.elbow_l, &m.elbow_r, &m.hip_l, &m.hip_r, &m.knee_l, &m.knee_r, &m.foot_l, &m.foot_r];
+    let props = [&m.weapon, &m.shield].into_iter().flatten().map(tris).sum::<usize>();
+    info!("viewer person {kind:?} look {look} desert {desert} kid {kid}: {} body tris + {props} prop tris", body.into_iter().map(tris).sum::<usize>());
+    let h = m.upload(meshes);
+    // A kid is the same body scaled down (villagers::KID_SCALE / SCALE) on its own biped root.
+    let body = if kid {
+        let k = commands.spawn((Transform::from_scale(Vec3::splat(0.55)), Visibility::Visible)).id();
+        commands.entity(root).add_child(k);
+        k
+    } else {
+        root
+    };
+    commands.entity(body).insert(crate::biped::BipedDrive { phase: look as f32 * 0.9, ..default() });
+    // Off-hand mount matches `villagers::build_biped_body` — only the guard / archer mesh sets
+    // carry an off-hand prop, so this stays empty-handed for the worker kinds.
+    let shield_xf = Transform {
+        translation: Vec3::new(0.0, 0.0, 0.14),
+        rotation: Quat::from_euler(EulerRot::XYZ, 0.15, -0.45, 0.1),
+        ..default()
+    };
+    let (hip_dx, shoulder_dx, head_mul) = crate::peasant_model::rig_dims();
+    let head = (if kid { 1.55 } else { 1.06 }) * head_mul;
+    crate::biped::spawn_biped(commands, body, mat, h, head, 1.0, hip_dx, shoulder_dx, -0.06, Some(shield_xf));
 }
 
 /// Three-point-ish lighting: a shadowed key, a soft fill from the opposite side, a back rim.

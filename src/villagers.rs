@@ -2636,6 +2636,9 @@ pub fn populate(
                 // Face the camera (−Z) + tag SceneActor so the wander brain leaves the transform
                 // alone and the facing sticks (clean front-on face shots).
                 let y = worldmap::ground_at_world(x, p[1]).unwrap_or(0.0);
+                if i == 0 {
+                    info!("FOREST_VILLINE ground y {y:.2} at {x:.1},{:.1}", p[1]); // for FOREST_CAM framing
+                }
                 commands.entity(e).insert((
                     crate::scenes::SceneActor,
                     Transform {
@@ -2880,7 +2883,9 @@ fn spawn(
 }
 
 /// Map a villager [`Kind`] (+ cosmetic `seed`) to a studio peasant biped mesh set. The town keeps
-/// its per-villager skin/tunic variety; the trouser tone is picked deterministically from the seed.
+/// its per-villager skin/tunic variety; the trouser tone and the realistic body's face / hair /
+/// beard look are picked deterministically from the seed (both periodic in `peasant_model::LOOKS`,
+/// so the outfit cache still shares meshes between same-looking troops).
 fn vil_biped_key(kind: Kind, seed: u32, kid: bool, desert: bool) -> BodyMeshKey {
     // Desert bodies use the studio's fixed DESERT_PANT, independent of this input colour.
     let trouser = if desert { PANT } else { PANT_TONES[(seed as usize) % PANT_TONES.len()] };
@@ -2898,7 +2903,7 @@ fn vil_biped_key(kind: Kind, seed: u32, kid: bool, desert: bool) -> BodyMeshKey 
         ),
         Kind::Peasant { skin, tunic, .. } => (PeasantKind::Unemployed, skin, tunic),
     };
-    BodyMeshKey { kind: pk, skin, tunic, trouser, kid, desert }
+    BodyMeshKey { kind: pk, skin, tunic, trouser, kid, desert, look: (seed % crate::peasant_model::LOOKS) as u8 }
 }
 
 /// Only visible mesh inputs belong in the key: a new gait/AI seed must not upload another
@@ -2911,11 +2916,13 @@ struct BodyMeshKey {
     trouser: u32,
     kid: bool,
     desert: bool,
+    /// Face / hair / beard / everyday-hat variant of the realistic kit body (`peasant_model::LOOKS`).
+    look: u8,
 }
 
 impl BodyMeshKey {
     fn meshes(self) -> BipedMeshes {
-        peasant_biped_meshes(self.kind, self.skin, self.tunic, self.trouser, self.kid, self.desert)
+        peasant_biped_meshes(self.kind, self.skin, self.tunic, self.trouser, self.kid, self.desert, self.look as u32)
     }
 }
 
@@ -3040,8 +3047,10 @@ fn build_biped_body(
     _meshes: &mut Assets<Mesh>,
 ) {
     // Kids get an oversized head on a downscaled body (chibi proportions) so they read as children,
-    // not just small adults.
-    let head_scale = if kid { 1.55 } else { 1.06 };
+    // not just small adults. Joint spacing (+ a head multiplier) follow the body in use: the slim
+    // realistic kit body or the stocky box peasant (`peasant_model::rig_dims`).
+    let (hip_dx, shoulder_dx, head_mul) = crate::peasant_model::rig_dims();
+    let head_scale = (if kid { 1.55 } else { 1.06 }) * head_mul;
     // Off-hand mount: only the GUARD mesh set carries a shield (peasant_model returns None for
     // workers/peasants, and spawn_biped mounts nothing then), so this stays a no-op for civilians.
     let shield_xf = Transform {
@@ -3060,7 +3069,7 @@ fn build_biped_body(
         let h = world.resource_scope(|world, mut cache: Mut<VillagerBodyCache>| {
             cache.get_or_upload(key, &mut world.resource_mut::<Assets<Mesh>>())
         });
-        crate::biped::spawn_biped(&mut world.commands(), root, &mat, h, head_scale, 1.0, 0.15, 0.3, VIL_RIG_OFF, Some(shield_xf));
+        crate::biped::spawn_biped(&mut world.commands(), root, &mat, h, head_scale, 1.0, hip_dx, shoulder_dx, VIL_RIG_OFF, Some(shield_xf));
     });
 }
 

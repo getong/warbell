@@ -492,6 +492,7 @@ pub fn build(
             for (dx, open) in [(0.0, false), (5.5, true)] {
                 let (x, z) = (p[0] + dx, p[1]);
                 let y = worldmap::ground_at_world(x, z).unwrap_or(0.0);
+                info!("FOREST_CAGETEST cage at {x:.1},{y:.2},{z:.1} (open: {open})"); // for FOREST_CAM framing
                 spawn_cage(
                     commands,
                     meshes,
