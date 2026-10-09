@@ -887,7 +887,7 @@ fn ter_noise(px: f32, py: f32) -> f32 {
     a + (b - a) * ux + (c - a) * uy * (1.0 - ux) + (d - b) * ux * uy
 }
 
-fn fg_smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
+pub(crate) fn fg_smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
     let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
 }
@@ -924,6 +924,15 @@ pub fn ground_patch(x: f32, z: f32) -> GroundPatch {
 pub fn forest_drift(x: f32, z: f32) -> f32 {
     let n = ter_noise(x * 0.028 + 7.0, z * 0.028 + 31.0) * 0.7 + ter_noise(x * 0.09 + 3.0, z * 0.09 + 17.0) * 0.3;
     fg_smoothstep(0.30, 0.72, n)
+}
+
+/// 0..1 realistic-forest GROVE field: ~45u-scale stands of dense woodland (1) opening into sunlit
+/// glades (0). The kit forest thins trees by it (natural clumps and clearings instead of an even
+/// random spread), the undergrowth turns to grass + flowers in the glades, and the floor shader
+/// greens them (`realforest::bake_mask` stores it in the mask's A channel).
+pub fn forest_grove(x: f32, z: f32) -> f32 {
+    let n = ter_noise(x * 0.021 + 51.0, z * 0.021 + 13.0) * 0.75 + ter_noise(x * 0.066 + 9.0, z * 0.066 + 77.0) * 0.25;
+    fg_smoothstep(0.28, 0.68, n)
 }
 
 /// The grid scatter over `[lo, hi]²`. One roll per tile; classes consume cumulative
@@ -1032,13 +1041,19 @@ pub fn scatter_region(
                 let slope = (gx * gx + gz * gz).sqrt() / d;
                 (1.0 - (slope - SLOPE_FREE).max(0.0) * SLOPE_TREE_THIN).clamp(SLOPE_TREE_FLOOR, 1.0)
             };
+            // Realistic forest: trees clump into groves around open glades (density-neutral overall).
+            let grove_mult = if kit.is_some() && cfg.name != "Grass" {
+                0.12 + 1.45 * fg_smoothstep(0.12, 0.62, forest_grove(cx, cz))
+            } else {
+                1.0
+            };
             // Thicken the open woods: full boost between the roads, fading to none at a trail edge.
             let density = SCATTER_DENSITY * (1.0 + OPEN_SCATTER_BOOST * crate::roads::openness(cx, cz));
             let roll = r.next();
             let mut acc = 0.0;
             let mut chosen: Option<&ClassHandles> = None;
             for c in &classes {
-                let chance = if c.tree { c.chance * tree_mult } else { c.chance };
+                let chance = if c.tree { c.chance * tree_mult * grove_mult } else { c.chance };
                 acc += chance * density;
                 if roll < acc {
                     chosen = Some(c);

@@ -18,6 +18,7 @@
 //! On by default; `FOREST_PBR=0` restores the low-poly forest (A/B and fallback). If any kit file
 //! fails to load the game logs a warning and keeps the low-poly forest.
 
+pub mod foliage;
 pub mod load;
 pub mod reskin;
 
@@ -116,8 +117,24 @@ pub struct GroundTextures {
     pub ormh: Handle<Image>,
 }
 
+/// A kit material: plain PBR, or a wind-swayed foliage material (leaf cards, undergrowth).
+#[derive(Clone)]
+pub enum KitMat {
+    Std(Handle<StandardMaterial>),
+    Foliage(Handle<foliage::FoliageMaterial>),
+}
+
+impl KitMat {
+    fn insert(&self, e: &mut EntityCommands) {
+        match self {
+            KitMat::Std(h) => e.insert(MeshMaterial3d(h.clone())),
+            KitMat::Foliage(h) => e.insert(MeshMaterial3d(h.clone())),
+        };
+    }
+}
+
 pub struct Kit {
-    mats: Vec<Handle<StandardMaterial>>,
+    mats: Vec<KitMat>,
     models: Vec<Model>,
     by_name: HashMap<String, usize>,
     pub ground: GroundTextures,
@@ -184,7 +201,7 @@ impl Kit {
     pub fn passive_for(&self, class: usize, cover: bool, roll: f32, roll2: f32) -> Option<(usize, f32)> {
         const GRASS: [&str; 4] = ["grass_a", "grass_b", "grass_c", "grass_d"];
         const FERN: [&str; 3] = ["fern_a", "fern_b", "fern_c"];
-        const FLOWERS: [&str; 4] = ["flower_daisy", "flower_lupine_a", "flower_lupine_b", "flower_yellow"];
+        const FLOWERS: [&str; 6] = ["flower_daisy", "flower_yellow", "flower_lupine_a", "flower_daisy", "flower_yellow", "flower_lupine_b"];
         const ROCKS: [&str; 13] = [
             "rock_01_a", "rock_01_b", "rock_01_c", "rock_01_d", "rock_01_e", "rock_01_f", "rock_02_a",
             "rock_02_b", "rock_02_c", "rock_02_d", "rock_02_e", "rock_02_f", "rock_02_g",
@@ -248,7 +265,8 @@ impl Kit {
             let lods = std::iter::once((&self.models[lod0], near.clone())).chain(lod1.map(|l| (l, far.clone())));
             for (model, range) in lods {
                 for part in &model.parts {
-                    let mut c = p.spawn((Mesh3d(part.handle.clone()), MeshMaterial3d(self.mats[part.mat].clone()), tf, range.clone()));
+                    let mut c = p.spawn((Mesh3d(part.handle.clone()), tf, range.clone()));
+                    self.mats[part.mat].insert(&mut c);
                     if Some(part.mat) == fruit {
                         c.insert((fruit_tag.clone(), Visibility::Visible));
                     }
@@ -292,7 +310,7 @@ impl Kit {
         const GRASS: [&str; 4] = ["grass_a", "grass_b", "grass_c", "grass_d"];
         const PEBBLES: [&str; 6] = ["rock_01_a", "rock_01_c", "rock_01_e", "rock_02_b", "rock_02_d", "rock_02_f"];
         const FERN: [&str; 3] = ["fern_a", "fern_b", "fern_c"];
-        const FLOWERS: [&str; 4] = ["flower_daisy", "flower_lupine_a", "flower_lupine_b", "flower_yellow"];
+        const FLOWERS: [&str; 6] = ["flower_daisy", "flower_yellow", "flower_lupine_a", "flower_daisy", "flower_yellow", "flower_lupine_b"];
         const LUSH: [&str; 3] = ["lush_a", "lush_b", "lush_c"];
         let mut gx = lo;
         while gx < hi {
@@ -356,7 +374,9 @@ impl Kit {
                 // lawn), and the ground fertility thins it further on the bare/worn patches. Every
                 // 2nd plant also goes into the far ring at 1.35x scale.
                 let fert = crate::biome::ground_patch(gx + 0.5, gz + 0.5).fertility;
-                let drift = crate::biome::forest_drift(gx + 0.5, gz + 0.5);
+                // Glades (open, sunlit) grow a grass + flower sward; groves keep the drifts.
+                let glade = 1.0 - crate::biome::fg_smoothstep(0.08, 0.38, crate::biome::forest_grove(gx + 0.5, gz + 0.5));
+                let drift = crate::biome::forest_drift(gx + 0.5, gz + 0.5).max(glade * 0.85);
                 for k in 0..3u32 {
                     let (a, b) = rolls(gx + 0.13 + k as f32 * 0.71, gz + 0.29 - k as f32 * 0.43);
                     let (c, d) = rolls(gx - 0.31 - k as f32 * 0.17, gz + 0.47 + k as f32 * 0.59);
@@ -373,7 +393,19 @@ impl Kit {
                     }
                     // Variety over volume: grass, ferns, short dry stalks, a low shrub, a fallen-leaf
                     // sheet, the occasional flower — each patch reads as a mixed understorey.
-                    let (pick, s) = if d < 0.42 {
+                    let (pick, s) = if glade > 0.5 {
+                        if d < 0.62 {
+                            (self.pick(&LUSH, c), 0.6 + c * 0.5)
+                        } else if d < 0.82 {
+                            // Meadow flowers: mostly daisies + yellow, the odd lupine spike.
+                            const GLADE_FLOWERS: [&str; 6] = ["flower_daisy", "flower_yellow", "flower_daisy", "flower_yellow", "flower_daisy", "flower_lupine_a"];
+                            (self.pick(&GLADE_FLOWERS, c), 0.8 + c * 0.3)
+                        } else if d < 0.92 {
+                            (self.pick(&["stalks_a"], c), 0.9)
+                        } else {
+                            (self.pick(&FERN, c), 0.7 + c * 0.4)
+                        }
+                    } else if d < 0.42 {
                         (self.pick(&LUSH, c), 0.65 + c * 0.5)
                     } else if d < 0.68 {
                         (self.pick(&FERN, c), 0.8 + c * 0.6)
@@ -492,13 +524,13 @@ impl Chunks {
             };
             let mut e = commands.spawn((
                 Mesh3d(meshes.add(base)),
-                MeshMaterial3d(kit.mats[mat].clone()),
                 Transform::from_translation(chunk_center(key)),
                 bevy::light::NotShadowCaster,
                 crate::biome::BiomeEntity,
                 DensitySlice(slice),
                 Visibility::default(),
             ));
+            kit.mats[mat].insert(&mut e);
             if tier != Tier::Props {
                 e.insert(crate::biome::GroundCoverChunk);
             }
@@ -517,7 +549,7 @@ pub struct RealForestPlugin;
 impl Plugin for RealForestPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ForestLook>();
-        app.add_plugins(reskin::ReskinPlugin);
+        app.add_plugins((reskin::ReskinPlugin, foliage::FoliagePlugin));
         if !enabled() {
             return;
         }
@@ -594,14 +626,23 @@ fn pbr_material(images: &mut Assets<Image>, set: &str, card: bool) -> Result<Sta
 fn try_build(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
+    foliage_mats: &mut Assets<foliage::FoliageMaterial>,
     images: &mut Assets<Image>,
 ) -> Result<Kit, String> {
     let mut mats = Vec::new();
     let mut mat_index = HashMap::new();
     for (name, set, card) in MATERIALS {
         mat_index.insert(name.to_string(), mats.len());
-        mats.push(materials.add(pbr_material(images, set, card)?));
+        let m = pbr_material(images, set, card)?;
+        // Leaf cards sway a little at the crown edge, undergrowth blades more at the tips; plus
+        // crown / undergrowth colour variety (see `foliage`).
+        mats.push(match name {
+            "canopy" => KitMat::Foliage(foliage_mats.add(foliage::material(m, 0.07, 1.2, 0.6))),
+            "undergrowth" => KitMat::Foliage(foliage_mats.add(foliage::material(m, 0.09, 2.5, 0.35))),
+            _ => KitMat::Std(materials.add(m)),
+        });
     }
+    let wind = [mat_index["canopy"], mat_index["undergrowth"]];
     let mut models = Vec::new();
     let mut by_name = HashMap::new();
     for glb in ["forest_pbr/trees.glb", "forest_pbr/undergrowth.glb", "forest_pbr/props.glb"] {
@@ -609,11 +650,19 @@ fn try_build(
         // `attach_tree` finds a tree's LOD1 at `lod0 + 1`, so keep each _lod0 / _lod1 pair adjacent.
         objs.sort_by(|a, b| a.0.cmp(&b.0));
         for (name, prims) in objs {
-            let mut parts = Vec::new();
+            let mut raw = Vec::new();
             for p in prims {
                 let mat = *mat_index.get(&p.material).ok_or_else(|| format!("{name}: unknown material {}", p.material))?;
-                parts.push(Part { handle: meshes.add(p.mesh.clone()), mesh: p.mesh, mat });
+                raw.push((p.mesh, mat));
             }
+            {
+                let mut view: Vec<(&mut Mesh, bool)> = raw.iter_mut().map(|(m, i)| (m, wind.contains(i))).collect();
+                foliage::bake_weights(&mut view);
+            }
+            let parts = raw
+                .into_iter()
+                .map(|(mesh, mat)| Part { handle: meshes.add(mesh.clone()), mesh, mat })
+                .collect();
             by_name.insert(name, models.len());
             models.push(Model { parts });
         }
@@ -632,10 +681,11 @@ const LAYERS: [&str; 3] = ["litter", "moss", "path"];
 fn build_kit(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut foliage_mats: ResMut<Assets<foliage::FoliageMaterial>>,
     mut images: ResMut<Assets<Image>>,
 ) {
     let t0 = std::time::Instant::now();
-    match try_build(&mut meshes, &mut materials, &mut images) {
+    match try_build(&mut meshes, &mut materials, &mut foliage_mats, &mut images) {
         Ok(kit) => {
             info!("realforest: kit loaded ({} models) in {:.2}s", kit.models.len(), t0.elapsed().as_secs_f32());
             let _ = KIT.set(kit);
@@ -734,12 +784,20 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
             }
         }
     }
+    let mut grove = vec![0u8; w * h];
+    for j in 0..h {
+        let wz = z0 + (j as f32 + 0.5) / RES;
+        for i in 0..w {
+            let wx = x0 + (i as f32 + 0.5) / RES;
+            grove[j * w + i] = (crate::biome::forest_grove(wx, wz) * 255.0).round() as u8;
+        }
+    }
     let mut data = vec![0u8; w * h * 4];
     for k in 0..w * h {
         data[k * 4] = (forest[k] * 255.0).round() as u8;
         data[k * 4 + 1] = road[k];
         data[k * 4 + 2] = (occl[k].clamp(0.0, 1.0) * 255.0).round() as u8;
-        data[k * 4 + 3] = 255;
+        data[k * 4 + 3] = grove[k];
     }
     let mut img = Image::new(
         bevy::render::render_resource::Extent3d { width: w as u32, height: h as u32, depth_or_array_layers: 1 },

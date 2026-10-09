@@ -250,8 +250,8 @@ fn drive_atmospherics(
         // (the base values are captured once so a `FOREST_ATMO` startup override still applies).
         let (d0, m0) = *base.get_or_insert((atmo.density, atmo.fog_max));
         let w = forest.as_ref().map_or(0.0, |f| f.0);
-        atmo.density = d0 * (1.0 - 0.6 * w);
-        atmo.fog_max = m0 * (1.0 - 0.45 * w);
+        atmo.density = d0 * (1.0 - 0.72 * w);
+        atmo.fog_max = m0 * (1.0 - 0.6 * w);
     }
 }
 

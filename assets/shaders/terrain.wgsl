@@ -393,7 +393,12 @@ fn fragment(
     let wp_dx = dpdx(wp);
     let wp_dy = dpdy(wp);
     let fmask_uv = (wp - forest.pbr_region.xy) * forest.pbr_region.zw;
-    let fmask = textureSampleLevel(fp_mask, fp_mask_samp, fmask_uv, 0.0).rgb;
+    let fmask4 = textureSampleLevel(fp_mask, fp_mask_samp, fmask_uv, 0.0);
+    let fmask = fmask4.rgb;
+    // Mask A = the grove field (`biome::forest_grove`): 0 in an open glade, 1 in a dense stand.
+    // The 1x1 placeholder mask has no alpha channel worth reading, but it's only bound while the
+    // forest floor is off (fp_w = 0), so its value never matters.
+    let glade = 1.0 - smoothstep(0.08, 0.40, fmask4.a);
     var fp_w = 0.0;
     var fp_nw = vec3<f32>(0.0, 1.0, 0.0);
     var fp_rough = 1.0;
@@ -416,7 +421,8 @@ fn fragment(
         let mossn = ter_noise_rot(wp * 0.05, 0.946, 0.326) * 0.65 + ter_noise(wp * 0.19 + vec2<f32>(5.0, 9.0)) * 0.35;
         // Moss/grass is the dominant floor (it sits under the green carpet and IS the carpet past
         // its draw range); leaf litter keeps the drier hollows.
-        let moss = smoothstep(0.30, 0.55, mossn);
+        // Glades open to the sun: the grass/moss layer takes over there, litter keeps the groves.
+        let moss = clamp(smoothstep(0.30, 0.55, mossn) + glade * 0.7 - (1.0 - glade) * 0.08, 0.0, 1.0);
         var w = vec3<f32>((1.0 - moss) * (1.0 - path), moss * (1.0 - path), path);
         // Height blend: the taller texel of the competing layers wins across a narrow band.
         let h0 = fp_heights(wp, w, wp_dx, wp_dy);
@@ -504,6 +510,13 @@ fn fragment(
         }
         // Broad value drift so the repeats never read as a grid from a distance.
         alb *= 0.84 + 0.32 * (ter_noise(wp * 0.07 + vec2<f32>(9.0, 2.0)) * 0.6 + ter_noise(wp * 0.23) * 0.4);
+        // Broad hue drift (cure for the uniform ochre floor): sun-dried gold <-> fresh green
+        // patches, fresher in the glades; the trail itself keeps its earth tone.
+        let hue_n = ter_noise(wp * 0.031 + vec2<f32>(23.0, 61.0));
+        let fresh = clamp(hue_n * 0.8 + glade * 0.35 - 0.05, 0.0, 1.0) * (1.0 - w.z);
+        alb *= mix(vec3<f32>(1.0, 0.95, 0.85), vec3<f32>(0.80, 1.0, 0.76), fresh);
+        // Pull the scanned floor's mustard back toward olive / earth (it read garish in low sun).
+        alb = mix(vec3<f32>(dot(alb, vec3<f32>(0.3, 0.59, 0.11))), alb, 0.85);
         // Micro self-shadow (above), contact darkening where roots / stones meet the floor (mask
         // B), and the cart-wheel ruts pressed back into the scanned path as damp, darker grooves
         // (the procedural rut tint applied earlier is overwritten by this mix).

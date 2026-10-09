@@ -98,7 +98,7 @@ impl Plugin for ScenePlugin {
             .insert_resource(SkyClock {
                 t: start_t(),
                 // Freeze the clock for screenshots so frame 90 is deterministic.
-                paused: std::env::var("FOREST_SHOT").is_ok(),
+                paused: std::env::var("FOREST_SHOT").is_ok() || crate::controls::walk_mode(),
                 day_secs: day_seconds(),
             })
             .init_resource::<SmoothBiomeAtmo>()
