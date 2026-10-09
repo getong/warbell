@@ -155,7 +155,7 @@ impl Plugin for DofPlugin {
         // ASSUMES SMAA is the camera's AA (added unconditionally in `scene.rs`; quality.rs only swaps
         // its preset). If you ever switch to FXAA/CAS/TAA, re-pin against that pass — `.after(smaa)`
         // silently becomes a no-op (no flicker error) when no `smaa` system runs, and the race returns.
-        render_app.add_systems(Core3d, dof_pass.in_set(Core3dSystems::PostProcess).after(smaa));
+        render_app.add_systems(Core3d, dof_pass.in_set(Core3dSystems::PostProcess).after(smaa).after(bevy::anti_alias::contrast_adaptive_sharpening::cas));
     }
 }
 

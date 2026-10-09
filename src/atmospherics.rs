@@ -204,6 +204,9 @@ impl Plugin for AtmosphericsPlugin {
             atmospherics_pass
                 .in_set(Core3dSystems::PostProcess)
                 .after(smaa)
+                // CAS (TAA preset) is a post_process_write ping-pong pass too: unordered, the
+                // two flip-flopped per frame (warm/cold image flicker).
+                .after(bevy::anti_alias::contrast_adaptive_sharpening::cas)
                 .before(crate::godrays::godrays_pass),
         );
     }

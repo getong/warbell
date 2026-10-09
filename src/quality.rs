@@ -338,6 +338,8 @@ impl Plugin for QualityPlugin {
         } else {
             cfg.as_ref().map(|c| c.settings.clone()).unwrap_or_else(|| preset_settings(quality))
         };
+        let mut settings = settings;
+        env_overrides(&mut settings);
         let mut window = cfg.as_ref().map(|c| c.window.clone()).unwrap_or_default();
         // FOREST_NOVSYNC (uncapped perf testing, set in main.rs) must win — else `apply_window_settings`
         // would re-vsync the window on frame 1.
@@ -514,6 +516,25 @@ fn disable_gpu_clustering_on_weak_gpu(
     }
 }
 
+/// A/B staging knobs on top of any preset: `FOREST_AA=off|low|high|ultra|taa`,
+/// `FOREST_SSAO=off|medium|ultra`.
+fn env_overrides(settings: &mut GraphicsSettings) {
+    match std::env::var("FOREST_AA").ok().as_deref() {
+        Some("off") => settings.antialias = AaLevel::Off,
+        Some("low") => settings.antialias = AaLevel::Low,
+        Some("high") => settings.antialias = AaLevel::High,
+        Some("ultra") => settings.antialias = AaLevel::Ultra,
+        Some("taa") => settings.antialias = AaLevel::Taa,
+        _ => {}
+    }
+    match std::env::var("FOREST_SSAO").ok().as_deref() {
+        Some("off") => settings.ssao = AoLevel::Off,
+        Some("medium") => settings.ssao = AoLevel::Medium,
+        Some("ultra") => settings.ssao = AoLevel::Ultra,
+        _ => {}
+    }
+}
+
 /// When the active **named** preset changes (chip click / F10 / hardware default / config load),
 /// overwrite the live [`GraphicsSettings`] with that preset's canned fill. `Custom` is skipped — it
 /// *is* the player's hand-tuned struct, so overwriting would undo their tweak. Runs on a
@@ -522,7 +543,8 @@ fn fill_settings_from_preset(quality: Res<GraphicsQuality>, mut settings: ResMut
     if *quality == GraphicsQuality::Custom {
         return;
     }
-    let want = preset_settings(*quality);
+    let mut want = preset_settings(*quality);
+    env_overrides(&mut want);
     if *settings != want {
         *settings = want;
     }
@@ -610,7 +632,11 @@ fn apply_quality(
         // iGPUs); otherwise insert it at the chosen quality level.
         match ao {
             Some(level) => {
-                e.insert(ScreenSpaceAmbientOcclusion { quality_level: level, ..default() });
+                // Assumed object thickness 1.0 (default 0.25): with TAA resolving it fully, the default
+                // occluded ~17% of the forest's (large) ambient term and the whole wood went dark.
+                // Measured: 1.0 keeps the contact grounding at ~3% overall darkening.
+                let thickness = std::env::var("FOREST_AO_THICK").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0);
+                e.insert(ScreenSpaceAmbientOcclusion { quality_level: level, constant_object_thickness: thickness });
             }
             None => {
                 e.remove::<ScreenSpaceAmbientOcclusion>();
