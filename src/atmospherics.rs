@@ -216,8 +216,10 @@ fn drive_atmospherics(
     time: Res<Time>,
     enabled: Res<AtmosphericsEnabled>,
     build_mode: Res<crate::town::BuildMode>,
+    forest: Option<Res<crate::realforest::ForestLook>>,
     sun: Query<&GlobalTransform, With<Sun>>,
     mut cams: Query<(&GlobalTransform, &Camera, &DistanceFog, &mut Atmospherics)>,
+    mut base: Local<Option<(f32, f32)>>,
 ) {
     let Ok(sun_tf) = sun.single() else {
         return;
@@ -241,6 +243,12 @@ fn drive_atmospherics(
         atmo.glow_color = Vec3::new(g.red, g.green, g.blue);
         atmo.time = time.elapsed_secs();
         atmo.fade = fade;
+        // Realistic forest: much thinner veil, so the scanned trunks keep their contrast in depth
+        // (the base values are captured once so a `FOREST_ATMO` startup override still applies).
+        let (d0, m0) = *base.get_or_insert((atmo.density, atmo.fog_max));
+        let w = forest.as_ref().map_or(0.0, |f| f.0);
+        atmo.density = d0 * (1.0 - 0.6 * w);
+        atmo.fog_max = m0 * (1.0 - 0.45 * w);
     }
 }
 

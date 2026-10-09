@@ -88,6 +88,7 @@ fn drive_grade(
     mut overlays: Query<&mut BackgroundGradient, With<Vignette>>,
     mut last_sat: Local<f32>,
     mut last_darkness: Local<f32>,
+    forest: Option<Res<crate::realforest::ForestLook>>,
 ) {
     let (darkness, drain) = match player.as_deref() {
         Some(p) => reactive(&p.0, time.elapsed_secs_f64()),
@@ -97,7 +98,9 @@ fn drive_grade(
     // grey on a hit. Reading the base from the resource — rather than capturing the camera's once —
     // is what lets the F1 saturation slider actually stick. Skip the write when unchanged so we
     // don't re-mark `ColorGrading` dirty every frame at rest.
-    let sat = look.saturation * (1.0 - drain).max(0.0);
+    // The realistic forest runs a richer grade (its scanned greens read washed out at the island base).
+    let forest_w = forest.as_ref().map_or(0.0, |f| f.0);
+    let sat = look.saturation * (1.0 + 0.1 * forest_w) * (1.0 - drain).max(0.0);
     if (sat - *last_sat).abs() > 1e-4 {
         *last_sat = sat;
         for mut cg in &mut cams {

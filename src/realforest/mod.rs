@@ -269,8 +269,21 @@ impl Kit {
                     }
                     let road = crate::roads::road_strength(x, z);
                     let pick = |names: &[&str], s: f32| self.pick(names, d).map(|m| (m, s));
-                    let choice = if road > 0.55 {
-                        None // trail centre stays clean (the path layer + ruts carry it)
+                    let choice = if road > 0.9 {
+                        // The grass strip a cart track keeps between its two ruts.
+                        if c < 0.14 { pick(&GRASS, 0.5 + d * 0.3) } else { None }
+                    } else if road > 0.55 {
+                        // Leaves blown onto the track.
+                        if c < 0.22 { pick(&LITTER, 0.7 + d * 0.4) } else { None }
+                    } else if road > 0.12 && c < 0.025 {
+                        // The odd fallen trunk / mossy boulder / bush right at the verge.
+                        if d < 0.4 {
+                            pick(&["log_a"], 0.75 + d * 0.5)
+                        } else if d < 0.75 {
+                            pick(&PEBBLES, 0.4 + d * 0.3)
+                        } else {
+                            pick(&["bush_a", "bush_b"], 1.0 + d * 0.4)
+                        }
                     } else if road > 0.12 {
                         // Trail verge: the lush band a forest path grows along — grass, ferns, flowers.
                         if c < 0.42 {
@@ -377,11 +390,39 @@ pub struct RealForestPlugin;
 
 impl Plugin for RealForestPlugin {
     fn build(&self, app: &mut App) {
+        app.init_resource::<ForestLook>();
         if !enabled() {
             return;
         }
         // Before the world build (Startup) reads the kit inside `biome::scatter_region`.
-        app.add_systems(PreStartup, build_kit).add_systems(Update, patch_terrain);
+        app.add_systems(PreStartup, build_kit).add_systems(Update, (patch_terrain, drive_forest_look));
+    }
+}
+
+/// 0..1 "the camera is in the realistic forest" weight, eased. The post stack reads it to give the
+/// forest its own look — clearer air (`atmospherics`), richer colour (`grade`), stronger sun shafts
+/// (`godrays`) — without touching the tuned look of every other biome.
+#[derive(Resource, Default)]
+pub struct ForestLook(pub f32);
+
+fn drive_forest_look(
+    time: Res<Time>,
+    cams: Query<&GlobalTransform, With<Camera3d>>,
+    mut look: ResMut<ForestLook>,
+) {
+    let Some(cam) = cams.iter().next() else { return };
+    let p = cam.translation();
+    let target = if get().is_some()
+        && crate::worldmap::tile_biome_world(p.x, p.z) == Some(crate::biome::Biome::Forest)
+    {
+        1.0
+    } else {
+        0.0
+    };
+    let k = (time.delta_secs() * 1.2).min(1.0);
+    let v = look.0 + (target - look.0) * k;
+    if (v - look.0).abs() > 1e-4 {
+        look.0 = v;
     }
 }
 

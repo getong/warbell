@@ -47,7 +47,7 @@ pub fn config() -> BiomeConfig {
         // scanned materials read photographic only under strong key light and crisp shadows.
         sky: if crate::realforest::enabled() { 0x9fcbee } else { 0xaed3e6 },
         fog_density: if crate::realforest::enabled() { 0.006 } else { 0.009 }, // clearest on the map
-        sun_color: if crate::realforest::enabled() { 0xfff0d2 } else { 0xffe9bb },
+        sun_color: if crate::realforest::enabled() { 0xfff6e6 } else { 0xffe9bb },
         sun_illuminance: if crate::realforest::enabled() { 15_500.0 } else { 10_500.0 },
         ambient_color: 0xd8ecd6,
         ambient_brightness: 85.0,

@@ -132,6 +132,8 @@ impl Plugin for GodRaysPlugin {
 fn drive_godrays(
     sun: Query<(&GlobalTransform, &DirectionalLight), With<Sun>>,
     mut cams: Query<(&GlobalTransform, &Camera, &mut GodRays)>,
+    forest: Option<Res<crate::realforest::ForestLook>>,
+    mut base: Local<Option<f32>>,
 ) {
     let Ok((sun_tf, sun_light)) = sun.single() else {
         return;
@@ -152,6 +154,9 @@ fn drive_godrays(
         let onscreen = smoothstep(0.05, 0.50, align);
         gr.fade = daylight * onscreen;
         gr.sun_color = sun_color;
+        // Sun shafts through the canopy are THE forest image: stronger under the realistic forest.
+        let i0 = *base.get_or_insert(gr.intensity);
+        gr.intensity = i0 * (1.0 + 0.5 * forest.as_ref().map_or(0.0, |f| f.0));
 
         // Project a far point along the sun direction to its screen UV. Guarded by `fade` above, so
         // a behind-camera projection (garbage UV) is harmless — the rays are already gated off.
