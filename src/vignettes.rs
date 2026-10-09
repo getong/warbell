@@ -8,7 +8,10 @@
 //!
 //! Each vignette is a single merged, vertex-coloured, flat-shaded mesh built from primitives —
 //! the exact `ruins.rs` build contract — so it batches against the scene's one white material and
-//! seats on flat ground with its base at y=0. Placement mirrors `ruins::populate_landmarks`
+//! seats on flat ground with its base at y=0. With the realistic forest kit loaded, the forest's
+//! Abandoned Camp is its Blender model instead (`wayside.glb`, `vignette_camp`: same footprint,
+//! fire at the origin, tent at +X, crate at (-0.7, 0.4)), and its spot is planned before the
+//! forest scatter so the kit's trees and ground cover keep clear of it. Placement mirrors `ruins::populate_landmarks`
 //! (reject-sample the flattest in-biome, on-land, unblocked spot), called from `worldmap::build`
 //! right after the landmarks so it routes around the ruin already planted in the same region.
 
@@ -238,10 +241,13 @@ fn footprint_spread(x: f32, z: f32, radius: f32) -> Option<f32> {
 /// Keep the visual footprint off roads and authored clearings, including landmarks whose
 /// decorative edge extends beyond their solid blocker.
 fn footprint_clear(x: f32, z: f32, radius: f32) -> bool {
-    if crate::blockers::any_visual_within(x, z, radius)
-        || crate::poi::overlaps_planned_clearing(x, z, radius)
-        || crate::bridges::near_bridge(x, z, radius + 0.2)
-    {
+    !crate::blockers::any_visual_within(x, z, radius) && site_clear(x, z, radius)
+}
+
+/// [`footprint_clear`] minus the blocker test — what is already known when the world build plans
+/// its clearings (phase 4, before any scatter).
+fn site_clear(x: f32, z: f32, radius: f32) -> bool {
+    if crate::poi::overlaps_planned_clearing(x, z, radius) || crate::bridges::near_bridge(x, z, radius + 0.2) {
         return false;
     }
     for k in 0..=8 {
@@ -265,6 +271,8 @@ fn footprint_clear(x: f32, z: f32, radius: f32) -> bool {
 struct Spec {
     biome: crate::biome::Biome,
     mesh: fn() -> Mesh,
+    /// The Blender model (`wayside.glb`) drawn instead of `mesh` when the realistic kit is loaded.
+    kit: Option<&'static str>,
     scale: f32,
     block_r: f32,
     foot_r: f32,
@@ -275,51 +283,117 @@ struct Spec {
     beacon: Color,
 }
 
+fn specs() -> [Spec; 5] {
+    use crate::biome::Biome;
+    [
+        Spec { biome: Biome::Forest, mesh: abandoned_camp, kit: Some("vignette_camp"), scale: 1.0, block_r: 0.9, foot_r: 1.6, name: "The Abandoned Camp", lore: "Cold ashes, and a meal left half-eaten.", buff: BuffKind::Haste, mag: 1.3, beacon: Color::srgb(1.0, 0.62, 0.2) },
+        Spec { biome: Biome::Desert, mesh: lost_caravan, kit: None, scale: 1.0, block_r: 1.0, foot_r: 1.5, name: "The Lost Caravan", lore: "The sand keeps its dead — and their gold.", buff: BuffKind::Power, mag: 1.4, beacon: Color::srgb(0.95, 0.55, 1.0) },
+        Spec { biome: Biome::Rocky, mesh: fallen_tower, kit: None, scale: 1.0, block_r: 1.0, foot_r: 1.8, name: "The Fallen Watchtower", lore: "It guarded the pass once. The pass forgot.", buff: BuffKind::Resist, mag: 0.6, beacon: Color::srgb(1.0, 0.8, 0.35) },
+        Spec { biome: Biome::Snow, mesh: frozen_camp, kit: None, scale: 1.0, block_r: 0.9, foot_r: 1.5, name: "The Frozen Camp", lore: "The expedition that never came home.", buff: BuffKind::Resist, mag: 0.6, beacon: Color::srgb(0.3, 0.92, 1.0) },
+        Spec { biome: Biome::Swamp, mesh: sunken_wreck, kit: None, scale: 1.0, block_r: 1.0, foot_r: 1.7, name: "The Sunken Wreck", lore: "The bog swallowed her whole, crew and all.", buff: BuffKind::Haste, mag: 1.3, beacon: Color::srgb(0.4, 0.95, 0.82) },
+    ]
+}
+
+/// Each spec draws from its own stream (spec 0 keeps the original seed), so one region's search
+/// can never shift another's spot.
+fn spec_seed(i: usize) -> u32 {
+    0x51a9_e3b7 ^ (i as u32).wrapping_mul(0x9e37_79b9)
+}
+
+/// Reject-sample the flattest in-biome spot whose footprint passes `clear` (best flatness wins).
+/// Returns `(x, z, y, yaw)`.
+fn search(s: &Spec, seed: u32, clear: fn(f32, f32, f32) -> bool) -> Option<(f32, f32, f32, f32)> {
+    let mut rng = seed;
+    let probe = s.foot_r * s.scale;
+    let mut best: Option<(f32, f32, f32, f32, f32)> = None; // (spread, x, z, y, yaw)
+    for _ in 0..4000 {
+        let x = crate::wildlife::rng_range(&mut rng, -crate::worldmap::GX + 6.0, crate::worldmap::GX - 6.0);
+        let z = crate::wildlife::rng_range(&mut rng, -crate::worldmap::GZ + 6.0, crate::worldmap::GZ - 6.0);
+        if crate::worldmap::biome_at_world(x, z) != Some(s.biome) || !clear(x, z, probe) {
+            continue;
+        }
+        let Some(spread) = footprint_spread(x, z, probe) else { continue };
+        let y = crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
+        let yaw = crate::wildlife::rng_range(&mut rng, 0.0, TAU);
+        if best.map_or(true, |b| spread < b.0) {
+            best = Some((spread, x, z, y, yaw));
+        }
+        if spread <= 0.01 {
+            break;
+        }
+    }
+    best.map(|(_, x, z, y, yaw)| (x, z, y, yaw))
+}
+
+/// The FOREST vignette's spot, chosen at build phase 4 ([`plan`]) — before the forest scatter — so
+/// the realistic kit's trees and merged ground cover keep clear of it (`realforest::keep_clear`):
+/// no fern growing through the tent. `(x, z, yaw, reserved radius)`.
+static FOREST_SITE: std::sync::Mutex<Option<(f32, f32, f32, f32)>> = std::sync::Mutex::new(None);
+
+pub fn reset_plan() {
+    *FOREST_SITE.lock().expect("vignette plan poisoned") = None;
+}
+
+/// Plan the forest vignette (see [`FOREST_SITE`]). Called from `worldmap::bs_sea_and_boats` after
+/// the camp and story-clearing plans.
+pub fn plan() {
+    let specs = specs();
+    let site = search(&specs[0], spec_seed(0), footprint_clear).map(|(x, z, _, yaw)| (x, z, yaw, specs[0].foot_r * specs[0].scale));
+    // Reserve it now so the placers between here and phase 24 (ore, chests, forage, …) keep off.
+    if let Some((x, z, _, foot)) = site {
+        crate::blockers::reserve_visual(x, z, foot);
+    }
+    *FOREST_SITE.lock().expect("vignette plan poisoned") = site;
+}
+
+/// `(centre, reserved radius)` of the planned forest vignette (see `poi::story_clearings`).
+pub fn planned_footprint() -> Option<(Vec2, f32)> {
+    FOREST_SITE.lock().expect("vignette plan poisoned").map(|(x, z, _, foot)| (Vec2::new(x, z), foot))
+}
+
+/// Does a circle at `(x, z)` of radius `r` overlap the planned forest vignette?
+pub fn overlaps_planned(x: f32, z: f32, r: f32) -> bool {
+    FOREST_SITE
+        .lock()
+        .expect("vignette plan poisoned")
+        .is_some_and(|(sx, sz, _, foot)| Vec2::new(x - sx, z - sz).length_squared() < (foot + r + 0.35).powi(2))
+}
+
 /// Plant one vignette per biome region — a flat, in-biome, unblocked spot (reject-sampled, best
-/// flatness wins), registered as a blocker and attached as a discoverable landmark POI. Called
-/// from `worldmap::build` after `ruins::populate_landmarks`, so it avoids the ruin in its region.
+/// flatness wins; the forest one comes from the phase-4 plan while its spot is still free),
+/// registered as a blocker and attached as a discoverable landmark POI. Called from
+/// `worldmap::build` after `ruins::populate_landmarks`, so it avoids the ruin in its region.
 pub fn populate_vignettes(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) {
     use crate::biome::{Biome, BiomeEntity};
     let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.9, ..default() });
-    let specs = [
-        Spec { biome: Biome::Forest, mesh: abandoned_camp, scale: 1.0, block_r: 0.9, foot_r: 1.6, name: "The Abandoned Camp", lore: "Cold ashes, and a meal left half-eaten.", buff: BuffKind::Haste, mag: 1.3, beacon: Color::srgb(1.0, 0.62, 0.2) },
-        Spec { biome: Biome::Desert, mesh: lost_caravan, scale: 1.0, block_r: 1.0, foot_r: 1.5, name: "The Lost Caravan", lore: "The sand keeps its dead — and their gold.", buff: BuffKind::Power, mag: 1.4, beacon: Color::srgb(0.95, 0.55, 1.0) },
-        Spec { biome: Biome::Rocky, mesh: fallen_tower, scale: 1.0, block_r: 1.0, foot_r: 1.8, name: "The Fallen Watchtower", lore: "It guarded the pass once. The pass forgot.", buff: BuffKind::Resist, mag: 0.6, beacon: Color::srgb(1.0, 0.8, 0.35) },
-        Spec { biome: Biome::Snow, mesh: frozen_camp, scale: 1.0, block_r: 0.9, foot_r: 1.5, name: "The Frozen Camp", lore: "The expedition that never came home.", buff: BuffKind::Resist, mag: 0.6, beacon: Color::srgb(0.3, 0.92, 1.0) },
-        Spec { biome: Biome::Swamp, mesh: sunken_wreck, scale: 1.0, block_r: 1.0, foot_r: 1.7, name: "The Sunken Wreck", lore: "The bog swallowed her whole, crew and all.", buff: BuffKind::Haste, mag: 1.3, beacon: Color::srgb(0.4, 0.95, 0.82) },
-    ];
-    let mut rng: u32 = 0x51a9_e3b7;
-    for s in specs {
-        let handle = meshes.add((s.mesh)());
-        let probe = s.foot_r * s.scale;
-        let mut best: Option<(f32, f32, f32, f32, f32)> = None; // (spread, x, z, y, yaw)
-        for _ in 0..4000 {
-            let x = crate::wildlife::rng_range(&mut rng, -crate::worldmap::GX + 6.0, crate::worldmap::GX - 6.0);
-            let z = crate::wildlife::rng_range(&mut rng, -crate::worldmap::GZ + 6.0, crate::worldmap::GZ - 6.0);
-            if crate::worldmap::biome_at_world(x, z) != Some(s.biome)
-                || !footprint_clear(x, z, probe)
-            {
-                continue;
-            }
-            let Some(spread) = footprint_spread(x, z, probe) else { continue };
-            let y = crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
-            let yaw = crate::wildlife::rng_range(&mut rng, 0.0, TAU);
-            if best.map_or(true, |b| spread < b.0) {
-                best = Some((spread, x, z, y, yaw));
-            }
-            if spread <= 0.01 {
-                break;
-            }
+    let planned_forest = *FOREST_SITE.lock().expect("vignette plan poisoned");
+    if let Some((x, z, _, foot)) = planned_forest {
+        let (site, solid) = (site_clear(x, z, foot), crate::blockers::any_within(x, z, foot));
+        if !site || solid {
+            info!("vignette: planned forest spot {x:.1},{z:.1} unusable (site ok {site}, solid within {solid})");
         }
-        if let Some((_, x, z, y, yaw)) = best {
-            let id = commands
-                .spawn((
-                    Mesh3d(handle.clone()),
-                    MeshMaterial3d(mat.clone()),
-                    Transform::from_xyz(x, y, z).with_rotation(Quat::from_rotation_y(yaw)).with_scale(Vec3::splat(s.scale)),
-                    BiomeEntity,
-                ))
-                .id();
+    }
+    for (i, s) in specs().into_iter().enumerate() {
+        let probe = s.foot_r * s.scale;
+        let spot = match (s.biome, planned_forest) {
+            // Its own phase-4 reservation is there by design: check the ground rules + solids.
+            (Biome::Forest, Some((x, z, yaw, _))) if site_clear(x, z, probe) && !crate::blockers::any_within(x, z, probe) => {
+                crate::worldmap::ground_at_world(x, z).map(|y| (x, z, y, yaw))
+            }
+            _ => None,
+        }
+        .or_else(|| search(&s, spec_seed(i), footprint_clear));
+        if let Some((x, z, y, yaw)) = spot {
+            let tf = Transform::from_xyz(x, y, z).with_rotation(Quat::from_rotation_y(yaw)).with_scale(Vec3::splat(s.scale));
+            let kit = s.kit.and_then(|name| crate::realforest::get().filter(|k| k.has(name)).map(|k| (k, name)));
+            let id = match kit {
+                Some((k, name)) => {
+                    let mut e = commands.spawn((tf, BiomeEntity));
+                    k.attach_static(&mut e, name, Transform::IDENTITY);
+                    e.id()
+                }
+                None => commands.spawn((Mesh3d(meshes.add((s.mesh)())), MeshMaterial3d(mat.clone()), tf, BiomeEntity)).id(),
+            };
             // Solid oriented box covering the wreck/camp footprint (a single circle let you clip
             // the wider edges); half-extent from the flatness-probe reach, floored at block_r.
             let hb = (s.foot_r * s.scale * 0.55).max(s.block_r);
@@ -327,7 +401,7 @@ pub fn populate_vignettes(commands: &mut Commands, meshes: &mut Assets<Mesh>, ma
             crate::blockers::reserve_visual(x, z, probe);
             // Vignette set-pieces carry no sealed gear ("" → no Rune-Trial), only their shrine buff.
             crate::landmarks::attach_custom(commands, id, s.name, s.lore, s.buff, s.mag, s.beacon, "", Vec3::new(x, y, z), meshes, materials);
-            info!("vignette {:?} \"{}\" at {:.1},{:.1},{:.1}", s.biome, s.name, x, y, z);
+            info!("vignette {:?} \"{}\" at {:.1},{:.1},{:.1} yaw {yaw:.2}{}", s.biome, s.name, x, y, z, if kit.is_some() { " [kit model]" } else { "" });
         } else {
             info!("vignette: no spot found for {:?}", s.biome);
         }

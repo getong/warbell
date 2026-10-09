@@ -13,7 +13,10 @@
 //! previews a biome landmark SET-PIECE — the full `LandmarkModel` (merged base + animated
 //! parts) on the white vertex-colour material, with the real `RuinsFxPlugin` animators
 //! running, auto-framed from the mesh bounds (big props need a far camera, not the
-//! character default). `FOREST_CAM` still overrides the framing.
+//! character default). `FOREST_VIEW=kit:<model>[,<model>...]` lines up static models of the
+//! realistic forest kit (`structures.glb` / `wayside.glb` names, e.g. `kit:wayside_shrine`) on
+//! their PBR materials (`FOREST_VIEW_YAW` turns them); its stage lights run hot, so judge relative
+//! tones there and absolute ones in game. `FOREST_CAM` still overrides the framing.
 
 use std::f32::consts::FRAC_PI_2;
 
@@ -267,6 +270,36 @@ fn setup(
     // `FOREST_VIEW=landmark:<name>` — a full landmark set-piece: merged base on the white
     // vertex-colour material + its animated parts (RuinsFxPlugin drives them here too).
     let view_env = std::env::var("FOREST_VIEW").unwrap_or_default();
+    // `FOREST_VIEW=kit:<model>[,<model>...]` — static models from the realistic forest kit (e.g.
+    // `kit:wayside_signpost,wayside_cairn`), side by side along +X on their real PBR materials,
+    // auto-framed. `FOREST_VIEW_YAW=<rad>` turns every model in place.
+    if let Some(list) = view_env.strip_prefix("kit:") {
+        let Some(kit) = crate::realforest::get() else {
+            error!("viewer: the realistic forest kit failed to load");
+            return;
+        };
+        let yaw: f32 = std::env::var("FOREST_VIEW_YAW").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+        let names: Vec<&str> = list.split(',').map(str::trim).filter(|n| kit.has(n)).collect();
+        let reach = |n: &str| kit.extents(n).map_or(1.0, |(h, _)| h.length());
+        let total: f32 = names.iter().map(|n| reach(n) * 2.0 + 0.5).sum();
+        let (mut x, mut top) = (-total * 0.5, 1.0_f32);
+        for n in &names {
+            let r = reach(n);
+            x += r + 0.25;
+            kit.spawn_static(&mut commands, n, Transform::from_xyz(x, 0.0, 0.0).with_rotation(Quat::from_rotation_y(yaw)));
+            top = top.max(kit.extents(n).map_or(1.0, |(_, h)| h));
+            x += r + 0.25;
+        }
+        if parse_cam().is_none() {
+            let radius = (total * 0.5).max(top).max(1.0);
+            target = Vec3::new(0.0, top * 0.4, 0.0);
+            eye = target + Vec3::new(0.35, 0.42, 1.0).normalize() * radius * 1.9;
+        }
+        commands.spawn((Camera3d::default(), Transform::from_translation(eye).looking_at(target, Vec3::Y)));
+        spawn_stage_lights(&mut commands);
+        spawn_ground(&mut commands, &mut meshes, &mut std_mats, total.max(6.0));
+        return;
+    }
     if let Some(name) = view_env.strip_prefix("landmark:") {
         let model = landmark_model(name);
         if parse_cam().is_none() {

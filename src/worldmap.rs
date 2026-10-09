@@ -2748,6 +2748,8 @@ pub fn build_step(
 ) {
     if step == 0 {
         crate::poi::reset_plan();
+        crate::vignettes::reset_plan();
+        crate::wayside::reset_plan();
         // Warm the per-map sampling bakes ([`tiles`] → [`water_near`] → [`tile_centre_ground`])
         // behind the loading veil: the first caller would otherwise pay the one-time bake as a
         // mid-gameplay frame hitch (e.g. the first invader A* of the run).
@@ -2999,6 +3001,10 @@ fn bs_sea_and_boats(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: 
 
     crate::camps::plan();
     crate::poi::plan_clearings();
+    // Before the scatter (phase 5) so the realistic forest's merged ground cover keeps clear of
+    // the forest vignette and every wayside piece (`realforest::keep_clear`).
+    crate::vignettes::plan();
+    crate::wayside::plan();
 }
 
 /// Scatter one biome's props on its tiles (height-aware), and capture its atmosphere/weather into

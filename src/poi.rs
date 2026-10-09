@@ -9,6 +9,8 @@
 //! frame on the fortress approach, a burned-out cabin, wayside graves, a standing-stone circle,
 //! a collapsed wooden watchtower, a shepherd's hut with a pen. Environmental storytelling à la
 //! RDR2 — no interaction, no text; each is a told-without-words scene beside the road.
+//! With the realistic forest kit loaded, the set-pieces and the gallows are Blender models instead
+//! (`wayside.glb`, see [`STORY_KIT`]) on the same footprints and blocker boxes.
 //!
 //! Placement: deterministic arc-length walk along the artery polylines (like `wayside`, but
 //! ~90–130u spacing and 6–11u OFF the road), rejecting water/roads/plots/clearings/mesa
@@ -265,6 +267,9 @@ fn field() -> Mesh {
 
 // ── Placement ────────────────────────────────────────────────────────────────────────
 const STORY_FOOTPRINTS: [f32; 5] = [1.9, 1.4, 3.25, 2.4, 2.3];
+/// The realistic kit's model for each story kind (`wayside.glb`, tools/blender_forest/wayside_models.py),
+/// authored to the same footprints and blocker boxes as the low-poly meshes above.
+const STORY_KIT: [&str; 5] = ["poi_burned_cabin", "poi_graves", "poi_stones", "poi_watchtower", "poi_shepherd_hut"];
 
 #[derive(Clone)]
 struct StorySite { kind: usize, pos: Vec2, yaw: f32 }
@@ -279,8 +284,15 @@ impl StoryClearings {
         self.0.iter().any(|(pos, foot)| p.distance_squared(*pos) < (foot + radius + 0.35).powi(2))
     }
 }
+/// Every spot the world build has planned for a later set-piece — the roadside story clearings,
+/// plus the wayside furniture and the forest vignette (`wayside::plan` / `vignettes::plan`) — so
+/// the biome scatter (trees, props, cover, in every biome) leaves them free.
 pub fn story_clearings() -> StoryClearings {
-    StoryClearings(STORY_SITES.lock().unwrap().iter().map(|site| (site.pos, STORY_FOOTPRINTS[site.kind])).collect())
+    let mut spots: Vec<(Vec2, f32)> =
+        STORY_SITES.lock().unwrap().iter().map(|site| (site.pos, STORY_FOOTPRINTS[site.kind])).collect();
+    spots.extend(crate::wayside::planned_footprints());
+    spots.extend(crate::vignettes::planned_footprint());
+    StoryClearings(spots)
 }
 pub fn overlaps_planned_clearing(x: f32, z: f32, radius: f32) -> bool {
     let p = Vec2::new(x, z);
@@ -300,6 +312,12 @@ fn rng_next(state: &mut u32) -> f32 {
 /// Flat, unclaimed, off-road land — same discipline as `wayside::spot_ok` but with a wider
 /// flatness probe (these set-pieces have real footprints).
 fn spot_ok(x: f32, z: f32, probe: f32) -> bool {
+    !crate::blockers::any_visual_within(x, z, probe + 0.2) && site_ok(x, z, probe)
+}
+
+/// [`spot_ok`] minus the visual-reservation test: a planned clearing reserves its own footprint
+/// at plan time, so at spawn only the ground rules and later SOLIDS are re-checked.
+fn site_ok(x: f32, z: f32, probe: f32) -> bool {
     let Some(y0) = crate::worldmap::ground_at_world(x, z) else { return false };
     for k in 0..6 {
         let a = k as f32 * (TAU / 6.0);
@@ -316,7 +334,6 @@ fn spot_ok(x: f32, z: f32, probe: f32) -> bool {
         { return false; }
     }
     !crate::roads::on_road(x, z)
-        && !crate::blockers::any_visual_within(x, z, probe + 0.2)
         && !crate::town::near_build_plot(x, z)
         && !crate::castle::in_footprint(x, z)
         && !crate::camps::in_clearing(x, z)
@@ -392,6 +409,11 @@ pub fn plan_clearings() {
         }
     }
     info!("poi: planned {} roadside clearings", planned.len());
+    // Reserve each clearing now: the scatter (via `story_clearings`) and every placer before
+    // phase 32 (ore, chests, forage, wayside, …) then leaves it free for its set-piece.
+    for site in &planned {
+        crate::blockers::reserve_visual(site.pos.x, site.pos.y, STORY_FOOTPRINTS[site.kind]);
+    }
     *STORY_SITES.lock().unwrap() = planned;
 }
 
@@ -399,24 +421,29 @@ pub fn plan_clearings() {
 pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) {
     let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.9, ..default() });
     let range = VisibilityRange { start_margin: 0.0..0.0, end_margin: 120.0..120.0, use_aabb: true };
-    // Final placement reuses the early plan, but still respects late authored solids.
+    // Final placement reuses the early plan, but still respects late authored solids. With the
+    // realistic forest kit loaded each set-piece is its Blender model (`wayside.glb`: same
+    // footprint, masses under the same blocker boxes); otherwise the low-poly mesh.
+    let kit = crate::realforest::get().filter(|k| k.has(STORY_KIT[0]));
     let handles: Vec<Handle<Mesh>> = [burned_cabin(), graves(), standing_stones(), fallen_watchtower(), shepherd_hut()]
         .into_iter().map(|mesh| meshes.add(mesh)).collect();
     let planned = STORY_SITES.lock().unwrap().clone();
     let mut placed = 0;
     for site in planned {
         let (q, foot) = (site.pos, STORY_FOOTPRINTS[site.kind]);
-        if !spot_ok(q.x, q.y, foot) { continue; }
+        if !site_ok(q.x, q.y, foot) || crate::blockers::any_within(q.x, q.y, foot + 0.2) {
+            info!("poi: planned {} at {:.1},{:.1} was claimed, skipped", STORY_KIT[site.kind], q.x, q.y);
+            continue;
+        }
         let y = crate::worldmap::ground_at_world(q.x, q.y).unwrap_or(0.0);
-        commands.spawn((
-            Mesh3d(handles[site.kind].clone()),
-            MeshMaterial3d(mat.clone()),
-            Transform::from_xyz(q.x, y, q.y).with_rotation(Quat::from_rotation_y(site.yaw)),
-            BiomeEntity,
-            range.clone(),
-        ));
+        let tf = Transform::from_xyz(q.x, y, q.y).with_rotation(Quat::from_rotation_y(site.yaw));
+        match kit.and_then(|k| k.spawn_static_with(commands, STORY_KIT[site.kind], tf, range.clone())) {
+            Some(e) => { commands.entity(e).insert(BiomeEntity); }
+            None => { commands.spawn((Mesh3d(handles[site.kind].clone()), MeshMaterial3d(mat.clone()), tf, BiomeEntity, range.clone())); }
+        }
         register_story_blockers(site.kind, q, site.yaw);
         crate::blockers::reserve_visual(q.x, q.y, foot);
+        info!("poi: {} at {:.1},{:.1}", STORY_KIT[site.kind], q.x, q.y);
         placed += 1;
     }
 
@@ -462,13 +489,11 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
         let y = crate::worldmap::ground_at_world(q.x, q.y).unwrap_or(0.0);
         // Face the frame across the road (rotation roughly toward the gate).
         let yaw = (gate.x - q.x).atan2(gate.y - q.y);
-        commands.spawn((
-            Mesh3d(meshes.add(gallows())),
-            MeshMaterial3d(mat.clone()),
-            Transform::from_xyz(q.x, y, q.y).with_rotation(Quat::from_rotation_y(yaw)),
-            BiomeEntity,
-            range.clone(),
-        ));
+        let tf = Transform::from_xyz(q.x, y, q.y).with_rotation(Quat::from_rotation_y(yaw));
+        match kit.and_then(|k| k.spawn_static_with(commands, "poi_gallows", tf, range.clone())) {
+            Some(e) => { commands.entity(e).insert(BiomeEntity); }
+            None => { commands.spawn((Mesh3d(meshes.add(gallows())), MeshMaterial3d(mat.clone()), tf, BiomeEntity, range.clone())); }
+        }
         crate::blockers::add_obb(q.x, q.y, 1.2, 0.9, yaw);
         crate::blockers::reserve_visual(q.x, q.y, 2.0);
         info!("poi: gallows at {:.1},{:.1}", q.x, q.y);
