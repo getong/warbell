@@ -50,6 +50,9 @@ const ACCEL: f32 = 14.0;
 const GAIT_FULL_SPEED: f32 = 1.0;
 const DECEL: f32 = 9.0;
 pub(super) const PLAYER_R: f32 = 0.22;
+/// Which way (+1 / -1 rotation) the hero last slid round a blocker — sticky, so consecutive
+/// frames keep curving the same way round an obstacle instead of flip-flopping.
+static SLIDE_SIDE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(1);
 /// How far outside a trunk's / rock's collision shell the player starts getting the steer assist.
 const OBSTACLE_ASSIST_SENSE: f32 = 0.7;
 /// Sideways bias mixed into the input near an obstacle (on top of removing the into-obstacle
@@ -149,9 +152,11 @@ fn obstacle_assisted_dir(pos: Vec2, input_dir: Vec2, current_vel: Vec2) -> Vec2 
     // Strip the part of the input that drives INTO the obstacle (fully at the shell, fading out
     // across the sense band), then lean along the tangent: the hero flows round the blocker.
     let into = input_dir.dot(away_dir);
+    // The outward lean grows toward contact: a pure tangent step at the shell cuts into the curve
+    // of a round blocker (and gets rejected), so near contact the path bows slightly out.
     (input_dir - away_dir * (into * strength)
         + tangent * (OBSTACLE_ASSIST_TANGENT * strength)
-        + away_dir * (OBSTACLE_ASSIST_OUTWARD * strength))
+        + away_dir * ((OBSTACLE_ASSIST_OUTWARD + 0.3 * strength * strength) * strength))
         .normalize_or_zero()
 }
 
@@ -249,6 +254,80 @@ pub fn player_roll(
     if let Some(fx) = fx {
         let at = Vec3::new(from.x, hero.y + 0.25, from.y);
         super::combat::spawn_dust_puff(&mut commands, &fx, at, 5);
+    }
+}
+
+/// One collision-resolved locomotion step: `(new pos, new vel, slide side)`. Takes the full
+/// `step` when `free`; otherwise slides instead of stopping dead — first the classic per-axis
+/// slide (walls), then progressively wider deflections of the step (rotated boxes, the curve of a
+/// trunk or boulder, a terrace lip at an angle), preferring `side` (the way the hero last slid) so
+/// he doesn't jitter between two equally good detours. Speed drops with the deflection (cos): a
+/// glancing slide, not a free teleport round the obstacle. Boxed into a corner → stop.
+fn slide_step(pos: Vec2, step: Vec2, vel: Vec2, side: f32, free: impl Fn(Vec2) -> bool) -> (Vec2, Vec2, f32) {
+    if free(pos + step) {
+        return (pos + step, vel, side);
+    }
+    let len = step.length();
+    if len < 1e-6 {
+        return (pos, Vec2::ZERO, side);
+    }
+    let dir = step / len;
+    for (axis_step, keep) in [(Vec2::new(step.x, 0.0), Vec2::X), (Vec2::new(0.0, step.y), Vec2::Y)] {
+        if axis_step.length() > 0.45 * len && free(pos + axis_step) {
+            return (pos + axis_step, vel * keep, side);
+        }
+    }
+    for ang in [0.35f32, 0.7, 1.05, 1.4] {
+        for sgn in [side, -side] {
+            let (sn, cs) = (sgn * ang).sin_cos();
+            let d = Vec2::new(dir.x * cs - dir.y * sn, dir.x * sn + dir.y * cs);
+            let k = ang.cos();
+            if free(pos + d * (len * k)) {
+                return (pos + d * (len * k), d * (vel.length() * k), sgn);
+            }
+        }
+    }
+    (pos, Vec2::ZERO, side)
+}
+
+#[cfg(test)]
+mod slide_tests {
+    use super::*;
+
+    /// Walk the slide for `frames` steps toward +Z at 4 u/s through a world of discs.
+    fn run(discs: &[(Vec2, f32)], start: Vec2, frames: usize) -> Vec2 {
+        let free = |p: Vec2| discs.iter().all(|(c, r)| p.distance(*c) >= r + PLAYER_R);
+        let (mut pos, mut vel, mut side) = (start, Vec2::new(0.0, 4.0), 1.0);
+        for _ in 0..frames {
+            vel = Vec2::new(0.0, 4.0); // the player keeps holding W
+            let step = vel / 60.0;
+            (pos, vel, side) = slide_step(pos, step, vel, side, &free);
+        }
+        pos
+    }
+
+    #[test]
+    fn head_on_into_a_trunk_slides_round_it() {
+        // A 0.4 trunk dead ahead: the hero must get past it, not stall at its face.
+        let end = run(&[(Vec2::new(0.0, 2.0), 0.4)], Vec2::ZERO, 120);
+        assert!(end.y > 3.0, "stalled at the trunk: {end:?}");
+    }
+
+    #[test]
+    fn diagonal_wall_of_stones_is_followed() {
+        // A row of boulders at 45 deg across the path: slide along it and out past its end.
+        let wall: Vec<_> = (0..6).map(|i| (Vec2::new(-1.5 + i as f32 * 0.5, 1.5 + i as f32 * 0.5), 0.3)).collect();
+        let end = run(&wall, Vec2::ZERO, 240);
+        assert!(end.y > 5.0, "stuck on the slanted row: {end:?}");
+    }
+
+    #[test]
+    fn a_closed_corner_stops_without_tunnelling() {
+        // Two overlapping discs forming a wide cup: the hero stops, never passes through.
+        let discs = [(Vec2::new(-0.35, 1.0), 0.6), (Vec2::new(0.35, 1.0), 0.6)];
+        let free = |p: Vec2| discs.iter().all(|(c, r)| p.distance(*c) >= r + PLAYER_R);
+        let end = run(&discs, Vec2::ZERO, 120);
+        assert!(free(end), "ended inside a blocker: {end:?}");
     }
 }
 
@@ -560,20 +639,13 @@ pub fn player_move(
         // from the shell too, and still can't be abused to clip a wall in play (he never legally
         // rests overlapping one, so it stays false except when a solid materialised around him).
         let escaping = blockers::any_within(hero.pos.x, hero.pos.y, PLAYER_R);
-        if hero_can_step(nx, hero.pos.y, PLAYER_R, hero.y)
-            && (escaping || !blockers::any_within(nx, hero.pos.y, PLAYER_R))
-        {
-            hero.pos.x = nx;
-        } else {
-            hero.vel.x = 0.0; // ran into a wall on X — drop that component (no pushing into it)
-        }
-        if hero_can_step(hero.pos.x, nz, PLAYER_R, hero.y)
-            && (escaping || !blockers::any_within(hero.pos.x, nz, PLAYER_R))
-        {
-            hero.pos.y = nz;
-        } else {
-            hero.vel.y = 0.0;
-        }
+        let hy = hero.y;
+        let free = |p: Vec2| hero_can_step(p.x, p.y, PLAYER_R, hy) && (escaping || !blockers::any_within(p.x, p.y, PLAYER_R));
+        let side = SLIDE_SIDE.load(std::sync::atomic::Ordering::Relaxed) as f32;
+        let (pos, vel, new_side) = slide_step(hero.pos, Vec2::new(nx, nz) - hero.pos, hero.vel, side, free);
+        hero.pos = pos;
+        hero.vel = vel;
+        SLIDE_SIDE.store(new_side as i32, std::sync::atomic::Ordering::Relaxed);
         // Steer the facing. Free-run: toward the INPUT direction while pressing (hold the last
         // facing through the slide). Combat stance: onto the RINGED FOE — the body stays square
         // to it while WASD circles/backpedals (the movement itself is untouched; only the yaw
