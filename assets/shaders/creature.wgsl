@@ -132,10 +132,12 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
             layer = 0;
         }
         let on = ft_obj_normal(m, pbr_input.N);
-        let sc = creature.pbr.x * select(1.0, 2.2, layer == 0 || layer == 6);
+        // Skin / bone grain is fine; fur strands are finer still and laid on softly (a strong
+        // strand map reads as wood grain on a hairy leg).
+        let sc = creature.pbr.x * select(select(1.0, 2.2, layer == 0 || layer == 6), 3.0, layer == 1);
         let alb = cd_tri(cd_alb, layer, obj, on, sc).rgb;
         let orm = cd_tri(cd_ormh, layer, obj, on, sc);
-        let k = creature.pbr.z;
+        let k = creature.pbr.z * select(1.0, 0.45, layer == 1);
         let rgb = pbr_input.material.base_color.rgb * mix(vec3<f32>(1.0), alb * 2.0, k);
         pbr_input.material.base_color = vec4<f32>(max(rgb, vec3<f32>(0.0)), 1.0);
         pbr_input.material.perceptual_roughness = clamp(mix(pbr_input.material.perceptual_roughness, orm.g, 0.7), 0.08, 1.0);

@@ -43,6 +43,9 @@ pub fn run() {
         .add_plugins(crate::ruins::RuinsFxPlugin) // landmark part animators (sails/orbits/pulses)
         .insert_resource(GlobalAmbientLight { brightness: 160.0, ..default() })
         .insert_resource(ClearColor(Color::srgb(0.16, 0.17, 0.20)))
+        // The realistic kit (Blender orks / animals / props) when present, before `setup` builds.
+        .add_plugins(bevy::pbr::MaterialPlugin::<crate::realforest::foliage::FoliageMaterial>::default())
+        .add_systems(PreStartup, crate::realforest::build_kit)
         .add_systems(Startup, setup);
 
     // `FOREST_VIEW_ANIM=idle|walk|block|attack` drives the REAL game animator on the previewed

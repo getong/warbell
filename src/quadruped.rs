@@ -698,6 +698,9 @@ impl QuadMeshes {
 
 /// Build the studio per-joint meshes for `species` (each in joint-local space).
 pub fn quad_meshes(species: QuadSpecies) -> QuadMeshes {
+    if let Some(m) = kit_quad_meshes(species) {
+        return m;
+    }
     let c = quad_config(species);
     let (bw, bh, bl) = (c.body.x, c.body.y, c.body.z);
 
@@ -752,6 +755,41 @@ pub fn quad_meshes(species: QuadSpecies) -> QuadMeshes {
     let paw = group(vec![bx(c.paw_w, c.paw_h, c.paw_w + 0.02, v(0.0, -c.paw_h / 2.0, 0.02), c.detail)]);
 
     QuadMeshes { spine, neck, head, tail, leg_upper, leg_lower, paw }
+}
+
+/// The realistic animal (Blender metaball parts, `animals.glb`) for the same joints and dimensions,
+/// recoloured with the species' coat table. `None` without the kit → the box-built animal.
+fn kit_quad_meshes(species: QuadSpecies) -> Option<QuadMeshes> {
+    let name = match species {
+        QuadSpecies::Dog => "dog",
+        QuadSpecies::Wolf => "wolf",
+        QuadSpecies::Horse => "horse",
+        QuadSpecies::Deer => "deer",
+        QuadSpecies::Camel => "camel",
+        QuadSpecies::Bear | QuadSpecies::PolarBear => "bear",
+    };
+    let kit = crate::realforest::get().filter(|k| k.has(&format!("q_{name}_spine")))?;
+    let c = quad_config(species);
+    let l = crate::palette::lin;
+    // Region order = animals.py: FUR, BELLY, ACCENT, DETAIL, EYE.
+    let accent_surf = if c.collar { Surf::Cloth } else { Surf::Fur };
+    let palette = [
+        (l(c.fur), Surf::Fur),
+        (l(c.belly), Surf::Fur),
+        (l(c.accent), accent_surf),
+        (l(c.detail), Surf::Bone),
+        (l(0x0c0a08), Surf::Bone),
+    ];
+    let part = |p: &str| kit.creature_part(&format!("q_{name}_{p}"), &palette);
+    Some(QuadMeshes {
+        spine: part("spine")?,
+        neck: part("neck")?,
+        head: part("head")?,
+        tail: if c.tail_vis { part("tail") } else { None },
+        leg_upper: part("leg_upper")?,
+        leg_lower: part("leg_lower")?,
+        paw: part("paw")?,
+    })
 }
 
 fn add_ears(head: &mut Vec<Mesh>, c: &QuadConfig) {

@@ -805,6 +805,16 @@ const BIPED_SIZE_FIX: f32 = 0.85;
 const ORK_RIG_OFF: f32 = -0.05;
 /// Glowing-eye offsets in the **head joint's** local frame (studio orc eye spots).
 const ORK_BIPED_EYE_OFFS: [Vec3; 2] = [Vec3::new(-0.07, 0.1, 0.14), Vec3::new(0.07, 0.1, 0.14)];
+
+/// Glowing-eye transforms on the biped head: in the sculpted (kit) head's sockets, small, else
+/// the box head's spots.
+fn ork_eye_xfs() -> [Transform; 2] {
+    if crate::realforest::get().is_some_and(|k| k.has("ork_torso")) {
+        [-1.0f32, 1.0].map(|s| Transform::from_xyz(s * 0.052, 0.088, 0.13).with_scale(Vec3::splat(0.42)))
+    } else {
+        ORK_BIPED_EYE_OFFS.map(Transform::from_translation)
+    }
+}
 /// Shield mount on the left hand (the biped animator rewrites its pose each frame; this is the rest).
 fn ork_shield_xf() -> Transform {
     Transform { translation: Vec3::new(0.0, 0.0, 0.14), rotation: xyz(0.15, -0.45, 0.1), scale: Vec3::ONE }
@@ -1194,6 +1204,9 @@ fn part(mut m: Mesh, scale: Vec3, rot: Quat, off: Vec3, c: [f32; 4]) -> Mesh {
 /// Faction tints the loincloth + mohawk. `variant` headgear + the shaman staff are layered in a
 /// later pass; this base is what `FOREST_VIEW=ork` renders for verification.
 pub(crate) fn ork_biped_meshes(variant: OrkVariant, faction: Faction) -> crate::biped::BipedMeshes {
+    if let Some(m) = kit_ork_meshes(variant, faction) {
+        return m;
+    }
     use crate::biped::BipedMeshes;
     const HPI: f32 = std::f32::consts::FRAC_PI_2;
     const PI: f32 = std::f32::consts::PI;
@@ -1344,6 +1357,62 @@ pub(crate) fn ork_biped_meshes(variant: OrkVariant, faction: Faction) -> crate::
         shield: Some(shield),
         lion: None,
     }
+}
+
+/// The realistic ork (Blender metaball parts, `creatures.glb`) for the same biped joints, recoloured
+/// per variant (skin) and faction (cloth). `None` without the kit → the box-built ork above.
+fn kit_ork_meshes(variant: OrkVariant, faction: Faction) -> Option<crate::biped::BipedMeshes> {
+    use crate::creature::Surf;
+    let kit = crate::realforest::get().filter(|k| k.has("ork_torso"))?;
+    // Realistic skin tones (the box orks' toy palette reads cartoonish on sculpted bodies):
+    // weathered olive / sallow green / scarred red-brown / ash-grey for the shaman.
+    let skin = match variant {
+        OrkVariant::Grunt => 0x56693a,
+        OrkVariant::Scout => 0x6b7444,
+        OrkVariant::Berserker => 0x6a4630,
+        OrkVariant::Shaman => 0x5f5a62,
+    };
+    // Region order = creatures.py: SKIN, DARK, BELLY, LEATHER, CLOTH, BONE, HAIR, WOOD, IRON, ORB.
+    let palette = [
+        (lin(skin), Surf::Skin),
+        (lin_scaled(skin, 0.4), Surf::Skin),
+        (lin_scaled(skin, 1.12), Surf::Skin),
+        (lin(0x4a301c), Surf::Scale),
+        (lin(faction.hex()), Surf::Cloth),
+        (lin(0xd8cfb4), Surf::Bone),
+        (lin(0x1a1008), Surf::Fur),
+        (lin(0x5a3a1c), Surf::Stone),
+        (lin(0x7a7d82), Surf::Metal),
+        (lin(0xc89cff), Surf::Bone),
+    ];
+    let part = |n: &str| kit.creature_part(n, &palette);
+    let head = match variant {
+        OrkVariant::Grunt => "ork_head_grunt",
+        OrkVariant::Scout => "ork_head_scout",
+        OrkVariant::Berserker => "ork_head_berserker",
+        OrkVariant::Shaman => "ork_head_shaman",
+    };
+    let weapon = if matches!(variant, OrkVariant::Shaman) { "ork_staff" } else { "ork_club" };
+    Some(crate::biped::BipedMeshes {
+        hips: part("ork_hips")?,
+        torso: part("ork_torso")?,
+        neck: part("ork_neck")?,
+        head: part(head)?,
+        shoulder_l: part("ork_upper_arm")?,
+        shoulder_r: part("ork_upper_arm")?,
+        elbow_l: part("ork_forearm")?,
+        elbow_r: part("ork_forearm")?,
+        hip_l: part("ork_thigh")?,
+        hip_r: part("ork_thigh")?,
+        knee_l: part("ork_shin")?,
+        knee_r: part("ork_shin")?,
+        foot_l: part("ork_foot")?,
+        foot_r: part("ork_foot")?,
+        weapon: part(weapon),
+        // Same face-forward counter-rotation as the box shield (see `ork_biped_meshes`).
+        shield: part("ork_shield").map(|m| m.rotated_by(Quat::from_rotation_y(1.15))),
+        lion: None,
+    })
 }
 
 fn spec(variant: OrkVariant, faction: Faction) -> OrkSpec {
@@ -1710,8 +1779,8 @@ impl Armory {
         );
         // Two glowing eyes on the head joint (head-local) — the menacing night-glow.
         commands.entity(head).with_children(|p| {
-            for off in ORK_BIPED_EYE_OFFS {
-                p.spawn((Mesh3d(self.eye_mesh.clone()), MeshMaterial3d(self.eye_mat.clone()), Transform::from_translation(off), OrkEye));
+            for xf in ork_eye_xfs() {
+                p.spawn((Mesh3d(self.eye_mesh.clone()), MeshMaterial3d(self.eye_mat.clone()), xf, OrkEye));
             }
         });
         if let (true, Some(hand)) = (torch_bearer, off_hand) {
@@ -1750,8 +1819,8 @@ impl Armory {
             .id();
         let head = crate::biped::spawn_biped(commands, root, &self.mat, t.biped.clone(), 1.22, 1.0, 0.17, 0.38, ORK_RIG_OFF, Some(ork_shield_xf())).0;
         commands.entity(head).with_children(|p| {
-            for off in ORK_BIPED_EYE_OFFS {
-                p.spawn((Mesh3d(self.eye_mesh.clone()), MeshMaterial3d(self.eye_mat.clone()), Transform::from_translation(off), OrkEye));
+            for xf in ork_eye_xfs() {
+                p.spawn((Mesh3d(self.eye_mesh.clone()), MeshMaterial3d(self.eye_mat.clone()), xf, OrkEye));
             }
         });
         root

@@ -96,7 +96,8 @@ def ork_tent(rng):
             soot = 1.0 - 0.25 * max(0.0, 1.0 - u * 3.0)  # smoke-stained near the ridge
             mud = 1.0 - 0.3 * max(0.0, u - 0.8) * 5.0  # muddy hem
             k = base_t * n * soot * max(mud, 0.6)
-            return (k, k * 0.95, k * 0.88)
+            # Weathered, smoke-greyed hides rather than fresh orange leather.
+            return (k * 0.72, k * 0.62, k * 0.52)
         sheet(g, grid, M_HIDE, col, tile=0.9, double=True)
         # A stitched-on patch of a different hide.
         pu, pv = rng.uniform(0.3, 0.6), rng.uniform(0.2, 0.7)
@@ -124,7 +125,7 @@ def ork_tent(rng):
             xx = vx * (0.04 + u * w * 0.95)
             row.append((xx, yy, d * 1.0 + 0.04 * math.sin(math.pi * (j / 6)) * math.sin(math.pi * u)))
         back.append(row)
-    sheet(g, back, M_HIDE, lambda u, v: (0.78, 0.72, 0.64), tile=0.9, double=True)
+    sheet(g, back, M_HIDE, lambda u, v: (0.55, 0.48, 0.4), tile=0.9, double=True)
     # Door mouth (-Z): two flaps tied back to the poles.
     for sx in (-1, 1):
         flap = []
@@ -138,7 +139,7 @@ def ork_tent(rng):
                 xx = x_edge * (0.55 + 0.45 * v) + sx * 0.05 * math.sin(math.pi * u)
                 row.append((xx, yy, -d * 1.02 - 0.08 * v * math.sin(math.pi * u)))
             flap.append(row)
-        sheet(g, flap, M_HIDE, lambda u, v: (0.7, 0.64, 0.56), tile=0.9, double=True)
+        sheet(g, flap, M_HIDE, lambda u, v: (0.5, 0.44, 0.37), tile=0.9, double=True)
     # Guy ropes + stakes from the pole tips.
     for sz in (-1, 1):
         for sx in (-1, 1):

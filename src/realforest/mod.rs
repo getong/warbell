@@ -147,7 +147,7 @@ pub struct Kit {
 }
 
 /// Material sets by the names Blender exported: (name, PBR set file stem, foliage card?).
-const MATERIALS: [(&str, &str, bool); 17] = [
+const MATERIALS: [(&str, &str, bool); 18] = [
     ("bark_oak", "bark_oak", false),
     ("bark_beech", "bark_beech", false),
     ("bark_pine", "bark_pine", false),
@@ -167,6 +167,9 @@ const MATERIALS: [(&str, &str, bool); 17] = [
     ("s_thatch", "s_thatch", false),
     ("s_cloth", "s_cloth", false),
     ("s_iron", "s_iron", false),
+    // Creature parts (creatures.glb) — never drawn with this material (recoloured CPU meshes on
+    // the creature material); the entry only lets the loader accept the glb.
+    ("creature", "", false),
 ];
 
 impl Kit {
@@ -268,6 +271,26 @@ impl Kit {
         let (yaw, _, _) = rot.to_euler(EulerRot::YXZ);
         crate::blockers::add_obb(x, z, half.x, half.y, yaw);
         true
+    }
+
+    /// A recoloured CPU copy of creature part `name` (creatures.glb): vertex colour R holds a
+    /// region code (region/16), G a baked cavity term. Each region gets `palette[region]` (rgb,
+    /// darkened by the cavity) and its creature surface code in alpha.
+    pub fn creature_part(&self, name: &str, palette: &[([f32; 4], crate::creature::Surf)]) -> Option<Mesh> {
+        use bevy::mesh::VertexAttributeValues;
+        let m = self.model(name)?;
+        let mut mesh = self.models[m].parts.first()?.mesh.clone();
+        if let Some(VertexAttributeValues::Float32x4(cols)) = mesh.attribute_mut(Mesh::ATTRIBUTE_COLOR) {
+            for c in cols.iter_mut() {
+                let region = ((c[0] * 16.0).floor() as usize).min(palette.len().saturating_sub(1));
+                let (rgb, surf) = palette[region];
+                let cav = c[1];
+                *c = [rgb[0] * cav, rgb[1] * cav, rgb[2] * cav, crate::creature::surf_code(surf)];
+            }
+        }
+        // Not needed on the creature path (triplanar), and the merger-free rigs don't care.
+        mesh.remove_attribute(Mesh::ATTRIBUTE_TANGENT);
+        Some(mesh)
     }
 
     /// Is there a kit model called `name`?
@@ -722,7 +745,7 @@ fn try_build(
     let wind = [mat_index["canopy"], mat_index["undergrowth"]];
     let mut models = Vec::new();
     let mut by_name = HashMap::new();
-    for glb in ["forest_pbr/trees.glb", "forest_pbr/undergrowth.glb", "forest_pbr/props.glb", "forest_pbr/structures.glb"] {
+    for glb in ["forest_pbr/trees.glb", "forest_pbr/undergrowth.glb", "forest_pbr/props.glb", "forest_pbr/structures.glb", "forest_pbr/creatures.glb", "forest_pbr/animals.glb"] {
         let mut objs = load::read_glb(glb)?;
         // `attach_tree` finds a tree's LOD1 at `lod0 + 1`, so keep each _lod0 / _lod1 pair adjacent.
         objs.sort_by(|a, b| a.0.cmp(&b.0));
@@ -784,7 +807,7 @@ fn model_extents(parts: &[Part], mats: &[KitMat]) -> (Vec2, f32) {
 /// Ground layers, in texture-array order (`terrain.wgsl` indexes them 0/1/2).
 const LAYERS: [&str; 3] = ["litter", "moss", "path"];
 
-fn build_kit(
+pub(crate) fn build_kit(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut foliage_mats: ResMut<Assets<foliage::FoliageMaterial>>,
