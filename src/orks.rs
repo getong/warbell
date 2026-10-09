@@ -1356,6 +1356,7 @@ pub(crate) fn ork_biped_meshes(variant: OrkVariant, faction: Faction) -> crate::
         weapon: Some(weapon),
         shield: Some(shield),
         lion: None,
+        skin: None,
     }
 }
 
@@ -1412,6 +1413,7 @@ fn kit_ork_meshes(variant: OrkVariant, faction: Faction) -> Option<crate::biped:
         // Same face-forward counter-rotation as the box shield (see `ork_biped_meshes`).
         shield: part("ork_shield").map(|m| m.rotated_by(Quat::from_rotation_y(1.15))),
         lion: None,
+        skin: None,
     })
 }
 

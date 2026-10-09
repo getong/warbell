@@ -154,6 +154,10 @@ pub fn animate_biped(
 /// A per-joint mesh set for a biped — the 14 body joints (hips/torso/neck/head, both shoulders/
 /// elbows, both hips/knees/feet) plus an optional held weapon (on the `Sword` pivot), shield, and
 /// shield emblem. Each becomes one flat-shaded vertex-coloured mesh, like the hero's.
+///
+/// Or, with [`BipedMeshes::skin`] set, the whole body is ONE mesh skinned to the same joints (the
+/// realistic townsfolk, `peasant_model::kit_peasant_meshes`): limbs then bend at the joints instead
+/// of reading as separate pegs, and the per-joint meshes are ignored (leave them empty).
 #[allow(dead_code)]
 pub struct BipedMeshes {
     pub hips: Mesh,
@@ -173,6 +177,36 @@ pub struct BipedMeshes {
     pub weapon: Option<Mesh>,
     pub shield: Option<Mesh>,
     pub lion: Option<Mesh>,
+    /// The whole body as one skinned mesh, authored in the `rig` frame at the rest pose, with
+    /// `ATTRIBUTE_JOINT_INDEX` / `ATTRIBUTE_JOINT_WEIGHT` indexing [`SKIN_JOINTS`].
+    pub skin: Option<Mesh>,
+}
+
+/// The joint order a [`BipedMeshes::skin`] mesh's joint indices refer to (`people.py` `JOINTS`).
+#[allow(dead_code)]
+pub const SKIN_JOINTS: [&str; 14] =
+    ["hips", "torso", "neck", "head", "sh_l", "el_l", "sh_r", "el_r", "hip_l", "knee_l", "foot_l", "hip_r", "knee_r", "foot_r"];
+
+/// Rest-pose transforms (in the `rig` frame) of the [`SKIN_JOINTS`], exactly as [`spawn_biped`]
+/// lays the joints out — the bind pose of a skinned body.
+pub fn rest_joint_matrices(head_scale: f32, foot_scale: f32, hip_dx: f32, shoulder_dx: f32) -> [Mat4; 14] {
+    let t = |x: f32, y: f32, z: f32| Mat4::from_translation(Vec3::new(x, y, z));
+    let ts = |x: f32, y: f32, z: f32, s: f32| Mat4::from_scale_rotation_translation(Vec3::splat(s), Quat::IDENTITY, Vec3::new(x, y, z));
+    let hips = t(0.0, 1.05, 0.0);
+    let torso = hips * t(0.0, 0.15, 0.0);
+    let neck = torso * t(0.0, 0.35, 0.0);
+    let head = neck * ts(0.0, 0.08, 0.0, head_scale);
+    let sh_l = torso * t(-shoulder_dx, 0.27, 0.01);
+    let el_l = sh_l * t(0.0, -0.30, 0.0);
+    let sh_r = torso * t(shoulder_dx, 0.27, 0.01);
+    let el_r = sh_r * t(0.0, -0.30, 0.0);
+    let hip_l = hips * t(-hip_dx, -0.05, 0.0);
+    let knee_l = hip_l * t(0.0, -0.40, 0.0);
+    let foot_l = knee_l * ts(0.0, -0.45, 0.0, foot_scale);
+    let hip_r = hips * t(hip_dx, -0.05, 0.0);
+    let knee_r = hip_r * t(0.0, -0.40, 0.0);
+    let foot_r = knee_r * ts(0.0, -0.45, 0.0, foot_scale);
+    [hips, torso, neck, head, sh_l, el_l, sh_r, el_r, hip_l, knee_l, foot_l, hip_r, knee_r, foot_r]
 }
 
 /// Pre-uploaded handles for a [`BipedMeshes`] set — so a cached spawner (e.g. the ork `Armory`)
@@ -180,23 +214,25 @@ pub struct BipedMeshes {
 /// spawn (which would bloat memory badly during a siege).
 #[derive(Clone)]
 pub struct BipedHandles {
-    hips: Handle<Mesh>,
-    torso: Handle<Mesh>,
-    neck: Handle<Mesh>,
-    head: Handle<Mesh>,
-    shoulder_l: Handle<Mesh>,
-    shoulder_r: Handle<Mesh>,
-    elbow_l: Handle<Mesh>,
-    elbow_r: Handle<Mesh>,
-    hip_l: Handle<Mesh>,
-    hip_r: Handle<Mesh>,
-    knee_l: Handle<Mesh>,
-    knee_r: Handle<Mesh>,
-    foot_l: Handle<Mesh>,
-    foot_r: Handle<Mesh>,
+    hips: Option<Handle<Mesh>>,
+    torso: Option<Handle<Mesh>>,
+    neck: Option<Handle<Mesh>>,
+    head: Option<Handle<Mesh>>,
+    shoulder_l: Option<Handle<Mesh>>,
+    shoulder_r: Option<Handle<Mesh>>,
+    elbow_l: Option<Handle<Mesh>>,
+    elbow_r: Option<Handle<Mesh>>,
+    hip_l: Option<Handle<Mesh>>,
+    hip_r: Option<Handle<Mesh>>,
+    knee_l: Option<Handle<Mesh>>,
+    knee_r: Option<Handle<Mesh>>,
+    foot_l: Option<Handle<Mesh>>,
+    foot_r: Option<Handle<Mesh>>,
     weapon: Option<Handle<Mesh>>,
     shield: Option<Handle<Mesh>>,
     lion: Option<Handle<Mesh>>,
+    /// The skinned body + its rest-pose bounds (rig frame), padded for the poses' reach.
+    skin: Option<(Handle<Mesh>, bevy::camera::primitives::Aabb)>,
 }
 
 impl BipedHandles {
@@ -210,27 +246,54 @@ impl BipedHandles {
     }
 }
 
+/// Vertex positions of a mesh (empty if it has none).
+fn skin_positions(m: &Mesh) -> Vec<Vec3> {
+    match m.attribute(Mesh::ATTRIBUTE_POSITION) {
+        Some(bevy::mesh::VertexAttributeValues::Float32x3(p)) => p.iter().map(|v| Vec3::from(*v)).collect(),
+        _ => Vec::new(),
+    }
+}
+
 impl BipedMeshes {
     /// Upload every mesh once, returning shareable (cloneable) handles for cached spawning.
     pub fn upload(self, meshes: &mut Assets<Mesh>) -> BipedHandles {
+        // A skinned body replaces the 14 per-joint leaves (those stay empty and are not uploaded).
+        let rigid = self.skin.is_none();
+        let mut add = |m: Mesh| rigid.then(|| meshes.add(m));
+        let (hips, torso, neck, head) = (add(self.hips), add(self.torso), add(self.neck), add(self.head));
+        let (shoulder_l, shoulder_r, elbow_l, elbow_r) = (add(self.shoulder_l), add(self.shoulder_r), add(self.elbow_l), add(self.elbow_r));
+        let (hip_l, hip_r, knee_l, knee_r) = (add(self.hip_l), add(self.hip_r), add(self.knee_l), add(self.knee_r));
+        let (foot_l, foot_r) = (add(self.foot_l), add(self.foot_r));
+        let skin = self.skin.map(|m| {
+            // Rest bounds padded for the clips' reach (an overhead chop, a seated lap, a stride).
+            let aabb = match bevy::camera::primitives::Aabb::enclosing(skin_positions(&m)) {
+                Some(b) => bevy::camera::primitives::Aabb::from_min_max(
+                    Vec3::from(b.min()) - Vec3::new(0.35, 0.3, 0.5),
+                    Vec3::from(b.max()) + Vec3::new(0.35, 0.45, 0.5),
+                ),
+                None => bevy::camera::primitives::Aabb::from_min_max(Vec3::new(-1.0, 0.0, -1.0), Vec3::new(1.0, 2.3, 1.0)),
+            };
+            (meshes.add(m), aabb)
+        });
         BipedHandles {
-            hips: meshes.add(self.hips),
-            torso: meshes.add(self.torso),
-            neck: meshes.add(self.neck),
-            head: meshes.add(self.head),
-            shoulder_l: meshes.add(self.shoulder_l),
-            shoulder_r: meshes.add(self.shoulder_r),
-            elbow_l: meshes.add(self.elbow_l),
-            elbow_r: meshes.add(self.elbow_r),
-            hip_l: meshes.add(self.hip_l),
-            hip_r: meshes.add(self.hip_r),
-            knee_l: meshes.add(self.knee_l),
-            knee_r: meshes.add(self.knee_r),
-            foot_l: meshes.add(self.foot_l),
-            foot_r: meshes.add(self.foot_r),
+            hips,
+            torso,
+            neck,
+            head,
+            shoulder_l,
+            shoulder_r,
+            elbow_l,
+            elbow_r,
+            hip_l,
+            hip_r,
+            knee_l,
+            knee_r,
+            foot_l,
+            foot_r,
             weapon: self.weapon.map(|m| meshes.add(m)),
             shield: self.shield.map(|m| meshes.add(m)),
             lion: self.lion.map(|m| meshes.add(m)),
+            skin,
         }
     }
 }
@@ -278,14 +341,14 @@ pub fn spawn_biped(
     commands.entity(root).add_child(rig);
 
     // Spine.
-    let hips = joint(commands, rig, Some(Hips), p(Vec3::new(0.0, 1.05, 0.0)), Some(h.hips));
-    let torso = joint(commands, hips, Some(Torso), p(Vec3::new(0.0, 0.15, 0.0)), Some(h.torso));
-    let neck = joint(commands, torso, None, p(Vec3::new(0.0, 0.35, 0.0)), Some(h.neck));
-    let head_e = joint(commands, neck, Some(Head), ps(Vec3::new(0.0, 0.08, 0.0), head_scale), Some(h.head));
+    let hips = joint(commands, rig, Some(Hips), p(Vec3::new(0.0, 1.05, 0.0)), h.hips);
+    let torso = joint(commands, hips, Some(Torso), p(Vec3::new(0.0, 0.15, 0.0)), h.torso);
+    let neck = joint(commands, torso, None, p(Vec3::new(0.0, 0.35, 0.0)), h.neck);
+    let head_e = joint(commands, neck, Some(Head), ps(Vec3::new(0.0, 0.08, 0.0), head_scale), h.head);
 
     // Left arm (+ optional shield/emblem on the hand).
-    let sh_l = joint(commands, torso, Some(ShoulderL), p(Vec3::new(-shoulder_dx, 0.27, 0.01)), Some(h.shoulder_l));
-    let el_l = joint(commands, sh_l, Some(ElbowL), p(Vec3::new(0.0, -0.30, 0.0)), Some(h.elbow_l));
+    let sh_l = joint(commands, torso, Some(ShoulderL), p(Vec3::new(-shoulder_dx, 0.27, 0.01)), h.shoulder_l);
+    let el_l = joint(commands, sh_l, Some(ElbowL), p(Vec3::new(0.0, -0.30, 0.0)), h.elbow_l);
     let hand_l = joint(commands, el_l, None, p(Vec3::new(0.0, -0.25, 0.0)), None);
     let mut shield_out = None;
     if let (Some(sx), Some(shield)) = (shield_xf, h.shield) {
@@ -297,20 +360,42 @@ pub fn spawn_biped(
     }
 
     // Right arm (+ optional weapon on the Sword pivot).
-    let sh_r = joint(commands, torso, Some(ShoulderR), p(Vec3::new(shoulder_dx, 0.27, 0.01)), Some(h.shoulder_r));
-    let el_r = joint(commands, sh_r, Some(ElbowR), p(Vec3::new(0.0, -0.30, 0.0)), Some(h.elbow_r));
+    let sh_r = joint(commands, torso, Some(ShoulderR), p(Vec3::new(shoulder_dx, 0.27, 0.01)), h.shoulder_r);
+    let el_r = joint(commands, sh_r, Some(ElbowR), p(Vec3::new(0.0, -0.30, 0.0)), h.elbow_r);
     let hand_r = joint(commands, el_r, None, p(Vec3::new(0.0, -0.25, 0.0)), None);
     if let Some(weapon) = h.weapon {
         joint(commands, hand_r, Some(Sword), Transform::default(), Some(weapon));
     }
 
     // Legs.
-    let hip_l = joint(commands, hips, Some(HipL), p(Vec3::new(-hip_dx, -0.05, 0.0)), Some(h.hip_l));
-    let knee_l = joint(commands, hip_l, Some(KneeL), p(Vec3::new(0.0, -0.40, 0.0)), Some(h.knee_l));
-    joint(commands, knee_l, Some(FootL), ps(Vec3::new(0.0, -0.45, 0.0), foot_scale), Some(h.foot_l));
-    let hip_r = joint(commands, hips, Some(HipR), p(Vec3::new(hip_dx, -0.05, 0.0)), Some(h.hip_r));
-    let knee_r = joint(commands, hip_r, Some(KneeR), p(Vec3::new(0.0, -0.40, 0.0)), Some(h.knee_r));
-    joint(commands, knee_r, Some(FootR), ps(Vec3::new(0.0, -0.45, 0.0), foot_scale), Some(h.foot_r));
+    let hip_l = joint(commands, hips, Some(HipL), p(Vec3::new(-hip_dx, -0.05, 0.0)), h.hip_l);
+    let knee_l = joint(commands, hip_l, Some(KneeL), p(Vec3::new(0.0, -0.40, 0.0)), h.knee_l);
+    let foot_l = joint(commands, knee_l, Some(FootL), ps(Vec3::new(0.0, -0.45, 0.0), foot_scale), h.foot_l);
+    let hip_r = joint(commands, hips, Some(HipR), p(Vec3::new(hip_dx, -0.05, 0.0)), h.hip_r);
+    let knee_r = joint(commands, hip_r, Some(KneeR), p(Vec3::new(0.0, -0.40, 0.0)), h.knee_r);
+    let foot_r = joint(commands, knee_r, Some(FootR), ps(Vec3::new(0.0, -0.45, 0.0), foot_scale), h.foot_r);
+
+    // A skinned body: one mesh in the rig frame, bound to the joints above (`SKIN_JOINTS` order)
+    // with their rest transforms as the bind pose. Bevy's skinning reads the joints' live
+    // GlobalTransforms, so every clip the animator writes bends the body.
+    if let Some((mesh, aabb)) = h.skin {
+        let joints = vec![hips, torso, neck, head_e, sh_l, el_l, sh_r, el_r, hip_l, knee_l, foot_l, hip_r, knee_r, foot_r];
+        let inverse: Vec<Mat4> = rest_joint_matrices(head_scale, foot_scale, hip_dx, shoulder_dx).iter().map(|m| m.inverse()).collect();
+        let body = commands.spawn((Transform::default(), Visibility::Visible, aabb, bevy::camera::visibility::NoAutoAabb)).id();
+        commands.entity(rig).add_child(body);
+        let mat = mat.clone();
+        // The bind-pose asset needs the asset store: add it (and the mesh, so the body never draws
+        // unskinned for a frame) when the commands flush.
+        commands.queue(move |world: &mut World| {
+            let Some(mut poses) = world.get_resource_mut::<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>() else {
+                return;
+            };
+            let inverse_bindposes = poses.add(bevy::mesh::skinning::SkinnedMeshInverseBindposes::from(inverse));
+            if let Ok(mut e) = world.get_entity_mut(body) {
+                e.insert((Mesh3d(mesh), MeshMaterial3d(mat), bevy::mesh::skinning::SkinnedMesh { inverse_bindposes, joints }));
+            }
+        });
+    }
 
     (head_e, shield_out)
 }
@@ -320,5 +405,24 @@ pub struct BipedPlugin;
 impl Plugin for BipedPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Update, animate_biped);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A skinned body's bind pose must be exactly where `spawn_biped` puts the joints.
+    #[test]
+    fn rest_joint_matrices_match_the_spawned_layout() {
+        let m = rest_joint_matrices(1.2, 1.0, 0.1, 0.2);
+        let at = |i: usize| m[i].transform_point3(Vec3::ZERO);
+        assert_eq!(SKIN_JOINTS[3], "head");
+        assert!((at(3) - Vec3::new(0.0, 1.63, 0.0)).length() < 1e-5);
+        assert!((m[3].transform_vector3(Vec3::X).length() - 1.2).abs() < 1e-5);
+        assert_eq!(SKIN_JOINTS[7], "el_r");
+        assert!((at(7) - Vec3::new(0.2, 1.17, 0.01)).length() < 1e-5);
+        assert_eq!(SKIN_JOINTS[10], "foot_l");
+        assert!((at(10) - Vec3::new(-0.1, 0.15, 0.0)).length() < 1e-5);
     }
 }

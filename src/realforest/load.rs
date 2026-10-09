@@ -272,6 +272,13 @@ pub fn read_glb(rel: &str) -> Result<Vec<(String, Vec<Primitive>)>, String> {
             m.insert_attribute(Mesh::ATTRIBUTE_COLOR, VertexAttributeValues::Float32x4(col));
             m.insert_indices(Indices::U32(idx));
             let material = prim.material().name().unwrap_or_default().to_string();
+            // Creature parts may carry data in a second UV set (the townsfolk's skin weights, see
+            // people.py); every other kit model keeps its plain layout.
+            if material == "creature" {
+                if let Some(uv1) = reader.read_tex_coords(1) {
+                    m.insert_attribute(Mesh::ATTRIBUTE_UV_1, uv1.into_f32().collect::<Vec<[f32; 2]>>());
+                }
+            }
             prims.push(Primitive { mesh: m, material });
         }
         out.push((name, prims));

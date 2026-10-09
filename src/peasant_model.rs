@@ -15,9 +15,10 @@
 //!
 //! **Realistic body.** When the Blender forest kit loaded `people.glb`
 //! (`tools/blender_forest/people.py`), [`peasant_biped_meshes`] instead assembles an organic,
-//! realistically-proportioned human from sculpted per-joint parts (see `kit_peasant_meshes`): same
-//! joints and props, a slimmer frame — so spawn sites take the rig spacing from [`rig_dims`] — and a
-//! per-person `look` (face / hair / beard / everyday hood). The box builder below stays the fallback.
+//! realistically-proportioned human as ONE skinned mesh on the same biped joints (see
+//! `kit_peasant_meshes`): same joints, clips and props, a slimmer frame — so spawn sites take the
+//! rig spacing from [`rig_dims`] — and a per-person `look` (face / hair / beard / everyday hood).
+//! The box builder below stays the fallback.
 
 use bevy::mesh::MeshBuilder;
 use bevy::prelude::*;
@@ -196,13 +197,16 @@ fn tan_skin(c: u32) -> u32 {
     (r << 16) | (g << 8) | b
 }
 
-// ── Realistic kit body (Blender metaball parts, `people.glb`) ─────────────────────────────────
+// ── Realistic kit body (Blender SDF pieces, `people.glb`) ──────────────────────────────────────
 //
-// `tools/blender_forest/people.py` builds a base human (tunic, trousers, boots, hands) plus
-// add-ons per rig joint — hair styles, beards, headgear, apron / plate + tabard / jerkin + quiver /
-// desert cloak, sash and robe, pauldrons, a bracer — each authored in its joint's frame. Here a
-// person is ASSEMBLED by merging the parts their trade + look call for, recoloured by one
-// per-person palette (vertex colour R = region code, see the region list in people.py).
+// `tools/blender_forest/people.py` builds a base human (tunic trunk, sleeved or bare arms with
+// gripping hands, trousered legs with boots or desert wraps + sandals, four faces) plus add-ons —
+// hair styles, beards, headgear, apron / plate + tabard / jerkin + quiver / desert cloak, sash and
+// robe, pauldrons, a bracer. Body pieces are authored in the rig's rest frame, head pieces in the
+// head joint's frame, and every vertex carries its skin weights (UV0 + UV1). Here a person is
+// ASSEMBLED by merging the pieces their trade + look call for into ONE skinned mesh, recoloured by
+// one per-person palette (vertex colour R = region code, see the region list in people.py), and
+// `biped::spawn_biped` binds it to the joints — elbows, knees and skirts bend instead of pegs.
 
 /// Number of distinct cosmetic looks (face / hair / beard / hair tone / everyday headgear) the
 /// kit body cycles through. Callers pass any u32 (the villager seed); it is taken mod this.
@@ -238,7 +242,7 @@ const LOOK_TABLE: [(&str, &str, Option<&str>, usize, u8); LOOKS as usize] = [
 
 /// The realistic kit, when it loaded the townsfolk parts.
 fn kit_people() -> Option<&'static crate::realforest::Kit> {
-    crate::realforest::get().filter(|k| k.has("hu_torso"))
+    crate::realforest::get().filter(|k| k.has("hu_trunk"))
 }
 
 /// `(hip_dx, shoulder_dx, head_mul)` for [`crate::biped::spawn_biped`]: the kit body's slimmer
@@ -252,6 +256,13 @@ pub fn rig_dims() -> (f32, f32, f32) {
     }
 }
 
+/// The head scale the kit body bakes into its head pieces — what the spawn sites pass to
+/// `spawn_biped` (`(1.55 kid | 1.06) * head_mul`). The skinned body's bind pose cancels the joint's
+/// own scale, so this is the size the head is drawn at.
+fn kit_head_scale(kid: bool) -> f32 {
+    (if kid { 1.55 } else { 1.06 }) * KIT_HEAD_MUL
+}
+
 /// Per-channel sRGB-hex lerp.
 fn mix_hex(a: u32, b: u32, t: f32) -> u32 {
     let ch = |s: u32| {
@@ -261,11 +272,111 @@ fn mix_hex(a: u32, b: u32, t: f32) -> u32 {
     ch(16) | ch(8) | ch(0)
 }
 
-/// The realistic townsperson (Blender parts, `people.glb`) for the same biped joints as the box
+/// Weathering per region (people.py order): the colour multiplier a fully weathered vertex (vertex
+/// colour B = 1) reaches — ruddy skin, grimy cloth, dusty boots and wraps.
+const KIT_WEATHER: [[f32; 3]; 16] = [
+    [1.0, 0.8, 0.74],    // skin: ruddy cheeks, nose, ears, knuckles
+    [1.0, 1.0, 1.0],     // lip
+    [31.0, 58.0, 92.0],  // eye: the baked corners lift the dark iris (linear) to off-white whites
+    [1.2, 1.15, 1.05],   // hair
+    [0.62, 0.6, 0.56],   // tunic: grime toward the hem, sweat under the arms
+    [0.7, 0.68, 0.64],   // trim
+    [0.62, 0.6, 0.56],   // trousers: worn knees
+    [0.8, 0.78, 0.74],   // leather
+    [1.7, 1.55, 1.35],   // boots: road dust
+    [0.8, 0.78, 0.74],   // metal
+    [0.75, 0.72, 0.68],  // headcloth
+    [1.25, 1.18, 1.05],  // band (desert wraps: dust)
+    [0.68, 0.65, 0.6],   // tabard / apron
+    [1.0, 1.0, 1.0],     // fletch / lamp
+    [0.78, 0.74, 0.68],  // cloak / robe
+    [0.8, 0.78, 0.74],   // helm
+];
+/// Where the head pieces hang (the head joint's rest position in the rig frame).
+const KIT_HEAD_PIVOT: Vec3 = Vec3::new(0.0, 1.63, 0.0);
+/// `biped::SKIN_JOINTS` index of the head.
+const SKIN_HEAD: u16 = 3;
+
+/// A piece's 4 skin influences from its UV0 + UV1: each component = joint + 0.005 + weight * 0.98
+/// (people.py `encode_weights`). Weights renormalised; no data → all on the hips.
+fn decode_influences(uv0: [f32; 2], uv1: [f32; 2]) -> ([u16; 4], [f32; 4]) {
+    let mut j = [0u16; 4];
+    let mut w = [0.0f32; 4];
+    for (i, v) in [uv0[0], uv0[1], uv1[0], uv1[1]].into_iter().enumerate() {
+        let jj = v.floor().clamp(0.0, 13.0);
+        j[i] = jj as u16;
+        w[i] = ((v - jj - 0.005) / 0.98).clamp(0.0, 1.0);
+    }
+    let sum: f32 = w.iter().sum();
+    if sum > 1e-4 {
+        w.iter_mut().for_each(|x| *x /= sum);
+    } else {
+        w = [1.0, 0.0, 0.0, 0.0];
+    }
+    (j, w)
+}
+
+/// Merge people.glb pieces into ONE mesh skinned to `biped::SKIN_JOINTS`, in the rig frame. Head
+/// pieces (`head == true`, authored in the head joint's frame) are hung at the head pivot and
+/// scaled by `head_scale` as far as they are head-weighted, so the neck stub stays body-sized and
+/// a kid's big head still meets a slim neck. The rest-pose position also goes into UV0.xy + UV1.x
+/// (UV1.y = 64 flags it): the creature shader textures in that space, so the scanned detail layers
+/// stay put on a bending limb instead of swimming through it.
+fn skinned_body(parts: Vec<(Mesh, bool)>, head_scale: f32) -> Option<Mesh> {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues as V};
+    let (mut pos, mut nrm, mut col) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut uv0, mut uv1, mut ji, mut jw, mut idx) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for (m, head) in parts {
+        let base = pos.len() as u32;
+        let (Some(V::Float32x3(p)), Some(V::Float32x3(n)), Some(V::Float32x4(c)), Some(V::Float32x2(a)), Some(V::Float32x2(b))) = (
+            m.attribute(Mesh::ATTRIBUTE_POSITION),
+            m.attribute(Mesh::ATTRIBUTE_NORMAL),
+            m.attribute(Mesh::ATTRIBUTE_COLOR),
+            m.attribute(Mesh::ATTRIBUTE_UV_0),
+            m.attribute(Mesh::ATTRIBUTE_UV_1),
+        ) else {
+            return None; // an old (rigid, unweighted) people.glb: no kit body
+        };
+        for k in 0..p.len() {
+            let (j, w) = decode_influences(a[k], b[k]);
+            let mut v = Vec3::from(p[k]);
+            if head {
+                let hw: f32 = (0..4).filter(|&i| j[i] == SKIN_HEAD).map(|i| w[i]).sum();
+                v = KIT_HEAD_PIVOT + v * (1.0 + (head_scale - 1.0) * hw);
+            }
+            pos.push(v.to_array());
+            nrm.push(n[k]);
+            col.push(c[k]);
+            uv0.push([v.x, v.y]);
+            uv1.push([v.z, 64.0]);
+            ji.push(j);
+            jw.push(w);
+        }
+        match m.indices() {
+            Some(Indices::U32(i)) => idx.extend(i.iter().map(|x| x + base)),
+            Some(Indices::U16(i)) => idx.extend(i.iter().map(|&x| x as u32 + base)),
+            None => idx.extend(base..base + p.len() as u32),
+        }
+    }
+    let mut out = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    out.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
+    out.insert_attribute(Mesh::ATTRIBUTE_NORMAL, nrm);
+    out.insert_attribute(Mesh::ATTRIBUTE_COLOR, V::Float32x4(col));
+    out.insert_attribute(Mesh::ATTRIBUTE_UV_0, uv0);
+    out.insert_attribute(Mesh::ATTRIBUTE_UV_1, uv1);
+    out.insert_attribute(Mesh::ATTRIBUTE_JOINT_INDEX, V::Uint16x4(ji));
+    out.insert_attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT, jw);
+    out.insert_indices(Indices::U32(idx));
+    Some(out)
+}
+
+/// The realistic townsperson (Blender pieces, `people.glb`) for the same biped joints as the box
 /// peasant: same trade marks (straw hat + apron, miner's helmet + lamp, steel helm + plate +
-/// livery tabard + shield, archer's hood + jerkin + quiver + bracer + bow, desert turban / cloak /
-/// sash / robe / sandals) and the same props (`peasant_tools`), recoloured with the caller's skin /
-/// tunic / trouser so the town keeps its variety; `look` adds face / hair / beard / hood variety.
+/// livery tabard + pauldrons + shield, archer's hood + jerkin + quiver + bracer + bow, desert
+/// turban / cloak / sash / robe / wraps + sandals) and the same props (`peasant_tools`), recoloured
+/// with the caller's skin / tunic / trouser so the town keeps its variety; `look` adds face / hair /
+/// beard / hood variety. The body is ONE mesh skinned to the joints ([`BipedMeshes::skin`]).
 /// `None` without the kit → the box-built body.
 fn kit_peasant_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u32, kid: bool, desert: bool, look: u32) -> Option<BipedMeshes> {
     use PeasantKind::*;
@@ -292,7 +403,7 @@ fn kit_peasant_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u32, ki
     };
     // Hoods / wraps hide the hair; kids are never bald or bearded; woodcutters and desert men
     // always wear a beard (the box peasant's woodcutter beard + the rival's look).
-    // (The steel helm counts: hair under it would be a hidden ~240 tris on every soldier.)
+    // (The steel helm counts: hair under it would be hidden tris on every soldier.)
     let covered = matches!(hat, Some("hood" | "archer" | "turban" | "headwrap" | "warhelm" | "helm"));
     // Under a cap / helmet / brim only the crop (or the bald fringe) — a fringe or a long mane
     // would poke through the headgear's front.
@@ -342,14 +453,14 @@ fn kit_peasant_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u32, ki
     let c = |hex: u32, s: Surf| (lin(hex), s);
     let palette = [
         c(skin, Surf::Skin),
-        c(mix_hex(skin, 0x7a3a34, 0.4), Surf::Skin),
-        c(0x241a14, Surf::Skin),
+        c(mix_hex(skin, 0x7a3a34, 0.42), Surf::Skin),
+        c(0x2a1e17, Surf::Skin), // the iris (the whites of the eye are baked weathering)
         c(HAIR_TONES[tone], Surf::Fur),
         c(tunic, Surf::Cloth),
         (crate::palette::lin_scaled(tunic, 0.62), Surf::Cloth),
         c(trouser, Surf::Cloth),
         c(LEATHER, Surf::Scale),
-        c(BOOT, Surf::Scale),
+        c(if desert { DESERT_SANDAL } else { BOOT }, Surf::Scale),
         c(metal, metal_surf),
         c(headcloth, Surf::Cloth),
         c(band, Surf::Cloth),
@@ -358,50 +469,9 @@ fn kit_peasant_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u32, ki
         c(DESERT_CLOAK, Surf::Cloth),
         c(if desert { DESERT_BRONZE } else { PLATE }, Surf::Metal),
     ];
-    // One joint's mesh = its base part with the add-ons merged in (any missing part → no kit body).
-    let part = |names: &[&str]| -> Option<Mesh> {
-        let (first, rest) = names.split_first()?;
-        let mut m = kit.creature_part(first, &palette)?;
-        for n in rest {
-            m.merge(&kit.creature_part(n, &palette)?).ok()?;
-        }
-        Some(m)
-    };
 
-    let mut head = vec![format!("hu_head_{face}")];
-    if !covered {
-        head.push(format!("hu_hair_{hair_style}"));
-    }
-    if let Some(b) = beard {
-        head.push(format!("hu_beard_{b}_{face}"));
-    }
-    if let Some(h) = hat {
-        head.push(format!("hu_hat_{h}"));
-    }
-    let head: Vec<&str> = head.iter().map(String::as_str).collect();
-
-    let mut torso = vec!["hu_torso"];
-    let mut hips = vec!["hu_hips"];
-    match kind {
-        // The farmer's apron is his trade mark (a desert farmer's thobe + turban do that job).
-        Farmer if !desert => {
-            torso.push("hu_torso_apron");
-            hips.push("hu_hips_apron");
-        }
-        Guard => {
-            torso.push("hu_torso_guard");
-            hips.push("hu_hips_tabard");
-        }
-        Archer => torso.push("hu_torso_archer"),
-        _ => {}
-    }
-    if desert {
-        torso.push("hu_torso_cloak");
-        if worker {
-            torso.push("hu_torso_sash");
-            hips.push("hu_hips_robe");
-        }
-    }
+    // The pieces this person wears (any missing piece → no kit body).
+    let mut names: Vec<String> = vec!["hu_trunk".into()];
     // Workers roll their sleeves up; soldiers and the desert folk keep them down; the idle vary.
     let fore = match kind {
         Guard => "sleeve",
@@ -410,33 +480,73 @@ fn kit_peasant_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u32, ki
         _ if desert => "sleeve",
         _ => "bare",
     };
-    let (fore_l, fore_r) = (format!("hu_forearm_{fore}_l"), format!("hu_forearm_{fore}_r"));
-    let (shoulder_l, shoulder_r) = if kind == Guard {
-        (part(&["hu_upper_arm_l", "hu_pauldron_l"])?, part(&["hu_upper_arm_r", "hu_pauldron_r"])?)
-    } else {
-        (part(&["hu_upper_arm_l"])?, part(&["hu_upper_arm_r"])?)
-    };
-    let elbow_l = if kind == Archer && fore == "bare" { part(&[&fore_l, "hu_bracer_l"])? } else { part(&[&fore_l])? };
-    let (shin, foot) = if desert { ("hu_shin_wrap", "hu_foot_sandal") } else { ("hu_shin", "hu_foot") };
+    let legs = if desert { "hu_leg_wrap" } else { "hu_leg" };
+    for s in ["l", "r"] {
+        names.push(format!("hu_arm_{fore}_{s}"));
+        names.push(format!("{legs}_{s}"));
+    }
+    names.push(format!("hu_head_{face}"));
+    if !covered {
+        names.push(format!("hu_hair_{hair_style}"));
+    }
+    if let Some(b) = beard {
+        names.push(format!("hu_beard_{b}_{face}"));
+    }
+    if let Some(h) = hat {
+        names.push(format!("hu_hat_{h}"));
+    }
+    match kind {
+        // The farmer's apron is his trade mark (a desert farmer's thobe + turban do that job).
+        Farmer if !desert => names.push("hu_apron".into()),
+        Guard => {
+            names.push("hu_guard".into());
+            // Steel pauldrons on our militia; the rival's sandy lamellar goes without (its
+            // desert cloak covers the shoulders — and that keeps the outfit inside the budget).
+            if !desert {
+                names.extend(["hu_pauldron_l", "hu_pauldron_r"].map(String::from));
+            }
+        }
+        Archer => {
+            names.push("hu_archer".into());
+            if fore == "bare" {
+                names.push("hu_bracer_l".into());
+            }
+        }
+        _ => {}
+    }
+    if desert {
+        names.push("hu_cloak".into());
+        if worker {
+            names.extend(["hu_sash", "hu_robe"].map(String::from));
+        }
+    }
+    let head_frame = |n: &str| ["hu_head", "hu_hair", "hu_beard", "hu_hat"].iter().any(|p| n.starts_with(p));
+    let parts = names
+        .iter()
+        .map(|n| Some((kit.people_part(n, &palette, &KIT_WEATHER)?, head_frame(n))))
+        .collect::<Option<Vec<_>>>()?;
+    let body = skinned_body(parts, kit_head_scale(kid))?;
     let (weapon, shield) = kit_tools(kit, kind, desert);
+    let empty = || Mesh::new(bevy::mesh::PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default());
     Some(BipedMeshes {
-        hips: part(&hips)?,
-        torso: part(&torso)?,
-        neck: part(&["hu_neck"])?,
-        head: part(&head)?,
-        shoulder_l,
-        shoulder_r,
-        elbow_l,
-        elbow_r: part(&[&fore_r])?,
-        hip_l: part(&["hu_thigh"])?,
-        hip_r: part(&["hu_thigh"])?,
-        knee_l: part(&[shin])?,
-        knee_r: part(&[shin])?,
-        foot_l: part(&[foot])?,
-        foot_r: part(&[foot])?,
+        hips: empty(),
+        torso: empty(),
+        neck: empty(),
+        head: empty(),
+        shoulder_l: empty(),
+        shoulder_r: empty(),
+        elbow_l: empty(),
+        elbow_r: empty(),
+        hip_l: empty(),
+        hip_r: empty(),
+        knee_l: empty(),
+        knee_r: empty(),
+        foot_l: empty(),
+        foot_r: empty(),
         weapon,
         shield,
         lion: None,
+        skin: Some(body),
     })
 }
 
@@ -721,6 +831,7 @@ pub fn peasant_biped_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u
         weapon,
         shield,
         lion: None,
+        skin: None,
     }
 }
 
@@ -863,4 +974,62 @@ fn peasant_tools(kind: PeasantKind, desert: bool) -> (Option<Mesh>, Option<Mesh>
     };
 
     (weapon, shield)
+}
+
+#[cfg(test)]
+mod kit_skin_tests {
+    use super::*;
+    use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues as V};
+
+    /// people.py `encode_weights`: joint + 0.005 + weight * 0.98.
+    fn enc(j: u16, w: f32) -> f32 {
+        j as f32 + 0.005 + w * 0.98
+    }
+
+    #[test]
+    fn influences_round_trip() {
+        let (j, w) = decode_influences([enc(8, 0.7), enc(0, 0.3)], [0.005, 0.005]);
+        assert_eq!((j[0], j[1]), (8, 0));
+        assert!((w[0] - 0.7).abs() < 1e-4 && (w[1] - 0.3).abs() < 1e-4 && w[2] == 0.0 && w[3] == 0.0);
+        // A full weight on the last joint stays on it (no spill into the next integer).
+        let (j, w) = decode_influences([enc(13, 1.0), 0.005], [0.005, 0.005]);
+        assert_eq!(j[0], 13);
+        assert!((w[0] - 1.0).abs() < 1e-5);
+        // No data → everything on the hips.
+        assert_eq!(decode_influences([0.0; 2], [0.0; 2]).1, [1.0, 0.0, 0.0, 0.0]);
+    }
+
+    fn tri(p: [[f32; 3]; 3], uv0: [f32; 2]) -> Mesh {
+        let mut m = Mesh::new(PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default());
+        m.insert_attribute(Mesh::ATTRIBUTE_POSITION, p.to_vec());
+        m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 0.0, 1.0]; 3]);
+        m.insert_attribute(Mesh::ATTRIBUTE_COLOR, V::Float32x4(vec![[1.0; 4]; 3]));
+        m.insert_attribute(Mesh::ATTRIBUTE_UV_0, vec![uv0; 3]);
+        m.insert_attribute(Mesh::ATTRIBUTE_UV_1, vec![[0.005, 0.005]; 3]);
+        m.insert_indices(Indices::U32(vec![0, 1, 2]));
+        m
+    }
+
+    #[test]
+    fn skinned_body_places_head_pieces_and_keeps_rest_positions() {
+        let body = tri([[0.1, 1.0, 0.0], [0.2, 1.0, 0.0], [0.1, 1.1, 0.0]], [enc(0, 1.0), 0.005]);
+        // A head piece fully on the head: hung at the pivot and scaled; one on the torso: unscaled.
+        let head = tri([[0.0, 0.1, 0.0], [0.05, 0.1, 0.0], [0.0, 0.15, 0.0]], [enc(SKIN_HEAD, 1.0), 0.005]);
+        let neck = tri([[0.0, -0.1, 0.0], [0.05, -0.1, 0.0], [0.0, -0.05, 0.0]], [enc(1, 1.0), 0.005]);
+        let m = skinned_body(vec![(body, false), (head, true), (neck, true)], 2.0).unwrap();
+        let Some(V::Float32x3(p)) = m.attribute(Mesh::ATTRIBUTE_POSITION) else { panic!() };
+        assert_eq!(p[0], [0.1, 1.0, 0.0]);
+        assert!((Vec3::from(p[3]) - (KIT_HEAD_PIVOT + Vec3::new(0.0, 0.2, 0.0))).length() < 1e-5);
+        assert!((Vec3::from(p[6]) - (KIT_HEAD_PIVOT + Vec3::new(0.0, -0.1, 0.0))).length() < 1e-5);
+        // The rest position rides in UV0.xy + UV1.x (flagged) for the shader.
+        let (Some(V::Float32x2(a)), Some(V::Float32x2(b))) = (m.attribute(Mesh::ATTRIBUTE_UV_0), m.attribute(Mesh::ATTRIBUTE_UV_1)) else {
+            panic!()
+        };
+        assert_eq!([a[3][0], a[3][1], b[3][0]], p[3]);
+        assert!(b[3][1] > 32.0);
+        let Some(Indices::U32(i)) = m.indices() else { panic!() };
+        assert_eq!(i.as_slice(), &[0, 1, 2, 3, 4, 5, 6, 7, 8]);
+        let Some(V::Uint16x4(j)) = m.attribute(Mesh::ATTRIBUTE_JOINT_INDEX) else { panic!() };
+        assert_eq!(j[3][0], SKIN_HEAD);
+    }
 }
