@@ -195,7 +195,9 @@ class Tufts:
 
     def __call__(self, p):
         s = np.sin(p @ self.k.T + self.ph).sum(1) / math.sqrt(len(self.ph))
-        return np.clip(s * 0.45 + 0.5, 0.0, 1.0) ** 1.6
+        # A smooth saturation (tanh, not a clip): clipped crests / troughs left flat plateaus with
+        # creased rims that the decimated mesh turned into faceted clumps.
+        return (0.5 + 0.5 * np.tanh(s * 1.1)) ** 1.6
 
 
 # ───────────────────────────────────────────────────────────────── bodies
@@ -264,6 +266,28 @@ class Body:
             if sel.any():
                 d[sel] -= amp * w[sel] * tufts(p[sel])
         return (d, reg) if want_region else d
+
+
+def to_surface(body, pts, inset=0.0, iters=6):
+    """Project points onto `body`'s surface as built so far (Newton steps along the gradient),
+    then sink them `inset` along the inward normal — to lay a thin line (lips, seams) exactly on a
+    blended surface instead of guessing where the smooth unions put it."""
+    q = np.atleast_2d(v3(pts)).astype(np.float64).copy()
+    for _ in range(iters):
+        d = body.eval(q)
+        g = gradient(body.eval, q)
+        q -= (d / np.maximum((g * g).sum(1), 1e-9))[:, None] * g
+    n = gradient(body.eval, q)
+    return q - n / np.maximum(norm(n), 1e-9)[:, None] * inset
+
+
+def resample(pts, n):
+    """`n` points evenly spaced (by arc length) along the polyline `pts`."""
+    pts = np.atleast_2d(v3(pts))
+    seg = norm(pts[1:] - pts[:-1])
+    s = np.concatenate([[0.0], np.cumsum(seg)])
+    t = np.linspace(0.0, s[-1], n)
+    return np.stack([np.interp(t, s, pts[:, i]) for i in range(3)], 1)
 
 
 def eval_chunked(fn, p, chunk=300_000):
