@@ -93,9 +93,13 @@ pub struct HeroWeapon;
 #[derive(Component)]
 pub struct BackSword;
 
-/// The shield slung on the back (hand board hidden) while sprinting — both arms run free.
+/// The shield slung on the back with the sword, out of a fight (the hand board hidden). During a
+/// draw / sheathe this same holder carries the board between `slot` and the hand.
 #[derive(Component)]
-pub struct BackShield;
+pub struct BackShield {
+    /// Rest pose on the back, in the torso joint's frame.
+    pub slot: Transform,
+}
 
 /// The hero's hot per-frame state (mutated directly each frame, never via events).
 #[derive(Component)]
@@ -226,6 +230,12 @@ pub struct Hero {
     /// Sword (and shield) in hand for a fight — written by [`anim`] from the draw/sheathe state.
     /// No sprinting while drawn.
     pub weapons_drawn: bool,
+    /// The player walked AWAY from the ringed foe (written by [`movement`]): the combat stance lets
+    /// go so the hero turns and leaves instead of backpedalling face-on. Cleared by a swing / block,
+    /// by stopping, or by stepping back toward the foe.
+    pub disengaged: bool,
+    /// How long the input has pointed away from the foe (s) — the disengage needs a deliberate beat.
+    pub away_for: f32,
 }
 
 /// Seconds the "in combat" state lingers past the last blow dealt/taken (drives the stance).
@@ -279,6 +289,8 @@ impl Hero {
             combat_until: 0.0,
             sprint_held: false,
             weapons_drawn: false,
+            disengaged: false,
+            away_for: 0.0,
         }
     }
 }

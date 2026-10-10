@@ -476,11 +476,11 @@ fn leg_rot(thigh_dir: f32, shin_dir: f32, pitch: f32, rig: &super::footman::LegR
 fn footman_gait(c: f32, speed: f32, armed: f32, shield_back: f32) -> Pose {
     let g = gait_at(speed.max(0.0) / hero_model_scale());
     if g.run <= 1e-3 {
-        walk_gait(c, &g, armed)
+        walk_gait(c, &g, armed, shield_back)
     } else if g.run >= 1.0 - 1e-3 {
         run_gait(c, &g, armed, shield_back)
     } else {
-        walk_gait(c, &g, armed).lerp(&run_gait(c, &g, armed, shield_back), g.run)
+        walk_gait(c, &g, armed, shield_back).lerp(&run_gait(c, &g, armed, shield_back), g.run)
     }
 }
 
@@ -759,7 +759,7 @@ fn run_gait(c: f32, g: &Gait, armed: f32, shield_back: f32) -> Pose {
 /// The IK walk (and its jog end, cross-faded into [`run_gait`]): `c` cycle phase, `g` the gait.
 /// `armed` (0..1): the sword is in hand (1) or slung on the back (0), an empty sword hand pumps
 /// as freely as the shield arm.
-fn walk_gait(c: f32, g: &Gait, armed: f32) -> Pose {
+fn walk_gait(c: f32, g: &Gait, armed: f32, shield_back: f32) -> Pose {
     let rig = super::footman::leg_rig();
     let g = *g;
     let (run, sprint) = (g.run, g.sprint);
@@ -903,7 +903,10 @@ fn walk_gait(c: f32, g: &Gait, armed: f32) -> Pose {
     // the board and drove it through the fist and thigh).
     // (Fully fixed elbow + a near-dead shoulder read as a stiff, wrong-looking arm: keep a relaxed
     // half-pump with some elbow give, the board tucked closer to the body.)
-    let (sl, el) = arm(-arm_swing, -late, -1.0, lerp(0.85, 0.45, run), 0.0, 0.1, lerp(0.0, 0.08, run), lerp(0.2, 0.7, run));
+    let (sl_c, el_c) = arm(-arm_swing, -late, -1.0, lerp(0.85, 0.45, run), 0.0, 0.1, lerp(0.0, 0.08, run), lerp(0.2, 0.7, run));
+    // With the board slung on the back the shield arm swings as freely as the empty sword arm.
+    let (sl_f, el_f) = arm(-arm_swing, -late, -1.0, 1.0, 0.25, 0.4, lerp(0.0, -0.06, run), 0.0);
+    let (sl, el) = (sl_c.slerp(sl_f, shield_back), el_c.slerp(el_f, shield_back));
     // The shoulder girdle travels with its arm (forward + a hair up on the front swing, back on
     // the back swing) instead of the arm pivoting about a bolted-down socket.
     let girdle = |rest: Vec3, fwd: f32| {
@@ -1654,9 +1657,23 @@ pub struct Sheath {
     calm_for: f32,
 }
 
-const SHEATHE_REACH: f32 = 0.55;
-const SHEATHE_DELAY: f32 = 1.6;
-const SHEATHE_DELAY_SPRINT: f32 = 0.4;
+/// One draw / sheathe: both hands go back at once (sword hilt over the right shoulder, shield rim at
+/// the left flank) and come forward with the kit.
+const SHEATHE_REACH: f32 = 0.7;
+/// Calm this long before the kit goes away — long enough that a foe drifting in and out of range
+/// doesn't have the hero fidgeting with his weapons.
+const SHEATHE_DELAY: f32 = 3.0;
+/// Shift in a fight: put the weapons away at once so the hero can run.
+const SHEATHE_DELAY_SPRINT: f32 = 0.1;
+/// A ringed foe within this (world u) counts as a fight on its own — the kit comes out.
+const DRAW_RANGE: f32 = 4.5;
+/// The shield hand's reach to the slung board's rim: the upper arm back (~35 deg) and a little out,
+/// turned in so the bent forearm points behind the flank — the hand lands at the left side of the
+/// back at about belt height (tuned against the viewer's `draw` loop).
+fn shield_reach_sh() -> Quat {
+    e3(0.6, 1.0, -0.3)
+}
+const SHIELD_REACH_EL: f32 = -1.05;
 
 impl Sheath {
     fn update(&mut self, dt: f32, want: bool, action: bool, sprinting: bool) {
@@ -1694,56 +1711,40 @@ impl Sheath {
     fn reach(&self) -> Option<f32> {
         self.reach_t.map(|t| (PI * (t / SHEATHE_REACH).clamp(0.0, 1.0)).sin())
     }
-}
 
-/// The shield's sling: on the arm normally, swung onto the back once a sprint is under way (so
-/// both arms can run), and back onto the arm when the sprint ends. A fight (any action, or the
-/// sword drawn) puts it straight on the arm. The swap plays a reach over the left shoulder.
-#[derive(Default)]
-pub struct ShieldSling {
-    on_back: bool,
-    /// Smoothed 0..1 of `on_back`, for the gait's shield-arm carry.
-    back: f32,
-    reach_t: Option<f32>,
-    to_back: bool,
-    want_for: f32,
-    calm_for: f32,
-}
-
-const SLING_REACH: f32 = 0.5;
-/// Sprint held this long before the shield goes onto the back / ended this long before it returns.
-const SLING_DELAY: f32 = 0.12;
-const UNSLING_DELAY: f32 = 0.45;
-
-impl ShieldSling {
-    fn update(&mut self, dt: f32, sprinting: bool, fight: bool) {
-        (self.want_for, self.calm_for) = if sprinting && !fight { (self.want_for + dt, 0.0) } else { (0.0, self.calm_for + dt) };
-        if fight && (self.on_back || self.reach_t.is_some()) {
-            // A swing / block / draw: the board is simply on the arm.
-            self.on_back = false;
-            self.reach_t = None;
-        } else if self.reach_t.is_none() {
-            if !self.on_back && self.want_for > SLING_DELAY {
-                (self.reach_t, self.to_back) = (Some(0.0), true);
-            } else if self.on_back && self.calm_for > UNSLING_DELAY {
-                (self.reach_t, self.to_back) = (Some(0.0), false);
-            }
-        }
-        if let Some(t) = self.reach_t.as_mut() {
-            *t += dt;
-            if *t >= 0.5 * SLING_REACH {
-                self.on_back = self.to_back; // hand at the shoulder: swap
-            }
-            if *t >= SLING_REACH {
-                self.reach_t = None;
-            }
-        }
-        let target = if self.on_back { 1.0 } else { 0.0 };
-        self.back += (target - self.back) * (dt * 8.0).min(1.0);
+    /// The shield's hand-off mid-reach: `None` when it simply sits (on the arm while drawn, on the
+    /// back otherwise); `Some(s)` while it travels, `s` = 0 on the back … 1 in the hand. The left
+    /// hand meets the rim at the flank around the middle of the reach; the board peels off the back
+    /// (draw) or settles onto it (sheathe) over a window around that meeting.
+    fn shield_transit(&self) -> Option<f32> {
+        let t = self.reach_t? / SHEATHE_REACH;
+        let s = smoothstep((t - 0.38) / 0.3);
+        Some(if self.to_drawn { s } else { 1.0 - s })
     }
+}
 
-    fn reach(&self) -> Option<f32> {
-        self.reach_t.map(|t| (PI * (t / SLING_REACH).clamp(0.0, 1.0)).sin())
+/// The slung shield's pose (torso frame) part-way through its hand-off, `s` = 0 at the back `slot`
+/// … 1 on the arm (`hand`). It swings round the LEFT flank on a cylinder about the spine — bearing
+/// and radius interpolated, with a little bulge — instead of cutting straight through the body.
+fn shield_handoff(slot: &Transform, hand: &Transform, s: f32) -> Transform {
+    let (a, b) = (slot.translation, hand.translation);
+    // Bearing about +Y, 0 = forward (+Z), −π/2 = left (−X); the back slot reads as −π so the sweep
+    // runs back → left → front.
+    let bearing = |v: Vec3| v.x.atan2(v.z);
+    let mut ba = bearing(a);
+    let bb = bearing(b);
+    if ba > bb + PI {
+        ba -= TAU;
+    } else if ba < bb - PI {
+        ba += TAU;
+    }
+    let (ra, rb) = (Vec2::new(a.x, a.z).length(), Vec2::new(b.x, b.z).length());
+    let ang = lerp(ba, bb, s);
+    let r = lerp(ra, rb, s) + 0.06 * (PI * s).sin();
+    Transform {
+        translation: Vec3::new(r * ang.sin(), lerp(a.y, b.y, s), r * ang.cos()),
+        rotation: slot.rotation.slerp(hand.rotation, s),
+        scale: Vec3::ONE,
     }
 }
 
@@ -1771,11 +1772,14 @@ pub fn hero_anim(
     mut blend: Local<ClipBlend>,
     // Sword in hand vs. slung on the back (+ the draw/sheathe reach in flight).
     mut sheath: Local<Sheath>,
-    // Shield on the arm vs. slung on the back for a sprint.
-    mut sling: Local<ShieldSling>,
     mut sword_vis: Query<(&HeroPart, &mut Visibility), (Without<super::BackSword>, Without<super::BackShield>)>,
     mut back_vis: Query<&mut Visibility, (With<super::BackSword>, Without<HeroPart>, Without<super::BackShield>)>,
-    mut back_shield_vis: Query<&mut Visibility, (With<super::BackShield>, Without<HeroPart>, Without<super::BackSword>)>,
+    // The shield goes with the sword: on the arm in a fight, slung on the back otherwise. This
+    // holder is the slung board, and carries it to / from the hand during a draw or sheathe.
+    mut back_shield: Query<
+        (&super::BackShield, &mut Transform, &mut Visibility),
+        (Without<HeroPart>, Without<super::BackSword>),
+    >,
 ) {
     let Ok((mut hero_mut, hh)) = hero_q.single_mut() else { return };
     let now = time.elapsed_secs();
@@ -1811,29 +1815,30 @@ pub fn hero_anim(
     *block_amt += (block_target - *block_amt) * (dt * 10.0).min(1.0);
     let block_amt = block_amt.clamp(0.0, 1.0);
 
-    // ── Sword: drawn for a fight, slung on the back otherwise ──
+    // ── Sword AND shield: drawn for a fight, slung on the back otherwise ──
     let action = hero_mut.attacking || hh.blocking || hero_mut.charge_t >= 0.0 || hero_mut.dash_t >= 0.0;
+    // A fight = blows traded lately, or a foe right on top of the hero. (Not merely a hostile
+    // somewhere in the soft-lock's 7 u arc: one drifting at the edge of it had the kit coming out
+    // and going away every few seconds.)
+    let foe_close = hero_mut.soft_pos.is_some_and(|tp| tp.distance(hero_mut.pos) < DRAW_RANGE);
+    let fight = foe_close || now < hero_mut.combat_until;
     // Holding Shift in a fight (no swing / block under way) puts the weapons away so the hero can
     // run: no sprinting with sword and shield drawn.
-    let fight = hero_mut.soft_pos.is_some() || now < hero_mut.combat_until;
     let want_drawn = action || hero_mut.victory || (fight && !hero_mut.sprint_held);
     sheath.update(dt, want_drawn, action, hero_mut.sprint_held);
     hero_mut.weapons_drawn = sheath.drawn;
     let hero: &Hero = &hero_mut;
-    // The shield goes onto the back once the hero is actually running fast.
-    sling.update(dt, hero.gait_speed > super::SPEED * 1.6 && hero.on_ground, action || sheath.drawn);
+    let transit = sheath.shield_transit();
     for (part, mut vis) in &mut sword_vis {
         if part.joint == Joint::Sword {
             vis.set_if_neq(if sheath.drawn { Visibility::Inherited } else { Visibility::Hidden });
         } else if part.joint == Joint::Shield {
-            vis.set_if_neq(if sling.on_back { Visibility::Hidden } else { Visibility::Inherited });
+            let in_hand = sheath.drawn && transit.is_none();
+            vis.set_if_neq(if in_hand { Visibility::Inherited } else { Visibility::Hidden });
         }
     }
     for mut vis in &mut back_vis {
         vis.set_if_neq(if sheath.drawn { Visibility::Hidden } else { Visibility::Inherited });
-    }
-    for mut vis in &mut back_shield_vis {
-        vis.set_if_neq(if sling.on_back { Visibility::Inherited } else { Visibility::Hidden });
     }
     let armed = sheath.armed;
 
@@ -1858,7 +1863,7 @@ pub fn hero_anim(
             hero.back_amt,
             hero.strafe_twist,
             armed,
-            sling.back,
+            1.0 - armed,
         );
         guard_overlay(&mut p, hero.stance_amt, moving);
         p
@@ -1955,27 +1960,20 @@ pub fn hero_anim(
         }
     };
     blend.last = Some(pose);
-    // The draw/sheathe reach: the sword hand goes up over the right shoulder to the slung hilt
-    // and back (the swap happens at the top, in `Sheath::update`).
+    // The draw/sheathe reach, both hands at once: the sword hand up over the right shoulder to the
+    // slung hilt (the swap happens at the top, in `Sheath::update`), the shield hand back and down
+    // to the board's rim at the left flank — a natural reach behind the hip, not a wrench over the
+    // head. The board itself travels between back and arm (`shield_handoff`, below).
     let pose = match sheath.reach() {
         Some(w) => {
             let mut p = pose;
             // Fist at the slung grip just under the crossguard (tuned against the viewer).
             p.sh_r = p.sh_r.lerp(Jp::r(e3(-3.1, -0.4, 0.3)), w);
             p.el_r = p.el_r.lerp(Jp::r(rx(-2.0)), w);
+            p.sh_l = p.sh_l.lerp(Jp::r(shield_reach_sh()), w);
+            p.el_l = p.el_l.lerp(Jp::r(rx(SHIELD_REACH_EL)), w);
             p.head = Jp::r(p.head.r * e3(0.0, -0.25 * w, 0.0)); // a glance at the hand
-            p.torso = Jp::r(p.torso.r * e3(-0.05 * w, -0.15 * w, 0.0));
-            p
-        }
-        None => pose,
-    };
-    let pose = match sling.reach() {
-        Some(w) => {
-            let mut p = pose;
-            // Shield hand up over the left shoulder to the sling (mirror of the sword reach).
-            p.sh_l = p.sh_l.lerp(Jp::r(e3(-3.0, 0.4, -0.3)), w);
-            p.el_l = p.el_l.lerp(Jp::r(rx(-1.9)), w);
-            p.torso = Jp::r(p.torso.r * e3(-0.04 * w, 0.12 * w, 0.0));
+            p.torso = Jp::r(p.torso.r * e3(-0.05 * w, -0.1 * w, 0.0));
             p
         }
         None => pose,
@@ -1989,6 +1987,8 @@ pub fn hero_anim(
         u * u
     };
 
+    // Final shield-arm joint transforms, for the slung board's hand-off (taken after every overlay).
+    let (mut sh_l_tf, mut el_l_tf, mut shield_tf) = (Transform::IDENTITY, Transform::IDENTITY, Transform::IDENTITY);
     for (part, mut tf) in &mut parts {
         let mut jp = pose.get(part.joint);
         // Only the gait slides the shoulder girdle; every other clip leaves the shoulders' `t`
@@ -2042,6 +2042,32 @@ pub fn hero_anim(
                 _ => {}
             }
         }
+        match part.joint {
+            Joint::ShoulderL => sh_l_tf = *tf,
+            Joint::ElbowL => el_l_tf = *tf,
+            Joint::Shield => shield_tf = *tf,
+            _ => {}
+        }
+    }
+
+    // The slung board: at its back slot, or mid hand-off on its way between the back and the hand
+    // (the hand board's pose in the torso frame: shoulder → elbow → fist → shield joint). At the
+    // end of a draw it lands exactly on the hand board, so the swap to it is invisible.
+    for (slung, mut tf, mut vis) in &mut back_shield {
+        let (pose_tf, shown) = match transit {
+            Some(s) => {
+                let hand = sh_l_tf
+                    .mul_transform(el_l_tf)
+                    .mul_transform(Transform::from_translation(super::footman::hand_l_bind()))
+                    .mul_transform(shield_tf);
+                (shield_handoff(&slung.slot, &hand, s), true)
+            }
+            None => (slung.slot, !sheath.drawn),
+        };
+        if *tf != pose_tf {
+            *tf = pose_tf;
+        }
+        vis.set_if_neq(if shown { Visibility::Inherited } else { Visibility::Hidden });
     }
 }
 
@@ -2256,35 +2282,46 @@ mod tests {
     }
 
     #[test]
-    fn shield_slings_for_a_sprint_and_returns_for_a_fight() {
+    fn shield_goes_with_the_sword() {
         let dt = 1.0 / 60.0;
-        let mut sl = ShieldSling::default();
-        // Sprinting: onto the back after the short delay and the reach.
-        let mut t = 0.0;
-        while !sl.on_back {
-            sl.update(dt, true, false);
-            t += dt;
-            assert!(t < SLING_DELAY + SLING_REACH, "never slung");
+        let mut sh = Sheath::default();
+        assert!(sh.shield_transit().is_none() && !sh.drawn, "starts slung");
+        // A fight: one reach brings both out; the board travels back → hand without jumping.
+        let mut last = 0.0_f32;
+        let mut seen = false;
+        for _ in 0..120 {
+            sh.update(dt, true, false, false);
+            if let Some(s) = sh.shield_transit() {
+                assert!(s >= last - 1e-6 && s - last < 0.2, "board jumped {last} → {s}");
+                last = s;
+                seen = true;
+            }
         }
-        assert!(t > SLING_DELAY, "slung before the sprint was under way");
-        // A swing / block mid-sprint: straight onto the arm, no reach.
-        for _ in 0..30 {
-            sl.update(dt, true, false);
+        assert!(seen && sh.drawn && sh.shield_transit().is_none(), "drawn with the shield on the arm");
+        assert!(last > 0.99, "the hand-off ended short of the hand ({last})");
+        // Calm: both go away together, the board settling back onto the back.
+        let mut last = 1.0_f32;
+        for _ in 0..((SHEATHE_DELAY + SHEATHE_REACH + 0.2) / dt) as usize {
+            sh.update(dt, false, false, false);
+            if let Some(s) = sh.shield_transit() {
+                assert!(s <= last + 1e-6, "board went back toward the hand");
+                last = s;
+            }
         }
-        sl.update(dt, true, true);
-        assert!(!sl.on_back && sl.reach().is_none());
-        // Sprint again, then stop: it comes back to the arm after the calm delay.
-        for _ in 0..60 {
-            sl.update(dt, true, false);
+        assert!(!sh.drawn && sh.shield_transit().is_none() && last < 0.01, "sheathed with the shield on the back");
+    }
+
+    #[test]
+    fn shield_handoff_swings_round_the_left_flank() {
+        let slot = Transform::from_translation(Vec3::new(0.0, 0.2, -0.2));
+        let hand = Transform::from_translation(Vec3::new(-0.3, -0.1, 0.12));
+        assert!(shield_handoff(&slot, &hand, 0.0).translation.distance(slot.translation) < 1e-4);
+        assert!(shield_handoff(&slot, &hand, 1.0).translation.distance(hand.translation) < 1e-4);
+        for i in 1..10 {
+            let t = shield_handoff(&slot, &hand, i as f32 / 10.0).translation;
+            assert!(t.x < 0.0, "passed the right side / the spine at {i}: {t}");
+            assert!(Vec2::new(t.x, t.z).length() > 0.19, "cut through the body at {i}: {t}");
         }
-        assert!(sl.on_back);
-        let mut t = 0.0;
-        while sl.on_back {
-            sl.update(dt, false, false);
-            t += dt;
-            assert!(t < UNSLING_DELAY + SLING_REACH, "never unslung");
-        }
-        assert!(t > UNSLING_DELAY);
     }
 
     #[test]

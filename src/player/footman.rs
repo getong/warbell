@@ -565,6 +565,13 @@ pub(crate) fn arm_bind() -> [(Vec3, Vec3); 2] {
     [(pos_of(&m, "ElbowR"), pos_of(&m, "Sword")), (pos_of(&m, "ElbowL"), pos_of(&m, "Shield"))]
 }
 
+/// The left fist's offset from the elbow (the untagged `handL` node the shield joint hangs off) —
+/// what `anim` needs to place the hand board in the torso frame for the draw / sheathe hand-off.
+pub(crate) fn hand_l_bind() -> Vec3 {
+    static HAND: std::sync::OnceLock<Vec3> = std::sync::OnceLock::new();
+    *HAND.get_or_init(|| pos_of(&parse(), "Shield"))
+}
+
 fn pos_of(model: &Model, name: &str) -> Vec3 {
     model.joints.iter().find(|(n, _, _)| n == name).map(|(_, _, p)| *p).unwrap_or(Vec3::ZERO)
 }
@@ -642,10 +649,11 @@ pub fn spawn(
         }
     }
 
-    // The shield slung on the back for a sprint (hidden until then): same meshes as the hand board,
-    // laid face-out over the slung sword, hilt still showing above the right shoulder.
+    // The shield slung on the back with the sword: same meshes as the hand board, laid face-out over
+    // the slung sword, hilt still showing above the right shoulder.
     if let Some(list) = by_joint.get("Shield") {
-        let back = commands.spawn((back_shield_transform(&g.model), Visibility::Hidden, BackShield)).id();
+        let slot = back_shield_transform(&g.model);
+        let back = commands.spawn((slot, Visibility::Hidden, BackShield { slot })).id();
         commands.entity(torso).add_child(back);
         for &i in list {
             let m = &g.model.meshes[i];

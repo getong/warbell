@@ -40,6 +40,14 @@ const STANCE_BACK_MULT: f32 = 0.72;
 /// is carried by the crossing gait. Clamped to ±`STANCE_TWIST_MAX`.
 const STANCE_TWIST_FRAC: f32 = 0.8;
 const STANCE_TWIST_MAX: f32 = 0.7;
+/// Walking AWAY ends the stance: input pointing this far off the ringed foe (`dir·to_foe` below
+/// this, i.e. more than ~110 deg away) held for [`DISENGAGE_HOLD`] s lets the hero turn and leave.
+/// A quick tap back is still a guarded backpedal; holding it means "I'm going". (Backpedalling
+/// face-on at ×0.72 of a walk, every ork outpaces you — the stance used to pin you to the fight.)
+const DISENGAGE_DOT: f32 = -0.35;
+const DISENGAGE_HOLD: f32 = 0.3;
+/// Stepping back toward the foe (`dir·to_foe` above this) re-engages the stance.
+const REENGAGE_DOT: f32 = 0.3;
 const GRAVITY: f32 = 20.0;
 const JUMP_SPEED: f32 = 6.5;
 const TURN_RATE: f32 = 15.0; // snappier facing toward the move direction
@@ -557,7 +565,21 @@ pub fn player_move(
     // the last exchange, so walking PAST a camp never squares you up). Sprint breaks it (turn and
     // run); first person is exempt. Smoothed so the anim twist and the camera's combat framing
     // fade in/out instead of snapping. ──
-    let stance = hero.soft_pos.is_some() && t < hero.combat_until && !sprinting && !fp.active;
+    // Disengage: the player holding a direction away from the ringed foe means leave, not backpedal.
+    // A swing / block / charge, stopping, stepping back at the foe, or the fight going cold
+    // re-engages.
+    let to_foe = hero.soft_pos.map(|tp| (tp - hero.pos).normalize_or_zero());
+    let toward = to_foe.map_or(0.0, |d| move_dir.dot(d));
+    let away = moving && to_foe.is_some() && toward < DISENGAGE_DOT;
+    hero.away_for = if away { hero.away_for + dt } else { 0.0 };
+    if hero.away_for > DISENGAGE_HOLD {
+        hero.disengaged = true;
+    }
+    let committed = hero.attacking || state.blocking || hero.charge_t >= 0.0;
+    if committed || !moving || t >= hero.combat_until || (to_foe.is_some() && toward > REENGAGE_DOT) {
+        hero.disengaged = false;
+    }
+    let stance = hero.soft_pos.is_some() && t < hero.combat_until && !sprinting && !fp.active && !hero.disengaged;
     let stance_target = if stance { 1.0 } else { 0.0 };
     hero.stance_amt += (stance_target - hero.stance_amt) * (dt * 8.0).min(1.0);
     // How the movement points relative to the body: 1 = with the facing, −1 = straight back.

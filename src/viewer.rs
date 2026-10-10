@@ -86,7 +86,8 @@ fn anim_drive(time: Res<Time>, mut q: Query<(&mut crate::player::Hero, &mut crat
         hero.attack_variant = variant;
         hero.attack_t = (hero.attack_t + dt) % crate::player::ATTACK_DURATION;
     };
-    match std::env::var("FOREST_VIEW_ANIM").unwrap_or_default().as_str() {
+    let mode = std::env::var("FOREST_VIEW_ANIM").unwrap_or_default();
+    match mode.as_str() {
         "walk" => {
             crate::player::anim::stage_gait(&mut hero, crate::player::SPEED, dt);
         }
@@ -123,11 +124,15 @@ fn anim_drive(time: Res<Time>, mut q: Query<(&mut crate::player::Hero, &mut crat
             hero.vel_y = (time.elapsed_secs() * 1.2).cos() * 6.5;
         }
         "victory" => hero.victory = true,
-        // Draw / sheathe loop: 3 s "in a fight" (combat window open), 3 s calm.
-        "draw" => {
+        // Draw / sheathe loop: a short "fight" (combat window open) from 1.0 s of every 8, then calm
+        // long enough for the sheathe delay to run out and the kit to go away.
+        "draw" | "drawwalk" => {
             let now = time.elapsed_secs();
-            if now % 6.0 < 3.0 {
+            if (1.0..1.5).contains(&(now % 8.0)) {
                 hero.combat_until = now + 0.1;
+            }
+            if mode == "drawwalk" {
+                crate::player::anim::stage_gait(&mut hero, crate::player::SPEED, dt);
             }
         }
         // Loop the Sand-Dash slide progress (0→1 along the blink) so a clip shows the dash-swipe lunge.
