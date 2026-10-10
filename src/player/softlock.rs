@@ -1,7 +1,7 @@
 //! **Soft-lock** — a light, AAA-style combat aim-assist (the Witcher "soft target"): while a
-//! hostile is near and in front, the game quietly PICKS it as your target, marks it with a subtle
-//! glowing ground ring, and MEASUREDLY eases the hero's facing onto it — never a hard snap, never a
-//! camera lock. Your own movement always overrides (the turn only nudges while you stand), and the
+//! hostile is near and in front, the game quietly PICKS it as your target, marks it with a quiet
+//! feathered ground ring, and MEASUREDLY eases the hero's facing onto it — never a hard snap, never
+//! a camera lock. Your own movement always overrides (the turn only nudges while you stand), and the
 //! swing then commits to the same ringed foe (see `combat::player_attack`, which reads `soft_pos`).
 //!
 //! It engages purely from proximity to a THREAT (ork / boss / warlord / rival soldier / hunting
@@ -10,9 +10,11 @@
 //! (`wildlife::is_hostile_species` — wolf/bear/boar/scorpion/croc/golem); grazers never grab the
 //! ring, so exploring doesn't auto-turn you at deer or workers.
 
+use bevy::mesh::MeshTag;
 use bevy::prelude::*;
 
 use super::{Hero, PlayMode};
+use crate::combat_marks::{self, MarkAssets, MarkKind};
 use crate::boss::Boss;
 use crate::dying::Dying;
 use crate::orks::Ork;
@@ -20,9 +22,26 @@ use crate::rival::RivalSoldier;
 use crate::warlord::Warlord;
 use crate::wildlife::Animal;
 
-/// Marker on the single reusable target-ring entity (moved under the soft target each frame).
-#[derive(Component)]
-pub struct TargetRing;
+/// The single reusable target-ring entity (moved under the soft target each frame). Carries its
+/// own fade so a new target fades in where it stands instead of the ring sliding across the field.
+#[derive(Component, Default)]
+pub struct TargetRing {
+    /// 0..1 fade (eased toward 1 while a target is held, 0 when none).
+    shown: f32,
+    /// The foe the ring currently marks — a switch restarts the fade at the new foe.
+    on: Option<Entity>,
+}
+
+/// Ring world diameter (the feathered line sits at 80% of the quad's half-size → ≈0.9u radius:
+/// just outside a `WORLD_BUMP`-scaled ork's footprint, so it frames the feet instead of hiding
+/// under them).
+const RING_DIAMETER: f32 = 2.25;
+/// Peak strength of the ring line — a quiet mark, never a hoop.
+const RING_ALPHA: f32 = 0.62;
+/// Fade in / out rates (1/s) and the slow drift of its ticks (rad/s).
+const RING_FADE_IN: f32 = 9.0;
+const RING_FADE_OUT: f32 = 7.0;
+const RING_SPIN: f32 = 0.35;
 
 /// Consider hostiles within this world-XZ distance (a bit past melee, so a closing foe is picked
 /// before you're on top of it).
@@ -42,33 +61,15 @@ const STICKY_BONUS: f32 = 1.6;
 /// turns) so it reads as a soft assist easing you onto the foe, not a snap.
 const SOFT_TURN_RATE: f32 = 2.5;
 
-/// Spawn the one reusable ground ring (hidden until there's a target). A thin flat annulus, unlit +
-/// emissive so it glows as a soft "focus" mark regardless of time-of-day; alpha-blended so it reads
-/// as a light overlay on the muck/grass, not a solid disc.
-pub fn spawn_target_ring(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut mats: ResMut<Assets<StandardMaterial>>,
-) {
-    let mesh = meshes.add(Annulus::new(0.62, 0.82).mesh().resolution(40).build());
-    let mat = mats.add(StandardMaterial {
-        base_color: Color::srgba(1.0, 0.82, 0.45, 0.55), // warm amber "focus" glow
-        emissive: LinearRgba::rgb(0.9, 0.6, 0.2),
-        unlit: true,
-        alpha_mode: AlphaMode::Blend,
-        cull_mode: None,
-        ..default()
-    });
-    commands.spawn((
-        Mesh3d(mesh),
-        MeshMaterial3d(mat),
-        // Annulus faces +Z; tip it flat (normal +Y) so it lies on the ground.
-        Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
-        Visibility::Hidden,
-        bevy::light::NotShadowCaster,
-        TargetRing,
-        crate::game_state::CampaignOnly,
-    ));
+/// Spawn the one reusable ground ring (hidden until there's a target): a `combat_marks` decal —
+/// a thin, feathered, PBR-lit pale line in four soft-ended arcs with small inward ticks, faintly
+/// shadowed outside, so it reads pressed into the ground under the foe. (It was a flat amber
+/// emissive 40-gon `Annulus` — a glowing low-poly hoop next to the realistic forest.)
+pub fn spawn_target_ring(mut commands: Commands, marks: Res<MarkAssets>) {
+    let e = combat_marks::spawn_mark(
+        &mut commands, &marks, MarkKind::Ring, Vec3::new(0.0, -100.0, 0.0), RING_DIAMETER, 0.0, 1.0, 0.0, 0,
+    );
+    commands.entity(e).insert((Visibility::Hidden, TargetRing::default(), crate::game_state::CampaignOnly));
 }
 
 /// Pick the soft target, ease facing onto it, and drive the ring. Runs right after `player_move` so
@@ -91,7 +92,7 @@ pub fn soft_lock(
             Without<Dying>,
         ),
     >,
-    mut ring_q: Query<(&mut Transform, &mut Visibility), With<TargetRing>>,
+    mut ring_q: Query<(&mut Transform, &mut Visibility, &mut TargetRing, &mut MeshTag)>,
 ) {
     let Ok(mut hero) = hero_q.single_mut() else { return };
 
@@ -100,8 +101,10 @@ pub fn soft_lock(
         hero.soft_target = None;
         hero.soft_pos = None;
         hero.threats = 0;
-        for (_, mut vis) in &mut ring_q {
-            *vis = Visibility::Hidden;
+        for (_, mut vis, mut ring, _) in &mut ring_q {
+            vis.set_if_neq(Visibility::Hidden);
+            ring.shown = 0.0;
+            ring.on = None;
         }
         return;
     }
@@ -158,15 +161,34 @@ pub fn soft_lock(
         hero.facing = super::movement::lerp_angle(hero.facing, want, f);
     }
 
-    // ── Drive the ring ──
-    for (mut tf, mut vis) in &mut ring_q {
+    // ── Drive the ring: follow the target, fade in on (re)acquire, fade out when it drops ──
+    let dt = time.delta_secs();
+    for (mut tf, mut vis, mut ring, mut tag) in &mut ring_q {
+        if hero.soft_target != ring.on && hero.soft_target.is_some() {
+            // New foe: restart the fade where it stands (no slide across the field).
+            ring.on = hero.soft_target;
+            ring.shown = 0.0;
+        }
         match hero.soft_pos {
             Some(tp) => {
-                let y = crate::worldmap::ground_at_world(tp.x, tp.y).unwrap_or(hero.y) + 0.05;
+                let y = crate::worldmap::ground_at_world(tp.x, tp.y).unwrap_or(hero.y) + 0.03;
                 tf.translation = Vec3::new(tp.x, y, tp.y);
-                *vis = Visibility::Visible;
+                ring.shown = (ring.shown + dt * RING_FADE_IN).min(1.0);
             }
-            None => *vis = Visibility::Hidden,
+            None => ring.shown = (ring.shown - dt * RING_FADE_OUT).max(0.0),
+        }
+        if ring.shown <= 0.0 {
+            ring.on = None;
+            vis.set_if_neq(Visibility::Hidden);
+            continue;
+        }
+        vis.set_if_neq(Visibility::Visible);
+        // A slow drift of the ticks keeps the mark alive without any pulse or glow.
+        tf.rotate_y(dt * RING_SPIN);
+        let ease = ring.shown * ring.shown * (3.0 - 2.0 * ring.shown);
+        let want = combat_marks::tag(MarkKind::Ring, RING_ALPHA * ease, 0, 0.0);
+        if tag.0 != want.0 {
+            tag.0 = want.0;
         }
     }
 }

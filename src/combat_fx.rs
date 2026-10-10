@@ -1,14 +1,17 @@
-//! Combat juice — floating damage numbers, ork HP bars, ork hurt-flash, and hero
+//! Combat juice — floating damage numbers, enemy HP bars, ork hurt-flash, and hero
 //! hit feedback (screen shake + red flash). Ported from the original game's
-//! `fxStore.ts` / `FloatingText.tsx` / `Ork.tsx`.
+//! `fxStore.ts` / `FloatingText.tsx` / `Ork.tsx`; the HP bars were since rebuilt as one
+//! shader quad each (`hp_bar.wgsl`) in the shared vitals style (`ui::vitals`).
 //!
 //! Everything attaches to orks **externally** (the same philosophy as
 //! `combat::Health`): hit-sites only push to [`FloatQueue`], set [`HitFeedback`],
 //! or insert [`HurtFlash`] — this module does all the rendering and even clones a
 //! per-ork material on the fly, so the shared ork model code stays untouched.
 
-use bevy::mesh::MeshBuilder;
+use bevy::mesh::{MeshBuilder, MeshTag};
 use bevy::prelude::*;
+use bevy::render::render_resource::{AsBindGroup, ShaderType};
+use bevy::shader::ShaderRef;
 use bevy::ui::UiTransform;
 
 use crate::orks::Ork;
@@ -38,9 +41,19 @@ const HURT_FLASH_TINT: [f32; 3] = [1.0, 0.92, 0.78];
 const SHAKE_DECAY: f32 = 2.4;
 /// Camera offset (world units) at full trauma.
 pub const SHAKE_MAX: f32 = 0.35;
-/// HP-bar quad size (world units), at the ork's baked scale.
-const HP_BAR_W: f32 = 0.6;
-const HP_BAR_H: f32 = 0.085;
+/// HP-bar height as a fraction of the SCREEN height: the bar is screen-constant across the fight
+/// range (its world size is re-solved from camera distance + FOV every frame), so it stays a thin,
+/// crisp line — the old fixed 0.6u quad was a slab across the frame up close and a speck far off.
+/// 0.0088 ≈ 9.5px at 1080p (1px rim + 1px frame each side + a ~5px channel); with the aspect below
+/// the bar is ≈105px wide.
+const HP_BAR_SCREEN_H: f32 = 0.0088;
+const HP_BAR_ASPECT: f32 = 11.0;
+/// Past this camera distance the bar stops being screen-constant and shrinks at half the
+/// perspective rate, so a far foe's bar still reads as farther away without going microscopic.
+const HP_BAR_CONST_DIST: f32 = 14.0;
+/// Brightness gain on the UI vitals palette for the world bar: its unlit colour runs through the
+/// tonemapper (the HUD's doesn't), which deepens + desaturates it a touch.
+const HP_BAR_GAIN: f32 = 1.0;
 /// Height above the ork root the bar floats at — at the creature's BASE rig scale. Orks and town
 /// NPCs were enlarged by `castle::WORLD_BUMP`, so their bars are spawned at this × that bump (see
 /// `ensure_hp_bars`); animals (left at their original scale) use this value as-is. Because the rig
@@ -319,14 +332,105 @@ fn hit_test(
     hitstop.remaining = hitstop.remaining.max(stop);
 }
 
-// ── 2. Ork HP bars (billboard follower entities) ────────────────────────────
+/// Capture hook: `FOREST_HURT_ALL=<frac>` (e.g. `0.6`) wounds every hittable foe (ork / animal /
+/// rival soldier / snowman / town NPC) to `frac` of its max HP, then knocks it down a further
+/// [`HURT_TEST_STEP`] every [`HURT_TEST_PERIOD`]s for a few steps before healing it back — each foe
+/// on its own phase — so a still always frames enemy HP bars mid-fight, some with a fresh damage
+/// trail still draining. The hero is held on a matching staircase from 72% (the HUD vitals show a
+/// partial fill + their own trail, safely above the low-HP dread grade, and he can't die mid-shot).
+/// Only writes on a step change, so real blows still land in between. No effect in normal play.
+#[allow(clippy::type_complexity)]
+fn hurt_all_test(
+    time: Res<Time>,
+    mut player: ResMut<crate::player::PlayerRes>,
+    mut foes: Query<
+        (Entity, &mut Health),
+        (
+            Or<(
+                With<Ork>,
+                With<crate::wildlife::Animal>,
+                With<crate::rival::RivalSoldier>,
+                With<crate::snowman::Snowman>,
+            )>,
+            Without<crate::dying::Dying>,
+        ),
+    >,
+    mut folk: Query<(Entity, &mut crate::villagers::NpcHp)>,
+    mut frac: Local<Option<Option<f32>>>,
+    mut steps: Local<std::collections::HashMap<Entity, i32>>,
+    mut hero_step: Local<i32>,
+) {
+    let Some(frac) = *frac.get_or_insert_with(|| {
+        std::env::var("FOREST_HURT_ALL").ok().and_then(|v| v.trim().parse::<f32>().ok()).map(|f| f.clamp(0.2, 0.98))
+    }) else {
+        return;
+    };
+    let t = time.elapsed_secs();
+    // Step index 0..HURT_TEST_STEPS on a per-entity phase (so the bars never all move in unison).
+    let step_of = |e: Entity| {
+        let phase = ((e.to_bits() as u32).wrapping_mul(2_654_435_761) >> 16) as f32 / 65_536.0;
+        ((t / HURT_TEST_PERIOD + phase * HURT_TEST_STEPS as f32) as i32).rem_euclid(HURT_TEST_STEPS)
+    };
+    let level = |k: i32| (frac - HURT_TEST_STEP * k as f32).max(0.08);
+    for (e, mut hp) in &mut foes {
+        let k = step_of(e);
+        if steps.insert(e, k) != Some(k) {
+            hp.hp = hp.max * level(k);
+        }
+    }
+    for (e, mut hp) in &mut folk {
+        let k = step_of(e);
+        if steps.insert(e, k) != Some(k) {
+            hp.hp = hp.max * level(k);
+        }
+    }
+    let k = ((t / HURT_TEST_PERIOD) as i32).rem_euclid(HURT_TEST_STEPS);
+    let p = &mut player.0;
+    if k != *hero_step || p.hp > p.max_hp * 0.75 || p.hp < p.max_hp * 0.4 {
+        *hero_step = k;
+        p.hp = p.max_hp * (0.72 - 0.08 * k as f64);
+    }
+}
+/// `FOREST_HURT_ALL` staircase: HP lost per step (fraction of max), seconds per step, steps/cycle.
+const HURT_TEST_STEP: f32 = 0.09;
+const HURT_TEST_PERIOD: f32 = 1.3;
+const HURT_TEST_STEPS: i32 = 4;
+
+// ── 2. Enemy HP bars (billboard follower entities, one shader quad each) ────
+//
+// Each bar is ONE quad drawn by `assets/shaders/hp_bar.wgsl` (rim + iron frame + channel + blood
+// fill + damage trail, all in the fragment shader). Every bar shares one mesh + one material; the
+// per-bar values (hp, trail, hit flash) ride the instance `MeshTag`, so the renderer instances
+// the whole horde's bars into a single draw, and a damage tick rewrites one `u32` — never a
+// material (the old two-quad bar swapped material handles on every hurt-flash).
+
+/// The bar's look — the shared vitals palette (`ui::theme`), linear, as the shader uniform.
+#[derive(Clone, Copy, ShaderType, Debug)]
+pub struct HpBarStyle {
+    fill_hi: Vec4,
+    fill_lo: Vec4,
+    trail: Vec4,
+    frame: Vec4,
+    empty: Vec4,
+}
+
+/// The enemy-bar material: opaque + unlit (see the shader header for why opaque).
+#[derive(Asset, AsBindGroup, TypePath, Clone, Debug)]
+pub struct HpBarMaterial {
+    #[uniform(0)]
+    style: HpBarStyle,
+}
+
+impl Material for HpBarMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/hp_bar.wgsl".into()
+    }
+}
 
 #[derive(Resource)]
 struct HpBarAssets {
     quad: Handle<Mesh>,
-    bg: Handle<StandardMaterial>,
-    fg: Handle<StandardMaterial>,
-    fg_hurt: Handle<StandardMaterial>,
+    mat: Handle<HpBarMaterial>,
 }
 
 /// Marks an ork as already having a follower bar (so we attach exactly one).
@@ -340,28 +444,36 @@ struct HpBar {
     ork: Entity,
     /// World-Y the bar floats at above the tracked entity — creatures sit higher than townsfolk.
     y: f32,
+    /// The delayed-damage ghost (same state machine as the HUD bars).
+    trail: crate::ui::vitals::DamageTrail,
 }
 
-/// The shrinking foreground quad inside a bar.
-#[derive(Component)]
-struct HpBarFg;
+/// Pack a bar's per-instance state for `hp_bar.wgsl`: hp + trail fractions (12 bits each) and the
+/// hit flash (8 bits).
+fn pack_bar_tag(hp: f32, trail: f32, flash: f32) -> u32 {
+    let q12 = |v: f32| (v.clamp(0.0, 1.0) * 4095.0).round() as u32;
+    let q8 = (flash.clamp(0.0, 1.0) * 255.0).round() as u32;
+    q12(hp) | q12(trail) << 12 | q8 << 24
+}
 
 fn setup_hp_bar_assets(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<HpBarMaterial>>,
 ) {
     let quad = meshes.add(Rectangle::new(1.0, 1.0).mesh().build());
-    let unlit = |c: Color| StandardMaterial {
-        base_color: c,
-        unlit: true,
-        cull_mode: None, // double-sided so the billboard is visible from either face
-        ..default()
+    // Unlit colours go straight to the tonemapper (TonyMcMapface), which deepens + desaturates the
+    // UI-tuned sRGB palette a touch — `HP_BAR_GAIN` lifts it back so the world bar matches the HUD.
+    let lin = |c: Color| (LinearRgba::from(c) * HP_BAR_GAIN).to_vec4();
+    let style = HpBarStyle {
+        fill_hi: lin(crate::ui::theme::HP_TOP),
+        fill_lo: lin(crate::ui::theme::HP_BOT),
+        trail: lin(crate::ui::theme::BAR_TRAIL),
+        frame: lin(crate::ui::theme::BAR_FRAME),
+        empty: lin(crate::ui::theme::BAR_EMPTY),
     };
-    let bg = materials.add(unlit(Color::srgba(0.0, 0.0, 0.0, 0.7)));
-    let fg = materials.add(unlit(Color::srgb(0.839, 0.227, 0.227))); // #d63a3a
-    let fg_hurt = materials.add(unlit(Color::srgb(1.0, 0.667, 0.125))); // #ffaa20
-    commands.insert_resource(HpBarAssets { quad, bg, fg, fg_hurt });
+    let mat = materials.add(HpBarMaterial { style });
+    commands.insert_resource(HpBarAssets { quad, mat });
 }
 
 /// Spawn one follower bar tracking `e`, floating at world-Y `y`. Shared by every hittable
@@ -369,26 +481,16 @@ fn setup_hp_bar_assets(
 /// the target can be despawned (biome rebuild, a defender bolt) the same frame it's first seen.
 fn spawn_hp_bar(commands: &mut Commands, assets: &HpBarAssets, e: Entity, y: f32) {
     commands.entity(e).try_insert(HasHpBar);
-    commands
-        .spawn((Transform::default(), Visibility::Hidden, HpBar { ork: e, y }, crate::biome::BiomeEntity))
-        .with_children(|p| {
-            p.spawn((
-                Mesh3d(assets.quad.clone()),
-                MeshMaterial3d(assets.bg.clone()),
-                // +Z = AWAY from the camera (the billboard's forward/-Z faces the camera via
-                // `look_at`), so the dark panel sits BEHIND the red fill instead of hiding it.
-                Transform::from_translation(Vec3::new(0.0, 0.0, 0.01))
-                    .with_scale(Vec3::new(HP_BAR_W + 0.04, HP_BAR_H + 0.02, 1.0)),
-                bevy::light::NotShadowCaster,
-            ));
-            p.spawn((
-                Mesh3d(assets.quad.clone()),
-                MeshMaterial3d(assets.fg.clone()),
-                Transform::from_scale(Vec3::new(HP_BAR_W, HP_BAR_H, 1.0)),
-                bevy::light::NotShadowCaster,
-                HpBarFg,
-            ));
-        });
+    commands.spawn((
+        Mesh3d(assets.quad.clone()),
+        MeshMaterial3d(assets.mat.clone()),
+        Transform::default(),
+        Visibility::Hidden,
+        MeshTag(pack_bar_tag(1.0, 1.0, 0.0)),
+        HpBar { ork: e, y, trail: crate::ui::vitals::DamageTrail::new(1.0) },
+        bevy::light::NotShadowCaster,
+        crate::biome::BiomeEntity,
+    ));
 }
 
 #[allow(clippy::type_complexity)]
@@ -438,11 +540,10 @@ fn ensure_hp_bars(
 fn drive_hp_bars(
     time: Res<Time>,
     mut commands: Commands,
-    assets: Res<HpBarAssets>,
-    cam_q: Query<&GlobalTransform, With<Camera3d>>,
+    cam_q: Query<(&GlobalTransform, &Projection), With<Camera3d>>,
     // Vitals come from `Health` (orks/animals) OR `NpcHp` (town NPCs) — whichever the target carries.
     targets: Query<
-        (&GlobalTransform, Option<&Health>, Option<&crate::villagers::NpcHp>, Option<&HurtFlash>, Option<&crate::dying::Dying>),
+        (&GlobalTransform, Option<&Health>, Option<&crate::villagers::NpcHp>, Option<&crate::dying::Dying>),
         Or<(
             With<Ork>,
             With<crate::wildlife::Animal>,
@@ -451,20 +552,26 @@ fn drive_hp_bars(
             With<crate::snowman::Snowman>,
         )>,
     >,
-    mut bars: Query<(Entity, &HpBar, &mut Transform, &mut Visibility, &Children)>,
-    mut fgs: Query<(&mut Transform, &mut MeshMaterial3d<StandardMaterial>), (With<HpBarFg>, Without<HpBar>)>,
+    mut bars: Query<(Entity, &mut HpBar, &mut Transform, &mut Visibility, &mut MeshTag)>,
     reticle_target: Option<Res<crate::player::ReticleTarget>>,
     fp: Option<Res<crate::player::FirstPerson>>,
 ) {
     let now = time.elapsed_secs();
+    let dt = time.delta_secs().min(0.1);
     let in_fp = fp.is_some_and(|f| f.active && f.blend > 0.5);
     // In first person the ringed foe's health lives under the crosshair (`viewmodel::sync_reticle`),
     // so its world-space bar — which would stripe across its chest right behind the reticle — hides.
     let reticle_foe = reticle_target.and_then(|t| t.0);
-    let Ok(cam_tf) = cam_q.single() else { return };
+    let Ok((cam_tf, proj)) = cam_q.single() else { return };
     let cam_pos = cam_tf.translation();
-    for (bar_e, bar, mut tf, mut vis, children) in &mut bars {
-        let Ok((ork_gt, health, npc_hp, hurt, dying)) = targets.get(bar.ork) else {
+    let cam_fwd = cam_tf.forward().as_vec3();
+    // World units per screen-height at 1u of depth (vertical FOV), for the screen-constant size.
+    let view_h_per_unit = match proj {
+        Projection::Perspective(p) => 2.0 * (p.fov * 0.5).tan(),
+        _ => 0.93,
+    };
+    for (bar_e, mut bar, mut tf, mut vis, mut mesh_tag) in &mut bars {
+        let Ok((ork_gt, health, npc_hp, dying)) = targets.get(bar.ork) else {
             commands.entity(bar_e).try_despawn();
             continue;
         };
@@ -477,11 +584,14 @@ fn drive_hp_bars(
                 continue;
             }
         };
+        let ratio = (cur / max).clamp(0.0, 1.0);
+        // The damage ghost runs even while the bar is hidden (culled / behind the reticle), so it
+        // never replays a stale drain when the bar comes back.
+        bar.trail.step(ratio, now, dt);
         if dying.is_some() || reticle_foe == Some(bar.ork) {
             vis.set_if_neq(Visibility::Hidden); // no bar over a crumpling corpse / the reticle's foe
             continue;
         }
-        let ratio = (cur / max).clamp(0.0, 1.0);
         if ratio >= 1.0 {
             vis.set_if_neq(Visibility::Hidden);
             continue;
@@ -519,26 +629,24 @@ fn drive_hp_bars(
             let pull = closeness * 0.8;
             head += (cam_pos - head).normalize_or_zero() * pull;
         }
-        let dist = head.distance(cam_pos);
+        // View-space DEPTH, not Euclidean distance: projected size goes with depth, so scaling by the
+        // straight-line distance would balloon bars toward the frame's edges.
+        let depth = (head - cam_pos).dot(cam_fwd).max(0.05);
         vis.set_if_neq(Visibility::Visible);
         tf.translation = head;
-        tf.look_at(cam_pos, Vec3::Y); // billboard (materials are double-sided)
-        // Close-up shrink: a 0.6u quad at arm's length stripes across the frame; ease it down as
-        // the camera closes (full size at/inside third-person follow distances).
-        tf.scale = Vec3::splat((dist / HP_BAR_NEAR).clamp(0.55, 1.0));
-        let hurting = hurt.is_some_and(|h| now < h.until);
-        for &c in children {
-            if let Ok((mut fg_tf, mut fg_mat)) = fgs.get_mut(c) {
-                fg_tf.scale.x = HP_BAR_W * ratio;
-                fg_tf.translation.x = -(1.0 - ratio) * HP_BAR_W / 2.0;
-                // Only WRITE the handle when it actually changes: assigning through `Mut` marks the
-                // component changed whether or not the value differs, which re-triggers extract +
-                // prepare for every visible bar, every frame (the same guard `rts::unitbars` uses).
-                let want = if hurting { &assets.fg_hurt } else { &assets.fg };
-                if fg_mat.0.id() != want.id() {
-                    fg_mat.0 = want.clone();
-                }
-            }
+        // Billboard with the quad's FRONT (+Z, uv-x running left→right on screen) toward the lens.
+        tf.look_at(head * 2.0 - cam_pos, Vec3::Y);
+        // Screen-constant size across the fight range (a thin crisp line at any distance — never a
+        // slab across the frame up close, never a speck far off); past `HP_BAR_CONST_DIST` it eases
+        // into half-rate perspective so a far foe's bar still reads as farther away.
+        let d_eff = if depth <= HP_BAR_CONST_DIST { depth } else { HP_BAR_CONST_DIST + (depth - HP_BAR_CONST_DIST) * 0.5 };
+        let h = HP_BAR_SCREEN_H * view_h_per_unit * d_eff;
+        tf.scale = Vec3::new(h * HP_BAR_ASPECT, h, 1.0);
+        // Only WRITE the tag when it actually moves: assigning through `Mut` marks the component
+        // changed whether or not the value differs, which re-extracts that mesh instance.
+        let want = pack_bar_tag(ratio, bar.trail.shown, bar.trail.flash(now));
+        if mesh_tag.0 != want {
+            mesh_tag.0 = want;
         }
     }
 }
@@ -791,7 +899,8 @@ pub struct CombatFxPlugin;
 
 impl Plugin for CombatFxPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<FloatQueue>()
+        app.add_plugins(MaterialPlugin::<HpBarMaterial>::default())
+            .init_resource::<FloatQueue>()
             .init_resource::<HitFeedback>()
             .add_systems(Startup, setup_hp_bar_assets)
             .add_systems(
@@ -799,6 +908,7 @@ impl Plugin for CombatFxPlugin {
                 (
                     float_test,
                     hit_test,
+                    hurt_all_test,
                     spawn_floats,
                     drive_floats,
                     hurt_flash,
@@ -808,5 +918,24 @@ impl Plugin for CombatFxPlugin {
                     drive_hit_flash,
                 ),
             );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The packing must match `hp_bar.wgsl`'s decode: hp in bits 0..11, trail 12..23, flash 24..31.
+    #[test]
+    fn bar_tag_layout_matches_the_shader() {
+        let t = pack_bar_tag(0.5, 0.75, 1.0);
+        assert_eq!(t & 0xfff, 2048);
+        assert_eq!((t >> 12) & 0xfff, 3071);
+        assert_eq!(t >> 24, 255);
+        // Out-of-range input clamps instead of bleeding into the neighbouring field.
+        let c = pack_bar_tag(1.7, -0.3, 2.0);
+        assert_eq!(c & 0xfff, 4095);
+        assert_eq!((c >> 12) & 0xfff, 0);
+        assert_eq!(c >> 24, 255);
     }
 }

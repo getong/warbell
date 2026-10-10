@@ -81,7 +81,6 @@ pub fn player_arts(
     orbit: Res<OrbitCam>,
     fx: Option<Res<CombatFx>>,
     mut player: ResMut<PlayerRes>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     mut commands: Commands,
     mut cues: MessageWriter<AudioCue>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
@@ -169,7 +168,7 @@ pub fn player_arts(
     let (dmg, origin) = match &art {
         Art::Slam => {
             let at = Vec3::new(hero.pos.x, hero.y + 0.05, hero.pos.y);
-            spawn_shockwave(&mut commands, &fx, &mut materials, at, now);
+            spawn_shockwave(&mut commands, &fx, at, now);
             spawn_burst(&mut commands, &fx, Vec3::new(hero.pos.x, hero.y + 0.4, hero.pos.y), true);
             feedback.trauma = (feedback.trauma + 0.5).min(1.0);
             crate::combat_fx::add_fov_kick(&mut feedback, 1.8); // heavy landing punch
@@ -177,7 +176,7 @@ pub fn player_arts(
         }
         Art::Sweep => {
             let at = Vec3::new(hero.pos.x, hero.y + 0.05, hero.pos.y);
-            spawn_shockwave(&mut commands, &fx, &mut materials, at, now);
+            spawn_shockwave(&mut commands, &fx, at, now);
             // A 360° fling of green leaf/thorn motes riding the energy ring.
             spawn_sweep_burst(&mut commands, &fx, Vec3::new(hero.pos.x, hero.y, hero.pos.y));
             feedback.trauma = (feedback.trauma + 0.34).min(1.0);

@@ -394,7 +394,6 @@ fn boss_brain(
     mut crit: ResMut<crate::player::PendingCrit>,
     mut bolts: ResMut<BoltSpawns>,
     fx: Option<Res<CombatFx>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
     mut notice: ResMut<Notice>,
     mut tension: ResMut<CritTension>,
@@ -464,13 +463,7 @@ fn boss_brain(
                     cues.write(crate::audio::AudioCue::Slam);
                 }
                 if let Some(fx) = &fx {
-                    crate::player::spawn_shockwave(
-                        &mut commands,
-                        fx,
-                        &mut materials,
-                        Vec3::new(b.pos.x, gy + 0.05, b.pos.y),
-                        now,
-                    );
+                    crate::player::spawn_shockwave(&mut commands, fx, Vec3::new(b.pos.x, gy + 0.05, b.pos.y), now);
                 }
             }
         } else if b.hostile && hero.alive {
@@ -530,13 +523,7 @@ fn boss_brain(
                             pending.1 = (hero.pos - b.pos).normalize_or_zero(); // directional hit-shake
                         }
                         if let Some(fx) = &fx {
-                            crate::player::spawn_shockwave(
-                                &mut commands,
-                                fx,
-                                &mut materials,
-                                Vec3::new(b.pos.x, gy + 0.05, b.pos.y),
-                                now,
-                            );
+                            crate::player::spawn_shockwave(&mut commands, fx, Vec3::new(b.pos.x, gy + 0.05, b.pos.y), now);
                         }
                     }
                     Signature::Volley(n) => {
@@ -829,6 +816,10 @@ fn despawn_boss_bar(mut commands: Commands, q: Query<Entity, With<BossBarRoot>>)
     }
 }
 
+/// Souls-style: the name sits small and left-aligned over a long, thin bar in the shared
+/// [`crate::ui::vitals`] look (iron frame, recessed channel, blood fill, damage trail) — the same
+/// read as the hero's HP bar and the world-space foe bars. (It was a rounded 14px pill in flat
+/// candy red with a gold outline.)
 fn spawn_boss_bar(commands: &mut Commands, fonts: &UiFonts, name: &str, level: i32, ratio: f32) {
     commands
         .spawn((
@@ -840,8 +831,8 @@ fn spawn_boss_bar(commands: &mut Commands, fonts: &UiFonts, name: &str, level: i
                 width: Val::Px(520.0),
                 margin: UiRect::left(Val::Px(-260.0)),
                 flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                row_gap: Val::Px(4.0),
+                align_items: AlignItems::FlexStart,
+                row_gap: Val::Px(5.0),
                 ..default()
             },
             GlobalZIndex(40),
@@ -850,33 +841,13 @@ fn spawn_boss_bar(commands: &mut Commands, fonts: &UiFonts, name: &str, level: i
         ))
         .with_children(|r| {
             r.spawn((
-                label(&fonts.display, &format!("{name}   —   Lv {level}"), 18.0, rgb(255, 224, 170)),
-                TextShadow { offset: Vec2::new(0.0, 2.0), color: rgba(0, 0, 0, 0.8) },
+                label(&fonts.display, &format!("{name}   —   Lv {level}"), 16.0, rgb(232, 220, 196)),
+                TextShadow { offset: Vec2::new(0.0, 1.0), color: rgba(0, 0, 0, 0.85) },
                 BossBarName,
             ));
-            // Track + fill.
-            r.spawn((
-                Node {
-                    width: Val::Percent(100.0),
-                    height: Val::Px(14.0),
-                    border: widgets::border(1.0),
-                    border_radius: radius(6.0),
-                    ..default()
-                },
-                BackgroundColor(rgba(20, 12, 10, 0.82)),
-                BorderColor::all(rgba(224, 168, 74, 0.7)),
-            ))
-            .with_children(|track| {
-                track.spawn((
-                    Node {
-                        width: Val::Percent(ratio * 100.0),
-                        height: Val::Percent(100.0),
-                        border_radius: radius(6.0),
-                        ..default()
-                    },
-                    BackgroundColor(rgb(196, 54, 44)),
-                    BossBarFill,
-                ));
+            r.spawn(crate::ui::vitals::track(Val::Percent(100.0), 11.0)).with_children(|t| {
+                let fill = t.spawn(crate::ui::vitals::fill(HP_TOP, HP_BOT, ratio, BossBarFill)).id();
+                t.spawn(crate::ui::vitals::trail(fill));
             });
         });
 }

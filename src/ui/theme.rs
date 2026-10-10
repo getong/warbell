@@ -51,13 +51,28 @@ pub const SLOT_BG: Color = rgba(146, 122, 86, 0.14);
 pub const SLOT_BORDER: Color = rgba(98, 78, 50, 0.9);
 pub const SLOT_BORDER_HOVER: Color = rgba(216, 178, 114, 0.95);
 
-// Bars
-pub const HP_TOP: Color = rgb(214, 58, 58);
-pub const HP_BOT: Color = rgb(138, 31, 31);
-pub const XP_TOP: Color = rgb(98, 198, 232); // #62c6e8
-pub const XP_BOT: Color = rgb(58, 123, 213); // #3a7bd5
-pub const STAM_TOP: Color = rgb(143, 168, 200); // #8fa8c8
-pub const STAM_BOT: Color = rgb(74, 102, 144); // #4a6690
+// Bars — the VITALS palette, shared by the hero HUD, the boss bars, the FP reticle bar AND the
+// world-space enemy bars (`combat_fx`, which feeds these into its shader), so every health bar in
+// the game reads as one family. Deliberately muted (no flat primaries): the old #d63a3a / cyan
+// candy bars looked like a mobile game next to the realistic forest. Blood is a deep, slightly
+// brown crimson with a soft top→bottom gradient; stamina a dry sage; XP a dim bronze thread.
+pub const HP_TOP: Color = rgb(150, 30, 24); // deep blood (lit top of the tube)
+pub const HP_BOT: Color = rgb(92, 14, 12); // clotted crimson (bottom)
+pub const XP_TOP: Color = rgb(184, 146, 82); // dim bronze
+pub const XP_BOT: Color = rgb(122, 92, 46);
+pub const STAM_TOP: Color = rgb(128, 146, 100); // dry sage
+pub const STAM_BOT: Color = rgb(78, 94, 58);
+/// Delayed-damage "trail" ghost behind a health fill (the Souls read of how much a blow took):
+/// a pale, desaturated amber — reads clearly against the blood without being a warning orange.
+pub const BAR_TRAIL: Color = rgb(186, 152, 104);
+/// The trail on the frame a blow lands (eases to [`BAR_TRAIL`]).
+pub const BAR_TRAIL_HOT: Color = rgb(236, 214, 170);
+/// Drained channel behind every vitals fill — near-black warm iron, a recessed slot.
+pub const BAR_EMPTY: Color = rgb(16, 13, 11);
+/// The 1px frame line around a vitals bar (muted iron-bronze) and the hairline near-black rim
+/// outside it that separates the bar from any background.
+pub const BAR_FRAME: Color = rgb(98, 84, 64);
+pub const BAR_RIM: Color = rgba(6, 5, 4, 0.92);
 
 // Primary action button (Play / Resume) — bronze-gold, dark text (`INK`).
 pub const PRIMARY: Color = rgb(196, 144, 62); // bronze base

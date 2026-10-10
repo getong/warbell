@@ -16,6 +16,7 @@ pub mod notice;
 pub mod settings;
 pub mod texture;
 pub mod theme;
+pub mod vitals;
 pub mod widgets;
 
 pub use fonts::{label, UiFonts};
@@ -39,6 +40,8 @@ impl Plugin for UiKitPlugin {
             focus::TooltipPlugin,
             graphics_menu::GraphicsMenuPlugin, // full graphics Settings page (native 0.19 widgets)
         ));
+        // Damage-trail ghosts behind every vitals bar (HUD + boss bars) — pure UI cosmetics.
+        app.add_systems(Update, vitals::drive_vital_trails);
         // NB: the Slider/Checkbox widget plugins are added automatically by `DefaultPlugins` when the
         // `bevy_ui_widgets` feature is on — adding them again here panics ("already added").
     }

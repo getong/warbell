@@ -12,6 +12,7 @@ use crate::player::{HeroHealth, PlayerRes};
 use crate::ui::anim::{anim, anim_btn, AnimKind};
 use crate::ui::fonts::{label, UiFonts};
 use crate::ui::theme::*;
+use crate::ui::vitals;
 use crate::ui::widgets::{self, border};
 use crate::ui::IconAtlas;
 use crate::ui::notice::Notice;
@@ -128,41 +129,16 @@ impl Plugin for HudPlugin {
     }
 }
 
+/// Vitals column width and bar heights (frame included). Thin, square-cut bars in the shared
+/// [`crate::ui::vitals`] look — they were 20/10/7px rounded pills in saturated candy gradients on a
+/// translucent panel, which read arcade next to the realistic world.
 const BAR_W: f32 = 240.0;
-
-/// A full-size absolute fill quad with a vertical gradient (width driven live), tagged `marker`.
-fn fill(top: Color, bot: Color, marker: impl Bundle) -> impl Bundle {
-    (
-        Node {
-            position_type: PositionType::Absolute,
-            left: Val::Px(0.0),
-            top: Val::Px(0.0),
-            width: Val::Percent(100.0),
-            height: Val::Percent(100.0),
-            ..default()
-        },
-        widgets::vgrad(top, bot),
-        marker,
-    )
-}
-
-/// A rounded bar-track node of the given height.
-fn track(h: f32) -> impl Bundle {
-    (
-        Node {
-            width: Val::Px(BAR_W),
-            height: Val::Px(h),
-            border: border(1.0),
-            border_radius: radius(R_CELL),
-            align_items: AlignItems::Center,
-            justify_content: JustifyContent::Center,
-            overflow: Overflow::clip(),
-            ..default()
-        },
-        BackgroundColor(PANEL_HUD),
-        BorderColor::all(BORDER_SOFT),
-    )
-}
+const HP_BAR_H: f32 = 15.0;
+const XP_BAR_H: f32 = 6.0;
+const STAM_BAR_H: f32 = 6.0;
+const BARS_GAP: f32 = 4.0;
+/// The level badge squares off against the whole bars column.
+const BADGE: f32 = HP_BAR_H + XP_BAR_H + STAM_BAR_H + 2.0 * BARS_GAP;
 
 fn setup_hud(mut commands: Commands, fonts: Res<UiFonts>) {
     commands
@@ -179,40 +155,44 @@ fn setup_hud(mut commands: Commands, fonts: Res<UiFonts>) {
             crate::game_state::CampaignOnly,
         ))
         .with_children(|root| {
-            // Level badge.
+            // Level badge: the same iron frame + near-black rim as the bars, square-cut.
             root.spawn((
                 Node {
-                    width: Val::Px(40.0),
-                    height: Val::Px(40.0),
+                    width: Val::Px(BADGE),
+                    height: Val::Px(BADGE),
                     align_items: AlignItems::Center,
                     justify_content: JustifyContent::Center,
                     border: border(1.0),
-                    border_radius: radius(R_BTN),
                     ..default()
                 },
-                BackgroundColor(PANEL_HUD),
-                BorderColor::all(rgba(255, 213, 140, 0.5)),
+                BackgroundColor(rgba(16, 13, 11, 0.86)),
+                BorderColor::all(BAR_FRAME),
+                Outline::new(Val::Px(1.0), Val::ZERO, BAR_RIM),
                 shadow_hud(),
             ))
             .with_children(|b| {
-                b.spawn((label(&fonts.display, "1", 16.0, GOLD), LevelText));
+                b.spawn((label(&fonts.display, "1", 15.0, GOLD), LevelText));
             });
-            // Bars column.
-            root.spawn(Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(3.0), ..default() })
+            // Bars column: HP (with the damage trail + its number), then thin XP and stamina. XP and
+            // stamina get no trail — a level-up resets XP to 0 and a sprint drains stamina
+            // continuously, neither of which is damage worth a ghost.
+            root.spawn(Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(BARS_GAP), ..default() })
                 .with_children(|col| {
-                    col.spawn(track(20.0)).with_children(|t| {
-                        t.spawn(fill(HP_TOP, HP_BOT, HpFill));
+                    col.spawn(vitals::track(Val::Px(BAR_W), HP_BAR_H)).with_children(|t| {
+                        let fill = t.spawn(vitals::fill(HP_TOP, HP_BOT, 1.0, HpFill)).id();
+                        t.spawn(vitals::trail(fill));
                         t.spawn((
-                            label(&fonts.bold, "100", 11.0, Color::WHITE),
-                            TextShadow { offset: Vec2::ZERO, color: rgba(0, 0, 0, 0.7) },
+                            label(&fonts.bold, "100", 10.0, rgb(236, 226, 208)),
+                            TextShadow { offset: Vec2::new(0.0, 1.0), color: rgba(0, 0, 0, 0.85) },
+                            ZIndex(2),
                             HpText,
                         ));
                     });
-                    col.spawn(track(10.0)).with_children(|t| {
-                        t.spawn(fill(XP_TOP, XP_BOT, XpFill));
+                    col.spawn(vitals::track(Val::Px(BAR_W), XP_BAR_H)).with_children(|t| {
+                        t.spawn(vitals::fill(XP_TOP, XP_BOT, 0.0, XpFill));
                     });
-                    col.spawn(track(7.0)).with_children(|t| {
-                        t.spawn(fill(STAM_TOP, STAM_BOT, StaminaFill));
+                    col.spawn(vitals::track(Val::Px(BAR_W), STAM_BAR_H)).with_children(|t| {
+                        t.spawn(vitals::fill(STAM_TOP, STAM_BOT, 1.0, StaminaFill));
                     });
                 });
         });
