@@ -5,6 +5,14 @@
 task-specific SOPs (`visual-debug-cloud`, `model-viewer`, `trailer-maker`, `studio-port`,
 `release`). This file only adds the durable, non-obvious notes for running in a Cursor Cloud VM.
 
+## Asset downloads
+
+Downloading **textures and animations** is always allowed — no need to ask first (the owner's
+standing permission). Prefer CC0 sources (Poly Haven, ambientCG, Quaternius); CC BY is fine with
+credit. Record each asset's source URL and licence in `assets/forest_pbr/ATTRIBUTION.txt`, keep
+textures at 2K unless a bigger map is clearly needed, and commit only the packed game assets — not
+the raw downloaded archives.
+
 ## Cursor Cloud specific instructions
 
 **What this is:** "Warbell" — a single Bevy 0.19 / Rust game crate (`tileworld_bevy_forest`, root
