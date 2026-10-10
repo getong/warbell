@@ -90,11 +90,12 @@ fn setup_bolt_assets(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let mesh = meshes.add(Sphere::new(0.16).mesh().ico(2).unwrap());
+    // A small white-hot core blown out in HDR so the bloom wraps it in a violet glow — the old
+    // flat unlit 0.32 m ball read as a pasted-on disc.
+    let mesh = meshes.add(Sphere::new(0.1).mesh().ico(3).unwrap());
     let mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.78, 0.61, 1.0),
-        emissive: LinearRgba::rgb(2.4, 1.4, 4.0),
-        unlit: true,
+        base_color: Color::BLACK,
+        emissive: LinearRgba::rgb(9.0, 4.0, 18.0),
         ..default()
     });
     commands.insert_resource(BoltAssets { mesh, mat });

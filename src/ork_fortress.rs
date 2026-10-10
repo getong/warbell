@@ -363,11 +363,11 @@ fn setup_bolt_assets(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let mesh = meshes.add(Sphere::new(0.17).mesh().ico(2).unwrap());
+    // HDR core for the bloom to glow (as the shaman bolt), not a flat unlit ball.
+    let mesh = meshes.add(Sphere::new(0.11).mesh().ico(3).unwrap());
     let mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.62, 1.0, 0.55),
-        emissive: LinearRgba::rgb(1.6, 4.8, 1.2),
-        unlit: true,
+        base_color: Color::BLACK,
+        emissive: LinearRgba::rgb(4.5, 14.0, 3.5),
         ..default()
     });
     commands.insert_resource(WarpBoltAssets { mesh, mat });
