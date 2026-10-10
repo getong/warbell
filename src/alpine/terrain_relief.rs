@@ -103,14 +103,20 @@ fn gullies(x: f32, z: f32, dir: (f32, f32), cell: f32) -> f32 {
 
 fn build_relief() -> Arc<Vec<f32>> {
     let grid = tiles();
-    let wet = water_near();
     let (w, h) = (COLS as usize, ROWS as usize);
     // 1. Distance (tiles) from every tile to the nearest class change / non-shelf tile.
     let eligible = |ix: i32, iz: i32| -> Option<i32> {
-        let (_, cls) = tile_in(&grid, ix, iz)?;
-        let ok = cls >= 3
-            && wet[(iz * COLS + ix) as usize] == 0
-            && cliff_exempt_base((ix as f32 + 0.5) / MAP_SCALE, (iz as f32 + 0.5) / MAP_SCALE);
+        let (tb, cls) = tile_in(&grid, ix, iz)?;
+        let (bx, bz) = ((ix as f32 + 0.5) / MAP_SCALE, (iz as f32 + 0.5) / MAP_SCALE);
+        // The snow massif is a continuous surface of its own (`alpine_massif`): rock range only.
+        // Dry = clear of inland water by the `water_near` margins (~2.1 base). NOT the
+        // `water_near()` mask itself: its bake reads corner heights (`bank_cell_active` →
+        // `corner_top_y_in` → this relief), so calling it from here re-locked its mutex on the
+        // same thread and hung the game at boot.
+        let ok = tb != TB::Snow
+            && cls >= 3
+            && cliff_exempt_base(bx, bz)
+            && inland_water_sd_base(bx, bz) > 2.5;
         ok.then_some(cls)
     };
     let mut d = vec![f32::INFINITY; w * h];

@@ -64,6 +64,11 @@ fn above(grid: &Grid, x: f32, z: f32, m: f32) -> f32 {
 
 /// (offset, unit contour tangent) for lip corner `(cx, cz)`; `None` for an unmoved corner.
 fn lip(cx: i32, cz: i32) -> Option<((f32, f32), (f32, f32))> {
+    // Snow-massif corners are the continuous surface the ground sampler reads at the GRID point:
+    // never slide them (a moved corner on a slope would float / bury whatever stands there).
+    if super::alpine_massif::corner_y(cx, cz).is_some() {
+        return None;
+    }
     let grid = tiles();
     let (lo, hi) = split(&grid, cx, cz)?;
     let m = (lo + hi) as f32 * 0.5;
