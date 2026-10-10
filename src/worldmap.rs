@@ -3403,15 +3403,14 @@ fn spawn_terrain_sheet(
         let mut cx = 0;
         while cx < COLS {
             let (x1, z1) = ((cx + TERRAIN_CHUNK).min(COLS), (cz + TERRAIN_CHUNK).min(ROWS));
-            let mesh = build_terrain_chunk(keep, cx, x1, cz, z1);
+            let mut mesh = build_terrain_chunk(keep, cx, x1, cz, z1);
             if mesh.count_vertices() > 0 {
-                // Attach the chunk's own AABB up front. The chunk entity carries `Transform::default()`
-                // with its geometry baked in WORLD space, and the LOD `VisibilityRange` measures the
-                // camera→AABB-centre distance. Until Bevy's `calculate_bounds` fills the AABB in, the
-                // range check falls back to the entity *translation* — i.e. the world ORIGIN (castle) —
-                // so a chunk under a player standing far from the castle reads as "far" and gets pinned
-                // to the coarse drape (the "underfoot chunk stuck in low-res" bug), a window that
-                // re-opens on every world/biome rebuild. Baking the real AABB here closes that gap.
+                // Attach the chunk's own AABB up front. The LOD `VisibilityRange` measures the
+                // camera→AABB-centre distance, and until Bevy's `calculate_bounds` fills the AABB in,
+                // the range check falls back to the entity *translation* — so a chunk under a player
+                // standing far from it could read as "far" and get pinned to the coarse drape (the
+                // "underfoot chunk stuck in low-res" bug), a window that re-opens on every world/biome
+                // rebuild. Baking the real AABB here closes that gap.
                 use bevy::camera::primitives::MeshAabb;
                 let aabb = mesh.compute_aabb();
                 // Terrain LOD: past TERRAIN_LOD the full-res chunk (1 quad/tile + walls +
@@ -3419,47 +3418,66 @@ fn spawn_terrain_sheet(
                 // vertices for the distant majority of the island. The band is a dithered
                 // crossfade (only the ring of chunks currently inside it pays the discard
                 // cost) so the swap doesn't pop; skirts on the coarse mesh hide the seam.
-                let coarse = if lod { build_terrain_chunk_coarse(keep, cx, x1, cz, z1) } else { None };
+                let mut coarse = if lod { build_terrain_chunk_coarse(keep, cx, x1, cz, z1) } else { None };
+                // ONE SHARED AABB (the union) for BOTH siblings. `VisibilityRange` with
+                // `use_aabb` measures the camera→AABB distance, and the dither crossfade
+                // is only COMPLEMENTARY (fine discards exactly the pixels the coarse
+                // keeps) when both siblings resolve the SAME distance. The stride-4 drape
+                // + its skirts bake slightly different bounds than the full-res mesh, so
+                // per-mesh AABBs put the two at different points of the band — mismatched
+                // checkerboards with see-through holes ("the ground looks slightly
+                // transparent"), and at screen edges one sibling could frustum-cull while
+                // the other still dithered.
+                let shared = match (aabb, coarse.as_ref().and_then(|c| c.compute_aabb())) {
+                    (Some(a), Some(b)) => {
+                        let min = a.min().min(b.min());
+                        let max = a.max().max(b.max());
+                        Some(bevy::camera::primitives::Aabb::from_min_max(min.into(), max.into()))
+                    }
+                    (a, b) => a.or(b),
+                };
+                // Re-centre BOTH siblings on that shared AABB centre: the geometry is authored in
+                // world space, but the chunk entity must sit AT its own centre. Bevy's GPU cull
+                // honours `use_aabb` (camera→AABB-centre), yet the per-fragment crossfade level
+                // (`mesh.wgsl`/`prepass.wgsl` → `get_visibility_range_dither_level`) is computed
+                // from the mesh TRANSLATION, `world_from_local[3]`, ignoring `use_aabb`. With every
+                // chunk at `Transform::default()` that translation was the world origin, so EVERY
+                // near chunk dithered by the camera's distance to the CASTLE: 150–176u out the
+                // whole underfoot ground lost 1..15 of every 16 pixels in a fixed 4×4 screen
+                // pattern (the regular grid of dark "dots" over the ground — the sea plane showing
+                // through the holes), and past 176u the full-res ground discarded entirely.
+                // Centred, the shader's distance and the cull's distance are the same number.
+                let centre = shared.map(|b| Vec3::from(b.center)).unwrap_or(Vec3::ZERO);
+                mesh.translate_by(-centre);
+                if let Some(c) = coarse.as_mut() {
+                    c.translate_by(-centre);
+                }
+                let local = shared.map(|b| bevy::camera::primitives::Aabb {
+                    center: (Vec3::from(b.center) - centre).into(),
+                    half_extents: b.half_extents,
+                });
                 let mut e = commands.spawn((
                     Mesh3d(meshes.add(mesh)),
                     MeshMaterial3d(mat.clone()),
-                    Transform::default(),
+                    Transform::from_translation(centre),
                     crate::biome::BiomeEntity,
                 ));
+                // `NoAutoAabb`: Bevy's `calculate_bounds` otherwise REPLACES the inserted AABB on
+                // the spawn frame (`Changed<Mesh3d>` fires on insert) with each mesh's own bounds —
+                // which silently undid the shared-AABB contract below for both siblings.
+                if let Some(local) = local {
+                    e.insert((local, bevy::camera::visibility::NoAutoAabb));
+                }
                 if let Some(coarse) = coarse {
-                    // ONE SHARED AABB (the union) for BOTH siblings. `VisibilityRange` with
-                    // `use_aabb` measures the camera→AABB distance, and the dither crossfade
-                    // is only COMPLEMENTARY (fine discards exactly the pixels the coarse
-                    // keeps) when both siblings resolve the SAME distance. The stride-4 drape
-                    // + its skirts bake slightly different bounds than the full-res mesh, so
-                    // per-mesh AABBs put the two at different points of the band — mismatched
-                    // checkerboards with see-through holes ("the ground looks slightly
-                    // transparent"), and at screen edges one sibling could frustum-cull while
-                    // the other still dithered. (Also the AABB-up-front fix: until Bevy's
-                    // `calculate_bounds` fills an AABB in, the range check falls back to the
-                    // entity translation — the world ORIGIN — pinning far-standing players'
-                    // underfoot chunks to the coarse drape on every rebuild.)
-                    let caabb = coarse.compute_aabb();
-                    let shared = match (aabb, caabb) {
-                        (Some(a), Some(b)) => {
-                            let min = a.min().min(b.min());
-                            let max = a.max().max(b.max());
-                            Some(bevy::camera::primitives::Aabb::from_min_max(min.into(), max.into()))
-                        }
-                        (a, b) => a.or(b),
-                    };
                     e.insert(bevy::camera::visibility::VisibilityRange {
                         start_margin: 0.0..0.0,
                         end_margin: TERRAIN_LOD..TERRAIN_LOD + TERRAIN_LOD_BAND,
                         use_aabb: true,
                     });
-                    if let Some(shared) = shared {
-                        e.insert(shared);
-                    }
                     let mut ce = commands.spawn((
                         Mesh3d(meshes.add(coarse)),
                         MeshMaterial3d(mat.clone()),
-                        Transform::default(),
+                        Transform::from_translation(centre),
                         crate::biome::BiomeEntity,
                         // Shadow cascades stop at ~150 and the fog is thick out there —
                         // the coarse drape is pure fill, never a shadow caster.
@@ -3470,11 +3488,9 @@ fn spawn_terrain_sheet(
                             use_aabb: true,
                         },
                     ));
-                    if let Some(shared) = shared {
-                        ce.insert(shared);
+                    if let Some(local) = local {
+                        ce.insert((local, bevy::camera::visibility::NoAutoAabb));
                     }
-                } else if let Some(aabb) = aabb {
-                    e.insert(aabb);
                 }
             }
             cx += TERRAIN_CHUNK;
