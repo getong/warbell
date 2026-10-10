@@ -226,6 +226,173 @@ fn idle_pose(t: f32) -> Pose {
     p
 }
 
+// â”€â”€ The hero at rest: motion-captured â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// A man standing at ease (CMU 139_02, 7.8 s, sampled at 10 Hz, each channel relative to his mean
+// stance): the weight drifting from foot to foot, the hips rolling and turning with it, the trunk
+// swaying over them and the head looking round now and then. Body frame = his planted feet.
+
+/// Samples per second in the `IDLE_*` tables.
+const IDLE_HZ: f32 = 10.0;
+/// Over the last this-many seconds of each pass the sideways channels swing over to the mirror
+/// image, which the next pass plays (so the loop runs 15.6 s before it repeats).
+const IDLE_FADE: f32 = 1.5;
+/// The hips over the right foot (+1 = one half foot-spacing), forward of the feet (m), and down (m).
+const IDLE_LAT: [f32; 78] = [
+    -0.023, -0.026, -0.037, -0.022, -0.011, -0.013, -0.022, -0.034, -0.035, -0.027, -0.004, 0.028, 0.052, 0.061,
+    0.039, -0.022, -0.097, -0.165, -0.214, -0.235, -0.229, -0.194, -0.140, -0.076, -0.009, 0.057, 0.129, 0.079,
+    -0.072, -0.270, -0.466, -0.582, -0.564, -0.438, -0.270, -0.103, 0.034, 0.134, 0.201, 0.239, 0.238, 0.171, 0.062,
+    -0.056, -0.176, -0.294, -0.415, -0.490, -0.471, -0.358, -0.172, 0.038, 0.225, 0.354, 0.428, 0.472, 0.523, 0.613,
+    0.718, 0.745, 0.629, 0.415, 0.194, 0.013, -0.116, -0.200, -0.249, -0.268, -0.250, -0.184, -0.070, 0.078, 0.207,
+    0.284, 0.282, 0.218, 0.138, 0.056,
+];
+const IDLE_FWD: [f32; 78] = [
+    0.008, 0.002, 0.002, -0.001, -0.001, 0.000, 0.001, 0.003, 0.006, 0.009, 0.012, 0.013, 0.012, 0.011, 0.009,
+    0.004, 0.001, -0.001, 0.000, 0.002, 0.005, 0.010, 0.014, 0.018, 0.021, 0.023, 0.015, 0.006, 0.000, -0.004,
+    -0.003, 0.002, 0.007, 0.007, 0.002, -0.005, -0.008, -0.009, -0.013, -0.017, -0.019, -0.021, -0.021, -0.016,
+    -0.009, -0.003, 0.003, 0.006, 0.005, 0.002, -0.002, -0.002, 0.002, 0.007, 0.010, 0.008, 0.004, -0.001, -0.009,
+    -0.012, -0.016, -0.025, -0.028, -0.026, -0.024, -0.019, -0.012, -0.006, 0.000, 0.002, 0.002, 0.002, 0.005,
+    0.006, 0.007, 0.008, 0.008, 0.009,
+];
+const IDLE_DIP: [f32; 78] = [
+    0.002, 0.004, 0.004, 0.004, 0.004, 0.004, 0.004, 0.004, 0.003, 0.003, 0.003, 0.002, 0.003, 0.003, 0.003, 0.004,
+    0.005, 0.005, 0.005, 0.005, 0.004, 0.004, 0.004, 0.003, 0.002, 0.002, 0.002, 0.000, -0.002, -0.003, -0.004,
+    -0.005, -0.005, -0.003, -0.001, 0.000, 0.001, 0.002, 0.001, 0.001, 0.001, 0.001, 0.000, -0.001, -0.002, -0.002,
+    -0.002, -0.002, -0.003, -0.005, -0.006, -0.005, -0.003, -0.002, -0.003, -0.005, -0.007, -0.009, -0.009, -0.007,
+    -0.008, -0.007, -0.004, 0.000, 0.001, 0.002, 0.002, 0.002, 0.002, 0.002, 0.000, -0.001, -0.001, 0.000, 0.000,
+    0.000, 0.001, 0.002,
+];
+/// Pelvis roll (+ = right hip up) and yaw (+ = right hip back), deg.
+const IDLE_ROLL: [f32; 78] = [
+    0.7, 0.8, 0.2, 0.5, 0.6, 0.4, 0.4, 0.2, 0.0, -0.3, -0.5, -0.4, 0.3, 0.1, -0.3, 0.1, 0.0, -0.1, -0.2, -0.3, -0.8,
+    -0.5, -0.4, -0.5, -0.4, -0.4, 0.6, 0.8, 1.6, 2.2, 1.8, 0.7, 0.3, 0.7, 0.9, 1.2, 0.7, 0.4, 0.3, 0.2, 0.0, 0.0,
+    0.4, 0.6, 0.6, 0.2, -0.4, -0.7, -0.8, -1.3, -1.5, -1.2, -0.9, -0.8, -0.9, -1.5, -1.9, -2.4, -2.9, -2.9, -1.6,
+    -0.2, 0.6, 1.3, 1.7, 2.0, 2.2, 2.2, 1.6, 0.8, 0.1, -0.4, -0.8, -0.9, -0.7, -0.3, 0.0, 0.5,
+];
+const IDLE_YAW: [f32; 78] = [
+    4.4, 4.9, 4.2, 4.0, 3.8, 3.6, 3.7, 3.8, 3.6, 3.0, 2.0, 1.0, -0.2, -1.2, -1.3, -0.6, 0.5, 2.5, 4.4, 6.2, 7.2,
+    7.2, 6.5, 5.1, 3.4, 1.6, 0.4, 0.2, 1.7, 4.2, 6.2, 6.6, 5.6, 3.9, 1.5, -0.4, -2.0, -3.2, -4.0, -4.7, -4.9, -4.0,
+    -1.9, 0.6, 3.2, 5.2, 6.5, 6.7, 5.2, 2.2, -1.3, -4.3, -6.8, -7.8, -7.9, -8.0, -8.4, -9.2, -11.2, -11.6, -10.0,
+    -7.4, -4.4, -1.7, 0.1, 0.9, 1.1, 1.4, 1.6, 0.9, -0.8, -3.3, -5.4, -6.3, -5.4, -3.2, -0.5, 2.1,
+];
+/// Trunk lean (+ = forward), side bend (+ = top right) and shoulder-line yaw (+ = right shoulder
+/// back), deg.
+const IDLE_LEAN: [f32; 78] = [
+    -0.6, 0.1, 0.2, 0.5, 0.4, 0.1, -0.3, -0.8, -1.6, -2.5, -2.8, -2.8, -2.5, -2.0, -1.4, 0.0, 1.5, 1.8, 0.8, 0.1,
+    -0.1, -0.4, -1.2, -2.0, -2.9, -3.5, -2.8, -1.6, -0.4, 0.7, 0.8, -0.2, -0.9, -0.4, 0.9, 2.2, 2.8, 2.6, 2.2, 1.8,
+    1.4, 1.1, 0.3, -1.0, -2.1, -2.5, -2.7, -2.8, -2.6, -2.1, -1.7, -1.3, -1.0, -1.2, -1.7, -1.7, -1.3, -0.7, 0.1,
+    0.3, 0.7, 2.6, 4.5, 5.2, 5.4, 5.0, 4.0, 3.0, 2.0, 1.3, 1.1, 1.0, 0.6, 0.4, 0.3, -0.2, -0.6, -0.5,
+];
+const IDLE_SIDE: [f32; 78] = [
+    -3.4, -3.3, -3.0, -3.1, -3.2, -3.1, -3.2, -3.2, -2.6, -1.3, -0.3, 0.6, 1.7, 2.5, 2.9, 2.6, 1.7, 0.8, -0.3, -0.9,
+    -1.2, -1.4, -1.6, -1.7, -1.7, -1.7, -1.5, 0.0, 1.0, 0.4, -0.5, -0.7, -0.8, -0.8, -0.6, -0.1, 0.5, 1.3, 2.2, 3.0,
+    3.4, 3.3, 2.6, 1.4, -0.4, -2.2, -3.3, -3.5, -3.7, -3.8, -3.4, -1.8, -0.9, -0.2, 1.1, 2.6, 4.1, 5.6, 7.1, 7.3,
+    6.4, 5.1, 3.5, 2.2, 1.1, 0.3, -0.2, -0.4, -0.3, -0.2, 0.0, 0.1, 0.1, -0.3, -1.0, -1.6, -2.4, -3.3,
+];
+const IDLE_SH_YAW: [f32; 78] = [
+    6.2, 6.3, 6.3, 5.9, 5.3, 4.9, 5.0, 5.0, 4.8, 4.1, 2.9, 1.3, -0.4, -1.7, -2.4, -2.3, -1.6, 0.1, 2.4, 5.1, 7.0,
+    7.6, 7.4, 6.2, 4.7, 3.2, 1.9, 1.7, 2.9, 3.8, 4.3, 3.9, 2.4, 0.9, -0.9, -2.3, -3.2, -3.8, -4.3, -4.7, -4.7, -3.6,
+    -1.8, 0.3, 2.6, 4.5, 5.4, 5.4, 4.0, 1.4, -1.9, -4.9, -7.0, -7.4, -6.8, -6.6, -6.6, -7.5, -9.6, -10.3, -8.9,
+    -6.8, -4.3, -1.9, -0.7, -0.6, -0.7, -0.5, 0.0, 0.0, -1.1, -3.0, -4.7, -5.3, -4.2, -1.8, 1.2, 4.1,
+];
+/// Gaze yaw (+ = looking right) and pitch (+ = looking down), deg.
+const IDLE_HEAD_YAW: [f32; 78] = [
+    34.1, 33.7, 33.5, 33.1, 32.5, 32.0, 31.4, 31.1, 24.7, 10.6, 0.4, -9.0, -18.7, -27.6, -33.7, -38.3, -40.7, -33.1,
+    -13.4, 3.5, 13.9, 20.5, 23.2, 23.7, 23.2, 22.3, 21.3, 19.5, 12.4, 3.4, -1.1, -2.8, -5.0, -9.0, -13.9, -18.9,
+    -22.4, -25.1, -27.2, -28.3, -24.3, -16.8, -10.8, -5.6, 5.3, 18.0, 23.7, 25.4, 25.6, 24.7, 16.7, -1.2, -8.7,
+    -9.3, -11.6, -17.0, -20.8, -23.2, -26.1, -26.9, -25.0, -22.5, -19.0, -17.4, -18.4, -19.1, -16.1, -11.4, -7.3,
+    -4.4, -2.0, 0.3, 2.6, 8.0, 17.1, 22.8, 27.2, 31.9,
+];
+const IDLE_HEAD_PITCH: [f32; 78] = [
+    -9.9, -9.8, -9.7, -9.5, -10.1, -10.4, -10.6, -10.4, -6.5, 0.0, 2.5, 4.6, 6.1, 6.4, 6.5, 8.2, 9.6, 9.3, 9.5, 9.3,
+    7.3, 2.4, -2.5, -6.2, -8.4, -9.6, -10.2, -10.0, -7.9, -4.9, -2.6, -1.2, 1.2, 6.1, 11.6, 15.8, 17.7, 18.1, 17.7,
+    16.6, 14.0, 8.9, 3.5, -0.5, -5.1, -10.5, -14.0, -15.6, -16.0, -15.4, -12.0, -7.6, -6.5, -6.0, -1.3, 6.3, 8.9,
+    9.0, 9.2, 8.5, 8.8, 9.6, 9.5, 10.1, 10.7, 9.1, 3.8, -1.5, -5.0, -5.8, -3.9, -2.1, -1.7, -3.6, -6.7, -8.7, -9.6,
+    -9.8,
+];
+
+/// Uniform periodic Catmull-Rom through `v` at sample position `x`.
+fn loop_curve(v: &[f32], x: f32) -> f32 {
+    let n = v.len() as isize;
+    let i = x.floor() as isize;
+    let t = x - x.floor();
+    let at = |j: isize| v[j.rem_euclid(n) as usize];
+    let (p0, p1, p2, p3) = (at(i - 1), at(i), at(i + 1), at(i + 2));
+    0.5 * (2.0 * p1 + (p2 - p0) * t + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t * t + (3.0 * (p1 - p2) + p3 - p0) * t * t * t)
+}
+
+/// The footman hero standing at rest at time `t` (s): the measured idle above over the breathing,
+/// the boots planted where the rest pose puts them (the legs are solved to them, so the hips can
+/// drift and roll freely).
+fn footman_idle_pose(t: f32) -> Pose {
+    let rig = super::footman::leg_rig();
+    let n = IDLE_LAT.len() as f32;
+    let period = n / IDLE_HZ;
+    let pass = (t / period).floor();
+    let local = t - pass * period;
+    // Sideways channels: +1 on even passes, −1 (the mirror image) on odd ones, crossing over smoothly.
+    let side = if (pass as i64).rem_euclid(2) == 0 { 1.0 } else { -1.0 };
+    let flip = side * (PI * smoothstep((local - (period - IDLE_FADE)) / IDLE_FADE)).cos();
+    let x = local * IDLE_HZ;
+    let ch = |v: &[f32]| loop_curve(v, x);
+    let deg = |v: &[f32]| loop_curve(v, x).to_radians();
+    let breath = (t * 2.2).sin();
+
+    let mut p = rest();
+    // ── Pelvis: the weight rides across over the feet; the hips roll and turn with it ──
+    let pelvis = e3(0.0, 0.6 * flip * deg(&IDLE_YAW), flip * deg(&IDLE_ROLL));
+    let half = rig.hip.x.abs();
+    let mut hips = Vec3::new(0.85 * half * flip * ch(&IDLE_LAT), super::model::HIP_REST_Y + ch(&IDLE_DIP) + 0.004 * breath, ch(&IDLE_FWD));
+    // Each boot stays where the rest pose stands it: flat, under its hip joint.
+    let (upper, lower) = (rig.knee.y.hypot(rig.knee.z), rig.foot.y.hypot(rig.foot.z));
+    let reach = 0.995 * (upper + lower);
+    let foot_of = |rest_hip: Vec3| rest_hip + Vec3::new(0.0, super::model::HIP_REST_Y, 0.0) + Vec3::new(0.0, rig.knee.y + rig.foot.y, rig.knee.z + rig.foot.z);
+    let hip_rest = [rig.hip, Vec3::new(-rig.hip.x, rig.hip.y, rig.hip.z)];
+    // Never stretch a leg past its reach: the hips settle onto the straighter (loaded) leg and the
+    // other one softens at the knee.
+    let smin = |a: f32, b: f32| {
+        let k = 0.01;
+        let h = (0.5 + 0.5 * (b - a) / k).clamp(0.0, 1.0);
+        lerp(b, a, h) - k * h * (1.0 - h)
+    };
+    for r in hip_rest {
+        let h = pelvis * r;
+        let d = foot_of(r) - (hips + h);
+        let cap = foot_of(r).y + (reach * reach - d.x * d.x - d.z * d.z).max(0.0).sqrt() - h.y;
+        hips.y = smin(hips.y, cap);
+    }
+    let leg = |r: Vec3| {
+        let h = hips + pelvis * r;
+        let d = foot_of(r) - h;
+        // Abduct the leg plane onto the boot (as the gait does against its sway) and solve the
+        // knee in it; the boot is turned back flat on the ground.
+        let abduct = Quat::from_rotation_z((d.x / d.x.hypot(d.y)).clamp(-0.5, 0.5).asin());
+        let (th, kn, _) = leg_ik(Vec2::ZERO, Vec2::new(d.z, -d.y.hypot(d.x)), 0.0, &rig);
+        let flat = (abduct * rx(th + kn)).inverse();
+        (Jp::r(pelvis.inverse() * abduct * rx(th)), Jp::r(rx(kn)), Jp::r(flat))
+    };
+    (p.hip_l, p.knee_l, p.foot_l) = leg(hip_rest[0]);
+    (p.hip_r, p.knee_r, p.foot_r) = leg(hip_rest[1]);
+    // The writer re-adds HIP_REST_Y − 1.05 (legacy 1.05-hip clips); store in that convention.
+    p.hips = Jp { t: Some(hips + Vec3::Y * (1.05 - super::model::HIP_REST_Y)), r: pelvis };
+
+    // ── Trunk and head: swaying over the hips, the chest rising with each breath; the gaze
+    // wanders (a little less far, and less often down, than the subject's) ──
+    let bend = e3(deg(&IDLE_LEAN) + 0.01 * breath, 0.0, -flip * deg(&IDLE_SIDE));
+    let trunk = Quat::from_rotation_y(0.6 * flip * deg(&IDLE_SH_YAW)) * bend;
+    p.torso = Jp::r(pelvis.inverse() * trunk);
+    let gaze = Quat::from_rotation_y(0.75 * flip * deg(&IDLE_HEAD_YAW)) * rx(0.5 * deg(&IDLE_HEAD_PITCH) - 0.015 * breath);
+    p.head = Jp::r(trunk.inverse() * gaze);
+
+    // ── Arms: the bind pose IS the standing carry; they hang plumb as the trunk bends (and
+    // breathe) ──
+    let hang = bend.inverse().slerp(Quat::IDENTITY, 0.2);
+    p.sh_l = Jp::r(hang * e3(breath * 0.035, 0.0, 0.012 * (t * 1.1).cos()));
+    p.el_l = Jp::r(rx(-0.05 - breath * 0.02));
+    p.sh_r = Jp::r(hang * e3(breath * 0.035, 0.0, -0.012 * (t * 1.1).cos()));
+    p.el_r = Jp::r(rx(-0.04 - breath * 0.015));
+    p
+}
+
 fn walk_pose(c: f32) -> Pose {
     let l = c;
     let r = c + PI;
@@ -1083,7 +1250,7 @@ pub(crate) fn stage_gait(hero: &mut super::Hero, speed: f32, dt: f32) {
 }
 
 fn footman_loco_pose(t: f32, wp: f32, m: f32, speed: f32, armed: f32, shield_back: f32) -> Pose {
-    idle_pose(t).lerp(&footman_gait(wp, speed, armed, shield_back), m)
+    footman_idle_pose(t).lerp(&footman_gait(wp, speed, armed, shield_back), m)
 }
 
 /// Footman combat-stance locomotion with two extra axes driven by `movement` —
@@ -2316,6 +2483,27 @@ mod tests {
         }
     }
 
+    /// The measured idle drifts the hips from foot to foot; the boots must stay put, flat on the
+    /// ground, with no knee locked past straight or sunk into a crouch — through the mirrored
+    /// second pass and both cross-overs too.
+    #[test]
+    fn idle_keeps_the_boots_planted() {
+        let rest = [heel_toe(&footman_idle_pose(0.0), false), heel_toe(&footman_idle_pose(0.0), true)];
+        let mut knee_max = 0.0_f32;
+        for i in 0..800 {
+            let p = footman_idle_pose(i as f32 * 0.04);
+            for (side, right) in [(0, false), (1, true)] {
+                let (h, t) = heel_toe(&p, right);
+                for (a, b) in [(h, rest[side].0), (t, rest[side].1)] {
+                    assert!(a.y.abs() < 0.012, "idle boot off the ground: t={}, y={}", i as f32 * 0.04, a.y);
+                    assert!(a.xz().distance(b.xz()) < 0.012, "idle boot slides: t={}, {a} vs {b}", i as f32 * 0.04);
+                }
+            }
+            knee_max = knee_max.max(p.knee_l.r.angle_between(Quat::IDENTITY)).max(p.knee_r.r.angle_between(Quat::IDENTITY));
+        }
+        assert!(knee_max.to_degrees() < 30.0, "idle knee sinks to {} deg", knee_max.to_degrees());
+    }
+
     /// World ground speeds spanning a creep, a walk, the base jog and the sprint.
     const SPEEDS: [f32; 7] = [0.5, 1.4, 2.4, 3.5, 4.4, 6.125, 7.0];
 
@@ -2493,7 +2681,7 @@ mod tests {
                 assert!(d < 0.002, "gait not periodic at v={v}: joint {} off by {d}", j as u8);
             }
             let stopped = stance_loco_pose(2.0, 1.7, 0.0, v, 0.0, 0.0, 1.0, 0.0);
-            let idle = idle_pose(2.0);
+            let idle = footman_idle_pose(2.0);
             assert!(stopped.hips.t.unwrap().distance(idle.hips.t.unwrap()) < 0.0001);
             assert!(stopped.knee_l.r.angle_between(idle.knee_l.r) < 0.001);
         }
