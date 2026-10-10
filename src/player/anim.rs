@@ -1616,6 +1616,11 @@ pub(crate) fn carry_pose() -> Pose {
     p
 }
 
+/// The caged-captive clip family (huddle / hug-and-rock / rub arms / slump, the feet-planted
+/// stand-up, gripping the bars, and the breath / look / flinch / talk overlays) — a child module so
+/// it can build [`Pose`]s field-by-field like the clips above; `crate::captives` drives it.
+pub(crate) mod captive;
+
 /// Which clip family [`hero_anim`] is playing — a change triggers the cross-fade.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum Clip {

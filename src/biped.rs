@@ -66,6 +66,14 @@ pub struct BipedDrive {
     pub bow_t: f32,
 }
 
+/// A whole pose written by a richer per-mob animator, used INSTEAD of the [`BipedDrive`] clip
+/// selection while present — e.g. a caged captive's idle life (`captives::captive_life`: huddles,
+/// rocking, the stand-up, gripping the bars), which needs more than the drive's flags can say.
+/// Removing it hands the rig straight back to the drive (the captive walk-out does exactly that
+/// once its cross-fade into the gait completes). Culling is unchanged.
+#[derive(Component, Clone, Copy)]
+pub(crate) struct PoseOverride(pub(crate) Pose);
+
 /// Select + compose the studio clips for one biped from its drive (reuses the hero's clip math).
 /// An attack while moving layers over the gait (a running attack), exactly like the hero.
 pub(crate) fn biped_pose(d: &BipedDrive, now: f32) -> Pose {
@@ -120,7 +128,7 @@ const LIMB_CULL2: f32 = 70.0 * 70.0;
 pub fn animate_biped(
     time: Res<Time>,
     cam: Query<&GlobalTransform, With<Camera3d>>,
-    drives: Query<(Entity, &BipedDrive, Option<&GlobalTransform>, Has<crate::player::Hero>)>,
+    drives: Query<(Entity, &BipedDrive, Option<&GlobalTransform>, Has<crate::player::Hero>, Option<&PoseOverride>)>,
     mut parts: Query<(&BipedPart, &mut Transform)>,
     // Reused across frames so a full siege+town's worth of bipeds doesn't heap-alloc a fresh map
     // every frame (clear keeps the capacity).
@@ -129,7 +137,7 @@ pub fn animate_biped(
     let now = time.elapsed_secs();
     let cam_p = cam.iter().next().map(|g| g.translation());
     poses.clear();
-    poses.extend(drives.iter().filter_map(|(e, d, gt, is_hero)| {
+    poses.extend(drives.iter().filter_map(|(e, d, gt, is_hero, over)| {
         if !is_hero {
             // No transform yet (spawned this frame) → pose it; the cull needs a real position.
             if let (Some(cp), Some(gt)) = (cam_p, gt) {
@@ -138,7 +146,7 @@ pub fn animate_biped(
                 }
             }
         }
-        Some((e, biped_pose(d, now)))
+        Some((e, over.map_or_else(|| biped_pose(d, now), |o| o.0)))
     }));
     for (part, mut tf) in &mut parts {
         if let Some(pose) = poses.get(&part.root) {

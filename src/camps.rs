@@ -104,18 +104,21 @@ pub fn spawn_cage(
     seed: u32,
     open: bool,
 ) -> Entity {
-    use crate::ork_fortress::{cage_door_mesh, cage_mesh, CAGE_SEATS, CAGE_W};
+    use crate::ork_fortress::{cage_door_mesh, cage_mesh, CAGE_BAR_SPOTS, CAGE_SEATS, CAGE_W};
     let mut rng = seed | 1;
     let kit = crate::realforest::get().filter(|k| k.has("ork_cage"));
+    // The cage's muffled voice clock (`audio::captive`) rides the frame — one per cage, so two
+    // decor cages sharing `CageKey::Decor` still keep their own time.
+    let voice = crate::audio::CageVoice::new(seed);
     let root = match kit {
         // Realistic forest: the Blender cage (same 2.2 x 1.8 frame, open on +X, beds on the seats).
         Some(k) => {
-            let mut e = commands.spawn((tf, Cage { key }, BiomeEntity));
+            let mut e = commands.spawn((tf, Cage { key }, voice, BiomeEntity));
             k.attach_static(&mut e, "ork_cage", Transform::IDENTITY);
             e.id()
         }
         None => commands
-            .spawn((Mesh3d(meshes.add(cage_mesh(&mut rng))), MeshMaterial3d(prop_mat.clone()), tf, Cage { key }, BiomeEntity))
+            .spawn((Mesh3d(meshes.add(cage_mesh(&mut rng))), MeshMaterial3d(prop_mat.clone()), tf, Cage { key }, voice, BiomeEntity))
             .id(),
     };
     // The door hangs just proud of the (+X, +Z) corner post. No BiomeEntity of its own — it
@@ -140,11 +143,28 @@ pub fn spawn_cage(
     };
     commands.entity(root).add_child(door);
     // The captives: real peasants seated on the straw beds (roots of their own — they stand up
-    // and WALK OUT on rescue, so they can't be children of the frame).
-    for (sx, sz, syaw) in CAGE_SEATS.iter().take(captives) {
+    // and WALK OUT on rescue, so they can't be children of the frame). Each gets its berth — the
+    // seat plus its own spot at the bars — so its idle life (`captives`) can get up, shuffle over,
+    // grip the bars and come back without leaving the footprint or walking into a cage-mate. The
+    // seated hips height matches the bedding: the Blender cage's straw is a low flat bed (top
+    // ≈0.22), the procedural one heaps it to ≈0.51.
+    let sit_h = if kit.is_some() { crate::captives::SIT_H_FLAT_STRAW } else { crate::captives::SIT_H_HEAPED_STRAW };
+    let yaw_of = |q: Quat| {
+        let f = q * Vec3::Z;
+        f.x.atan2(f.z)
+    };
+    for ((sx, sz, syaw), (bx, bz, byaw)) in CAGE_SEATS.iter().zip(CAGE_BAR_SPOTS).take(captives) {
         let seat = tf.transform_point(v(*sx, 0.148, *sz)); // on the plank floor
         let facing = tf.rotation * ry(*syaw);
-        crate::villagers::spawn_cage_captive(commands, meshes, creature_mats, seat, facing, key, next_u32(&mut rng));
+        let berth = crate::captives::Berth {
+            seat,
+            seat_yaw: yaw_of(facing),
+            bars: tf.transform_point(v(bx, 0.148, bz)),
+            bars_yaw: yaw_of(tf.rotation * ry(byaw)),
+            cage: Vec2::new(tf.translation.x, tf.translation.z),
+            sit_h,
+        };
+        crate::villagers::spawn_cage_captive(commands, meshes, creature_mats, berth, key, next_u32(&mut rng));
     }
     root
 }

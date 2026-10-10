@@ -19,6 +19,11 @@ pub enum Speaker {
     /// The desert rival's garrison — foreign Saracen-style mercenaries (`rival.rs`). Spatial, like
     /// the orks, with a pitch jitter so one recorded voice covers the whole host.
     Rival,
+    /// A peasant locked in an ork cage (`camps.rs`) — spatial at the cage, heard MUFFLED: the clips
+    /// are low-passed re-cuts of the villager recordings (`tools/make_captive_vo.py`) and the
+    /// subtitle is drawn as a muffled aside that never clobbers a real line
+    /// (`Subtitles::say_muffled`). Paced by `audio::captive`.
+    Captive,
 }
 
 /// How a speaker's voice is routed. Looked up from [`SPEAKERS`] by the director.
@@ -32,14 +37,21 @@ pub struct SpeakerVoice {
     pub name: Option<&'static str>,
     /// Random playback-speed (pitch) range rolled per utterance — `(1.0, 1.0)` = no shift.
     pub pitch: (f32, f32),
+    /// Heard through bars / a wall: its subtitle is a dimmer muffled aside that yields to any
+    /// ordinary caption instead of replacing it (`Subtitles::say_muffled`).
+    pub muffled: bool,
 }
 
-/// The voice registry: one entry per [`Speaker`]. Linear-scanned (3 entries).
+/// The voice registry: one entry per [`Speaker`]. Linear-scanned (5 entries).
 pub const SPEAKERS: &[(Speaker, SpeakerVoice)] = &[
-    (Speaker::Hero,     SpeakerVoice { spatial: false, gain: 1.0,  name: None,              pitch: (1.0,  1.0)  }),
-    (Speaker::Villager, SpeakerVoice { spatial: true,  gain: 1.4,  name: Some("Townsfolk"), pitch: (1.0,  1.0)  }),
-    (Speaker::Ork,      SpeakerVoice { spatial: true,  gain: 0.85, name: None,              pitch: (0.82, 1.18) }),
-    (Speaker::Rival,    SpeakerVoice { spatial: true,  gain: 0.9,  name: Some("Rival"),     pitch: (0.88, 1.12) }),
+    (Speaker::Hero,     SpeakerVoice { spatial: false, gain: 1.0,  name: None,              pitch: (1.0,  1.0),  muffled: false }),
+    (Speaker::Villager, SpeakerVoice { spatial: true,  gain: 1.4,  name: Some("Townsfolk"), pitch: (1.0,  1.0),  muffled: false }),
+    (Speaker::Ork,      SpeakerVoice { spatial: true,  gain: 0.85, name: None,              pitch: (0.82, 1.18), muffled: false }),
+    (Speaker::Rival,    SpeakerVoice { spatial: true,  gain: 0.9,  name: Some("Rival"),     pitch: (0.88, 1.12), muffled: false }),
+    // The clips are mastered ~13 dB under a townsperson's; the extra gain only claws a little of
+    // that back, so a captive stays the quietest voice in the world. A slight pitch spread keeps
+    // the cages from sounding like one recorded prisoner.
+    (Speaker::Captive,  SpeakerVoice { spatial: true,  gain: 1.6,  name: Some("Captive"),   pitch: (0.95, 1.05), muffled: true  }),
 ];
 
 pub fn speaker_voice(s: Speaker) -> SpeakerVoice {
@@ -166,6 +178,18 @@ pub enum Concept {
     VillagerBorn,
     /// The keep falls — defeat (`siege.rs`). Hero's last word.
     KeepLost,
+    // ── Caged captives (`audio::captive`) — background murmurs heard through the bars. NOT
+    //    peaceful: a cage is always guarded, so the hero is "in danger" whenever he can hear one,
+    //    and these are the sound of exactly that. They sit at [`BACKGROUND_PRIORITY`] instead, so
+    //    any real line cuts them off and none ever waits on them. ──
+    /// The far, wordless layer — sobbing, a cough, a groan.
+    CaptiveSob,
+    /// A few hopeless words, once the hero is within earshot of them.
+    CaptiveMurmur,
+    /// An ork at the bars or a fight close by — a frightened gasp or line.
+    CaptiveFear,
+    /// The hero is at the cage and no jailer is near — a direct plea to him.
+    CaptivePlea,
 }
 
 /// PEACEFUL concepts — ambient/exploration/economy lines that must fall silent the moment the hero
@@ -592,6 +616,37 @@ pub const LINES: &[Line] = &[
     // Keep lost — defeat (hero's last word). Priority 30, once.
     Line { once: true, priority: 30, ..line("keep_lost_a", Speaker::Hero, Concept::KeepLost, "The keep... it's falling. I couldn't hold it. ...I'm sorry.") },
     Line { once: true, priority: 30, ..line("keep_lost_b", Speaker::Hero, Concept::KeepLost, "The walls are down. This is how it ends, then. Standing.") },
+    // ── Caged captives — clips at `audio/vo/npc/captive/<id>.ogg`, built by
+    //    `tools/make_captive_vo.py` (no TTS: cut from the villager recordings above, low-passed,
+    //    quietened; the script's `RECIPES` carry the exact source spans). Every spoken subtitle is a
+    //    word actually audible in the clip; the wordless ones name the sound. All background
+    //    (priority ≤ `BACKGROUND_PRIORITY`) with per-line floors so one cage never repeats itself. ──
+    // Sobbing: catches of breath + the falling "Oh," of `greet` and "Ooh" of `pa_shiny`, wavered.
+    Line { priority: 1, floor: 40.0, ..line("captive_sob_a", Speaker::Captive, Concept::CaptiveSob, "*muffled sobbing*") },
+    // Weeping: the inhale of `screaming` + a softer `pa_shiny` "Ooh" and `greet` "Oh".
+    Line { priority: 1, floor: 40.0, ..line("captive_sob_b", Speaker::Captive, Concept::CaptiveSob, "*quiet weeping*") },
+    // Three dry coughs: the /s/ of "house" (`need_house_a`) over the /k/ of "came" (`rescued`), dropped.
+    Line { priority: 1, floor: 40.0, ..line("captive_cough", Speaker::Captive, Concept::CaptiveSob, "*coughing*") },
+    // A low moan: the `pa_shiny` "Ooh" taken down ~4 semitones after a slow inhale.
+    Line { priority: 1, floor: 40.0, ..line("captive_groan", Speaker::Captive, Concept::CaptiveSob, "*a low groan*") },
+    // "Gods… help…" — the "Gods" + "help" of `born_a` ("...Gods help the little one."), pulled apart.
+    Line { priority: 1, floor: 60.0, ..line("captive_gods_help",   Speaker::Captive, Concept::CaptiveMurmur, "Gods… help…") },
+    // "Three weeks…" — the opening of `trailer_cage` ("Three weeks I was in there...").
+    Line { priority: 1, floor: 60.0, ..line("captive_three_weeks", Speaker::Captive, Concept::CaptiveMurmur, "Three weeks…") },
+    // "Buried another last night…" — the first sentence of `pop_lost`.
+    Line { priority: 1, floor: 60.0, ..line("captive_buried",      Speaker::Captive, Concept::CaptiveMurmur, "Buried another last night…") },
+    // "They're coming…" — the gasp + first words of `siege_fear`.
+    Line { priority: 2, floor: 25.0, ..line("captive_coming",  Speaker::Captive, Concept::CaptiveFear, "They're coming…") },
+    // "He's right behind me, isn't he?" — the whole of `vill_behind`.
+    Line { priority: 2, floor: 25.0, ..line("captive_behind",  Speaker::Captive, Concept::CaptiveFear, "He's right behind me, isn't he?") },
+    // A gasp (`siege_fear`) into a high shaking "oh" (`greet`, raised) — no words.
+    Line { priority: 2, floor: 25.0, ..line("captive_whimper", Speaker::Captive, Concept::CaptiveFear, "*a frightened whimper*") },
+    // "M'lord… I beg you." — "m'lord" + "I beg you" from one take of `need_house_a`.
+    Line { priority: 2, floor: 45.0, ..line("captive_beg",  Speaker::Captive, Concept::CaptivePlea, "M'lord… I beg you.") },
+    // "You came for me?" — the opening question of `rescued`.
+    Line { priority: 2, floor: 45.0, ..line("captive_came", Speaker::Captive, Concept::CaptivePlea, "You came for me?") },
+    // "Help… help." — the last word of `taxes` ("...That'll help."), twice, the second weaker.
+    Line { priority: 2, floor: 45.0, ..line("captive_help", Speaker::Captive, Concept::CaptivePlea, "Help… help.") },
 ];
 
 /// All catalog lines for a concept, in declaration order.
@@ -603,7 +658,7 @@ pub fn voice_clip_path(line: &Line) -> Option<String> {
     if !line.recorded { return None; }
     let dir = match line.speaker {
         Speaker::Hero => "hero", Speaker::Villager => "npc",
-        Speaker::Ork => "ork", Speaker::Rival => "rival",
+        Speaker::Ork => "ork", Speaker::Rival => "rival", Speaker::Captive => "npc/captive",
     };
     Some(format!("audio/vo/{dir}/{}.ogg", line.id))
 }
@@ -684,11 +739,21 @@ pub fn can_play(active: Option<&Active>, now: f32, new_priority: u8) -> bool {
 }
 
 /// One subtitle channel: ordinary dialogue waits for every speaker. Only a strictly
-/// higher urgent line can cut an interruptible utterance, never equal-priority chatter.
+/// higher urgent line can cut an interruptible utterance, never equal-priority chatter — except a
+/// BACKGROUND line (a captive's murmur), which anything that out-ranks it may cut, so the world's
+/// real dialogue never queues behind a sob from a cage.
 pub fn channel_available<'a>(active: impl Iterator<Item = &'a Active>, now: f32, priority: u8) -> bool {
-    active.filter(|a| now < a.ends_at).all(|a|
-        a.interruptible && priority >= HERO_URGENT_PRIORITY && priority > a.priority)
+    active.filter(|a| now < a.ends_at).all(|a| {
+        a.interruptible
+            && priority > a.priority
+            && (priority >= HERO_URGENT_PRIORITY || a.priority <= BACKGROUND_PRIORITY)
+    })
 }
+
+/// Lines at or below this priority are background murmur (the caged captives): they play only
+/// into a silent channel, never hold it against a real line, and don't count as "someone
+/// speaking" for the triggers that politely wait their turn (`VoiceManager::others_speaking`).
+pub const BACKGROUND_PRIORITY: u8 = 2;
 
 /// Hero-line spacing: while the shared ~20 s window is open, only a genuinely URGENT line —
 /// priority at or above this — may barge in. The hero's tiers below it (musings 5, chest/broke 10,
@@ -830,9 +895,36 @@ mod tests {
 
     #[test]
     fn every_speaker_is_registered() {
-        for s in [Speaker::Hero, Speaker::Villager, Speaker::Ork, Speaker::Rival] {
+        for s in [Speaker::Hero, Speaker::Villager, Speaker::Ork, Speaker::Rival, Speaker::Captive] {
             let _ = speaker_voice(s);
         }
+    }
+
+    #[test]
+    fn captive_murmurs_are_background_and_yield_to_any_real_line() {
+        let caps: Vec<&Line> = LINES.iter().filter(|l| l.speaker == Speaker::Captive).collect();
+        assert_eq!(caps.len(), 13);
+        for l in &caps {
+            assert!(l.priority <= BACKGROUND_PRIORITY && l.interruptible && l.floor > 0.0, "{}", l.id);
+            assert!(!is_peaceful(l.concept), "{}: a guarded cage is always 'in danger'", l.id);
+            assert!(voice_clip_path(l).unwrap().starts_with("audio/vo/npc/captive/captive_"));
+            // A wordless clip is captioned as a sound, never as invented words.
+            let sound = l.text.starts_with('*');
+            assert_eq!(sound, l.text.ends_with('*'), "{}", l.id);
+            assert_eq!(sound, matches!(l.id, "captive_sob_a" | "captive_sob_b" | "captive_cough"
+                | "captive_groan" | "captive_whimper"), "{}", l.id);
+        }
+        let sob = Active { id: "captive_sob_a", ends_at: 10.0, priority: 1, interruptible: true, then: None };
+        // A greeting (10), a hero musing (5) or a fear line (2) cuts a sob…
+        assert!(channel_available(std::iter::once(&sob), 5.0, 10));
+        assert!(channel_available(std::iter::once(&sob), 5.0, 5));
+        assert!(channel_available(std::iter::once(&sob), 5.0, 2));
+        // …but another sob never talks over it, and ordinary chatter still can't cut real lines.
+        assert!(!channel_available(std::iter::once(&sob), 5.0, 1));
+        let greet = Active { id: "greet", priority: 10, ..sob };
+        assert!(!channel_available(std::iter::once(&greet), 5.0, 2));
+        assert!(!channel_available(std::iter::once(&greet), 5.0, 12));
+        assert!(channel_available(std::iter::once(&greet), 5.0, 15));
     }
 
     fn active(prio: u8, interruptible: bool, ends_at: f32) -> Active {

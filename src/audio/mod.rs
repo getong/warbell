@@ -16,6 +16,7 @@ mod advice;
 mod campaign;
 mod ambience;
 mod animals;
+mod captive;
 pub(crate) mod director;
 mod footsteps;
 pub(crate) mod lines;
@@ -29,6 +30,7 @@ mod voice;
 
 pub(crate) use lines::{Concept, Speaker};
 pub(crate) use director::Speak;
+pub(crate) use captive::CageVoice;
 
 use bevy::audio::Volume;
 use bevy::prelude::*;
@@ -411,6 +413,17 @@ impl Plugin for GameAudioPlugin {
                     .run_if(in_state(crate::game_state::AppState::Playing))
                     // Campaign speakers only — skirmish bodies reuse these models but the
                     // barks reference hero/keep/siege context that doesn't exist there.
+                    .run_if(crate::rts::in_campaign),
+            )
+            // The caged captives' muffled murmurs (`captive`): background lines, decided only in
+            // live play — a frozen world's prisoners don't sob on a timer behind a panel.
+            .add_systems(
+                Update,
+                captive::detect_captive_voices
+                    .after(voice::play_voice_cues)
+                    .before(director::speak_director)
+                    .run_if(in_state(crate::game_state::AppState::Playing))
+                    .run_if(in_state(crate::game_state::Modal::None))
                     .run_if(crate::rts::in_campaign),
             )
             // The director is the PLAYBACK layer — gated on `Playing` (like every sibling audio

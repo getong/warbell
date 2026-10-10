@@ -2314,6 +2314,14 @@ pub(crate) const CAGE_H: f32 = 1.8;
 /// (`villagers::spawn_cage_captive`), faced loosely toward the door (+X) so the huddle
 /// reads as watching for rescue.
 pub(crate) const CAGE_SEATS: [(f32, f32, f32); 3] = [(-0.52, 0.30, 1.25), (0.28, -0.48, 2.0), (0.05, 0.62, 0.7)];
+/// Where the captive of the matching [`CAGE_SEATS`] seat stands to grip the bars and look out
+/// (`captives::captive_life`): cage-local `(x, z, yaw)`, each centred between two bars (the walls'
+/// bars sit at ±0.24 / ±0.72, the door's at z 0.35 / −0.10 / −0.55) and ~0.36 inside the bar
+/// plane, so the hands land on the bars and the body never does. Spots keep ≥0.44 from every
+/// straw bed and ≥1.0 from the other seats, so one captive up at the bars never walks into a
+/// seated cage-mate: seat 0 → the back (−X) wall, seat 1 → the door, seat 2 → the +Z wall.
+pub(crate) const CAGE_BAR_SPOTS: [(f32, f32, f32); 3] =
+    [(-0.74, -0.48, -FRAC_PI_2), (0.81, -0.33, FRAC_PI_2), (0.48, 0.74, 0.0)];
 
 // Cage dressing hues (rough rope lashings + the captives' straw bedding).
 const ROPE: u32 = 0x8a6f46;

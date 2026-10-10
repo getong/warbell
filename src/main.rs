@@ -35,6 +35,7 @@ mod boats;
 mod boss;
 mod build_fx;
 mod camps;
+mod captives; // caged captives' idle life (pose override on the shared biped rig)
 mod campaign_verify; // opt-in first-three-cycles engine integration checks
 mod capture;
 mod cinematic;
@@ -354,7 +355,10 @@ fn main() {
         .add_plugins(ruins::RuinsFxPlugin)
         // Ambush snowmen: static snow-biome decor that wakes + slams when the hero nears or strikes
         // it. Standalone — the tuples above are at the `Plugins` arity-15 cap.
-        .add_plugins(snowman::SnowmanPlugin);
+        .add_plugins(snowman::SnowmanPlugin)
+        // Caged captives' idle life: rocking, rubbing, slumping, trips to the bars, flinches.
+        // Standalone — the tuples above are at the `Plugins` arity-15 cap.
+        .add_plugins(captives::CaptivesPlugin);
     campaign_verify::install(&mut app);
     if std::env::var("FOREST_RENDER_SYNC").as_deref() == Ok("1") {
         if let Some(render) = app.get_sub_app_mut(bevy::render::RenderApp) {

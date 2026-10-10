@@ -85,9 +85,12 @@ impl Default for VoiceManager {
 
 impl VoiceManager {
     /// Is any NON-hero speaker mid-line right now? (Replaces the old `OthersSpeaking` resource —
-    /// the hero's observational lines defer while a villager/ork is talking.)
+    /// the hero's observational lines defer while a villager/ork is talking.) A captive's
+    /// background murmur doesn't count — real lines cut it rather than wait on it.
     pub fn others_speaking(&self, now: f32) -> bool {
-        self.active.iter().any(|(s, a)| *s != Speaker::Hero && now < a.ends_at)
+        self.active.iter().any(|(s, a)| {
+            *s != Speaker::Hero && now < a.ends_at && a.priority > super::lines::BACKGROUND_PRIORITY
+        })
     }
     /// Is the hero mid-line? (Replaces `HeroSpeaking` — villagers/orks defer to him.)
     pub fn hero_speaking(&self, now: f32) -> bool {
@@ -263,7 +266,13 @@ fn play_line(
         cd.until = now + super::HERO_LINE_CD.max(dur);
         cd.priority = line.priority;
     }
-    subs.say_as(now, voice.name, line.text, dur);
+    // A muffled voice (a captive behind bars) captions as a dim aside that never replaces a
+    // real line's subtitle still on screen.
+    if voice.muffled {
+        subs.say_muffled(now, voice.name, line.text, dur);
+    } else {
+        subs.say_as(now, voice.name, line.text, dur);
+    }
 }
 
 /// The walk-away anchor for a hero line, derived from its concept (ported from the old
@@ -424,6 +433,26 @@ pub(super) mod tests {
         step(&mut app, 4.0);
         assert_eq!(app.world().resource::<VoiceManager>().active[&Speaker::Hero].id, "chest");
         assert_eq!(sink_count(&mut app), 1);
+    }
+    #[test]
+    fn a_captive_murmur_never_holds_the_channel_or_the_caption_against_a_real_line() {
+        let mut app = app();
+        app.world_mut().write_message(Speak::at(Concept::CaptiveSob, Vec3::new(5.0, 1.0, 0.0)));
+        step(&mut app, 1.0);
+        assert_eq!(app.world().resource::<VoiceManager>().active[&Speaker::Captive].priority, 1);
+        assert!(app.world().resource::<crate::subtitles::Subtitles>().is_muffled());
+        // Mid-sob: nobody counts as speaking, and a townsperson's greeting cuts straight in.
+        assert!(!app.world().resource::<VoiceManager>().others_speaking(1.5));
+        app.world_mut().write_message(Speak::new(Concept::Greeting));
+        step(&mut app, 0.5);
+        assert_eq!(sink_count(&mut app), 1);
+        let mgr = app.world().resource::<VoiceManager>();
+        assert!(mgr.active.contains_key(&Speaker::Villager) && !mgr.active.contains_key(&Speaker::Captive));
+        assert!(!app.world().resource::<crate::subtitles::Subtitles>().is_muffled());
+        // …and while the greeting plays, a captive's plea is simply not started.
+        app.world_mut().write_message(Speak::at(Concept::CaptivePlea, Vec3::new(5.0, 1.0, 0.0)));
+        step(&mut app, 0.5);
+        assert!(!app.world().resource::<VoiceManager>().active.contains_key(&Speaker::Captive));
     }
     #[test]
     fn all_opening_recordings_decode_with_complete_non_silent_lengths() {
