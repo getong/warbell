@@ -341,7 +341,7 @@ fn gait_at(v: f32) -> Gait {
         // its natural contact sweep and a duty factor shrinking from a jog's ~1/3 to a sprint's ~0.23.
         sweep: lerp(walk_sweep, run_sweep(sprint), run),
         front: k(0.44, 0.40, 0.38),
-        duty: lerp(0.6, lerp(0.32, 0.23, sprint), run),
+        duty: lerp(0.6, lerp(JOG.to, SPRINT.to, sprint), run),
         toe_off: k(0.38, 0.48, 0.6),
         strike: k(-0.22, -0.08, 0.0),
         run,
@@ -484,8 +484,9 @@ fn footman_gait(c: f32, speed: f32, armed: f32, shield_back: f32) -> Pose {
     }
 }
 
-// ── Run: gait-lab joint curves, foot-locked by a stance time-warp ─────────────────────────
-// Redone from scratch (user, 2026-10). Instead of solving the legs from a foot path and keying
+// ── Run: motion-captured joint curves, foot-locked by a stance time-warp ──────────────────
+// Redone from scratch (user, 2026-10), then rebuilt on real motion capture when the hand-keyed
+// curves still read wrong. Instead of solving the legs from a foot path and keying
 // the swing, every joint follows measured running curves (global thigh angle, knee flexion,
 // ankle plantar-flexion over the gait cycle), so the stride has the shape of a real run: a soft
 // landing just ahead of the hips, the knee loading through mid-stance, a full push-off, the heel
@@ -507,34 +508,134 @@ struct RunCurves {
     ankle: &'static [f32],
 }
 
-/// A jog (shapes from gait-lab means around 3-3.5 m/s, Novacheck 1998): landing with the thigh
-/// ~28 deg ahead and the knee soft, push-off with the thigh ~18 behind, ~80 deg of knee fold in
-/// the swing, thigh drive to ~38. Fitted to this rig: its shin is half again its thigh and its
-/// sabaton long and rigid, so the stance knee loads to ~32 deg (not the lab's ~40, which sank the
-/// hips into a bouncing crouch) and the boot peels to only ~30 deg at toe-off (a steeper roll on
-/// that lever vaulted the hips up onto tiptoe).
+/// The motion-capture tables' sample points: 25 evenly over one cycle.
+const RUN_P: [f32; 25] = [
+    0.0, 0.04, 0.08, 0.12, 0.16, 0.20, 0.24, 0.28, 0.32, 0.36, 0.40, 0.44, 0.48, 0.52, 0.56, 0.60, 0.64, 0.68, 0.72,
+    0.76, 0.80, 0.84, 0.88, 0.92, 0.96,
+];
+
+/// A run at 3.56 m/s, measured: the mean of three CMU motion-capture runs (subjects 09 and 35),
+/// one right-leg cycle each, contact to contact. The real shape the hand-keyed tables missed: a
+/// push-off with the thigh ~29 deg behind, the knee loading to ~47 in the stance and folding to
+/// ~109 in the swing while the thigh is already forward (the heel tucks under the hips, it does
+/// not kick out behind), and the drive to ~39.
 const JOG: RunCurves = RunCurves {
-    to: 0.38,
-    p: &[0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.38, 0.45, 0.52, 0.60, 0.68, 0.76, 0.84, 0.92],
-    thigh: &[28.0, 24.0, 19.0, 13.0, 7.0, 0.0, -8.0, -18.0, -13.0, -2.0, 12.0, 26.0, 35.0, 38.0, 34.0],
-    knee: &[21.0, 28.0, 32.0, 32.0, 29.0, 25.0, 21.0, 20.0, 34.0, 56.0, 74.0, 80.0, 70.0, 52.0, 30.0],
-    ankle: &[-4.0, -10.0, -16.0, -20.0, -21.0, -18.0, -12.0, -8.0, 6.0, 6.0, 0.0, -3.0, -5.0, -5.0, -4.0],
+    to: 0.322,
+    p: &RUN_P,
+    thigh: &[
+        27.4, 27.3, 24.1, 17.8, 9.0, -0.2, -9.6, -18.8, -28.1, -29.2, -26.3, -21.8, -15.0, -7.3, 2.3, 14.2, 25.1,
+        33.3, 37.7, 39.4, 38.9, 36.0, 32.4, 29.3, 27.1,
+    ],
+    knee: &[
+        28.3, 39.7, 46.3, 47.3, 44.1, 38.3, 31.4, 22.3, 12.3, 18.1, 31.6, 46.8, 64.3, 80.9, 95.5, 105.9, 109.2,
+        105.4, 96.0, 82.0, 65.2, 46.9, 30.2, 20.7, 19.4,
+    ],
+    ankle: &[
+        -8.9, -15.3, -22.9, -30.1, -35.1, -32.4, -22.7, -0.5, 19.9, 27.7, 23.5, 23.5, 25.2, 24.0, 19.4, 18.1, 10.8,
+        4.9, 0.2, -5.0, -9.5, -11.2, -11.1, -11.6, -9.8,
+    ],
 };
 
-/// An armoured soldier's sprint: shorter contact, more thigh drive (~60 deg) and reach, but only
-/// ~85 deg of heel recovery: with this rig's long shins a lab fold (100-125) swings the shin out
-/// horizontal behind, the heels-kicking-back look the user rejected. Timed like real front-side
-/// mechanics: at the other foot's landing the folded leg is passing under the hips (thigh ~18 deg,
-/// heel tucked in and angled down), the knee then drives up to
-/// its peak as the other foot toes off, and opens only for the reach and paw-back into contact,
-/// so in the flight the front leg is carried high instead of skimming the ground in a split.
+/// The hero's sprint (~6.5 m/s): the measured run morphed — the stance cut to a quarter of the
+/// cycle, the thigh driving ~15 deg higher (to ~57), the push-off a little less far behind, the
+/// stance knee stiffer and the swing fold ~10 % deeper, still peaking with the thigh forward.
 const SPRINT: RunCurves = RunCurves {
-    to: 0.27,
-    p: &[0.0, 0.05, 0.10, 0.15, 0.20, 0.27, 0.35, 0.43, 0.51, 0.59, 0.67, 0.75, 0.83, 0.91],
-    thigh: &[32.0, 26.0, 18.0, 9.0, -3.0, -20.0, -12.0, 4.0, 18.0, 36.0, 52.0, 60.0, 55.0, 42.0],
-    knee: &[22.0, 28.0, 30.0, 27.0, 21.0, 18.0, 42.0, 68.0, 84.0, 86.0, 78.0, 62.0, 44.0, 30.0],
-    ankle: &[2.0, -8.0, -15.0, -18.0, -14.0, -3.0, 10.0, 6.0, 0.0, -3.0, -4.0, -2.0, 0.0, 1.0],
+    to: 0.25,
+    p: &RUN_P,
+    thigh: &[
+        31.0, 29.4, 22.7, 11.1, -1.5, -12.6, -24.1, -27.1, -25.4, -22.2, -17.4, -11.3, -4.1, 5.7, 18.9, 31.9, 43.3,
+        51.4, 56.3, 57.5, 54.8, 48.9, 42.2, 36.3, 32.1,
+    ],
+    knee: &[
+        26.1, 37.9, 42.4, 40.1, 33.8, 25.5, 13.9, 15.6, 26.3, 39.8, 55.5, 72.8, 89.9, 105.5, 116.7, 119.9, 115.1,
+        104.6, 90.2, 74.0, 56.9, 40.2, 26.7, 19.8, 19.8,
+    ],
+    ankle: &[
+        -8.9, -17.4, -27.2, -34.8, -31.4, -13.7, 15.3, 26.8, 25.3, 23.1, 24.3, 25.1, 23.0, 19.1, 17.8, 11.1, 5.6,
+        1.3, -3.3, -7.8, -10.6, -11.3, -11.3, -11.4, -9.6,
+    ],
 };
+
+// The same runners' upper body over the right leg's cycle (0 = right contact, at `RUN_P`), deg,
+// against the heading. Left-side curves are these half a cycle on, mirrored.
+/// Pelvis yaw (+ = right hip back), obliquity (+ = right hip up), tilt (+ = top forward).
+const RUN_PEL_YAW: [f32; 25] = [
+    4.5, 5.8, 5.6, 4.2, 2.9, 3.2, 2.6, 0.5, -1.0, -1.8, -1.8, -2.7, -3.8, -5.3, -5.9, -5.0, -3.2, -3.1, -3.1, -1.6,
+    0.3, 1.5, 1.9, 2.1, 3.3,
+];
+const RUN_PEL_OBL: [f32; 25] = [
+    -2.6, -0.7, 2.5, 3.7, 4.0, 4.4, 4.1, 3.4, 3.2, 3.9, 4.9, 4.8, 3.4, 1.8, -0.8, -3.5, -3.7, -4.3, -4.2, -3.8,
+    -3.1, -3.5, -4.5, -5.0, -4.2,
+];
+const RUN_PEL_TILT: [f32; 25] = [
+    3.4, 2.3, 2.5, 3.2, 3.7, 4.3, 4.9, 5.1, 5.2, 5.6, 5.4, 4.6, 3.7, 2.7, 2.2, 2.9, 3.5, 4.0, 4.6, 5.0, 5.2, 5.4,
+    5.6, 5.1, 4.0,
+];
+/// Shoulder-line yaw (+ = right shoulder back), trunk lean (+ = forward), side bend (+ = top right).
+const RUN_SH_YAW: [f32; 25] = [
+    10.0, 8.9, 7.9, 6.3, 3.2, -0.8, -4.2, -6.4, -8.1, -9.3, -9.6, -9.6, -9.9, -9.5, -8.4, -7.3, -4.9, -1.2, 2.6,
+    5.4, 7.3, 8.8, 9.5, 9.6, 9.6,
+];
+const RUN_LEAN: [f32; 25] = [
+    12.4, 12.9, 14.0, 14.8, 14.9, 14.5, 13.5, 12.4, 11.2, 10.6, 10.6, 10.8, 11.7, 12.5, 13.4, 14.4, 14.9, 14.8,
+    14.1, 12.9, 11.8, 10.8, 10.6, 10.7, 10.9,
+];
+const RUN_SIDE: [f32; 25] = [
+    2.4, 2.8, 3.4, 3.4, 3.0, 2.3, 1.8, 1.1, 0.5, -0.1, -0.5, -1.2, -2.0, -2.6, -3.1, -3.5, -3.3, -2.7, -2.1, -1.5,
+    -0.8, -0.2, 0.3, 0.8, 1.6,
+];
+/// The right arm in the trunk frame: upper-arm flexion (+ = elbow ahead of the shoulder; it never
+/// gets much ahead — a runner's arm swings from beside the body to well behind it), abduction
+/// (+ = out), the elbow's bend (93-121 deg: the forearm rides forward and up), the forearm's turn
+/// out of the sagittal plane (− = across toward the midline).
+const RUN_ARM_FLEX: [f32; 25] = [
+    -24.8, -17.7, -8.5, 0.1, 5.0, 6.9, 6.8, 5.8, 3.8, 1.9, -0.3, -2.7, -5.6, -8.4, -10.9, -14.2, -17.8, -21.1,
+    -24.7, -28.3, -31.8, -34.4, -35.0, -33.7, -30.4,
+];
+const RUN_ARM_ABD: [f32; 25] = [
+    6.1, 7.4, 8.9, 9.7, 10.1, 10.4, 11.1, 11.7, 12.2, 12.6, 12.4, 11.5, 10.7, 9.7, 7.8, 6.0, 5.6, 6.5, 7.2, 6.9,
+    6.2, 5.5, 4.6, 4.1, 4.9,
+];
+const RUN_ARM_ELBOW: [f32; 25] = [
+    100.8, 102.3, 103.5, 105.1, 108.8, 113.2, 117.0, 119.5, 121.0, 120.8, 118.9, 115.2, 109.9, 103.5, 97.6, 93.4,
+    92.8, 94.4, 96.3, 97.4, 98.6, 100.2, 101.5, 102.5, 102.8,
+];
+const RUN_ARM_FORE_OUT: [f32; 25] = [
+    -5.0, -8.0, -11.8, -14.7, -15.6, -15.8, -16.4, -17.5, -18.7, -20.0, -20.5, -19.7, -17.5, -14.9, -11.9, -9.1,
+    -8.4, -9.5, -10.0, -8.9, -7.0, -5.3, -4.2, -3.8, -4.5,
+];
+/// Middle and half-range of [`RUN_ARM_FLEX`] (deg): the swing's centre and its ±1 reach.
+const RUN_ARM_MID: f32 = -14.0;
+const RUN_ARM_HALF: f32 = 21.0;
+
+/// The recorded clock at gait cycle `u` with stance share `duty`: each step's stance plays the
+/// measured stance (`JOG.to` of the cycle) and its flight the measured flight, so a shorter
+/// sprint contact keeps the upper body in time with the feet.
+fn run_clock(u: f32, duty: f32) -> f32 {
+    let duty = duty.clamp(0.05, 0.45);
+    let u = u.rem_euclid(1.0);
+    let (half, q) = if u < 0.5 { (0.0, u) } else { (0.5, u - 0.5) };
+    half + if q < duty { q * JOG.to / duty } else { JOG.to + (q - duty) * (0.5 - JOG.to) / (0.5 - duty) }
+}
+
+/// Shoulder and elbow rotations that lay an arm's upper arm along `upper` (torso frame) with the
+/// forearm bent `bend` rad off it, turned toward `toward`. `bind` = (elbow from the shoulder, hand
+/// from the elbow) at rest; the elbow hinges on its X axis and the shoulder carries the rest.
+fn aim_arm(upper: Vec3, toward: Vec3, bend: f32, bind: (Vec3, Vec3)) -> (Quat, Quat) {
+    let (u0, f0) = (bind.0.normalize(), bind.1.normalize());
+    // The hinge angle (flexing = −) that opens the bind forearm to `bend` off the upper arm.
+    let (a, b) = (u0.y * f0.y + u0.z * f0.z, u0.z * f0.y - u0.y * f0.z);
+    let open = ((bend.cos() - u0.x * f0.x) / a.hypot(b).max(1e-5)).clamp(-1.0, 1.0).acos();
+    let elbow = rx(b.atan2(a) - open);
+    let frame = |u: Vec3, f: Vec3| {
+        let n = u.cross(f).normalize_or_zero();
+        Mat3::from_cols(u, n.cross(u), n)
+    };
+    let du = upper.normalize();
+    let w = (toward - toward.dot(du) * du).normalize_or_zero();
+    let to = frame(du, bend.cos() * du + bend.sin() * w);
+    (Quat::from_mat3(&(to * frame(u0, elbow * f0).transpose())), elbow)
+}
 
 /// Periodic Catmull-Rom through keys `(p[i], v[i])` on a unit cycle (non-uniform spacing).
 fn cycle_curve(p: &[f32], v: &[f32], x: f32) -> f32 {
@@ -611,47 +712,45 @@ fn run_warp(sprint: f32, s: f32, dz: f32, rig: &super::footman::LegRig) -> f32 {
     0.5 * (a + b)
 }
 
-/// The hip-joint height a stance holds at warped progress `s`: the planted leg's own height
-/// through the landing and the loading, then a steady, accelerating rise into toe-off. Left to
-/// itself the leg would hump the hips up mid-push (the boot peeling onto its toe) and sink them
-/// again as the thigh trails out behind, so the body would fall through every flight; under the
-/// rise the knee simply gives a little more ([`run_gait`] solves those frames with IK). Equal to
-/// the leg's own height at contact and toe-off, so the swing curves pick up seamlessly.
-fn run_hold_height(sprint: f32, s: f32, rig: &super::footman::LegRig) -> f32 {
-    let own = |x: f32| run_stance(sprint, x, rig).4;
-    let (mut s_min, mut h_min) = (0.0_f32, f32::MAX);
-    for i in 0..=16 {
-        let x = i as f32 / 16.0;
-        let h = own(x);
-        if h < h_min {
-            (s_min, h_min) = (x, h);
-        }
-    }
-    let h = own(s);
-    if s <= s_min {
-        return h;
-    }
-    let t = (s - s_min) / (1.0 - s_min).max(1e-3);
-    h.min(lerp(h_min, own(1.0), t * t))
+/// The runners' measured hip bob (cm) over a step (0 = a landing; the cycle repeats it each
+/// step): lowest a little after the landing as the knee loads, rising through the push-off,
+/// cresting just after toe-off and falling into the next landing — ~8.5 cm in all.
+const RUN_BOB: [f32; 25] = [
+    0.0, -2.1, -3.8, -4.5, -3.9, -2.4, -0.4, 1.5, 3.0, 4.0, 4.0, 3.2, 1.3, -1.1, -3.0, -4.3, -4.4, -3.2, -1.4, 0.6,
+    2.3, 3.6, 4.1, 3.7, 2.4,
+];
+
+/// Hip-joint height at gait cycle `u` with stance share `duty`: the measured bob from this run's
+/// own landing height, bent a little (zero at each landing) so it also meets the leg's own
+/// toe-off height on this rig (its long rigid sabaton peels the hips higher than a person's
+/// foot), so the landing and the lift-off both hand over to the swing curves exactly. (The old
+/// flight arc matched the push-off's climb rate and threw the hips ~17 cm up.)
+fn run_hip_height(sprint: f32, duty: f32, u: f32, rig: &super::footman::LegRig) -> f32 {
+    let own = |s: f32| run_stance(sprint, s, rig).4;
+    let bob = |x: f32| 0.01 * (cycle_curve(&RUN_P, &RUN_BOB, x) - RUN_BOB[0]);
+    let bend = |x: f32| (TAU * x).sin().powi(2);
+    let (h0, h1) = (own(0.0), own(1.0));
+    let fix = (h1 - h0 - bob(JOG.to)) / bend(JOG.to);
+    let x = run_clock(u, duty).rem_euclid(0.5);
+    h0 + bob(x) + fix * bend(x)
 }
 
-/// Hip-joint height at step phase `q` (0..0.5: one stance of `duty`, then the flight to the other
-/// foot's contact). Planted: what the leg's pose dictates. Flight: a Hermite arc from toe-off to
-/// the next landing matching both ends' vertical speed (up off the toe, over, down onto the heel).
-fn run_hip_height(sprint: f32, duty: f32, q: f32, rig: &super::footman::LegRig) -> f32 {
-    let planted = |q: f32| run_hold_height(sprint, run_warp(sprint, q / duty, 0.0, rig), rig);
-    if q < duty {
-        return planted(q);
+/// How far the swing leg is retargeted from the runners' joint angles to their ankle path.
+const RUN_RETARGET: f32 = 0.6;
+
+/// A swing leg's (thigh, shin) forward angles moved by `w` (0..1) from the recorded joint angles
+/// toward the recorded ANKLE path: the runners' legs are thigh = shin, this rig's shin is half
+/// again its thigh, so the same knee fold fans the boot out far behind the hips (the heels-
+/// kicking-back look); placing the ankle where a person's would be, scaled to this leg, tucks the
+/// heel up under the body and carries the knee a little higher instead.
+fn swing_retarget(thigh: f32, shin: f32, w: f32, rig: &super::footman::LegRig) -> (f32, f32) {
+    if w <= 0.0 {
+        return (thigh, shin);
     }
-    let e = 0.01 * duty;
-    let (y0, y1) = (planted(duty), planted(0.0));
-    // Ballistic: the hips leave the toe rising and land falling (clamped, so a curve tweak that
-    // flattened either end can never make the flight sag below its take-off and landing).
-    let (m0, m1) = (((y0 - planted(duty - e)) / e).max(0.0), ((planted(e) - y1) / e).min(0.0));
-    let span = 0.5 - duty;
-    let t = ((q - duty) / span).clamp(0.0, 1.0);
-    let (t2, t3) = (t * t, t * t * t);
-    (2.0 * t3 - 3.0 * t2 + 1.0) * y0 + (t3 - 2.0 * t2 + t) * span * m0 + (-2.0 * t3 + 3.0 * t2) * y1 + (t3 - t2) * span * m1
+    let half = 0.5 * (rig.knee.y.hypot(rig.knee.z) + rig.foot.y.hypot(rig.foot.z));
+    let ankle = half * Vec2::new(thigh.sin() + shin.sin(), -thigh.cos() - shin.cos());
+    let (t, sh) = leg_dirs(Vec2::ZERO, ankle, rig);
+    (lerp(thigh, t, w), lerp(shin, sh, w))
 }
 
 fn run_gait(c: f32, g: &Gait, armed: f32, shield_back: f32) -> Pose {
@@ -662,13 +761,17 @@ fn run_gait(c: f32, g: &Gait, armed: f32, shield_back: f32) -> Pose {
     // Stance weight per leg (0 at contact / toe-off, 1 mid-stance) for the pelvis drop and sway.
     let load = |u: f32| if u < duty { (PI * u / duty).sin() } else { 0.0 };
     let (kl, kr) = (load(u_l), load(u_r));
-    let fwd_l = (TAU * u_l).cos(); // +1 at the left contact (left leg out front)
+    // The recorded upper body plays on the right leg's clock; the left side half a cycle on.
+    let x_r = run_clock(u_r, duty);
+    let x_l = (x_r + 0.5).fract();
+    let rec = |v: &[f32], x: f32| cycle_curve(&RUN_P, v, x).to_radians();
+    // A sprint twists the hips and shoulders a little further.
+    let twist = lerp(1.0, 1.2, sprint);
 
-    // ── Pelvis: tipped forward a touch, yawing with the forward leg, dropping on the swing side ──
-    let tilt = lerp(0.07, 0.1, sprint);
-    let pel_yaw = lerp(0.09, 0.12, sprint) * (TAU * (u_l - 0.04)).cos();
-    let pel_drop = 0.05 * (kr - kl); // minus = right (+X) hip low: left leg loaded
-    let pelvis = e3(tilt, pel_yaw, pel_drop);
+    // ── Pelvis (measured): tipped forward a touch, the swing leg's hip carried forward with it,
+    // dropping on the swing side ──
+    let tilt = rec(&RUN_PEL_TILT, x_r);
+    let pelvis = e3(tilt, twist * rec(&RUN_PEL_YAW, x_r), rec(&RUN_PEL_OBL, x_r));
     let hip_l = pelvis * rig.hip;
     let hip_r = pelvis * Vec3::new(-rig.hip.x, rig.hip.y, rig.hip.z);
     let hip_nominal = e3(tilt, 0.0, 0.0) * rig.hip;
@@ -676,7 +779,7 @@ fn run_gait(c: f32, g: &Gait, armed: f32, shield_back: f32) -> Pose {
     // offset below the hips joint); in flight they follow the arc between the two stances.
     let q = u_l.rem_euclid(0.5);
     let loaded = if q < duty { if u_l < 0.5 { hip_l } else { hip_r } } else { hip_nominal };
-    let hips_y = run_hip_height(sprint, duty, q, &rig) - loaded.y;
+    let hips_y = run_hip_height(sprint, duty, u_l, &rig) - loaded.y;
     let sway = 0.01 * (kr - kl);
     let hips_t = Vec3::new(sway, hips_y, 0.0);
     let mut p = rest();
@@ -687,67 +790,70 @@ fn run_gait(c: f32, g: &Gait, armed: f32, shield_back: f32) -> Pose {
         let (th, kn, ft) = if u < duty {
             let s = run_warp(sprint, u / duty, off.z - hip_nominal.z, &rig);
             let (t, k, pitch, _, own) = run_stance(sprint, s, &rig);
-            let hold = run_hold_height(sprint, s, &rig);
-            if hold < own - 1e-4 {
-                // Hips held under the leg's own height: same boot placement, the knee takes it up.
-                let (upper, lower) = (rig.knee.y.hypot(rig.knee.z), rig.foot.y.hypot(rig.foot.z));
-                let shin = t - k;
-                let ankle = Vec2::new(upper * t.sin() + lower * shin.sin(), -upper * t.cos() - lower * shin.cos());
-                leg_ik(Vec2::ZERO, ankle + Vec2::Y * (own - hold), pitch, &rig)
-            } else {
-                leg_rot(t, t - k, pitch, &rig)
-            }
+            // The hips ride the measured bob, not this pose's own height: same boot placement,
+            // the knee gives or straightens the difference.
+            let hold = hips_t.y + off.y;
+            let (upper, lower) = (rig.knee.y.hypot(rig.knee.z), rig.foot.y.hypot(rig.foot.z));
+            let shin = t - k;
+            let ankle = Vec2::new(upper * t.sin() + lower * shin.sin(), -upper * t.cos() - lower * shin.cos());
+            leg_ik(Vec2::ZERO, ankle + Vec2::Y * (own - hold), pitch, &rig)
         } else {
-            let (t, k, a) = run_angles(sprint, false, (u - duty) / (1.0 - duty));
-            leg_rot(t, t - k, -(t - k) + a, &rig)
+            let sw = (u - duty) / (1.0 - duty);
+            let (t, k, a) = run_angles(sprint, false, sw);
+            let (t, shin) = swing_retarget(t, t - k, RUN_RETARGET * smoothstep(sw / 0.3) * smoothstep((1.0 - sw) / 0.3), &rig);
+            leg_rot(t, shin, -shin + a, &rig)
         };
         // Keep the boots on their track under the swaying pelvis (as in `walk_gait`).
         let leg_len = (hips_t.y + off.y).max(0.3);
-        let abduct = Quat::from_rotation_z((-(hips_t.x) / leg_len).clamp(-0.5, 0.5).asin());
+        // (the hip joint's own sideways shift as the pelvis rolls and yaws counts too).
+        let drift = hips_t.x + off.x - rig.hip.x.abs() * off.x.signum();
+        let abduct = Quat::from_rotation_z((-drift / leg_len).clamp(-0.5, 0.5).asin());
         (Jp::r(pelvis.inverse() * abduct * rx(th)), Jp::r(rx(kn)), Jp::r(rx(ft)))
     };
     (p.hip_l, p.knee_l, p.foot_l) = leg(hip_l, u_l);
     (p.hip_r, p.knee_r, p.foot_r) = leg(hip_r, u_r);
 
-    // ── Trunk: a modest forward lean (7-10 deg), the shoulders counter-rotating the pelvis, the
-    // head steady and level on the road ──
-    let lean = lerp(0.12, 0.17, sprint) + 0.025 * (kl + kr);
-    let torso_yaw = -1.6 * pel_yaw;
-    p.torso = Jp::r(Quat::from_rotation_y(torso_yaw) * e3(lean - tilt, 0.0, -0.7 * pel_drop));
-    p.head = Jp::r(e3(-lean * 0.8, -0.8 * (pel_yaw + torso_yaw), -0.3 * pel_drop));
+    // ── Trunk (measured): a ~13 deg forward lean breathing twice a stride, the shoulders
+    // counter-rotating the hips, a little side bend over the stance; the head steady and level ──
+    let lean = rec(&RUN_LEAN, x_r) + lerp(0.0, 0.045, sprint);
+    let trunk = Quat::from_rotation_y(twist * rec(&RUN_SH_YAW, x_r)) * e3(lean, 0.0, -rec(&RUN_SIDE, x_r));
+    p.torso = Jp::r(pelvis.inverse() * trunk);
+    p.head = Jp::r(trunk.inverse() * rx(0.04));
 
-    // ── Arms: opposite arm to the forward leg, swung from a loose shoulder, more behind than in
-    // front (a runner drives the arm back); elbows fairly open (the user's reference: ~60-75 deg
-    // of bend, closing a little as the hand comes forward, opening behind); forearms angling in
-    // toward the midline in front. The swing trails the legs a touch, the elbow the shoulder. ──
-    let sh_amp = lerp(0.56, 0.8, sprint);
-    let sh_mid = -0.08;
-    // On top of the bind's own ~25 deg carry bend: ~60 deg in all, ~75 in front, ~45 behind.
-    let el_mid = lerp(0.55, 0.62, sprint);
-    let el_amp = lerp(0.22, 0.28, sprint);
-    let arm = |u_leg: f32, side: f32, scale: f32, el_fix: f32| {
-        let f = (TAU * (u_leg - 0.03)).cos(); // +1 = this arm fully forward
-        let fl = (TAU * (u_leg - 0.08)).cos();
-        let flex = sh_mid + scale * sh_amp * f; // + = upper arm forward of the trunk
-        let cross = 0.22 * f.max(0.0) * scale;
-        let sh = e3(-flex, -0.22 * side, side * (0.07 - cross));
-        let el = rx(-lerp(el_mid + el_amp * fl, el_mid, el_fix));
-        (sh, el)
+    // ── Arms (measured): the upper arm swings from beside the trunk to well behind it, never
+    // much ahead; the elbow stays bent ~95-120 deg so the forearm rides forward and up, angled in
+    // toward the midline. A sprint pumps wider and a touch tighter. ──
+    let ab = super::footman::arm_bind();
+    let pump = lerp(1.0, 1.35, sprint);
+    let free = |x: f32, side: f32, amp: f32, bind: (Vec3, Vec3)| {
+        let mid = RUN_ARM_MID.to_radians() + lerp(0.0, 0.07, sprint);
+        let flex = mid + amp * pump * (rec(&RUN_ARM_FLEX, x) - RUN_ARM_MID.to_radians());
+        let abd = rec(&RUN_ARM_ABD, x);
+        let out = rec(&RUN_ARM_FORE_OUT, x);
+        let upper = Vec3::new(side * abd.tan(), -1.0, flex.tan());
+        aim_arm(upper, Vec3::new(side * out.sin(), 0.0, out.cos()), rec(&RUN_ARM_ELBOW, x) - 0.1 * sprint, bind)
     };
+    // How far forward each arm is in its swing (+1 front, −1 back).
+    let reach = |x: f32| (rec(&RUN_ARM_FLEX, x) - RUN_ARM_MID.to_radians()) / RUN_ARM_HALF.to_radians();
+    let (f_r, f_l) = (reach(x_r), reach(x_l));
     // Sword arm: free (the blade is slung), or with the sword in hand a shortened pump.
-    let (sr, er) = arm(u_l, 1.0, lerp(1.0, 0.7, armed), 0.0);
+    let (sr, er) = free(x_r, 1.0, lerp(1.0, 0.7, armed), ab[0]);
     // Shield arm: a board on the forearm is carried, not pumped (small swing, elbow held); with the
-    // shield slung on the back for the sprint, the arm runs free like the other.
-    let (sl_c, el_c) = arm(u_r, -1.0, 0.4, 0.75);
-    let (sl_f, el_f) = arm(u_r, -1.0, 1.0, 0.0);
-    let (sl, el) = (sl_c.slerp(sl_f, shield_back), el_c.slerp(el_f, shield_back));
+    // shield slung on the back, the arm runs free like the other.
+    let carry = {
+        let flex = -0.08 + 0.4 * lerp(0.56, 0.8, sprint) * f_l;
+        let el_mid = lerp(0.55, 0.62, sprint);
+        (e3(-flex, 0.22, -(0.07 - 0.088 * f_l.max(0.0))), rx(-(el_mid + 0.25 * lerp(0.22, 0.28, sprint) * f_l)))
+    };
+    let (sl_f, el_f) = free(x_l, -1.0, 1.0, ab[1]);
+    let (sl, el) = (carry.0.slerp(sl_f, shield_back), carry.1.slerp(el_f, shield_back));
     let girdle = |rest: Vec3, f: f32| rest + Vec3::new(0.0, 0.012 * f.max(0.0), 0.03 * f);
-    p.sh_r = Jp { t: Some(girdle(rig.shoulder_r, fwd_l)), r: sr };
+    p.sh_r = Jp { t: Some(girdle(rig.shoulder_r, f_r)), r: sr };
     p.el_r = Jp::r(er);
-    p.sh_l = Jp { t: Some(girdle(rig.shoulder, -fwd_l)), r: sl };
+    p.sh_l = Jp { t: Some(girdle(rig.shoulder, f_l)), r: sl };
     p.el_l = Jp::r(el);
     // A blade in hand rides shouldered (wrist against the pump) rather than fanning behind.
-    let wrist = armed * 0.6 * sh_amp * (TAU * (u_l - 0.03)).cos();
+    let wrist = armed * 0.6 * lerp(0.56, 0.8, sprint) * f_r;
     p.sword = Jp::r(rx(wrist) * sword_rest_r().slerp(posed_sword(-2.046, -0.52, 0.119).r, armed));
     // The board stays upright, edge-on along the body: cancel the elbow's pitch on it.
     let (el_x, _, _) = el.to_euler(EulerRot::XYZ);
@@ -2231,7 +2337,7 @@ mod tests {
     /// sprinting thigh to 136° and folded the knee to 154°).
     #[test]
     fn swing_joint_angles_stay_human() {
-        for (v, hip_max, knee_max) in [(1.4_f32, 40.0_f32, 75.0_f32), (3.5, 55.0, 105.0), (6.125, 75.0, 132.0)] {
+        for (v, hip_max, knee_max) in [(1.4_f32, 40.0_f32, 75.0_f32), (3.5, 55.0, 115.0), (6.125, 75.0, 132.0)] {
             let (mut hi, mut kn) = (0.0_f32, 0.0_f32);
             for i in 0..200 {
                 let p = footman_gait(std::f32::consts::TAU * i as f32 / 200.0, v, 0.0, 1.0);
@@ -2359,8 +2465,9 @@ mod tests {
             // Left heel strike: left boot out front → right (sword) arm forward (negative X).
             let p = footman_gait(0.0, v, 1.0, 0.0);
             assert!(heel_toe(&p, false).0.z > heel_toe(&p, true).0.z);
-            let fwd = |q: Quat| (q * Vec3::NEG_Y).z;
-            assert!(fwd(p.sh_r.r) > fwd(p.sh_l.r), "sword arm must lead with the left leg (v={v})");
+            // Where each shoulder puts its elbow (the bind upper arm, turned).
+            let [r, l] = super::super::footman::arm_bind();
+            assert!((p.sh_r.r * r.0).z > (p.sh_l.r * l.0).z, "sword arm must lead with the left leg (v={v})");
         }
     }
 

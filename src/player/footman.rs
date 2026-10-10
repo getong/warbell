@@ -558,11 +558,14 @@ const KNEE_FILL_R: f32 = 0.08;
 /// Roll of the slung blade about its own axis (tuned against the viewer).
 const BACK_SWORD_ROLL: f32 = 0.0;
 
-/// Bind-pose arm joint offsets (elbow in shoulder, hand in elbow), right then left — test probes.
-#[cfg(test)]
+/// Bind-pose arm joint offsets (elbow in shoulder, hand in elbow), right then left — what the run
+/// aims its arms from.
 pub(crate) fn arm_bind() -> [(Vec3, Vec3); 2] {
-    let m = parse();
-    [(pos_of(&m, "ElbowR"), pos_of(&m, "Sword")), (pos_of(&m, "ElbowL"), pos_of(&m, "Shield"))]
+    static ARMS: OnceLock<[(Vec3, Vec3); 2]> = OnceLock::new();
+    *ARMS.get_or_init(|| {
+        let m = parse();
+        [(pos_of(&m, "ElbowR"), pos_of(&m, "Sword")), (pos_of(&m, "ElbowL"), pos_of(&m, "Shield"))]
+    })
 }
 
 /// The left fist's offset from the elbow (the untagged `handL` node the shield joint hangs off) —
