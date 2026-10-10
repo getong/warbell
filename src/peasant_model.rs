@@ -42,6 +42,20 @@ pub enum PeasantKind {
     Archer,
 }
 
+/// What a `kind`'s right hand carries (its [`kit_tools`] / [`peasant_tools`] weapon slot) — so the
+/// biped clips grip that tool (`BipedDrive::tool`). Every spawn of a peasant body sets this.
+pub fn held_tool(kind: PeasantKind) -> crate::biped::HeldTool {
+    use crate::biped::HeldTool;
+    match kind {
+        PeasantKind::Woodcutter => HeldTool::Axe,
+        PeasantKind::Miner => HeldTool::Pick,
+        PeasantKind::Farmer => HeldTool::Hoe,
+        PeasantKind::Guard => HeldTool::Sword,
+        PeasantKind::Archer => HeldTool::Bow,
+        PeasantKind::Unemployed => HeldTool::None,
+    }
+}
+
 // Fixed studio peasant hues (skin/tunic/trouser are caller-supplied for town variety).
 const LEATHER: u32 = 0x4e3b31; // gripColor
 const WOOD: u32 = 0x6b4a2e; // wood brown (tool hafts — a real timber haft, not the old pale-grey trim)
@@ -846,27 +860,29 @@ fn peasant_tools(kind: PeasantKind, desert: bool) -> (Option<Mesh>, Option<Mesh>
     let guard = kind == Guard;
     let archer = kind == Archer;
     let fletch = if desert { DESERT_FLETCH } else { FLETCH };
-    // Tool on the right hand (built +Y in sword-local; the shared `Sword` rest rotation carries it).
+    // Tool on the right hand (built +Y in sword-local from the fist's grip, edge toward +X). The
+    // work tools are full length — the two-handed strokes (`player::anim::toolwork`) grip them with
+    // both fists — matching the kit's `people.py` tools (axe/pick head ~0.72-0.76, hoe ~1.2).
     let weapon = if woodcutter {
         Some(group(vec![
-            frustum(0.022, 0.026, 0.52, v(0.0, 0.26, 0.0), WOOD, Surf::Skin), // handle
-            frustum(0.03, 0.034, 0.07, v(0.0, 0.48, 0.0), IRON, Surf::Metal), // collar
-            bxr(0.17, 0.1, 0.04, v(0.07, 0.52, 0.0), rz(0.12), IRON, Surf::Metal), // head
-            cone(0.065, 0.13, v(0.2, 0.52, 0.0), rz(-FRAC_PI_2), v(1.0, 0.85, 0.45), IRON, Surf::Metal), // edge
+            frustum(0.022, 0.026, 0.82, v(0.0, 0.36, 0.0), WOOD, Surf::Skin), // handle
+            frustum(0.03, 0.034, 0.07, v(0.0, 0.68, 0.0), IRON, Surf::Metal), // collar
+            bxr(0.17, 0.1, 0.04, v(0.07, 0.72, 0.0), rz(0.12), IRON, Surf::Metal), // head
+            cone(0.065, 0.13, v(0.2, 0.72, 0.0), rz(-FRAC_PI_2), v(1.0, 0.85, 0.45), IRON, Surf::Metal), // edge
         ]))
     } else if miner {
         Some(group(vec![
-            frustum(0.02, 0.024, 0.5, v(0.0, 0.25, 0.0), WOOD, Surf::Skin), // handle
-            bx(0.06, 0.08, 0.04, v(0.0, 0.46, 0.0), IRON, Surf::Metal), // socket
-            bx(0.34, 0.05, 0.04, v(0.0, 0.5, 0.0), IRON, Surf::Metal), // pick bar
-            cone(0.035, 0.14, v(0.0, 0.56, 0.06), rx(FRAC_PI_2), Vec3::ONE, IRON, Surf::Metal), // point
-            cone(0.03, 0.11, v(0.19, 0.5, 0.0), rz(-FRAC_PI_2), v(1.0, 0.8, 0.45), IRON, Surf::Metal), // chisel
+            frustum(0.02, 0.024, 0.82, v(0.0, 0.36, 0.0), WOOD, Surf::Skin), // handle
+            bx(0.06, 0.08, 0.04, v(0.0, 0.74, 0.0), IRON, Surf::Metal), // socket
+            bx(0.40, 0.05, 0.04, v(0.0, 0.74, 0.0), IRON, Surf::Metal), // pick bar
+            cone(0.035, 0.12, v(-0.24, 0.72, 0.0), rz(FRAC_PI_2), v(1.0, 1.0, 0.8), IRON, Surf::Metal), // point
+            cone(0.03, 0.11, v(0.24, 0.72, 0.0), rz(-FRAC_PI_2), v(1.0, 0.8, 0.45), IRON, Surf::Metal), // chisel
         ]))
     } else if farmer {
         Some(group(vec![
-            frustum(0.02, 0.024, 0.54, v(0.0, 0.27, 0.0), WOOD, Surf::Skin), // handle
-            frustum(0.032, 0.036, 0.08, v(0.0, 0.5, 0.0), IRON, Surf::Metal), // socket
-            bxr(0.22, 0.045, 0.035, v(0.12, 0.5, 0.02), rz(0.55), IRON, Surf::Metal), // hoe blade
+            frustum(0.02, 0.024, 1.25, v(0.0, 0.575, 0.0), WOOD, Surf::Skin), // handle
+            frustum(0.032, 0.036, 0.07, v(0.0, 1.2, 0.0), IRON, Surf::Metal), // socket
+            bxr(0.15, 0.014, 0.16, v(0.1, 1.19, 0.0), rz(-0.26), IRON, Surf::Metal), // flat hoe blade, canted back
         ]))
     } else if guard && desert {
         // The rival garrison carries a CURVED SCIMITAR (a saracen sabre), not our straight arming

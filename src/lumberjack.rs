@@ -46,8 +46,6 @@ const DANGER_TTL: f32 = 45.0;
 /// Axe damage per work swing — scaled with TREE_HP's ×3 bump (TREE_HP 165 → ~5 swings ≈ 10s a
 /// tree), so the town's wood income keeps its old pace even though the hero now needs 3× the hits.
 const CHOP_DMG: f64 = 36.0;
-/// Seconds between work swings — matches the overhead chop loop in `villager_limbs` (~2.1s).
-const CHOP_CD: f32 = 2.1;
 /// Pad past the trunk surface (its blocker radius + the cutter's body radius) at which the axe
 /// can land. Small on purpose — the cutter should stand AT the bark, not an axe-handle off it —
 /// but it must leave a little slop over where the trunk blocker parks the body, or "arrived"
@@ -354,6 +352,7 @@ fn chop_work(
         job.atk_cd -= dt;
         if d <= reach {
             // At the tree: face it, plant the feet, swing on the cooldown.
+            let fresh = !worker.at_post;
             worker.at_post = true;
             v.moving = false;
             job.stall = 0.0;
@@ -362,8 +361,14 @@ fn chop_work(
             if to.length_squared() > 1e-4 {
                 v.facing = to.x.atan2(to.y);
             }
+            // Each chop lands on the work clip's own beat (`player::anim::toolwork`'s axe stroke,
+            // ~2.1s, on the cutter's clock): the thunk + the bark's shudder when the bit meets it.
+            let clock = now + v.phase;
+            if fresh {
+                job.atk_cd = crate::player::anim::next_blow_in(crate::biped::HeldTool::Axe, clock, true);
+            }
             if job.atk_cd <= 0.0 {
-                job.atk_cd = CHOP_CD;
+                job.atk_cd = crate::player::anim::next_blow_in(crate::biped::HeldTool::Axe, clock, false);
                 if hero.pos.distance(v.pos) < SFX_EARSHOT {
                     cues.write(crate::audio::AudioCue::WoodChop);
                 }
@@ -624,10 +629,11 @@ fn attach_log(
                 .spawn((
                     Mesh3d(mesh),
                     MeshMaterial3d(mat),
-                    // Carried level across the chest in both arms (matches the biped `carry_pose`).
-                    // Child of the root (scale ~0.6); rotated so the log lies across the body (X).
-                    Transform::from_xyz(0.0, 1.05, 0.46)
-                        .with_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(0.05)),
+                    // Cradled level against the chest, resting on both palms (the biped tool clips'
+                    // hauling grip solves the fists under `LOG_CRADLE`). Child of the root (rig
+                    // frame shifted by the rig's drop); rotated so the log lies across the body (X).
+                    Transform::from_translation(crate::player::anim::LOG_CRADLE + Vec3::Y * crate::villagers::VIL_RIG_OFF)
+                        .with_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)),
                 ))
                 .id();
         });

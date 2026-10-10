@@ -17,7 +17,8 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 
-use crate::player::anim::{action_over_loco, attack_phase, attack_pose, bow_pose, carry_pose, loco_pose, sit_pose, work_pose, Pose};
+use crate::player::anim::{action_over_loco, attack_phase, attack_pose, biped_tool_pose, bow_pose, carry_pose, loco_pose, sit_pose, work_pose, Pose};
+pub(crate) use crate::player::anim::HeldTool;
 use crate::player::{Joint, ATTACK_DURATION};
 
 /// One animated joint of a biped mob. `root` points back at the entity carrying [`BipedDrive`] so a
@@ -57,6 +58,9 @@ pub struct BipedDrive {
     pub work: u8,
     /// True while hauling a load home (a woodcutter's log / a miner's cart) — both arms grip forward.
     pub carrying: bool,
+    /// The load is a handcart pulled behind (a miner's ore cart): the fists hold its shafts at the
+    /// sides instead of cradling a log against the chest. Only read while `carrying`.
+    pub pulling: bool,
     /// Per-instance clock offset (radians/seconds) so neighbouring mobs don't fidget/work in
     /// lockstep. Fed into the work stroke; locomotion already carries its own phase via `walk_phase`.
     pub phase: f32,
@@ -64,6 +68,14 @@ pub struct BipedDrive {
     pub bow: bool,
     /// 0..1 progress through the bow-shot clip (the archer brain advances it over its shot time).
     pub bow_t: f32,
+    /// What the right hand holds (set once from the outfit at spawn). Anything but `None` hands the
+    /// clip selection to `player::anim::toolwork`, which grips the tool for real in every state
+    /// (two-handed work strokes, the shoulder carry, slung while hauling, the guard's buckler, the
+    /// archer's bow at ease). Orks and empty-handed folk leave it `None`.
+    pub tool: HeldTool,
+    /// This rig's `(hip_dx, shoulder_dx)` from [`spawn_biped`] — the tool clips place fists and feet
+    /// by IK, so they need the real joint layout. Zero = the realistic kit body's.
+    pub limb_dx: Vec2,
 }
 
 /// A whole pose written by a richer per-mob animator, used INSTEAD of the [`BipedDrive`] clip
@@ -77,6 +89,10 @@ pub(crate) struct PoseOverride(pub(crate) Pose);
 /// Select + compose the studio clips for one biped from its drive (reuses the hero's clip math).
 /// An attack while moving layers over the gait (a running attack), exactly like the hero.
 pub(crate) fn biped_pose(d: &BipedDrive, now: f32) -> Pose {
+    // A townsperson with a tool / weapon in hand: the tool clips own the whole pose.
+    if let Some(p) = biped_tool_pose(d, now) {
+        return p;
+    }
     if d.sitting {
         return sit_pose();
     }

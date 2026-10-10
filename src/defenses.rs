@@ -507,7 +507,8 @@ pub fn populate_defenders(
                 },
                 KeepArcher { home_yaw, yaw: home_yaw, draw_started: -1.0, target: None, loosed: false },
                 // The shared biped animator idles/draws off this; `phase` desyncs the breathing.
-                crate::biped::BipedDrive { phase: i as f32 * 1.7, ..default() },
+                // The bow rides the left fist at ease (`HeldTool::Bow`), so the draw starts from it.
+                crate::biped::BipedDrive { phase: i as f32 * 1.7, tool: crate::biped::HeldTool::Bow, ..default() },
                 crate::biome::BiomeEntity,
             ))
             .id();
