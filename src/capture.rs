@@ -41,7 +41,16 @@ impl Plugin for CapturePlugin {
                 .init_resource::<ShotClock>()
                 .add_systems(Update, drive_shot);
         } else if let Ok(dir) = std::env::var("FOREST_CLIP") {
-            app.insert_resource(clip_cfg(dir))
+            let cfg = clip_cfg(dir);
+            // `FOREST_CLIP_FIXED=1`: every tick advances the sim by exactly one playback frame
+            // (the default only caps the step, so quick ticks between PNG saves record unevenly
+            // spaced frames) — for frame-exact animation reviews.
+            if std::env::var("FOREST_CLIP_FIXED").is_ok() {
+                app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(
+                    1.0 / cfg.fps as f32,
+                )));
+            }
+            app.insert_resource(cfg)
                 .init_resource::<ClipClock>()
                 .init_resource::<ClipProgress>()
                 .add_systems(Startup, clip_setup)

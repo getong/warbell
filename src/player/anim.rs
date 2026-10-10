@@ -1969,6 +1969,10 @@ pub(crate) fn carry_pose() -> Pose {
 /// it can build [`Pose`]s field-by-field like the clips above; `crate::captives` drives it.
 pub(crate) mod captive;
 
+/// The light sword combo, retargeted from keyframed clips (see the module docs).
+mod swordplay;
+mod ual_sword;
+
 /// Which clip family [`hero_anim`] is playing — a change triggers the cross-fade.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum Clip {
@@ -1990,6 +1994,10 @@ pub struct ClipBlend {
     from: Option<(Pose, f32, f32)>,
     /// The airborne clip leads with the right leg (mirrored) this jump.
     lead_right: bool,
+    /// The light swing playing last frame (its combo step), to start its recovery when it ends.
+    swinging: Option<u8>,
+    /// A finished light swing settling back to the guard: (combo step, when the swing ended).
+    recover: Option<(u8, f32)>,
 }
 
 /// Draw/sheathe bookkeeping. Drawing for a fight that's coming (a foe ringed, blows traded)
@@ -2257,7 +2265,12 @@ pub fn hero_anim(
         let tail = smoothstep((p - 0.7) / 0.3);
         dash_pose(p).lerp(&loco, tail)
     } else if let Some((phase, p)) = &attack {
-        let atk = attack_pose(hero.attack_variant, phase, *p);
+        let atk = if hero.attack_variant < super::combat::HEAVY_VARIANT {
+            let ap = (hero.attack_t / hero.attack_dur).clamp(0.0, 1.0);
+            swordplay::strike_pose(hero.attack_variant, ap, super::combat::HIT_PHASE)
+        } else {
+            attack_pose(hero.attack_variant, phase, *p)
+        };
         if hero.on_ground && moving > 0.05 {
             action_over_loco(&atk, &loco, moving) // running / walking attack
         } else {
@@ -2285,9 +2298,28 @@ pub fn hero_anim(
         if blend.lead_right { mirror_legs(&j) } else { j }
     } else if block_amt > 0.001 {
         brace(&loco, &defend_pose(now), block_amt, moving)
+    } else if let Some((variant, ended)) = blend.recover {
+        // A light swing the chain stopped at settles back through its own recovery; walking off
+        // hands the legs (and soon the whole body) straight back to locomotion.
+        let (rec, w) = swordplay::recover_pose(variant, now - ended);
+        loco.lerp(&action_over_loco(&rec, &loco, moving), w * (1.0 - moving))
     } else {
         loco
     };
+    // Recovery bookkeeping: a light swing that just ended starts its recovery; anything else
+    // taking over (another swing, a block, a roll, a jump…) or the clip running out ends it.
+    let light = hero.attacking && hero.attack_variant < super::combat::HEAVY_VARIANT;
+    if let (Some(v), false) = (blend.swinging, hero.attacking) {
+        blend.recover = Some((v, now));
+    }
+    blend.swinging = light.then_some(hero.attack_variant);
+    let busy = hero.attacking || hero.victory || hero.roll_t >= 0.0 || hero.dash_t >= 0.0 || !hero.on_ground
+        || hero.charge_t > CHARGE_GRACE || block_amt > 0.001;
+    if let Some((v, ended)) = blend.recover {
+        if (busy && now > ended) || now - ended > swordplay::recover_len(v) {
+            blend.recover = None;
+        }
+    }
 
     if clip != blend.clip {
         let dur = match (blend.clip, clip) {

@@ -568,6 +568,39 @@ pub(crate) fn arm_bind() -> [(Vec3, Vec3); 2] {
     })
 }
 
+/// The hand blade's axes in the `Sword` joint's own frame (before the joint's rotation): the grip →
+/// tip direction and the edge (the blade's width across it) — what a clip's hand orientation is
+/// mapped onto when it aims the sword.
+pub(crate) fn blade_axes() -> (Vec3, Vec3) {
+    static AXES: OnceLock<(Vec3, Vec3)> = OnceLock::new();
+    *AXES.get_or_init(|| {
+        let m = parse();
+        let blade = &m.meshes[m.blade];
+        let dir = blade.xf.transform_point(m.tip).normalize_or(Vec3::NEG_Y);
+        // The blade's widest spread across its axis: the dominant direction of the vertices'
+        // cross-axis scatter (a few power-iteration steps on its covariance).
+        let across: Vec<Vec3> = blade
+            .positions
+            .iter()
+            .map(|p| {
+                let v = blade.xf.transform_point(Vec3::from_array(*p));
+                v - dir * v.dot(dir)
+            })
+            .collect();
+        let mean = across.iter().copied().sum::<Vec3>() / across.len().max(1) as f32;
+        let cov = across.iter().fold(Mat3::ZERO, |c, v| {
+            let d = *v - mean;
+            c + Mat3::from_cols(d * d.x, d * d.y, d * d.z)
+        });
+        let mut edge = dir.any_orthonormal_vector();
+        for _ in 0..32 {
+            let n = cov * edge;
+            edge = (n - dir * n.dot(dir)).normalize_or(edge);
+        }
+        (dir, edge)
+    })
+}
+
 /// The left fist's offset from the elbow (the untagged `handL` node the shield joint hangs off) —
 /// what `anim` needs to place the hand board in the torso frame for the draw / sheathe hand-off.
 pub(crate) fn hand_l_bind() -> Vec3 {

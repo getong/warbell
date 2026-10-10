@@ -20,7 +20,7 @@ use super::{FirstPerson, Hero, HeroHealth, PlayMode, PlayerRes};
 pub const ATTACK_DURATION: f32 = 0.45;
 const ATTACK_RANGE: f32 = 1.8;
 const ATTACK_CONE_DOT: f32 = 0.5; // cos 60° — front cone half-angle
-const HIT_PHASE: f32 = 0.3; // fraction into the swing where damage lands
+pub(crate) const HIT_PHASE: f32 = 0.3; // fraction into the swing where damage lands
 
 // ── Attack aim-assist ──
 // When a swing starts, the hero *gently* leans his facing toward the nearest enemy so a swing reads

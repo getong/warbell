@@ -100,6 +100,25 @@ fn anim_drive(time: Res<Time>, mut q: Query<(&mut crate::player::Hero, &mut crat
             hh.blocking = true;
             crate::player::anim::stage_gait(&mut hero, crate::player::SPEED, dt);
         }
+        // One light swing of a combo step every 2.2 s, its recovery playing out in between.
+        "swing1" | "swing2" | "swing3" => {
+            let t = time.elapsed_secs() % 2.2;
+            if t < crate::player::ATTACK_DURATION {
+                hero.attacking = true;
+                hero.attack_variant = mode.as_bytes()[5] - b'1';
+                hero.attack_t = t;
+            }
+        }
+        // The full light chain (steps 1 → 2 → 3, each pressed as the last lands) every 4 s.
+        "combo" => {
+            let t = time.elapsed_secs() % 4.0;
+            let step = (t / 0.5) as u8;
+            if step < 3 && t % 0.5 < crate::player::ATTACK_DURATION {
+                hero.attacking = true;
+                hero.attack_variant = step;
+                hero.attack_t = t % 0.5;
+            }
+        }
         "attack" | "attack1" => swing(&mut hero, 0),
         "attack2" => swing(&mut hero, 1),
         "attack3" => swing(&mut hero, 2),

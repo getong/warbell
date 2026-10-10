@@ -123,7 +123,9 @@ Warbell's **source code** is **source-available** under the
 **non-commercial** purposes; commercial use is reserved. The **assets** under `assets/` carry
 their own terms (e.g. [game-icons.net](https://game-icons.net) icons under CC BY 3.0, the
 Cinzel / EB Garamond fonts under the SIL Open Font License; audio and other art may be
-separately licensed). See [`LICENSE`](LICENSE) for the full text and the asset note.
+separately licensed). The hero's light sword combo is retargeted from
+[Quaternius' Universal Animation Library 2](https://quaternius.itch.io/universal-animation-library-2)
+(CC0). See [`LICENSE`](LICENSE) for the full text and the asset note.
 
 
 I am also working on realistic procedural world generation in bevy 
