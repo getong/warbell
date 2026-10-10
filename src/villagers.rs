@@ -684,9 +684,10 @@ pub fn spawn_scene_peasant(
 // ── Caged captives: real peasants behind bars, freed by clearing their jailers ────────────
 
 /// A caged peasant — a REAL peasant biped (`peasant_model`) huddled on the straw of a prisoner
-/// cage (`camps::spawn_cage`), not a baked box. No brain, no HP: it only sits (its
-/// [`BipedDrive::sitting`] pose) until a rescue tags it [`WalkOut`]. `seed` fixes its face and
-/// clothes so the townsperson it becomes on walking out is visibly the SAME person.
+/// cage (`camps::spawn_cage`), not a baked box. No HP and no townsfolk brain: its idle life (the
+/// huddles, rocking, the trips to the bars, flinches — `captives::CaptiveLife`) poses it until a
+/// rescue tags it [`WalkOut`]. `seed` fixes its face and clothes so the townsperson it becomes on
+/// walking out is visibly the SAME person.
 #[derive(Component)]
 pub struct Captive {
     pub key: crate::camps::CageKey,
@@ -699,7 +700,8 @@ pub struct Captive {
 #[derive(Component)]
 pub(crate) struct WalkOut {
     target: Vec2,
-    start: f32,
+    /// When this captive starts to stand (s) — `captives::captive_life` times the stand-up to it.
+    pub(crate) start: f32,
     line: &'static str,
 }
 
@@ -717,26 +719,31 @@ const FREED_LINES: [&str; 6] = [
 /// Pace of the walk-out shuffle (u/s) — slower than a guard's march; they're stiff from the cage.
 const WALK_OUT_SPEED: f32 = 2.0;
 
-/// Spawn one seated captive peasant at `pos` (world; on the cage's plank floor), facing
-/// `facing`. Called by `camps::spawn_cage` — one per straw bed.
+/// Spawn one seated captive peasant on its `berth` (the straw seat on the cage's plank floor,
+/// plus its spot at the bars). Called by `camps::spawn_cage` — one per straw bed. The
+/// [`crate::captives::CaptiveLife`] it carries poses it through the [`crate::biped::PoseOverride`]
+/// (seeded per captive, so no two in a cage move in step).
 pub fn spawn_cage_captive(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
-    pos: Vec3,
-    facing: Quat,
+    berth: crate::captives::Berth,
     key: crate::camps::CageKey,
     seed: u32,
 ) -> Entity {
     let mat = shared_body_material(creature_mats);
     let skin = SKIN[(seed as usize) % SKIN.len()];
     let tunic = TUNIC[(seed as usize >> 3) % TUNIC.len()];
+    let life = crate::captives::CaptiveLife::new(berth, seed);
+    let pose = crate::biped::PoseOverride(life.first_pose());
     let root = commands
         .spawn((
-            Transform { translation: pos, rotation: facing, scale: Vec3::splat(SCALE) },
+            Transform { translation: berth.seat, rotation: Quat::from_rotation_y(berth.seat_yaw), scale: Vec3::splat(SCALE) },
             Visibility::Visible,
             BipedDrive { sitting: true, phase: (seed % 628) as f32 / 100.0, ..default() },
             Captive { key, seed },
+            life,
+            pose,
             BiomeEntity,
         ))
         .id();
@@ -771,19 +778,23 @@ pub(crate) fn release_captives(commands: &mut Commands, now: f32, cage_tf: &Tran
 /// Walk freed captives out of their cage: stand up (drop the sitting pose), float their comment,
 /// shuffle to the door mouth, then convert into a REAL townsperson on the spot — the same face
 /// and clothes (same `seed`), now with the full militia identity — which the guard AI marches
-/// home to the courtyard through the gates (the `NavPath` A* in [`guard_combat`]).
+/// home to the courtyard through the gates (the `NavPath` A* in [`guard_combat`]). The stand-up
+/// itself is the captive's idle life ([`crate::captives::CaptiveLife`]) playing its feet-planted
+/// rise; the walk only sets off once that reports the captive upright, so nobody slides out of
+/// the cage still seated.
+#[allow(clippy::type_complexity)]
 fn walk_out_captives(
     time: Res<Time>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut creature_mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
-    mut q: Query<(Entity, &Captive, &WalkOut, &mut Transform, &mut BipedDrive)>,
+    mut q: Query<(Entity, &Captive, &WalkOut, &mut Transform, &mut BipedDrive, Option<&crate::captives::CaptiveLife>)>,
 ) {
     let now = time.elapsed_secs();
     let tw = time.elapsed_secs_wrapped();
     let dt = time.delta_secs();
-    for (e, cap, w, mut tf, mut d) in &mut q {
+    for (e, cap, w, mut tf, mut d, life) in &mut q {
         if now < w.start {
             continue; // still huddled — the door is swinging open
         }
@@ -796,6 +807,9 @@ fn walk_out_captives(
                 color: Color::srgb(0.85, 0.92, 1.0),
                 scale: 0.95,
             });
+        }
+        if life.is_some_and(|l| !l.upright()) {
+            continue; // still getting up off the straw
         }
         let pos = Vec2::new(tf.translation.x, tf.translation.z);
         let to = w.target - pos;

@@ -3,11 +3,17 @@
 //! voices can push to it later). The line fades out on its own — set it and forget it.
 //!
 //! Speakers write the text + a display duration via [`Subtitles::say`]; the UI system below mirrors
-//! the resource into one persistent `Text` node, fading the last stretch out.
+//! the resource into one persistent `Text` node, fading the last stretch out. A voice heard through
+//! bars (the caged captives) uses [`Subtitles::say_muffled`] instead: a smaller, dimmer aside that
+//! only ever fills an EMPTY caption slot — it never replaces a real line still on screen.
 
 use bevy::prelude::*;
 
 use crate::ui::{label, UiFonts};
+
+/// Caption size (px) of an ordinary line, and of a muffled aside.
+const SIZE: f32 = 19.0;
+const MUFFLED_SIZE: f32 = 16.5;
 
 /// The currently-shown caption. A speaker calls [`Subtitles::say`]; the latest line wins.
 #[derive(Resource, Default)]
@@ -18,6 +24,8 @@ pub struct Subtitles {
     /// Demo/clip override: once locked, ambient `say`/`say_as` calls are ignored so a scripted
     /// caption (`force`) can't be clobbered by the audio director's barks. Never set in play.
     locked: bool,
+    /// The caption is a muffled aside ([`Subtitles::say_muffled`]) — drawn dimmer and smaller.
+    muffled: bool,
 }
 
 impl Subtitles {
@@ -32,10 +40,30 @@ impl Subtitles {
         }
         self.set(now, speaker, text, dur);
     }
+    /// A MUFFLED aside (a captive behind bars): shown only if no ordinary caption is still up —
+    /// it never clobbers a story line — and drawn smaller and dimmer. Spoken words read
+    /// "Captive (muffled): …"; a sound caption (`*muffled sobbing*`) stands on its own.
+    pub fn say_muffled(&mut self, now: f32, speaker: Option<&str>, text: &str, dur: f32) {
+        if self.locked || (now < self.until && !self.muffled) {
+            return;
+        }
+        let sound = text.starts_with('*');
+        self.text = match speaker {
+            Some(name) if !sound => format!("{name} (muffled): {text}"),
+            _ => text.to_string(),
+        };
+        self.until = now + dur;
+        self.muffled = true;
+    }
     /// Clip-only: pin a caption that ambient speakers can't override (locks the resource).
     pub fn force(&mut self, now: f32, speaker: Option<&str>, text: &str, dur: f32) {
         self.locked = true;
         self.set(now, speaker, text, dur);
+    }
+    /// Is the current caption a muffled aside? (Test probe — the UI reads the field directly.)
+    #[cfg(test)]
+    pub fn is_muffled(&self) -> bool {
+        self.muffled
     }
     fn set(&mut self, now: f32, speaker: Option<&str>, text: &str, dur: f32) {
         self.text = match speaker {
@@ -43,6 +71,7 @@ impl Subtitles {
             None => text.to_string(),
         };
         self.until = now + dur;
+        self.muffled = false;
     }
 }
 
@@ -79,7 +108,7 @@ fn setup(mut commands: Commands, fonts: Res<UiFonts>) {
         ))
         .with_children(|p| {
             p.spawn((
-                label(&fonts.semibold, "", 19.0, Color::NONE),
+                label(&fonts.semibold, "", SIZE, Color::NONE),
                 Node { max_width: Val::Px(760.0), ..default() },
                 TextShadow { offset: Vec2::splat(2.0), color: Color::srgba(0.0, 0.0, 0.0, 0.85) },
                 SubtitleText,
@@ -90,9 +119,10 @@ fn setup(mut commands: Commands, fonts: Res<UiFonts>) {
 fn update(
     time: Res<Time>,
     subs: Res<Subtitles>,
-    mut q: Query<(&mut Text, &mut TextColor), With<SubtitleText>>,
+    fonts: Res<UiFonts>,
+    mut q: Query<(&mut Text, &mut TextColor, &mut TextFont), With<SubtitleText>>,
 ) {
-    let Ok((mut text, mut color)) = q.single_mut() else { return };
+    let Ok((mut text, mut color, mut font)) = q.single_mut() else { return };
     let remaining = subs.until - time.elapsed_secs();
     if remaining <= 0.0 {
         if !text.0.is_empty() {
@@ -103,8 +133,43 @@ fn update(
     }
     if text.0 != subs.text {
         *text = Text::new(subs.text.clone());
+        // Restyle only when the caption changes: a muffled aside in the lighter face, smaller.
+        let (face, size) = if subs.muffled { (&fonts.regular, MUFFLED_SIZE) } else { (&fonts.semibold, SIZE) };
+        *font = TextFont { font: face.clone().into(), font_size: size.into(), ..default() };
     }
     // Fade the final 0.6s out so lines don't pop off.
     let a = (remaining / 0.6).min(1.0);
-    color.0 = Color::srgba(0.95, 0.97, 1.0, a);
+    color.0 = if subs.muffled { Color::srgba(0.78, 0.82, 0.88, 0.82 * a) } else { Color::srgba(0.95, 0.97, 1.0, a) };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_muffled_aside_never_clobbers_a_real_caption() {
+        let mut s = Subtitles::default();
+        s.say_as(0.0, Some("Townsfolk"), "Rain or orcs. Always something.", 3.0);
+        s.say_muffled(1.0, Some("Captive"), "Gods… help…", 2.0);
+        assert_eq!(s.text, "Townsfolk: Rain or orcs. Always something.");
+        assert!(!s.is_muffled());
+        // Once the real line has gone, the aside shows — tagged, or as a bare sound caption.
+        s.say_muffled(3.5, Some("Captive"), "Gods… help…", 2.0);
+        assert_eq!(s.text, "Captive (muffled): Gods… help…");
+        assert!(s.is_muffled());
+        s.say_muffled(4.0, Some("Captive"), "*muffled sobbing*", 2.0);
+        assert_eq!(s.text, "*muffled sobbing*");
+        // A real line always replaces an aside.
+        s.say_as(4.5, None, "Down it goes.", 2.0);
+        assert_eq!(s.text, "Down it goes.");
+        assert!(!s.is_muffled());
+    }
+
+    #[test]
+    fn a_forced_caption_holds_against_asides_too() {
+        let mut s = Subtitles::default();
+        s.force(0.0, None, "scripted", 1.0);
+        s.say_muffled(5.0, Some("Captive"), "*coughing*", 2.0);
+        assert_eq!(s.text, "scripted");
+    }
 }

@@ -10,6 +10,8 @@
 //!     sustained horde from `siege_clip_refill`); frame with `FOREST_CAM`/`FOREST_CLIP_ORBIT`.
 //!   - `build`   — handled in `town.rs` (`demo_build_timelapse`): raise the town one plot at a
 //!     time for a construction timelapse; frame with `FOREST_CLIP_ORBIT`.
+//!   - `captives` — a fixed camera on a guarded camp cage: the captives' idle life + muffled
+//!     voices, warband alive (`FOREST_DEMO_FREE=<secs>` adds the rescue for an after-shot).
 //!
 //! Under `FOREST_CLIP` the hero boots in `PlayMode::FreeRoam`, where `player_move`/`player_camera`
 //! early-return — so this owns the hero pose and the camera outright, while the ungated `hero_anim`
@@ -56,6 +58,10 @@ impl Plugin for DemoPlugin {
             }
             Some("rescue") => {
                 app.add_systems(PostUpdate, rescue_drive.run_if(in_state(crate::game_state::Modal::None)));
+            }
+            Some("captives") => {
+                // Captions left live on purpose: the captives' muffled asides are part of the shot.
+                app.add_systems(PostUpdate, captives_drive.run_if(in_state(crate::game_state::Modal::None)));
             }
             _ => {}
         }
@@ -350,6 +356,107 @@ fn rescue_drive(
     }
     // Pin the rescue quip on screen the whole clip (ambient hurt/guard barks can't override it).
     subs.force(now, Some("Townsfolk"), RESCUE_LINE, 2.0);
+}
+
+// ── captives: watch a guarded cage's prisoners live (no rescue unless asked) ──────────
+
+/// `FOREST_DEMO=captives` — a fixed camera on the nearest camp's cage with its warband left ALIVE,
+/// so a clip shows the captives' idle life (`captives`) and hears their muffled voices
+/// (`audio::captive`) instead of the rescue. The hero stands on the far side of the cage from the
+/// camp, just past the warband's leash (in sight of the captives, never attacked); the camera sits
+/// cage-local, by default high in a corner inside the cage.
+///
+/// Knobs: `FOREST_DEMO_CAGECAM="x,y,z[,lx,ly,lz]"` (cage-local eye [+ look-at point]),
+/// `FOREST_DEMO_HERO=<u>` (the hero's distance from the cage), `FOREST_DEMO_FREE=<secs>` (fell the
+/// warband that long after recording starts → the real `camp_rescue` frees the cage: the
+/// stand-up + walk-out after-shot).
+#[allow(clippy::type_complexity)]
+fn captives_drive(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut hero_q: Query<(&mut Hero, &mut Transform), (Without<Camera3d>, Without<crate::camps::Cage>)>,
+    mut cam_q: Query<&mut Transform, (With<Camera3d>, Without<Hero>, Without<crate::camps::Cage>)>,
+    cages: Query<(&Transform, &crate::camps::Cage), (Without<Hero>, Without<Camera3d>)>,
+    orks: Query<(Entity, &crate::orks::Ork), (Without<crate::orks::WaveInvader>, Without<crate::dying::Dying>)>,
+    prog: Option<Res<crate::capture::ClipProgress>>,
+    mut site: Local<Option<(Vec2, Vec2)>>,
+    mut started: Local<Option<f32>>,
+    mut freed: Local<bool>,
+) {
+    let now = time.elapsed_secs();
+    if site.is_none() {
+        *site = crate::camps::cage_positions()
+            .into_iter()
+            .min_by(|a, b| a.0.length_squared().total_cmp(&b.0.length_squared()));
+    }
+    let Some((cage, centre)) = *site else { return };
+    // The cage's own frame (its yaw places the cage-local camera) — wait for the camp to spawn.
+    let Some(ctf) = cages
+        .iter()
+        .map(|(tf, _)| *tf)
+        .min_by(|a, b| a.translation.xz().distance(cage).total_cmp(&b.translation.xz().distance(cage)))
+        .filter(|tf| tf.translation.xz().distance(cage) < 1.0)
+    else {
+        return;
+    };
+
+    // In FRONT of the captives (they sit facing the door, cage-local +X) where possible, so their
+    // glances at the hero read on camera; always past the warband's 16 u leash from its fire.
+    let dist = env_f32("FOREST_DEMO_HERO").unwrap_or(12.5);
+    let hpos = [Vec3::X, Vec3::new(1.0, 0.0, 1.0), Vec3::new(1.0, 0.0, -1.0), Vec3::Z, Vec3::NEG_Z]
+        .into_iter()
+        .map(|d| (ctf.rotation * d).xz().normalize_or_zero())
+        .map(|d| cage + d * dist)
+        .find(|h| h.distance(centre) > 16.5)
+        .unwrap_or_else(|| cage + (cage - centre).normalize_or(Vec2::X) * (16.5 - cage.distance(centre)).max(dist));
+    let hy = crate::worldmap::ground_at_world(hpos.x, hpos.y).unwrap_or(ctf.translation.y);
+    let face = cage - hpos;
+    if let Ok((mut hero, mut htf)) = hero_q.single_mut() {
+        hero.pos = hpos;
+        hero.y = hy;
+        hero.facing = face.x.atan2(face.y);
+        hero.moving = false;
+        hero.moving_amt = 0.0;
+        htf.translation = Vec3::new(hpos.x, hy, hpos.y);
+        htf.rotation = Quat::from_rotation_y(hero.facing);
+    }
+    if let Ok(mut cam) = cam_q.single_mut() {
+        // Default: up in the cage's (+X, −Z) corner, the door's latch end (clear of every berth and bar spot),
+        // looking down across all three captives, who sit facing roughly that way.
+        let (eye, at) = std::env::var("FOREST_DEMO_CAGECAM")
+            .ok()
+            .and_then(|s| {
+                let v: Vec<f32> = s.split(',').filter_map(|p| p.trim().parse().ok()).collect();
+                match v.len() {
+                    3 => Some((Vec3::new(v[0], v[1], v[2]), Vec3::new(0.0, 0.6, 0.0))),
+                    6 => Some((Vec3::new(v[0], v[1], v[2]), Vec3::new(v[3], v[4], v[5]))),
+                    _ => None,
+                }
+            })
+            .unwrap_or((Vec3::new(0.95, 1.65, -0.95), Vec3::new(-0.15, 0.45, 0.2)));
+        cam.translation = ctf.transform_point(eye);
+        cam.look_at(ctf.transform_point(at), Vec3::Y);
+    }
+
+    // The optional rescue: counted from the first recorded frame (or the first frame the cage
+    // exists, in a single-shot capture).
+    let Some(after) = env_f32("FOREST_DEMO_FREE") else { return };
+    if prog.as_ref().is_some_and(|p| !p.recording) {
+        return;
+    }
+    let t0 = *started.get_or_insert(now);
+    if !*freed && now - t0 >= after {
+        *freed = true;
+        for (e, o) in &orks {
+            if o.home().distance(centre) < 6.0 {
+                crate::dying::begin_dying(&mut commands, e, now);
+            }
+        }
+    }
+}
+
+fn env_f32(key: &str) -> Option<f32> {
+    std::env::var(key).ok().and_then(|v| v.trim().parse().ok())
 }
 
 // ── work: tracking shot on a woodcutter (peasants visibly do the work) ───────────────
