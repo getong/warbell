@@ -1315,6 +1315,8 @@ pub fn scatter_region(
             let clutter_mask = |x: f32, z: f32| mask(x, z) && !(river_guard && crate::water::on_river(x, z));
             k.scatter_clutter(&mut kit_chunks, lo, hi, &clutter_mask, height_fn);
         }
+        // Pebbles at the waterline + the grass fringe on the eroded river / lake banks.
+        k.scatter_shore(&mut kit_chunks, lo, hi, mask);
         kit_chunks.spawn(k, commands, meshes, scatter_cull_enabled());
     }
 }

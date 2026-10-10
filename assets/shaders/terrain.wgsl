@@ -57,6 +57,8 @@ const FP_T0: f32 = 4.6;
 const FP_T1: f32 = 5.3;
 const FP_T2: f32 = 4.2;
 const FP_DEPTH: f32 = 0.20;
+// The water plane (`worldmap::SEA_Y`): every river, lake and pool surface sits at this height.
+const SEA_Y: f32 = -0.4;
 
 fn fp_uv0(p: vec2<f32>) -> vec2<f32> { return p / FP_T0; }
 fn fp_uv1(p: vec2<f32>) -> vec2<f32> { return p / FP_T1 + vec2<f32>(0.37, 0.61); }
@@ -385,6 +387,45 @@ fn fragment(
         rgb = mix(rgb, drift, tg.x * 0.48 * debris_w);
     }
 
+    // ── Riverbank (`worldmap::bank_profile`) ── UV_0 = (bank, cut): bank is 1 on the eroded slope
+    //    and 0 on the land above its rounded lip. The grass / forest floor rolls over the lip and
+    //    thins down the face into bare earth (sooner where the pitch is steep — a cut bank is
+    //    almost all earth), and the last few decimetres above the waterline are dark damp soil.
+    //    Meshes without UV_0 (and all ground away from inland water) carry bank = 0: a no-op.
+    var bank = 0.0;
+#ifdef VERTEX_UVS_A
+    bank = clamp(in.uv.x, 0.0, 1.0);
+#endif
+    var bank_soil = 0.0;
+    var bank_damp = 0.0;
+    // Per-channel tint the bank earth carries relative to the forest humus (also applied to the
+    // scanned path layer below): sandy loam on a desert brook, grey silt by snow, humus elsewhere.
+    var bank_tint = vec3<f32>(1.0);
+    var bank_sandy = 0.0;
+    if bank > 0.001 {
+        let hy = in.world_position.y - SEA_Y;
+        let bn = ter_noise(wp * 0.9 + vec2<f32>(13.0, 77.0)) * 0.65 + ter_noise(wp * 2.6 + vec2<f32>(41.0, 5.0)) * 0.35;
+        let steep = 1.0 - smoothstep(0.62, 0.96, in.world_normal.y);
+        // Ragged grass edge partway down the face; steep pitches go bare at once.
+        bank_soil = clamp(smoothstep(0.30, 0.85, bank + (bn - 0.5) * 0.7) * (0.40 + 0.60 * steep)
+            + steep * 0.6 * bank, 0.0, 1.0);
+        // Capillary wet line: ~0.15–0.4u above the water, wavering with the noise.
+        bank_damp = (1.0 - smoothstep(0.02, 0.14 + 0.26 * bn, hy)) * smoothstep(0.0, 0.25, bank);
+        bank_soil = max(bank_soil, bank_damp);
+        // Bright, non-green ground (sand, snow) lends the soil its own colour, darkened like wet
+        // sand; green ground keeps the brown humus.
+        let base = pbr_input.material.base_color.rgb;
+        let base_l = dot(base, vec3<f32>(0.299, 0.587, 0.114));
+        let sandy = smoothstep(0.22, 0.45, base_l) * (1.0 - green) * 0.8;
+        bank_sandy = sandy;
+        let humus = vec3<f32>(0.29, 0.225, 0.16);
+        let earth_c = mix(humus, base * 0.55, sandy);
+        bank_tint = earth_c / humus;
+        let earth = earth_c * (0.80 + 0.40 * bn);
+        rgb = mix(rgb, earth, bank_soil);
+        rgb *= 1.0 - 0.48 * bank_damp;
+    }
+
     // ── Realistic forest floor (`realforest`) ── scanned litter / moss / path layers splatted over
     //    the forest by the baked mask, height-blended (pebbles and leaves poke through the moss
     //    instead of a soft cross-fade), with parallax occlusion mapping near the camera so the
@@ -403,10 +444,22 @@ fn fragment(
     var fp_nw = vec3<f32>(0.0, 1.0, 0.0);
     var fp_rough = 1.0;
     var fp_ao = 1.0;
+    // Bank earth drawn with the scanned PATH layer (real soil + pebbles) wherever the slope is
+    // gentle enough for the planar mapping not to stretch; steeper cut faces keep the procedural
+    // earth above plus the wall relief below.
+    var bank_fp = 0.0;
     if forest.pbr.x > 0.5 {
         let edge_n = ter_noise(wp * 0.21 + vec2<f32>(3.0, 41.0)) - 0.5;
-        fp_w = smoothstep(0.25, 0.75, fmask.r + edge_n * 0.45)
-             * smoothstep(0.55, 0.85, in.world_normal.y) * (1.0 - cliff);
+        // On a bank the slope gate relaxes, so the forest floor rolls over the lip with the ground
+        // instead of fading to bare vertex green there.
+        let slope_gate = mix(smoothstep(0.55, 0.85, in.world_normal.y), smoothstep(0.40, 0.70, in.world_normal.y),
+            smoothstep(0.0, 0.2, bank));
+        fp_w = smoothstep(0.25, 0.75, fmask.r + edge_n * 0.45) * slope_gate * (1.0 - cliff);
+        // Off the forest, a sandy bank (a desert brook) keeps its own wet sand: the scanned layer
+        // is woodland soil with leaf litter in it, which read as a forest path laid on the dunes.
+        let bank_scan = mix(1.0 - bank_sandy * 1.25, 1.0, smoothstep(0.1, 0.5, fmask.r));
+        bank_fp = bank_soil * smoothstep(0.40, 0.70, in.world_normal.y) * (1.0 - cliff) * bank_scan;
+        fp_w = max(fp_w, bank_fp);
     }
     if fp_w > 0.002 {
         // Layer weights: trails -> path, broad damp patches -> moss, the rest -> leaf litter.
@@ -417,7 +470,8 @@ fn fragment(
         // Narrower worn track, and the grass strip a cart path keeps between its ruts (centre of
         // the road field, away from the grooves) goes back to the mossy layer.
         let centre_strip = smoothstep(0.88, 0.97, fmask.g) * (1.0 - smoothstep(0.05, 0.3, rut)) * 0.85;
-        let path = smoothstep(0.36, 0.86, fmask.g + edge) * (1.0 - centre_strip);
+        // Bank earth claims its share of the floor as path (all of it off the forest mask).
+        let path = max(smoothstep(0.36, 0.86, fmask.g + edge) * (1.0 - centre_strip), bank_fp / fp_w);
         let mossn = ter_noise_rot(wp * 0.05, 0.946, 0.326) * 0.65 + ter_noise(wp * 0.19 + vec2<f32>(5.0, 9.0)) * 0.35;
         // Moss/grass is the dominant floor (it sits under the green carpet and IS the carpet past
         // its draw range); leaf litter keeps the drier hollows.
@@ -528,10 +582,13 @@ fn fragment(
         // Puddles are near-black, glassy and flat, so the IBL sky and sun glint off them.
         let damp = w.z * (0.45 + 0.55 * ter_noise(wp * 0.11 + vec2<f32>(41.0, 7.0)));
         alb *= 1.0 - 0.22 * damp;
+        alb *= mix(vec3<f32>(1.0), bank_tint, bank_fp / fp_w) * (1.0 - 0.48 * bank_damp);
         // Small, scattered puddles: mostly IN the ruts, occasionally in a dip — never a flooded track.
         let pocket = smoothstep(0.62, 0.85, ter_noise(wp * 0.33 + vec2<f32>(71.0, 5.0)));
         let water_line = smoothstep(0.70, 0.92, ter_noise(wp * 0.16 + vec2<f32>(13.0, 57.0))) * 0.35 + rut * 0.32 * pocket;
-        let puddle = clamp((water_line - hit_h) * 10.0, 0.0, 1.0) * w.z * smoothstep(0.5, 0.8, path);
+        // No puddles standing on a bank slope (the bank's own damp band handles the wet look).
+        let puddle = clamp((water_line - hit_h) * 10.0, 0.0, 1.0) * w.z * smoothstep(0.5, 0.8, path)
+            * (1.0 - smoothstep(0.0, 0.2, bank));
         alb = mix(alb, alb * 0.16, puddle);
         rgb = mix(rgb, alb, fp_w);
         // Tangent frame of the planar XZ mapping: u runs along +X, v along +Z, and an OpenGL
@@ -651,6 +708,12 @@ fn fragment(
     if wet > 0.001 {
         let rw = pbr_input.material.perceptual_roughness;
         pbr_input.material.perceptual_roughness = mix(rw, 0.40, wet);
+    }
+
+    // Damp bank soil just above the waterline: a soft wet sheen, glossiest at the water's edge.
+    if bank_damp > 0.001 {
+        let rb = pbr_input.material.perceptual_roughness;
+        pbr_input.material.perceptual_roughness = mix(rb, 0.34, bank_damp);
     }
 
     // Ultra grass sheen: drop roughness a touch on green ground so the sun throws a lush,
