@@ -144,8 +144,9 @@ impl RoadField {
 /// field) just aliases them away.
 const RUT_D: f32 = 0.72;
 const RUT_W: f32 = 0.34;
-/// Rut-texture resolution (world units per texel).
-const RUT_CELL: f32 = 0.35;
+/// Rut-texture resolution (world units per texel) — also the cell of the terrain's ground-mask
+/// image the rut bake is padded into (`worldmap::ground_mask_image`).
+pub(crate) const RUT_CELL: f32 = 0.35;
 
 /// Bake the rut mask: R8 texel data + the world→UV mapping (`xy` = min corner, `zw` = 1/extent),
 /// same contract as `worldmap::bake_water_field`. Consumed by `terrain::make_material`.

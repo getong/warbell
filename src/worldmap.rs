@@ -2234,7 +2234,9 @@ fn build_water_near() -> Arc<Vec<u8>> {
                 }
             }
         }
-        if !near {
+        // ...and the profile actually moves some vertex of it. Past the slope's reach a cell inside
+        // the band is plain land: drawn and sampled identically without the 18-triangle sub-grid.
+        if !near || !bank_cell_active(ix, iz, &mut sd_at) {
             continue;
         }
         let any_sea = [(ix, iz), (ix + 1, iz), (ix + 1, iz + 1), (ix, iz + 1)].iter().any(|&(cx, cz)| corner_is_sea(cx, cz));
@@ -2244,6 +2246,39 @@ fn build_water_near() -> Arc<Vec<u8>> {
         v[(iz * COLS + ix) as usize] = 2;
     }
     Arc::new(v)
+}
+
+/// Does [`bank_profile`] move any sub-vertex of cell `(ix, iz)` off its land height — or any point
+/// of the ring one sub-step outside it, which the bank normals' central differences read? Tested
+/// with the water distance pulled in by a safety margin, so a cell judged inert stays inert under
+/// the mesher's own (gradient-extrapolated) neighbour samples. An inert cell is left to the plain
+/// path: same surface, same normals, and its shared edges with a real bank cell are inert too.
+fn bank_cell_active(ix: i32, iz: i32, sd_at: &mut impl FnMut(i32, i32) -> f32) -> bool {
+    const NB: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
+    const MARGIN: f32 = 0.25;
+    let h = tile_at(ix, iz)
+        .or_else(|| NB.iter().find_map(|&(dx, dz)| tile_at(ix + dx, iz + dz)))
+        .map(|t| t.1)
+        .unwrap_or(1);
+    let flat = (h - 1) as f32 * GROUND_STEP;
+    let c = |cx: i32, cz: i32| corner_top_y_for(cx, cz, h).unwrap_or(flat);
+    let cy = [c(ix, iz), c(ix + 1, iz), c(ix + 1, iz + 1), c(ix, iz + 1)];
+    let n = BANK_SUB;
+    for kz in -1..=n + 1 {
+        for kx in -1..=n + 1 {
+            let (tx, tz) = (kx as f32 / n as f32, kz as f32 / n as f32);
+            let a = cy[0] + (cy[1] - cy[0]) * tx;
+            let b = cy[3] + (cy[2] - cy[3]) * tx;
+            let yl = a + (b - a) * tz;
+            let (sx, sz) = (ix * n + kx, iz * n + kz);
+            let (wx, wz) = (sx as f32 / n as f32 - GX, sz as f32 / n as f32 - GZ);
+            let (y, bank, _) = bank_profile(yl, sd_at(sx, sz) - MARGIN, wx, wz);
+            if bank > 0.0 || y != yl {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 // World ↔ tile helpers (world is the enlarged tile-space recentred on the origin).
@@ -2479,12 +2514,12 @@ fn bank_canon(c: [f32; 4], kx: i32, kz: i32, n: i32) -> f32 {
     }
 }
 
-/// One vertex of a bank cell's sub-grid: position, normal, colour, and UV_0 = (bank, cut).
+/// One vertex of a bank cell's sub-grid: position, normal, colour. (The bank shading weight is
+/// not a vertex attribute — it rides in the ground-mask texture, see [`ground_mask_image`].)
 struct BankVert {
     p: [f32; 3],
     n: [f32; 3],
     c: [f32; 4],
-    uv: [f32; 2],
 }
 
 /// [`inland_water_sd_world`] at bank sub-grid point `(sx, sz)` (tile·[`BANK_SUB`] + k), memoised
@@ -3283,7 +3318,7 @@ fn bs_grass_sheet(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &m
         grain: 0.72,
         streak: 0.5,
     };
-    let ground_mat = crate::terrain::make_material(&grass_detail, 1.0, Some(rut_mask_image(images)), images, terrain_mats);
+    let ground_mat = crate::terrain::make_material(&grass_detail, 1.0, Some(ground_mask_image(images)), images, terrain_mats);
     spawn_terrain_sheet(commands, meshes, ground_mat, |tb| tb != TB::Blight && tb != TB::Swamp);
 }
 
@@ -3307,7 +3342,7 @@ fn bs_swamp_sheet(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &m
     // that `ground_color` feathers over the biome BLEND band, so both sheets resolve the SAME
     // roughness at a shared boundary vertex → no seam, while the marsh interior (alpha≈1) still reads
     // as the wet ~0.40-roughness muck it did before (player: "bardziej mokre bagno").
-    let swamp_mat = crate::terrain::make_material(&swamp_detail, 1.0, Some(rut_mask_image(images)), images, terrain_mats);
+    let swamp_mat = crate::terrain::make_material(&swamp_detail, 1.0, Some(ground_mask_image(images)), images, terrain_mats);
     spawn_terrain_sheet(commands, meshes, swamp_mat, |tb| tb == TB::Swamp);
 }
 
@@ -3324,25 +3359,60 @@ fn bs_blight_sheet(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &
         grain: 0.88,
         streak: 0.55,
     };
-    let blight_mat = crate::terrain::make_material(&blight_detail, 0.97, Some(rut_mask_image(images)), images, terrain_mats);
+    let blight_mat = crate::terrain::make_material(&blight_detail, 0.97, Some(ground_mask_image(images)), images, terrain_mats);
     spawn_terrain_sheet(commands, meshes, blight_mat, |tb| tb == TB::Blight);
 }
 
-/// The cart-wheel-rut mask (fragment-resolution road grooves, `roads::bake_rut_mask`) as a GPU
-/// image + world→UV region, baked once per process (the road network itself is process-cached)
-/// and shared by all terrain sheets.
-fn rut_mask_image(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
-    static CACHE: Mutex<Option<(Handle<Image>, Vec4)>> = Mutex::new(None);
-    let mut c = CACHE.lock().expect("rut mask cache poisoned");
-    if let Some(v) = c.as_ref() {
+/// The terrain shader's fragment-resolution ground masks as one RG8 GPU image + world→UV region,
+/// shared by all terrain sheets and baked once per map:
+/// - R = cart-wheel ruts (`roads::bake_rut_mask`, copied texel-for-texel), and
+/// - G = the eroded-bank weight ([`bank_weight_world`]) the shader shades as bank soil.
+///
+/// The bank weight rides here rather than in a vertex UV on purpose: any UV attribute turns on
+/// `VERTEX_UVS` for the terrain pipeline, and Bevy's PBR fragment then compiles a dozen flag-gated
+/// texture paths into the (already heavy) ground shader — measured ~0.1 ms of extra main-pass GPU
+/// time over all ground, not just the banks. The rut grid is padded out by whole texels to cover
+/// the map, so the ruts keep their exact texels and the bank channel gets the same 0.35u texels
+/// (about the bank mesh's 1/3u sub-grid).
+fn ground_mask_image(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
+    static CACHE: Mutex<Option<HashMap<u8, (Handle<Image>, Vec4)>>> = Mutex::new(None);
+    let mut c = CACHE.lock().expect("ground mask cache poisoned");
+    let id = active_id();
+    if let Some(v) = c.as_ref().and_then(|m| m.get(&id)) {
         return v.clone();
     }
-    let (data, w, h, region) = crate::roads::bake_rut_mask();
+    let (rut, rw, rh, rut_region) = crate::roads::bake_rut_mask();
+    let cell = crate::roads::RUT_CELL;
+    let rut_lo = Vec2::new(rut_region.x, rut_region.y);
+    // Whole-texel padding on each side so the grid spans the whole map grid.
+    let pad_lo = |lo: f32, min: f32| ((lo - min) / cell).ceil().max(0.0) as usize;
+    let (px0, pz0) = (pad_lo(rut_lo.x, -GX), pad_lo(rut_lo.y, -GZ));
+    let lo = rut_lo - Vec2::new(px0 as f32, pz0 as f32) * cell;
+    let w = (((GX - lo.x) / cell).ceil().max(0.0) as usize).max(px0 + rw);
+    let h = (((GZ - lo.y) / cell).ceil().max(0.0) as usize).max(pz0 + rh);
+    let mut data = vec![0u8; w * h * 2];
+    for j in 0..rh {
+        for i in 0..rw {
+            data[((j + pz0) * w + (i + px0)) * 2] = rut[j * rw + i];
+        }
+    }
+    // Bank weight at each texel CENTRE (what bilinear sampling reconstructs there).
+    for j in 0..h {
+        let wz = lo.y + (j as f32 + 0.5) * cell;
+        for i in 0..w {
+            let wx = lo.x + (i as f32 + 0.5) * cell;
+            let b = bank_weight_world(wx, wz);
+            if b > 0.0 {
+                data[(j * w + i) * 2 + 1] = (b.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+            }
+        }
+    }
+    let region = Vec4::new(lo.x, lo.y, 1.0 / (w as f32 * cell), 1.0 / (h as f32 * cell));
     let mut img = Image::new(
         Extent3d { width: w as u32, height: h as u32, depth_or_array_layers: 1 },
         TextureDimension::D2,
         data,
-        TextureFormat::R8Unorm,
+        TextureFormat::Rg8Unorm,
         // MAIN_WORLD too — this handle is process-cached in the static below and re-bound
         // into BRAND-NEW terrain materials on every in-process world rebuild. RENDER_WORLD-only
         // drops the CPU copy after the first extract, so those later materials could never
@@ -3355,7 +3425,7 @@ fn rut_mask_image(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
         ..default()
     });
     let v = (images.add(img), region);
-    *c = Some(v.clone());
+    c.get_or_insert_with(HashMap::new).insert(id, v.clone());
     v
 }
 
@@ -3860,14 +3930,12 @@ fn build_terrain_chunk_coarse(
         [v[0] / l, v[1] / l, v[2] / l]
     };
 
-    let mut uvs: Vec<[f32; 2]> = Vec::new();
-    let mut push_quad = |p: [[f32; 3]; 4], n: [[f32; 3]; 4], c: [[f32; 4]; 4], uv: [[f32; 2]; 4]| {
+    let mut push_quad = |p: [[f32; 3]; 4], n: [[f32; 3]; 4], c: [[f32; 4]; 4]| {
         let b = positions.len() as u32;
         for k in 0..4 {
             positions.push(p[k]);
             normals.push(n[k]);
             colors.push(c[k]);
-            uvs.push(uv[k]);
         }
         indices.extend_from_slice(&[b, b + 1, b + 2, b, b + 2, b + 3]);
     };
@@ -3916,8 +3984,7 @@ fn build_terrain_chunk_coarse(
             ];
             let n = [cn(cx, cz), cn(x1, cz), cn(x1, z1), cn(cx, z1)];
             let c = corners.map(|(gx, gz)| ground_color(gx as f32 / MAP_SCALE, gz as f32 / MAP_SCALE));
-            let uv = corners.map(|(gx, gz)| bank_uv_world(gx as f32 - GX, gz as f32 - GZ));
-            push_quad(p, n, c, uv);
+            push_quad(p, n, c);
 
             // Perimeter skirt: cell edges lying on the CHUNK boundary drop a short apron so a
             // height mismatch against the neighbouring chunk's LOD state can't open a crack.
@@ -3942,7 +4009,6 @@ fn build_terrain_chunk_coarse(
                     ],
                     [n[a], n[b], n[b], n[a]],
                     [c[a], c[b], dark(c[b]), dark(c[a])],
-                    [uv[a], uv[b], uv[b], uv[a]],
                 );
             }
             cx += LOD_STRIDE;
@@ -3957,7 +4023,6 @@ fn build_terrain_chunk_coarse(
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
     mesh.insert_indices(Indices::U32(indices));
     Some(mesh)
 }
@@ -4144,8 +4209,6 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
         cx >= 0 && cz >= 0 && cx < COLS && cz < ROWS && mask[(cz * COLS + cx) as usize] == 2
     };
     let mut sd_cache: HashMap<(i32, i32), f32> = HashMap::new();
-    // Sparse (vertex, UV) list for the bank vertices; every other vertex gets UV (0, 0).
-    let mut bank_uv: Vec<(u32, [f32; 2])> = Vec::new();
     let sub = BANK_SUB;
     let sub_x = |sx: i32| sx as f32 / BANK_SUB as f32 - GX;
     let sub_z = |sz: i32| sz as f32 / BANK_SUB as f32 - GZ;
@@ -4301,7 +4364,7 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
                         let gx = bank_canon(gxs, kx, kz, sub);
                         let gz = bank_canon(gzs, kx, kz, sub);
                         let sd = bank_sub_sd(&mut sd_cache, sx, sz);
-                        let (y, bank, cutw) = bank_profile(yl, sd, wx, wz);
+                        let y = bank_profile(yl, sd, wx, wz).0;
                         // Normal by central differences of the SAME profile one sub-step either
                         // side (land extrapolated along its own gradient, water distance from the
                         // shared sub-grid) — smooth across cells, and on untouched land it reduces
@@ -4314,7 +4377,6 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
                             p: [wx, y, wz],
                             n: nrm3([(yxm - yxp) / (2.0 * e), 1.0, (yzm - yzp) / (2.0 * e)]),
                             c: canon_col(kx, kz),
-                            uv: [bank, cutw],
                         });
                     }
                 }
@@ -4323,13 +4385,10 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
                 let gi = |kx: i32, kz: i32| kz as usize * side + kx as usize;
                 if grid.iter().any(|v| v.p[1] >= DROWNED) {
                     let base = positions.len() as u32;
-                    for (i, v) in grid.iter().enumerate() {
+                    for v in &grid {
                         positions.push(v.p);
                         normals.push(v.n);
                         colors.push(v.c);
-                        if v.uv[0] > 0.0 || v.uv[1] > 0.0 {
-                            bank_uv.push((base + i as u32, v.uv));
-                        }
                     }
                     for kz in 0..sub {
                         for kx in 0..sub {
@@ -4611,18 +4670,10 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
         }
     }
 
-    // UV_0 carries the bank shading data (x = bank weight, y = cut-bank weight; see
-    // `bank_profile`) for `terrain.wgsl` — zero everywhere but the eroded slopes. EVERY terrain
-    // mesh (full-res and the coarse drape) carries UV_0 so they share one vertex layout/pipeline.
-    let mut uvs = vec![[0.0f32; 2]; positions.len()];
-    for (i, uv) in bank_uv {
-        uvs[i as usize] = uv;
-    }
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
     mesh.insert_indices(Indices::U32(indices));
     mesh
 }
@@ -4674,10 +4725,10 @@ fn bank_surface(wx: f32, wz: f32) -> Option<(f32, f32, f32, f32)> {
     Some((y, bank, cut, sd))
 }
 
-/// Bank shading data `[bank, cut]` at world `(wx, wz)` — what the full-res mesher writes into
-/// UV_0 there — for the coarse drape, so a far bank keeps its soil/damp look across the LOD swap.
-fn bank_uv_world(wx: f32, wz: f32) -> [f32; 2] {
-    bank_surface(wx, wz).map_or([0.0, 0.0], |(_, bank, cut, _)| [bank, cut])
+/// Bank shading weight at world `(wx, wz)`: 0 on untouched land … 1 on the eroded slope face
+/// (`bank_profile`'s `bank`), 0 off the bank tiles — baked into [`ground_mask_image`].
+fn bank_weight_world(wx: f32, wz: f32) -> f32 {
+    bank_surface(wx, wz).map_or(0.0, |(_, bank, _, _)| bank)
 }
 
 #[cfg(test)]
@@ -4736,6 +4787,41 @@ mod tests {
             }
         }
         assert!(n > 20_000);
+    }
+
+    /// A land cell near inland water that the bank mask leaves off (`bank_cell_active` judged it
+    /// past the slope's reach) really is untouched by the bank profile: its plain surface is
+    /// exactly what the eroded-bank path would have drawn there.
+    #[test]
+    fn unflagged_cells_near_water_are_inert() {
+        let m = water_near();
+        let mut checked = 0;
+        for iz in 0..ROWS {
+            for ix in 0..COLS {
+                if m[(iz * COLS + ix) as usize] == 2 || tile_at(ix, iz).is_none() {
+                    continue;
+                }
+                if inland_water_sd_world(ix as f32 + 0.5 - GX, iz as f32 + 0.5 - GZ) > BANK_BAND + 1.5 {
+                    continue;
+                }
+                // Sea-touching cells keep the coast's own cut (never bank cells by design).
+                if [(ix, iz), (ix + 1, iz), (ix + 1, iz + 1), (ix, iz + 1)].iter().any(|&(a, b)| corner_is_sea(a, b)) {
+                    continue;
+                }
+                for (fx, fz) in [(0.17, 0.5), (0.5, 0.5), (0.83, 0.2), (0.3, 0.9)] {
+                    let (wx, wz) = (ix as f32 + fx - GX, iz as f32 + fz - GZ);
+                    let Some(y) = smooth_surface_y(wx, wz) else { continue };
+                    let sd = inland_water_sd_world(wx, wz);
+                    let (yb, bank, _) = bank_profile(y, sd, wx, wz);
+                    assert!(
+                        bank == 0.0 && yb == y,
+                        "cell ({ix},{iz}) is off the bank mask but the profile moves ({wx},{wz}): sd={sd} y={y} → {yb}"
+                    );
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 1000, "only {checked} samples near inland water");
     }
 
     /// Dry footing on an eroded bank stays above the water plane, and the bank meets the water

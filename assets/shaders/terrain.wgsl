@@ -35,7 +35,8 @@ struct ForestParams {
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> forest: ForestParams;
 @group(#{MATERIAL_BIND_GROUP}) @binding(101) var detail_tex: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(102) var detail_samp: sampler;
-// Cart-wheel-rut mask (R8, `roads::bake_rut_mask`): twin grooves beside artery centrelines.
+// Ground masks (RG8, `worldmap::ground_mask_image`): R = cart-wheel ruts (`roads::bake_rut_mask`,
+// twin grooves beside artery centrelines), G = eroded-bank weight (`worldmap::bank_profile`).
 // Fragment-resolution because ~0.5u grooves are far below the 1u vertex-colour grid.
 @group(#{MATERIAL_BIND_GROUP}) @binding(103) var rut_tex: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(104) var rut_samp: sampler;
@@ -286,7 +287,8 @@ fn fragment(
     let rut_uv = (wp - forest.rut_region.xy) * forest.rut_region.zw;
     let rut_in = f32(forest.rut_region.z > 0.0
         && rut_uv.x > 0.0 && rut_uv.x < 1.0 && rut_uv.y > 0.0 && rut_uv.y < 1.0);
-    let rut = textureSample(rut_tex, rut_samp, rut_uv).r * rut_in;
+    let gmask = textureSample(rut_tex, rut_samp, rut_uv).rg * rut_in;
+    let rut = gmask.r;
     let rut_wear = 0.65 + 0.35 * ter_noise(wp * 0.9 + vec2<f32>(31.0, 7.0));
     // 0.55: tuned by A/B shots — 0.22 and even 0.38 drowned under the ±0.17 ground mottle +
     // midday haze/bloom (verification: "ruts invisible"); a 1.0 debug pass proved the sampling
@@ -387,15 +389,12 @@ fn fragment(
         rgb = mix(rgb, drift, tg.x * 0.48 * debris_w);
     }
 
-    // ── Riverbank (`worldmap::bank_profile`) ── UV_0 = (bank, cut): bank is 1 on the eroded slope
-    //    and 0 on the land above its rounded lip. The grass / forest floor rolls over the lip and
-    //    thins down the face into bare earth (sooner where the pitch is steep — a cut bank is
-    //    almost all earth), and the last few decimetres above the waterline are dark damp soil.
-    //    Meshes without UV_0 (and all ground away from inland water) carry bank = 0: a no-op.
-    var bank = 0.0;
-#ifdef VERTEX_UVS_A
-    bank = clamp(in.uv.x, 0.0, 1.0);
-#endif
+    // ── Riverbank (`worldmap::bank_profile`) ── the ground mask's G: 1 on the eroded slope, 0 on
+    //    the land above its rounded lip. The grass / forest floor rolls over the lip and thins
+    //    down the face into bare earth (sooner where the pitch is steep — a cut bank is almost all
+    //    earth), and the last few decimetres above the waterline are dark damp soil. All ground
+    //    away from inland water (and grounds without the mask) reads bank = 0: a no-op.
+    let bank = gmask.g;
     var bank_soil = 0.0;
     var bank_damp = 0.0;
     // Per-channel tint the bank earth carries relative to the forest humus (also applied to the
@@ -448,6 +447,9 @@ fn fragment(
     // gentle enough for the planar mapping not to stretch; steeper cut faces keep the procedural
     // earth above plus the wall relief below.
     var bank_fp = 0.0;
+    // The forest's own share of the floor: parallax + self-shadow follow it alone, so bank soil
+    // off the forest is a flat scanned layer (no ray march) — the march is the floor's big cost.
+    var fp_forest = 0.0;
     if forest.pbr.x > 0.5 {
         let edge_n = ter_noise(wp * 0.21 + vec2<f32>(3.0, 41.0)) - 0.5;
         // On a bank the slope gate relaxes, so the forest floor rolls over the lip with the ground
@@ -455,6 +457,7 @@ fn fragment(
         let slope_gate = mix(smoothstep(0.55, 0.85, in.world_normal.y), smoothstep(0.40, 0.70, in.world_normal.y),
             smoothstep(0.0, 0.2, bank));
         fp_w = smoothstep(0.25, 0.75, fmask.r + edge_n * 0.45) * slope_gate * (1.0 - cliff);
+        fp_forest = fp_w;
         // Off the forest, a sandy bank (a desert brook) keeps its own wet sand: the scanned layer
         // is woodland soil with leaf litter in it, which read as a forest path laid on the dunes.
         let bank_scan = mix(1.0 - bank_sandy * 1.25, 1.0, smoothstep(0.1, 0.5, fmask.r));
@@ -493,7 +496,7 @@ fn fragment(
         let q = forest.params2.y;
         let dist = distance(view.world_position.xyz, in.world_position.xyz);
         let pom_far = select(0.0, select(16.0, 26.0, q >= 2.0), q >= 1.0);
-        let depth = FP_DEPTH * fp_w * (1.0 - smoothstep(pom_far * 0.55, pom_far, dist));
+        let depth = FP_DEPTH * fp_forest * (1.0 - smoothstep(pom_far * 0.55, pom_far, dist));
         if depth > 0.002 {
             let vdir = normalize(view.world_position.xyz - in.world_position.xyz);
             shift = -vdir.xz / max(vdir.y, 0.2) * depth;
@@ -530,7 +533,7 @@ fn fragment(
                     let hk = dot(w, fp_heights(pw + lstep * t * (1.0 - hit_h), w, wp_dx, wp_dy));
                     self_shadow = max(self_shadow, (hk - ray_h) * 7.0);
                 }
-                self_shadow = clamp(self_shadow, 0.0, 1.0) * (depth / (FP_DEPTH * fp_w + 1e-4));
+                self_shadow = clamp(self_shadow, 0.0, 1.0) * (depth / (FP_DEPTH * fp_forest + 1e-4));
             }
         }
 
