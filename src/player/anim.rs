@@ -1916,12 +1916,14 @@ pub(crate) fn bow_pose(t: f32, p: f32) -> Pose {
     // Bow arm: levels straight out at the target (compensating the torso yaw), elbow near-locked.
     po.sh_l = Jp::r(e3(lerp(0.1, -1.42, draw) + trem, lerp(0.0, 0.34, draw), lerp(-0.15, -0.06, draw)));
     po.el_l = Jp::r(rx(lerp(-0.5, -0.1, draw)));
-    // The bow itself: from the at-ease carry along the forearm to UPRIGHT in the draw. With the
-    // arm raised forward (hand-local −Y ≈ world-forward, +Z ≈ world-up), pitching the mesh +X by
-    // +π/2 stands the stave (mesh +Y) vertical and turns the string (mesh −Z) back at the cheek.
+    // The bow itself: from the at-ease carry (stave through the fist, tipped forward-up — see
+    // `toolwork::bow_carry_r`) to UPRIGHT in the draw. With the arm raised forward (hand-local
+    // −Y ≈ world-forward, +Z ≈ world-up), pitching the mesh +X by +π/2 stands the stave (mesh +Y)
+    // vertical and turns the string (mesh −Z) back at the cheek. Both are pure X turns, so the
+    // stave stays in the fist the whole way.
     po.shield = Jp {
-        t: Some(Vec3::new(0.0, -0.02, 0.05)),
-        r: Jp::r(e3(0.12, -1.5, 0.0)).r.slerp(e3(1.55, 0.0, 0.0), draw),
+        t: Some(toolwork::BOW_CARRY_T.lerp(Vec3::new(0.0, -0.02, 0.05), draw)),
+        r: toolwork::bow_carry_r().slerp(e3(1.55, 0.0, 0.0), draw),
     };
     // String hand: reaches forward with the nock, hauls straight back to the cheek (the elbow
     // folding to a right angle at shoulder height, shoulder drawn back around the yawed torso),
@@ -1944,8 +1946,9 @@ pub(crate) fn bow_pose(t: f32, p: f32) -> Pose {
         po.sh_l = Jp::r(po.sh_l.r * e3(0.0, 0.06 * k, 0.04 * k));
     }
 
-    // Settle everything back to the rest carry after the loose.
-    let out = rest();
+    // Settle everything back to the rest carry after the loose (the bow back to its at-ease grip).
+    let mut out = rest();
+    out.shield = Jp { t: Some(toolwork::BOW_CARRY_T), r: toolwork::bow_carry_r() };
     if settle > 0.0 {
         return po.lerp(&out, settle);
     }
@@ -1972,6 +1975,11 @@ pub(crate) mod captive;
 /// The light sword combo, retargeted from keyframed clips (see the module docs).
 mod swordplay;
 mod ual_sword;
+
+/// Townsfolk tools held for real: two-handed work strokes solved onto the haft, shoulder carries,
+/// the slung tool + load grips while hauling, the guard's buckler and the archer's bow at ease.
+mod toolwork;
+pub(crate) use toolwork::{biped_tool_pose, next_blow_in, HeldTool, CART_GRIP, CART_SHAFT_PITCH, LOG_CRADLE};
 
 /// Which clip family [`hero_anim`] is playing — a change triggers the cross-fade.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]

@@ -1493,22 +1493,27 @@ def build_meta(part, target_tris, res=0.0025):
 
 def tool(kind):
     p = Part(f"hu_tool_{kind}")
+    # Work tools are full-size (the two-handed strokes in `toolwork.rs` grip them with both fists):
+    # the haft runs +Y from the butt (-0.05), the right fist's grip at the origin, and the cutting
+    # edge / blade faces +X. Keep the head heights in step with `toolwork::Tool`'s spec.
     if kind == "axe":
-        p.cap(T_WOOD, (0, -0.05, 0), (0, 0.555, 0), 0.019)
+        p.cap(T_WOOD, (0, -0.05, 0), (0, 0.765, 0), 0.019)
         p.cap(T_LEATHER, (0, -0.04, 0), (0, 0.07, 0), 0.023)  # grip wrap
-        p.ell(T_IRON, (0.035, 0.517, 0), (0.05, 0.036, 0.018))  # eye / cheeks
-        p.ell(T_IRON, (0.12, 0.515, 0), (0.06, 0.045, 0.01))  # blade body
-        p.ell(T_IRON, (0.175, 0.513, 0), (0.016, 0.075, 0.008))  # flared bit
-        p.ball(T_IRON, (-0.03, 0.517, 0), 0.02)  # poll
+        p.ell(T_IRON, (0.035, 0.722, 0), (0.05, 0.036, 0.018))  # eye / cheeks
+        p.ell(T_IRON, (0.12, 0.72, 0), (0.06, 0.045, 0.01))  # blade body
+        p.ell(T_IRON, (0.175, 0.718, 0), (0.016, 0.075, 0.008))  # flared bit
+        p.ball(T_IRON, (-0.03, 0.722, 0), 0.02)  # poll
     elif kind == "hoe":
-        p.cap(T_WOOD, (0, -0.05, 0), (0, 0.565, 0), 0.018)
-        p.ell(T_IRON, (0, 0.512, 0), (0.024, 0.042, 0.024))  # socket
-        p.ell(T_IRON, (0.115, 0.48, 0.02), (0.105, 0.03, 0.01), rot=_rot_z(-0.55))  # blade
+        # A long-handled chopping hoe: a flat iron blade ~16 cm wide (along Z) on a short neck,
+        # canted 15 deg back toward the hands, so it bites the soil and draws flat on the pull.
+        p.cap(T_WOOD, (0, -0.05, 0), (0, 1.2, 0), 0.018)
+        p.ell(T_IRON, (0.012, 1.205, 0), (0.026, 0.032, 0.024))  # socket
+        p.ell(T_IRON, (0.098, 1.192, 0), (0.075, 0.007, 0.078), rot=_rot_z(-0.26))  # blade
     elif kind == "pick":
-        p.cap(T_WOOD, (0, -0.05, 0), (0, 0.535, 0), 0.018)
-        p.ell(T_IRON, (0, 0.49, 0), (0.026, 0.04, 0.024))  # socket
-        pts = [(-0.175, 0.45), (-0.09, 0.49), (0.0, 0.5), (0.09, 0.49), (0.175, 0.45)]
-        rads = [0.006, 0.014, 0.02, 0.014, 0.006]
+        p.cap(T_WOOD, (0, -0.05, 0), (0, 0.79, 0), 0.018)
+        p.ell(T_IRON, (0, 0.745, 0), (0.026, 0.04, 0.024))  # socket
+        pts = [(-0.24, 0.70), (-0.12, 0.748), (0.0, 0.762), (0.12, 0.748), (0.24, 0.70)]
+        rads = [0.006, 0.015, 0.021, 0.015, 0.006]
         for (a, ra), (b, rb) in zip(zip(pts, rads), zip(pts[1:], rads[1:])):
             p.cap(T_IRON, (a[0], a[1], 0), (b[0], b[1], 0), (ra + rb) / 2)
     elif kind == "sword":
@@ -1532,7 +1537,9 @@ def tool(kind):
         p.ell(T_ACCENT, (0, -0.02, 0), (0.004, 0.05, 0.02))
     elif kind == "shield":
         p.ell(T_WOOD, (0, 0, 0), (0.24, 0.24, 0.02))  # planks
-        p.ell(T_ACCENT, (0, 0, 0.0), (0.165, 0.165, 0.03))  # painted livery field (steep edge)
+        # Painted livery field (steep edge) — on the face only: centred forward of the planks so
+        # it never shows through the back, where the fist holds the grip.
+        p.ell(T_ACCENT, (0, 0, 0.008), (0.165, 0.165, 0.026))
         for k in range(20):  # leather-bound rim
             a, b = k / 20 * 2 * math.pi, (k + 1) / 20 * 2 * math.pi
             p.cap(T_LEATHER, (math.cos(a) * 0.238, math.sin(a) * 0.238, 0), (math.cos(b) * 0.238, math.sin(b) * 0.238, 0), 0.013)

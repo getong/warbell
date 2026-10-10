@@ -40,7 +40,9 @@ const SCALE: f32 = 0.81;
 /// the suburbs have visibly childlike kids underfoot.
 const KID_SCALE: f32 = SCALE * 0.55;
 /// Drop the biped rig so the feet sit on the ground (matches the `peasant` model-viewer offset).
-const VIL_RIG_OFF: f32 = -0.06;
+/// Root-parented props the hands grip (a hauled log, a handcart) sit at rig-frame grips shifted by
+/// this (`player::anim::LOG_CRADLE` / `CART_GRIP` are rig-frame).
+pub(crate) const VIL_RIG_OFF: f32 = -0.06;
 
 // Palette (sRGB hex, from Villager.tsx) — widened for per-villager cosmetic variety.
 const SKIN: [u32; 6] = [0xe8c4a0, 0xdca78a, 0xc89070, 0xc08866, 0xa36b4a, 0x8a5638];
@@ -1989,6 +1991,7 @@ fn villager_drive(
             Has<crate::lumberjack::Hauling>,
             Has<crate::miner::Carting>,
             Has<Archer>,
+            Option<&crate::rts::workers::Haul>,
         ),
         Without<crate::dying::Dying>,
     >,
@@ -1996,7 +1999,7 @@ fn villager_drive(
     let tw = time.elapsed_secs_wrapped();
     let now = time.elapsed_secs();
     let dt = time.delta_secs();
-    for (v, worker, role, mut d, hauling, carting, is_archer) in &mut q {
+    for (v, worker, role, mut d, hauling, carting, is_archer, rts_haul) in &mut q {
         // Ease the idle↔gait blend so starts/stops aren't a snap.
         let target = if v.moving { 1.0 } else { 0.0 };
         d.moving_amt += (target - d.moving_amt) * (dt * 8.0).min(1.0);
@@ -2004,8 +2007,10 @@ fn villager_drive(
         d.walk_phase = (tw + v.phase) * v.gait;
         d.phase = v.phase;
 
-        // Hauling a log / carting stone home → both arms grip the load forward (carry pose).
-        d.carrying = hauling || carting;
+        // Hauling a log / an RTS load home → both arms cradle it against the chest; carting stone →
+        // both fists on the handcart's shafts at the sides (the cart trails behind).
+        d.carrying = hauling || carting || rts_haul.is_some_and(|h| h.loaded());
+        d.pulling = carting;
 
         // A posted worker plies their trade while standing at post; walking falls through to loco.
         let working = worker.is_some_and(|w| w.at_post) && !v.moving;
@@ -3073,6 +3078,7 @@ fn build_biped_body(
         ..default()
     };
     let key = vil_biped_key(kind, seed, kid, desert);
+    let tool = crate::peasant_model::held_tool(key.kind);
     let mat = mat.clone();
     // Resolve the shared assets when these spawn commands flush. This keeps the existing spawn
     // API usable from campaign, RTS and rebuild callers without a global cache or extra borrows.
@@ -3084,6 +3090,12 @@ fn build_biped_body(
             cache.get_or_upload(key, &mut world.resource_mut::<Assets<Mesh>>())
         });
         crate::biped::spawn_biped(&mut world.commands(), root, &mat, h, head_scale, 1.0, hip_dx, shoulder_dx, VIL_RIG_OFF, Some(shield_xf));
+        // The outfit's tool, and the joint layout its grips are solved against (a re-skin to a
+        // new trade lands here too, so the clips always grip the tool actually in hand).
+        if let Some(mut d) = world.get_mut::<BipedDrive>(root) {
+            d.tool = tool;
+            d.limb_dx = Vec2::new(hip_dx, shoulder_dx);
+        }
     });
 }
 

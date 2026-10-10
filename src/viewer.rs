@@ -60,7 +60,7 @@ pub fn run() {
             .init_resource::<crate::player::FirstPerson>()
             .add_systems(Update, (anim_drive, crate::player::anim::hero_anim).chain())
             // Animal / biped models read their own driver; inert for the hero.
-            .add_systems(Update, (quad_anim_drive, biped_anim_drive));
+            .add_systems(Update, (quad_anim_drive, biped_anim_drive, townsfolk_haul_props));
     }
     app.run();
 }
@@ -201,8 +201,9 @@ fn quad_anim_drive(time: Res<Time>, mut q: Query<&mut crate::quadruped::QuadDriv
 fn biped_anim_drive(time: Res<Time>, mut q: Query<&mut crate::biped::BipedDrive>) {
     // Every previewed rig (the `peasant:lineup` row has several), each keeping its own phase.
     for mut d in &mut q {
-        let phase = d.phase;
-        *d = crate::biped::BipedDrive { phase, ..default() };
+        // The held tool + joint layout are the body's (set at spawn), not part of the clip.
+        let (phase, tool, limb_dx) = (d.phase, d.tool, d.limb_dx);
+        *d = crate::biped::BipedDrive { phase, tool, limb_dx, ..default() };
         drive_biped_clip(&time, &mut d);
     }
 }
@@ -221,6 +222,13 @@ fn drive_biped_clip(time: &Time, d: &mut crate::biped::BipedDrive) {
         }
         "carry" => {
             d.carrying = true;
+            d.moving_amt = 1.0;
+            d.walk_phase = now * 8.0 + d.phase;
+        }
+        // A carter hauling his handcart home (fists on the shafts; see `townsfolk_haul_props`).
+        "pull" | "cart" => {
+            d.carrying = true;
+            d.pulling = true;
             d.moving_amt = 1.0;
             d.walk_phase = now * 8.0 + d.phase;
         }
@@ -594,7 +602,14 @@ fn spawn_viewer_peasant(
     } else {
         root
     };
-    commands.entity(body).insert(crate::biped::BipedDrive { phase: look as f32 * 0.9, ..default() });
+    let (hip_dx, shoulder_dx, head_mul) = crate::peasant_model::rig_dims();
+    // The trade's tool in hand, gripped by the tool clips exactly as in town.
+    commands.entity(body).insert(crate::biped::BipedDrive {
+        phase: look as f32 * 0.9,
+        tool: crate::peasant_model::held_tool(kind),
+        limb_dx: Vec2::new(hip_dx, shoulder_dx),
+        ..default()
+    });
     // Off-hand mount matches `villagers::build_biped_body` — only the guard / archer mesh sets
     // carry an off-hand prop, so this stays empty-handed for the worker kinds.
     let shield_xf = Transform {
@@ -602,7 +617,6 @@ fn spawn_viewer_peasant(
         rotation: Quat::from_euler(EulerRot::XYZ, 0.15, -0.45, 0.1),
         ..default()
     };
-    let (hip_dx, shoulder_dx, head_mul) = crate::peasant_model::rig_dims();
     let head = (if kid { 1.55 } else { 1.06 }) * head_mul;
     crate::biped::spawn_biped(commands, body, mat, h, head, 1.0, hip_dx, shoulder_dx, -0.06, Some(shield_xf));
 }
@@ -648,4 +662,39 @@ fn parse_equip() -> (Option<String>, Option<String>) {
     let Ok(s) = std::env::var("FOREST_EQUIP") else { return (None, None) };
     let mut it = s.split(',').map(|p| p.trim()).filter(|p| !p.is_empty()).map(str::to_string);
     (it.next(), it.next())
+}
+
+/// `FOREST_VIEW_ANIM=carry|pull` on a townsperson: hang the load the hauling grip closes on — the
+/// woodcutter's log cradled at the chest (`lumberjack::attach_log`'s place) or the miner's
+/// handcart on its shafts (`miner::spawn_cart`) — on each previewed tool-holder, once.
+fn townsfolk_haul_props(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut mats: ResMut<Assets<StandardMaterial>>,
+    fresh: Query<(Entity, &crate::biped::BipedDrive), Added<crate::biped::BipedDrive>>,
+) {
+    let mode = std::env::var("FOREST_VIEW_ANIM").unwrap_or_default();
+    let cart = matches!(mode.as_str(), "pull" | "cart");
+    if mode != "carry" && !cart {
+        return;
+    }
+    for (e, d) in &fresh {
+        if d.tool == crate::biped::HeldTool::None {
+            continue;
+        }
+        if cart {
+            let a = crate::miner::CartAssets::build(&mut meshes, &mut mats);
+            crate::miner::spawn_cart(&mut commands, e, &a);
+        } else {
+            let log = commands
+                .spawn((
+                    Mesh3d(meshes.add(Cuboid::new(0.26, 0.26, 1.05))),
+                    MeshMaterial3d(mats.add(StandardMaterial { base_color: Color::srgb(0.42, 0.28, 0.15), perceptual_roughness: 0.95, ..default() })),
+                    Transform::from_translation(crate::player::anim::LOG_CRADLE + Vec3::Y * crate::villagers::VIL_RIG_OFF)
+                        .with_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)),
+                ))
+                .id();
+            commands.entity(e).add_child(log);
+        }
+    }
 }

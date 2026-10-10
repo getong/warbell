@@ -145,6 +145,10 @@ impl Haul {
     fn new() -> Self {
         Haul { phase: Phase::Start, timer: 0.0, carry: None, last: Vec2::ZERO, anchor: Vec2::ZERO, stuck: 0.0 }
     }
+    /// Carrying a load home (its prop in the arms) — `villagers::villager_drive` plays the cradle.
+    pub(crate) fn loaded(&self) -> bool {
+        self.carry.is_some()
+    }
 }
 
 /// Net displacement (world units) a worker must escape to count as "making progress" for the stuck
@@ -645,9 +649,20 @@ fn drop_carry(commands: &mut Commands, haul: &mut Haul) {
 
 fn spawn_carry(commands: &mut Commands, assets: &CarryAssets, kind: CarryKind, parent: Entity) -> Entity {
     let (mesh, mat) = assets.get(kind);
-    // Carried across the chest / shouldered (worker root scale ≈0.81; child in local space).
+    // Cradled against the chest on the fists (`player::anim::LOG_CRADLE`, rig frame → root frame):
+    // the log lies across the body like the campaign woodcutter's; a lump / sack sits on the
+    // same palms, its base where the log's is. (Root-local; the worker root scales it.)
+    // (half height, half depth) of each prop as it is held — the log's are its 0.26 section.
+    let (half_h, half_d) = match kind {
+        CarryKind::Wood => (0.13, 0.13),
+        CarryKind::Stone => (0.15, 0.17),
+        CarryKind::Gold => (0.15, 0.15),
+        CarryKind::Food => (0.20, 0.15),
+    };
+    let at = crate::player::anim::LOG_CRADLE + Vec3::new(0.0, crate::villagers::VIL_RIG_OFF + half_h - 0.13, half_d - 0.13);
+    let turn = if matches!(kind, CarryKind::Wood) { Quat::from_rotation_y(std::f32::consts::FRAC_PI_2) } else { Quat::IDENTITY };
     let child = commands
-        .spawn((Mesh3d(mesh), MeshMaterial3d(mat), Transform::from_xyz(0.0, 1.05, 0.4)))
+        .spawn((Mesh3d(mesh), MeshMaterial3d(mat), Transform::from_translation(at).with_rotation(turn)))
         .id();
     commands.entity(parent).add_child(child);
     child

@@ -39,8 +39,6 @@ const DANGER_TTL: f32 = 45.0;
 /// at ~7 swings (≈15s) per boulder, so raising hero-mining difficulty didn't quietly halve the
 /// town's stone income.
 const PICK_DMG: f64 = 85.0;
-/// Seconds between work swings — matches the overhead-swing work loop in `villager_limbs` (~2.1s).
-const PICK_CD: f32 = 2.1;
 /// Swing reach BEYOND the boulder's own blocker radius (centre-to-centre gate =
 /// `blocker_r + PICK_REACH`). Steering stops the body at `blocker_r + body_r (0.28)`, so this
 /// leaves ~0.5u of slack while keeping the miner right at the rock face — a flat 2.4u gate
@@ -337,6 +335,7 @@ fn pick_work(
         job.atk_cd -= dt;
         if d <= node.blocker_r + PICK_REACH {
             // At the boulder: face it, plant the feet, swing on the cooldown.
+            let fresh = !worker.at_post;
             worker.at_post = true;
             v.moving = false;
             job.stall = 0.0;
@@ -345,8 +344,14 @@ fn pick_work(
             if to.length_squared() > 1e-4 {
                 v.facing = to.x.atan2(to.y);
             }
+            // Each blow lands on the work clip's own beat (`player::anim::toolwork`'s pick
+            // stroke, ~2.1s, on the miner's clock): the chip + the judder when the point bites.
+            let clock = now + v.phase;
+            if fresh {
+                job.atk_cd = crate::player::anim::next_blow_in(crate::biped::HeldTool::Pick, clock, true);
+            }
             if job.atk_cd <= 0.0 {
-                job.atk_cd = PICK_CD;
+                job.atk_cd = crate::player::anim::next_blow_in(crate::biped::HeldTool::Pick, clock, false);
                 if hero.pos.distance(v.pos) < SFX_EARSHOT {
                     cues.write(crate::audio::AudioCue::OreChip);
                 }
@@ -547,21 +552,41 @@ fn cart_home(
 
 /// The cart mesh/material set, built once and cached (every cart looks the same).
 #[derive(Clone)]
-struct CartAssets {
+pub(crate) struct CartAssets {
     bed_mesh: Handle<Mesh>,
     wheel_mesh: Handle<Mesh>,
     stone_mesh: Handle<Mesh>,
+    shaft_mesh: Handle<Mesh>,
     wood_mat: Handle<StandardMaterial>,
     dark_mat: Handle<StandardMaterial>,
     stone_mat: Handle<StandardMaterial>,
 }
 
+/// The handcart trails this far behind the carter (root-local z of its centre).
+const CART_Z: f32 = -1.05;
+/// Top of the cart bed (cart-local y) — where the shafts are pinned to its front lip.
+const CART_BED_TOP: f32 = 0.40;
+/// How far each shaft runs on past the carter's fist.
+const CART_SHAFT_TIP: f32 = 0.10;
+
+/// The right shaft's line, cart-local: (the point the carter's fist closes on, its direction
+/// toward the front, its length from the bed lip to the tip). It runs through the biped hauling
+/// grip (`player::anim::CART_GRIP`, rig frame → root frame → cart frame), so the fists the arm IK
+/// puts there close round the wood.
+fn cart_shaft() -> (Vec3, Vec3, f32) {
+    let pitch = crate::player::anim::CART_SHAFT_PITCH;
+    let dir = Vec3::new(0.0, pitch.sin(), pitch.cos());
+    let grip = crate::player::anim::CART_GRIP + Vec3::new(0.0, crate::villagers::VIL_RIG_OFF, -CART_Z);
+    (grip, dir, (grip.y - CART_BED_TOP) / dir.y + CART_SHAFT_TIP)
+}
+
 impl CartAssets {
-    fn build(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) -> Self {
+    pub(crate) fn build(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) -> Self {
         Self {
             bed_mesh: meshes.add(Cuboid::new(0.6, 0.16, 0.84)),
             wheel_mesh: meshes.add(Cuboid::new(0.08, 0.4, 0.4)),
             stone_mesh: meshes.add(Cuboid::new(0.22, 0.2, 0.22)),
+            shaft_mesh: meshes.add(Cuboid::new(0.045, 0.045, cart_shaft().2)),
             wood_mat: materials.add(StandardMaterial {
                 base_color: Color::srgb(0.42, 0.28, 0.15),
                 perceptual_roughness: 0.95,
@@ -581,8 +606,40 @@ impl CartAssets {
     }
 }
 
-/// Put the visible loaded cart behind a fresh carter: a little plank wagon on two wheels with a
-/// heap of grey stone, trailing the miner (−Z, the model's back). Mirror of `lumberjack::attach_log`.
+/// A loaded handcart under `parent` (a carter's root): a plank bed on two wheels with a heap of
+/// grey stone, trailing behind, its two shafts running forward up into the carter's fists at his
+/// sides. Returns the cart entity (despawn it to drop the whole cart).
+pub(crate) fn spawn_cart(commands: &mut Commands, parent: Entity, a: &CartAssets) -> Entity {
+    let (grip, dir, len) = cart_shaft();
+    let mid = grip + dir * (CART_SHAFT_TIP - 0.5 * len);
+    let tilt = Quat::from_rotation_x(-crate::player::anim::CART_SHAFT_PITCH);
+    let cart = commands
+        .spawn((Transform::from_xyz(0.0, 0.0, CART_Z), Visibility::Visible))
+        .with_children(|c| {
+            c.spawn((Mesh3d(a.bed_mesh.clone()), MeshMaterial3d(a.wood_mat.clone()), Transform::from_xyz(0.0, 0.34, 0.0)));
+            for wx in [-0.4_f32, 0.4] {
+                c.spawn((Mesh3d(a.wheel_mesh.clone()), MeshMaterial3d(a.dark_mat.clone()), Transform::from_xyz(wx, 0.2, 0.0)));
+            }
+            for sx in [-1.0_f32, 1.0] {
+                c.spawn((
+                    Mesh3d(a.shaft_mesh.clone()),
+                    MeshMaterial3d(a.wood_mat.clone()),
+                    Transform::from_xyz(sx * grip.x, mid.y, mid.z).with_rotation(tilt),
+                ));
+            }
+            // A small heap of stone riding the bed.
+            for (sx, sy, sz) in [(0.0, 0.52, 0.0), (-0.13, 0.6, -0.12), (0.14, 0.58, 0.1)] {
+                c.spawn((Mesh3d(a.stone_mesh.clone()), MeshMaterial3d(a.stone_mat.clone()), Transform::from_xyz(sx, sy, sz)));
+            }
+        })
+        .id();
+    commands.entity(parent).add_child(cart);
+    cart
+}
+
+/// Put the visible loaded cart behind a fresh carter: a little plank handcart on two wheels with a
+/// heap of grey stone, trailing the miner (−Z, the model's back) on two shafts he holds at his
+/// sides (the biped hauling grip, `player::anim::toolwork`). Mirror of `lumberjack::attach_log`.
 fn attach_cart(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -595,36 +652,7 @@ fn attach_cart(
             continue;
         }
         let a = cache.get_or_insert_with(|| CartAssets::build(&mut meshes, &mut materials)).clone();
-        let mut cart = Entity::PLACEHOLDER;
-        commands.entity(e).with_children(|p| {
-            cart = p
-                // Pushed in FRONT like a wheelbarrow (matches the biped `carry_pose` hands-forward).
-                .spawn((Transform::from_xyz(0.0, 0.0, 0.6), Visibility::Visible))
-                .with_children(|c| {
-                    c.spawn((
-                        Mesh3d(a.bed_mesh.clone()),
-                        MeshMaterial3d(a.wood_mat.clone()),
-                        Transform::from_xyz(0.0, 0.34, 0.0),
-                    ));
-                    for wx in [-0.4_f32, 0.4] {
-                        c.spawn((
-                            Mesh3d(a.wheel_mesh.clone()),
-                            MeshMaterial3d(a.dark_mat.clone()),
-                            Transform::from_xyz(wx, 0.2, 0.0),
-                        ));
-                    }
-                    // A small heap of stone riding the bed.
-                    for (sx, sy, sz) in [(0.0, 0.52, 0.0), (-0.13, 0.6, -0.12), (0.14, 0.58, 0.1)] {
-                        c.spawn((
-                            Mesh3d(a.stone_mesh.clone()),
-                            MeshMaterial3d(a.stone_mat.clone()),
-                            Transform::from_xyz(sx, sy, sz),
-                        ));
-                    }
-                })
-                .id();
-        });
-        carting.cart = Some(cart);
+        carting.cart = Some(spawn_cart(&mut commands, e, &a));
     }
 }
 
