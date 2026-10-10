@@ -148,7 +148,7 @@ const RUT_W: f32 = 0.34;
 const RUT_CELL: f32 = 0.35;
 
 /// Bake the rut mask: R8 texel data + the world→UV mapping (`xy` = min corner, `zw` = 1/extent),
-/// same contract as `worldmap::bake_shore_distance`. Consumed by `terrain::make_material`.
+/// same contract as `worldmap::bake_water_field`. Consumed by `terrain::make_material`.
 pub fn bake_rut_mask() -> (Vec<u8>, usize, usize, Vec4) {
     let curves = network();
     let mut lo = Vec2::splat(f32::MAX);

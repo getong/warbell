@@ -1,128 +1,98 @@
-// Stylized water — FRAGMENT override of `ExtendedMaterial<StandardMaterial, WaterExt>`.
-// Builds the standard PBR input, then layers:
-//   1. a multi-octave wave normal (two broad swells + mid chop + fine ripples that fade
-//      with distance so the horizon never shimmers),
-//   2. a shore-distance field baked by `worldmap::build` (the terrain has NO underwater
-//      geometry — cliff walls stop at the waterline — so prepass depth can't measure
-//      shallowness; the baked field gives distance-to-land directly): a shallow→deep
-//      colour/opacity gradient, a soft waterline, and an animated foam collar hugging
-//      every coast, river bank and lake edge,
-//   3. grazing-angle fresnel that tints toward the sky and sharpens roughness, so the
-//      surface mirrors the Atmosphere sky at a distance but stays readable up close.
-// Everything still runs the normal PBR lighting + post, so sun glints, IBL, fog and
-// tonemap all apply. On Ultra the lifted bloom catches the sharpened sun glints —
-// the sparkle is free.
+// Realistic water — FRAGMENT override of `ExtendedMaterial<StandardMaterial, WaterExt>`: the ONE
+// opaque material for the sea, rivers, lake and bog pools (see `src/water.rs`). Single pass, no
+// extra render targets, six ripple-map taps + three field taps per fragment:
+//   1. NORMAL from the baked tileable slope map (`water::ripple_map`) in three layers — broad swell
+//      (open water only), mid chop, fine capillaries — at unrelated scales and rotations so the
+//      tile never reads. River layers are FLOW-MAPPED along the baked current (two-phase, Valve's
+//      Portal 2 scheme); still water only drifts. The mips' slope variance is folded into the GGX
+//      roughness, so distant water widens the sun into a glitter path instead of shimmering.
+//   2. BODY by Beer–Lambert absorption over a depth SYNTHESISED from the baked bank distance (the
+//      terrain has no underwater geometry, so the depth prepass can't measure it): the silty bed
+//      shows through at the banks, deep water converges on its in-scattered colour — clear teal
+//      sea / lake, greener silty rivers, tannin-brown bog.
+//   3. REFLECTION is Bevy's own PBR: F0 ≈ 0.02 Fresnel of the environment map + GGX sun / moon
+//      glints. This shader only OCCLUDES it — a two-tap march of the bank field along the
+//      reflected ray darkens the sky where the far bank would be mirrored (the dark treeline band
+//      every real lake has), and night dims the baked daytime environment map.
+//   4. A thin, broken foam line hugging the bank (none on the bog).
+// Fog, haze, DoF and tonemapping all apply as on any opaque surface — the water is in the prepass.
 
 #import bevy_pbr::{
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
-    pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
     forward_io::{VertexOutput, FragmentOutput},
-    mesh_view_bindings::{globals, lights, view},
+    mesh_view_bindings::{globals, lights},
 }
 
 struct WaterParams {
-    // x = ripple amplitude (normal tilt), y = wave frequency, z = scroll speed,
-    // w = fresnel strength (0 = off)
+    // x = ripple strength (normal-tilt multiplier, 1 = as authored), y = river flow speed (world
+    // units/s at a baked flow of 1), z = shore-foam strength, w = unused
     params: vec4<f32>,
-    // rgb = sky tint blended in at grazing angles, w = shore-fx strength (foam/gradient)
-    sky_tint: vec4<f32>,
-    // Shore-distance texture mapping: xy = world-space min corner, zw = 1 / world extent.
+    // Water-field mapping: xy = world-space min corner, zw = 1 / world extent.
     region: vec4<f32>,
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> water: WaterParams;
-// R8 shore-distance field: 0 = land, 1 = ≥ SHORE_MAX tiles offshore (linear-filtered). Samples
-// OUTSIDE the field's UV [0,1] are forced to "deep" in the fragment (see `in_field`) — the island
-// touches the texture edge at its widest latitude, so relying on clamp-to-edge there smeared a
-// false shallow band across the open sea.
-@group(#{MATERIAL_BIND_GROUP}) @binding(101) var shore_tex: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(102) var shore_samp: sampler;
-// Bog mask (R8, same region mapping as the shore field): 1 over the swamp's carved standing
-// pools — the vivid river palette swaps to still dark-olive murk there and the foam collar dies
-// (a bog doesn't lap). Baked alongside the shore field in `worldmap::bake_shore_distance`.
-@group(#{MATERIAL_BIND_GROUP}) @binding(103) var bog_tex: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(104) var bog_samp: sampler;
+// RGBA8 water field (`worldmap::bake_water_field`, linear-filtered): R = signed distance to the
+// bank (−SHORE_LAND … +SHORE_MAX world units), G = bog mask, BA = river flow (0.5-biased XZ).
+@group(#{MATERIAL_BIND_GROUP}) @binding(101) var field_tex: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(102) var field_samp: sampler;
+// Tileable slope map (`water::ripple_map`, repeat + mipmapped + anisotropic): RG = slope
+// (0.5-biased), B = the slope std-dev a mip averaged away, A = height.
+@group(#{MATERIAL_BIND_GROUP}) @binding(103) var ripple_tex: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(104) var ripple_samp: sampler;
 
-// Max encoded shore distance in tiles — keep in sync with `worldmap::SHORE_MAX`.
+// Keep in sync with `worldmap::SHORE_MAX` / `worldmap::SHORE_LAND`.
 const SHORE_MAX: f32 = 8.0;
+const SHORE_LAND: f32 = 1.0;
 
-// ── Tiny value noise (foam break-up) ────────────────────────────────────────────
-fn hash21(p: vec2<f32>) -> f32 {
-    let h = dot(p, vec2<f32>(127.1, 311.7));
-    return fract(sin(h) * 43758.5453123);
+struct Field {
+    shore: f32,
+    bog: f32,
+    flow: vec2<f32>,
+};
+
+fn water_field(p: vec2<f32>) -> Field {
+    var f: Field;
+    let uv = (p - water.region.xy) * water.region.zw;
+    // Outside the baked square = open ocean: deep, still, clear. (Clamp-to-edge would smear the
+    // border texels across the whole off-texture sea — "the white stripe through the map".)
+    if any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0)) {
+        f.shore = SHORE_MAX;
+        f.bog = 0.0;
+        f.flow = vec2<f32>(0.0);
+        return f;
+    }
+    let s = textureSampleLevel(field_tex, field_samp, uv, 0.0);
+    f.shore = s.r * (SHORE_LAND + SHORE_MAX) - SHORE_LAND;
+    f.bog = s.g;
+    f.flow = (s.ba * 255.0 - 128.0) / 127.0; // 128 = still
+    return f;
 }
 
-fn vnoise(p: vec2<f32>) -> f32 {
-    let i = floor(p);
-    let f = fract(p);
-    let u = f * f * (3.0 - 2.0 * f);
-    let a = hash21(i);
-    let b = hash21(i + vec2<f32>(1.0, 0.0));
-    let c = hash21(i + vec2<f32>(0.0, 1.0));
-    let d = hash21(i + vec2<f32>(1.0, 1.0));
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+// One ripple-map tap at world `p`, layer rotation `cs` = (cos, sin), `scale` = world units per
+// tile. Returns (world-XZ slope, slope std-dev, height).
+fn ripple(p: vec2<f32>, cs: vec2<f32>, scale: f32) -> vec4<f32> {
+    let uv = vec2<f32>(cs.x * p.x - cs.y * p.y, cs.y * p.x + cs.x * p.y) / scale;
+    let c = textureSample(ripple_tex, ripple_samp, uv);
+    let g = c.rg * 2.0 - 1.0;
+    // Rotate the slope back into world XZ (transpose of the uv rotation).
+    return vec4<f32>(cs.x * g.x + cs.y * g.y, cs.x * g.y - cs.y * g.x, c.b, c.a);
 }
 
-// ── Wave field ──────────────────────────────────────────────────────────────────
-// Sum of directional sine waves with analytic gradients. `fine` (0..1) scales the
-// high-frequency octaves — distance-faded by the caller so far water stays calm.
-// Returns vec3(height, dH/dx, dH/dz).
-fn water_surface(p: vec2<f32>, t: f32, fine: f32) -> vec3<f32> {
-    let freq = water.params.y;
-    let speed = water.params.z;
-    var h = 0.0;
-    var gx = 0.0;
-    var gz = 0.0;
-    // Two broad slow swells (the original calm surface).
-    {
-        let d = vec2<f32>(0.80, 0.60);
-        let f = freq;
-        let a = 0.6;
-        let ph = dot(p, d) * f + t * speed;
-        h += sin(ph) * a;
-        let c = cos(ph) * a * f;
-        gx += c * d.x; gz += c * d.y;
-    }
-    {
-        let d = vec2<f32>(-0.50, 0.86);
-        let f = freq * 1.6;
-        let a = 0.35;
-        let ph = dot(p, d) * f + t * speed * 1.3;
-        h += sin(ph) * a;
-        let c = cos(ph) * a * f;
-        gx += c * d.x; gz += c * d.y;
-    }
-    // Mid chop — visible texture inside a screenshot's middle ground.
-    {
-        let d = vec2<f32>(0.31, -0.95);
-        let f = freq * 3.1;
-        let a = 0.16 * fine;
-        let ph = dot(p, d) * f + t * speed * 1.9;
-        h += sin(ph) * a;
-        let c = cos(ph) * a * f;
-        gx += c * d.x; gz += c * d.y;
-    }
-    {
-        let d = vec2<f32>(-0.91, -0.42);
-        let f = freq * 4.3;
-        let a = 0.11 * fine;
-        let ph = dot(p, d) * f + t * speed * 2.4;
-        h += sin(ph) * a;
-        let c = cos(ph) * a * f;
-        gx += c * d.x; gz += c * d.y;
-    }
-    // Fine ripples — the layer that makes sun glints slide and sparkle up close.
-    {
-        let d = vec2<f32>(0.59, 0.81);
-        let f = freq * 7.7;
-        let a = 0.05 * fine;
-        let ph = dot(p, d) * f + t * speed * 3.4;
-        h += sin(ph) * a;
-        let c = cos(ph) * a * f;
-        gx += c * d.x; gz += c * d.y;
-    }
-    return vec3<f32>(h, gx, gz);
+// Flow-mapped layer: two taps half a cycle apart, each advected along `flow` and snapped back
+// while its weight is zero, blended variance-preserving so the chop doesn't pulse flatter
+// mid-cycle. With zero flow both taps sit still and only `drift` moves them.
+fn flowed(p: vec2<f32>, drift: vec2<f32>, flow: vec2<f32>, cs: vec2<f32>, scale: f32, cycle: f32, t: f32) -> vec4<f32> {
+    let ph0 = fract(t / cycle);
+    let ph1 = fract(t / cycle + 0.5);
+    let a = ripple(p + drift - flow * (ph0 * cycle), cs, scale);
+    // Offset the second tap's pattern so the two phases don't show the same waves.
+    let b = ripple(p + drift - flow * (ph1 * cycle) + vec2<f32>(0.37, 0.71) * scale, cs, scale);
+    let w0 = 1.0 - abs(2.0 * ph0 - 1.0);
+    let w1 = 1.0 - w0;
+    let k = inverseSqrt(w0 * w0 + w1 * w1);
+    return vec4<f32>((a.xy * w0 + b.xy * w1) * k, sqrt(a.z * a.z * w0 + b.z * b.z * w1), a.w * w0 + b.w * w1);
 }
 
 @fragment
@@ -132,93 +102,87 @@ fn fragment(
 ) -> FragmentOutput {
     var pbr_input = pbr_input_from_standard_material(in, is_front);
 
-    let amp = water.params.x;
     let t = globals.time;
     let p = in.world_position.xz;
+    let V = pbr_input.V;
 
-    // High-frequency octaves fade out by ~90 units so the far sea reads as calm
-    // swells instead of aliased shimmer against the fog line.
-    let cam_dist = length(view.world_position.xyz - in.world_position.xyz);
-    let fine = clamp(1.0 - cam_dist / 90.0, 0.0, 1.0);
+    let fld = water_field(p);
+    let shore = max(fld.shore, 0.0);
+    let bog = fld.bog;
+    let flow_amt = min(length(fld.flow), 1.0);
+    let river = smoothstep(0.05, 0.35, flow_amt) * (1.0 - bog);
+    let flow = fld.flow * water.params.y;
+    // 0 in channels / at the banks → 1 on the open sea and mid-lake: a swell needs fetch.
+    let open = smoothstep(2.0, 7.0, shore) * (1.0 - bog);
 
-    let s = water_surface(p, t, fine);
-    let ripple_n = normalize(vec3<f32>(-s.y * amp, 1.0, -s.z * amp));
-    pbr_input.N = normalize(pbr_input.N + ripple_n - vec3<f32>(0.0, 1.0, 0.0));
-    pbr_input.world_normal = pbr_input.N;
+    // ── 1. Normal ───────────────────────────────────────────────────────────────
+    let wind = vec2<f32>(0.81, 0.59);
+    let l0 = ripple(p + wind * (t * 0.35), vec2<f32>(0.6216, 0.7833), 23.0);
+    let l1 = flowed(p, wind * (t * 0.12), flow, vec2<f32>(0.9394, 0.3429), 6.0, 2.2, t);
+    let l2 = flowed(p, vec2<f32>(-0.45, 0.89) * (t * 0.09), flow * 1.3, vec2<f32>(-0.5474, 0.8369), 1.9, 1.3, t);
+    // Tilt per layer. The bog lies nearly flat; a river's current roughens its chop.
+    let k = water.params.x * mix(1.0, 0.25, bog);
+    let k0 = 0.12 * open * k;
+    let k1 = mix(0.16, 0.22, river) * k;
+    let k2 = 0.11 * k;
+    let slope = l0.xy * k0 + l1.xy * k1 + l2.xy * k2;
+    let N = normalize(vec3<f32>(-slope.x, 1.0, -slope.y));
+    // Slope variance the mips filtered out → extra GGX width (Toksvig / LEAN-style): far water
+    // spreads the sun into a soft glitter path; the calm floor keeps near glints sharp.
+    let sv = vec3<f32>(l0.z * k0, l1.z * k1, l2.z * k2);
+    let alpha = sqrt(0.03 * 0.03 + dot(sv, sv));
 
-    var alpha = pbr_input.material.base_color.a;
-    var rough = pbr_input.material.perceptual_roughness;
+    // ── 2. Body: Beer–Lambert over the synthesised depth ───────────────────────
+    // Gently shelving: ~0.8 u deep a unit out, ~2.3 at three, levelling off near 5 mid-lake — a
+    // broad shallow band where the bed shows through, not a cliff-edged pit.
+    let depth = 5.0 * (1.0 - exp(-shore / 6.0));
+    // Refracted path down to the bed and back up (Snell, n = 1.33), from the flat view angle.
+    let cos_i = clamp(V.y, 0.0, 1.0);
+    let cos_t = sqrt(1.0 - (1.0 - cos_i * cos_i) / 1.769);
+    let path = depth * (1.0 + 1.0 / cos_t);
+    // Absorption (1/world unit) and in-scattered colour per water type: clear sea / lake (red goes
+    // first → teal), lightly silted river (green), tannin bog (blue goes first → brown-black).
+    let sigma = mix(mix(vec3<f32>(0.50, 0.17, 0.13), vec3<f32>(0.90, 0.30, 0.38), river),
+        vec3<f32>(2.4, 2.9, 3.8), bog);
+    let scat = mix(mix(vec3<f32>(0.006, 0.050, 0.062), vec3<f32>(0.020, 0.055, 0.045), river),
+        vec3<f32>(0.012, 0.010, 0.005), bog);
+    let trans = exp(-sigma * path);
+    // Bed: mottled silt / sand (static — the bed doesn't drift), wobbled by refraction; dark peat
+    // under the bog.
+    let mott = textureSample(ripple_tex, ripple_samp, (p + N.xz * (min(depth, 2.0) * 0.35)) / 7.3).a;
+    let bed = mix(mix(vec3<f32>(0.15, 0.13, 0.09), vec3<f32>(0.28, 0.24, 0.17), mott),
+        vec3<f32>(0.045, 0.035, 0.022), bog);
+    var body = bed * trans + scat * (1.0 - trans);
 
-    // Distance to the nearest land tile, in tiles (0 on land, SHORE_MAX+ offshore).
-    let uv = (p - water.region.xy) * water.region.zw;
-    // Outside the baked shore field = open ocean → force DEEP. Clamp-to-edge otherwise smears the
-    // texture's border column across the whole off-texture sea: where the island nears the texture
-    // edge (its widest latitude, z≈0) that column holds a small shore distance, so the clamp painted
-    // a bogus shallow+foam BAND straight across the open sea E↔W ("the white stripe through the map").
-    let in_field = uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0;
-    let shore = select(SHORE_MAX, textureSample(shore_tex, shore_samp, uv).r * SHORE_MAX, in_field);
-    let bog = select(0.0, textureSample(bog_tex, bog_samp, uv).r, in_field);
-    let fx = water.sky_tint.w;
+    // Foam: a thin broken line right at the bank, a little wider on open water and in the current.
+    let lively = max(open, river);
+    let edge = 1.0 - smoothstep(0.0, mix(0.3, 0.5, lively), shore);
+    let breakup = smoothstep(0.45, 0.8, l1.w * 0.6 + l2.w * 0.4 + edge * 0.25);
+    let foam = edge * breakup * water.params.z * mix(0.35, 0.6, lively) * (1.0 - bog);
+    body = mix(body, vec3<f32>(0.60, 0.63, 0.62), foam);
 
-    // Authored stylized palette (linear RGB): vivid turquoise lapping the banks,
-    // rich saturated blue out in the channel / open sea. Authored here rather than
-    // derived from the (muted) base colour — scaling that washed the whole river
-    // toward grey. Lighting still applies, so it dims at night like everything else.
-    // The first water texel beside land already reads ~1 (chamfer step + half-texel
-    // sampling), so shift the field half a tile back toward the bank — otherwise the
-    // waterline effects start one tile out and the foam collar evaporates.
-    let shore_d = max(shore - 0.5, 0.0);
+    // What the surface reflects isn't transmitted: weight the body by (1 − Fresnel).
+    let n_dot_v = max(dot(N, V), 1e-4);
+    let fres = 0.02 + 0.98 * pow(1.0 - n_dot_v, 5.0);
+    body *= 1.0 - fres * (1.0 - foam);
 
-    let depth_t = 1.0 - exp(-shore_d * 0.7);
-    let shallow_col = vec3<f32>(0.05, 0.38, 0.40);
-    let deep_col = vec3<f32>(0.012, 0.09, 0.32);
-    var color = mix(pbr_input.material.base_color.rgb,
-        mix(shallow_col, deep_col, depth_t), fx);
-    alpha = mix(alpha, mix(0.82, 0.96, depth_t), fx);
-    // Bog murk: the swamp pools (and the marsh's river stretches) are STILL dark-olive water,
-    // not the vivid turquoise channel — and near-opaque (you don't see the carved floor through
-    // bog water). Cooler + more saturated than the first cut, which sat so close to the mud
-    // tone that daytime pools read as wet dirt instead of standing water.
-    let murk = mix(vec3<f32>(0.055, 0.115, 0.095), vec3<f32>(0.022, 0.048, 0.042), depth_t);
-    color = mix(color, murk, bog * fx);
-    alpha = mix(alpha, 0.95, bog * fx);
-    // A touch glossier over the bog: the flat sky-sheen highlight is what sells "still water,
-    // not mud" by day.
-    rough = mix(rough, 0.10, bog * 0.6);
+    // ── 3. Reflection occlusion ─────────────────────────────────────────────────
+    // A bank ~2.5 u tall at horizontal distance d hides the sky from reflected rays rising slower
+    // than 2.5/d — so probe the bank field twice along the reflected ray's ground track within that
+    // reach. Uses the rippled normal, so the mirrored bank wobbles with the water.
+    let R = reflect(-V, N);
+    let r_len = max(length(R.xz), 1e-3);
+    let reach = clamp(2.5 * r_len / max(R.y, 0.02), 0.5, 22.0);
+    let dir = R.xz / r_len;
+    let o1 = water_field(p + dir * (reach * 0.35)).shore;
+    let o2 = water_field(p + dir * (reach * 0.85)).shore;
+    let occ = 1.0 - smoothstep(-0.5, 0.5, min(o1, o2));
 
-    // Crest/trough banding: light gathers on the swell tops so the surface reads
-    // as moving even where there's no glint.
-    color *= 1.0 + s.x * 0.20;
-
-    // Soft waterline: fade out right where the sheet meets the bank so the shoreline
-    // is a wash, not a hard z-cut.
-    alpha *= mix(1.0, smoothstep(0.0, 0.15, shore), fx);
-
-    // Foam collar on every shore: a crisp noise-dappled band over the shallows plus
-    // a bright line hugging the waterline, breathing with the swell phase. The hard
-    // smoothstep threshold keeps it readable low-poly dapples, not grey smudge.
-    let n = vnoise(p * 1.9 + vec2<f32>(t * 0.25, -t * 0.20));
-    let foam_w = 0.45 + 0.2 * sin(t * 0.9 + n * 6.2831) + s.x * 0.15;
-    let band = 1.0 - smoothstep(0.0, max(foam_w, 0.001), shore_d + (n - 0.5) * 0.5);
-    let line = 1.0 - smoothstep(0.0, 0.3, shore_d);
-    let foam = smoothstep(0.55, 0.85, band * (0.30 + 0.70 * n) + line * 0.6) * fx * (1.0 - bog * 0.94);
-    color = mix(color, vec3<f32>(0.95, 0.97, 0.98), foam);
-    alpha = max(alpha, min(foam * 1.2, 0.97));
-    rough = mix(rough, 0.85, foam);
-
-    // Grazing-angle fresnel: tint toward the sky and tighten the roughness so the
-    // distance mirrors the Atmosphere; head-on stays the soft readable sheet.
-    let fres = pow(1.0 - clamp(dot(pbr_input.N, pbr_input.V), 0.0, 1.0), 5.0)
-        * water.params.w;
-    rough = mix(rough, 0.16, fres);
-
-    // Day factor from the brightest directional light. Bevy premultiplies ONLY
-    // illuminance into `.color` (no exposure), so these are lux-scale: the day sun
-    // peaks ≈13k, while the night pair — 3800-lux moon + the sun's 800-lux
-    // readability floor — tops out ≈2.7k. The vivid authored palette is a DAYLIGHT
-    // look — under the blue-leaning night grade its cyan luminance survives while
-    // the terrain crushes, so the lake would glow radioactive at midnight. Dim it
-    // toward a dark moonlit sheet instead.
+    // Day factor from the brightest directional light. Bevy premultiplies ONLY illuminance into
+    // `.color` (lux-scale, no exposure): the day sun peaks ≈13k; the night moon + the sun's
+    // readability floor stay under ≈4.5k. The environment map is a baked DAYTIME sky (only dimmed
+    // to ~70 % after dark), so mirroring it at full strength would turn night water into a pale
+    // sheet — keep a dim sky + the moon glint instead.
     var sun_lum = 0.0;
     let nd = min(lights.n_directional_lights, 4u);
     for (var i = 0u; i < nd; i = i + 1u) {
@@ -226,19 +190,20 @@ fn fragment(
         sun_lum = max(sun_lum, dot(c, vec3<f32>(0.299, 0.587, 0.114)));
     }
     let day_f = smoothstep(3500.0, 9000.0, sun_lum);
-    color = mix(color, water.sky_tint.rgb, fres * 0.35 * mix(0.4, 1.0, day_f));
-    color *= mix(0.22, 1.0, day_f);
 
-    pbr_input.material.base_color = vec4<f32>(color, alpha);
-    pbr_input.material.perceptual_roughness = rough;
+    pbr_input.N = N;
+    pbr_input.material.base_color = vec4<f32>(body, 1.0);
+    pbr_input.material.perceptual_roughness = mix(sqrt(alpha), 0.6, foam);
+    pbr_input.material.metallic = 0.0;
+    // Replaces Bevy's SSAO-derived estimate (the bank wall beside the waterline is exactly what the
+    // march above accounts for; SSAO would double it). The mirrored bank is lit vegetation and
+    // earth, not a void, so it only halves the sky. By day the gain goes ABOVE 1: the baked
+    // environment cubemap (`scene::gradient_env_cubemap` × `IBL_INTENSITY`) is ~2× dimmer than the
+    // Atmosphere sky actually drawn on screen, and a water mirror must match the sky above it.
+    pbr_input.specular_occlusion = (1.0 - 0.5 * occ) * mix(0.2, 2.2, day_f);
 
     var out: FragmentOutput;
-    if (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_UNLIT_BIT) == 0u {
-        out.color = apply_pbr_lighting(pbr_input);
-    } else {
-        out.color = pbr_input.material.base_color;
-    }
-
+    out.color = apply_pbr_lighting(pbr_input);
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
     return out;
 }

@@ -8,8 +8,10 @@
 //!   him — the lake or the open sea only (`worldmap::is_open_water_world`), NOT rivers or the marsh
 //!   puddles that thread the swamp. Away from open water they dissolve out, exactly like the
 //!   butterflies vanish off green country.
-//! - Swimming, a fish sits a hair BELOW the translucent surface — a soft gliding shadow at ~half
-//!   alpha, tail swishing — so it reads as life under the water, not a card floating on it.
+//! - Swimming, a fish reads as sitting just under the surface — a soft, flat, dark gliding shadow
+//!   at ~half alpha, tail swishing — so it reads as life under the water, not a card floating on
+//!   it. (The water is opaque, so this is a squashed silhouette riding on the plane; see
+//!   `SURFACE_LIFT`.)
 //! - Every few seconds a fish **breaches**: a parabolic leap that clears the surface (full alpha,
 //!   nose-up on the rise, nose-down on the fall), then slips back under. That's the moment the
 //!   player catches out of the corner of their eye — the "sometimes jump out near you".
@@ -28,8 +30,13 @@ const FISH_COUNT: usize = 3;
 /// Water-surface Y (mirrors the private `worldmap::SEA_Y`; sea, rivers and lake all show this one
 /// flat sheet). Swim depth and leap height are measured off it.
 const SEA_Y: f32 = -0.4;
-/// How far below the surface a fish cruises while swimming — a soft submerged shadow.
-const SWIM_DEPTH: f32 = 0.14;
+/// The water plane is OPAQUE (it hides everything below `SEA_Y`), so "cruising just under the
+/// surface" is faked: the fish rides this far ABOVE the plane, squashed to [`SUBMERGED_SQUASH`] of
+/// its height and tinted toward [`SUBMERGED_TINT`] — a soft dark silhouette seen from above that
+/// thins to nothing at grazing angles, as a real submerged fish does behind the surface glare.
+const SURFACE_LIFT: f32 = 0.02;
+const SUBMERGED_SQUASH: f32 = 0.1;
+const SUBMERGED_TINT: Color = Color::srgb(0.30, 0.36, 0.34);
 /// Max horizontal distance (world units) a fish's home spot sits from the hero.
 const TERRITORY_R: f32 = 13.0;
 /// Don't seat a fish right under the hero's feet — nearest water home is at least this far out.
@@ -364,11 +371,10 @@ fn swim_fish(
             let z = f.leap_from.y + f.leap_dir.cos() * travel;
             // Nose-up on the way out, nose-down on the way down.
             let pitch = (s * core::f32::consts::PI).cos() * 0.9;
-            (x, z, SEA_Y + h, pitch)
+            (x, z, SEA_Y + SURFACE_LIFT + h, pitch)
         } else {
-            // Cruising just under the surface with a soft depth bob.
-            let y = SEA_Y - SWIM_DEPTH + (t * 1.3 + p).sin() * 0.03;
-            (lx, lz, y, 0.0)
+            // Cruising "just under" the surface (see `SURFACE_LIFT`).
+            (lx, lz, SEA_Y + SURFACE_LIFT, 0.0)
         };
 
         let prev = tf.translation;
@@ -382,12 +388,15 @@ fn swim_fish(
         };
         tf.rotation = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
 
-        // Alpha: a soft ~half-visible shadow while submerged, ramping to full as it clears the
-        // surface on a leap (so the breach reads crisp and the underwater glide stays subtle).
-        let above = ((y - SEA_Y) / 0.25).clamp(0.0, 1.0);
+        // Squash + tint + alpha: a soft, flat, ~half-visible shadow while "submerged", unfolding to
+        // the full silvery fish as it clears the surface on a leap (so the breach reads crisp and
+        // the glide stays subtle). The squash grows back faster than the fish rises, so no part of
+        // it ever dips under the opaque plane.
+        let above = ((y - SEA_Y - SURFACE_LIFT) / 0.25).clamp(0.0, 1.0);
+        tf.scale = Vec3::new(1.0, SUBMERGED_SQUASH + (1.0 - SUBMERGED_SQUASH) * above, 1.0);
         let alpha = f.fade * (0.45 + 0.55 * above);
         if let Some(mut m) = mats.get_mut(&f.mat) {
-            m.base_color.set_alpha(alpha);
+            m.base_color = SUBMERGED_TINT.mix(&Color::WHITE, above).with_alpha(alpha);
         }
     }
 }
