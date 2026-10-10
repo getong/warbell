@@ -1969,6 +1969,10 @@ pub(crate) fn carry_pose() -> Pose {
 /// it can build [`Pose`]s field-by-field like the clips above; `crate::captives` drives it.
 pub(crate) mod captive;
 
+/// The orks' own animator (planted IK stance, foot-locked waddle, wound-up club blows that land on
+/// the damage instant) — `crate::orks` drives it, `crate::biped::animate_biped` poses with it.
+pub(crate) mod ork;
+
 /// The light sword combo, retargeted from keyframed clips (see the module docs).
 mod swordplay;
 mod ual_sword;

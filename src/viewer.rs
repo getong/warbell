@@ -61,6 +61,8 @@ pub fn run() {
             .add_systems(Update, (anim_drive, crate::player::anim::hero_anim).chain())
             // Animal / biped models read their own driver; inert for the hero.
             .add_systems(Update, (quad_anim_drive, biped_anim_drive));
+        // Orks own their drive (gait phase included) — posed the same frame, as in game.
+        app.add_systems(Update, ork_anim_drive.before(crate::biped::animate_biped));
     }
     app.run();
 }
@@ -198,7 +200,10 @@ fn quad_anim_drive(time: Res<Time>, mut q: Query<&mut crate::quadruped::QuadDriv
 
 /// Drive a previewed ork/peasant biped's [`crate::biped::BipedDrive`] from `FOREST_VIEW_ANIM`
 /// (walk/run/carry/hoe/chop/attack/sit; else idle). Inert for the hero/quad models.
-fn biped_anim_drive(time: Res<Time>, mut q: Query<&mut crate::biped::BipedDrive>) {
+fn biped_anim_drive(
+    time: Res<Time>,
+    mut q: Query<&mut crate::biped::BipedDrive, Without<crate::player::anim::ork::OrkMotion>>,
+) {
     // Every previewed rig (the `peasant:lineup` row has several), each keeping its own phase.
     for mut d in &mut q {
         let phase = d.phase;
@@ -239,6 +244,52 @@ fn drive_biped_clip(time: &Time, d: &mut crate::biped::BipedDrive) {
         }
         "sit" => d.sitting = true,
         _ => {} // idle
+    }
+}
+
+/// Drive a previewed ork's animator ([`crate::player::anim::ork::OrkMotion`]) from
+/// `FOREST_VIEW_ANIM`, synthesising what its brain would report: `walk` (patrol pace) / `run` (a
+/// charge, on guard) / `charge` (closing in with the club cocked) as ground motion; `guard`;
+/// `smash` / `swipe` / `attack` (either) / `cast` as a standing fight with a blow landing every
+/// cooldown (the countdown winds it up, the stamp lands it); `sit`; else at ease. Owns the ork's
+/// drive outright ([`biped_anim_drive`] skips orks — its clip phase would fight the foot-locked
+/// gait phase) and runs before the pose is taken, like `orks::ork_drive` in game.
+fn ork_anim_drive(
+    time: Res<Time>,
+    mut q: Query<(&mut crate::biped::BipedDrive, &mut crate::player::anim::ork::OrkMotion)>,
+    mut ground: Local<Vec2>,
+) {
+    use crate::player::anim::ork::OrkBlow;
+    let (now, dt) = (time.elapsed_secs(), time.delta_secs());
+    let mode = std::env::var("FOREST_VIEW_ANIM").unwrap_or_default();
+    // World speed (the root is unscaled here: rig units / s) — a grunt's patrol / charge in rig units.
+    let speed = match mode.as_str() {
+        "walk" => 1.75,
+        "run" | "charge" => 2.6,
+        _ => 0.0,
+    };
+    ground.y += speed * dt;
+    let cd = if mode == "cast" { crate::orks::SHAMAN_CAST_CD } else { crate::orks::ORK_ATTACK_CD };
+    let (strike_in, stamp) = match mode.as_str() {
+        "smash" | "swipe" | "attack" | "cast" => {
+            // A blow lands every `cd` from t = 1s: countdown to the next, stamp of the last.
+            let t = now - 1.0;
+            let last = (t / cd).floor();
+            (cd - (t - last * cd), if t >= 0.0 { 1.0 + last * cd } else { 0.0 })
+        }
+        "guard" | "run" => (crate::player::anim::ork::STRIKE_HOLD, 0.0),
+        "charge" => (crate::player::anim::ork::SWING_T, 0.0),
+        _ => (f32::INFINITY, 0.0),
+    };
+    for (mut d, mut m) in &mut q {
+        let phase = d.phase;
+        *d = crate::biped::BipedDrive { phase, moving_amt: if speed > 0.0 { 1.0 } else { 0.0 }, sitting: mode == "sit", walk_phase: d.walk_phase, ..default() };
+        match mode.as_str() {
+            "smash" if !m.build.staff => m.set_next(OrkBlow::Smash),
+            "swipe" if !m.build.staff => m.set_next(OrkBlow::Swipe),
+            _ => {}
+        }
+        m.track(&mut d, stamp, strike_in, *ground, 1.0, now, dt);
     }
 }
 
@@ -437,9 +488,12 @@ fn spawn_model(
             if torch {
                 h = h.with_shield(Some(meshes.add(crate::orks::ork_torch_mesh())));
             }
-            commands.entity(root).insert(crate::biped::BipedDrive::default());
-            let (_, off_hand) =
-                crate::biped::spawn_biped(commands, root, mat, h, 1.22, 1.0, 0.17, 0.38, -0.05, Some(shield_xf));
+            // The ork animator, as in game (`ork_anim_drive` plays its clips under FOREST_VIEW_ANIM).
+            commands.entity(root).insert((crate::biped::BipedDrive::default(), crate::orks::ork_motion(variant, 7)));
+            let (hip_dx, shoulder_dx, head_scale) = crate::orks::rig_dims(variant);
+            let (_, off_hand) = crate::biped::spawn_biped(
+                commands, root, mat, h, head_scale, 1.0, hip_dx, shoulder_dx, -0.05, Some(shield_xf),
+            );
             if let (true, Some(hand)) = (torch, off_hand) {
                 // Bright vertex-coloured stand-in for the emissive flame (the viewer only carries
                 // the shared CreatureMaterial) — placement, not look.

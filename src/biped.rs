@@ -130,7 +130,14 @@ const LIMB_CULL2: f32 = 70.0 * 70.0;
 pub fn animate_biped(
     time: Res<Time>,
     cam: Query<&GlobalTransform, With<Camera3d>>,
-    drives: Query<(Entity, &BipedDrive, Option<&GlobalTransform>, Has<crate::player::Hero>, Option<&PoseOverride>)>,
+    drives: Query<(
+        Entity,
+        &BipedDrive,
+        Option<&GlobalTransform>,
+        Has<crate::player::Hero>,
+        Option<&PoseOverride>,
+        Option<&crate::player::anim::ork::OrkMotion>,
+    )>,
     mut parts: Query<(&BipedPart, &mut Transform)>,
     // Reused across frames so a full siege+town's worth of bipeds doesn't heap-alloc a fresh map
     // every frame (clear keeps the capacity).
@@ -139,7 +146,7 @@ pub fn animate_biped(
     let now = time.elapsed_secs();
     let cam_p = cam.iter().next().map(|g| g.translation());
     poses.clear();
-    poses.extend(drives.iter().filter_map(|(e, d, gt, is_hero, over)| {
+    poses.extend(drives.iter().filter_map(|(e, d, gt, is_hero, over, ork)| {
         if !is_hero {
             // No transform yet (spawned this frame) → pose it; the cull needs a real position.
             if let (Some(cp), Some(gt)) = (cam_p, gt) {
@@ -148,7 +155,14 @@ pub fn animate_biped(
                 }
             }
         }
-        Some((e, over.map_or_else(|| biped_pose(d, now), |o| o.0)))
+        // An ork carries its own animator (`OrkMotion`: its stance, waddle and wound-up blows);
+        // everyone else plays the shared studio clips from the drive.
+        let pose = match (over, ork) {
+            (Some(o), _) => o.0,
+            (None, Some(m)) => crate::player::anim::ork::ork_pose(d, m, now),
+            (None, None) => biped_pose(d, now),
+        };
+        Some((e, pose))
     }));
     for (part, mut tf) in &mut parts {
         if let Some(pose) = poses.get(&part.root) {

@@ -1244,6 +1244,21 @@ pub(crate) fn invader_brain(
             }
         }
 
+        // The countdown to this invader's next blow for the ork animator (`Ork::strike_in`): its
+        // cooldown when it stands swinging (hero / guard / keep / farm), the closing time while it
+        // charges a hero or guard (never under the downswing — that starts once in reach), a held
+        // guard while it prowls the melee ring, and none on the march.
+        o.strike_in = if at_hero || at_guard || at_keep || at_building {
+            o.atk_cd.max(0.0)
+        } else if o.holding {
+            crate::player::anim::ork::STRIKE_HOLD
+        } else if chase_hero || guard_tgt.is_some() {
+            let gap = (o.pos.distance(target) - atk_range).max(0.0);
+            (gap / (o.speed * 1.4).max(0.1)).max(o.atk_cd).max(crate::player::anim::ork::SWING_T)
+        } else {
+            f32::INFINITY
+        };
+
         // Stuck-ork safety net — progress-based: a keep-marcher that hasn't gotten closer to the
         // keep within the timeout is wedged (oscillating round a prop/wall, or gate-flip thrash)
         // and fades out, so the wave can't hang. See `stuck_step`.

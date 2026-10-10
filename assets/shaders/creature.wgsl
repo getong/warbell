@@ -37,6 +37,16 @@ fn cd_tri(t: texture_2d_array<f32>, layer: i32, p: vec3<f32>, n: vec3<f32>, sc: 
         + textureSample(t, cd_s, q.xy + vec2<f32>(0.71, 0.71), layer) * w.z;
 }
 
+// `cd_tri` with explicit gradients (`dp*`: screen derivatives of `p * sc`), so it may run inside
+// non-uniform control flow (the ork skin's coarse octave below).
+fn cd_tri_grad(t: texture_2d_array<f32>, layer: i32, p: vec3<f32>, n: vec3<f32>, sc: f32, dpx: vec3<f32>, dpy: vec3<f32>) -> vec4<f32> {
+    let w = ft_tri_w(n);
+    let q = p * sc;
+    return textureSampleGrad(t, cd_s, q.zy, layer, dpx.zy, dpy.zy) * w.x
+        + textureSampleGrad(t, cd_s, q.xz + vec2<f32>(0.37, 0.37), layer, dpx.xz, dpy.xz) * w.y
+        + textureSampleGrad(t, cd_s, q.xy + vec2<f32>(0.71, 0.71), layer, dpx.xy, dpy.xy) * w.z;
+}
+
 // Object-space normal. Bevy writes `world_normal = normalize(inverse_transpose(M) * objectNormal)`,
 // so `transpose(M) * world_normal` is parallel to the raw attribute — including on the footman's
 // non-uniformly scaled parts (pauldrons, straps). A pure inverse would skew those weights.
@@ -114,6 +124,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     );
     // Triplanar projection normal (object space).
     var on = ft_obj_normal(m, pbr_input.N);
+    // Skinned ORK bodies (`orks::kit_ork_body`) flag UV1.y = 65 + GLOSS (0 dry .. 1 oily / wet).
+    var ork_body = false;
+    var gloss = 0.0;
 #ifdef VERTEX_UVS_A
 #ifdef VERTEX_UVS_B
     // GPU-SKINNED bodies (the townsfolk, `peasant_model::skinned_body`) carry their REST-pose
@@ -126,6 +139,8 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let skinned = in.uv_b.y > 32.0;
     obj = select(obj, rest, skinned);
     on = select(on, normalize(rest_n + vec3<f32>(1e-7, 0.0, 0.0)), skinned);
+    ork_body = in.uv_b.y > 64.5;
+    gloss = clamp(in.uv_b.y - 65.0, 0.0, 1.0);
 #endif
 #endif
 
@@ -182,9 +197,31 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
             rgb = rgb * (0.88 + 0.5 * rim);
         }
 #endif
+        // Ork skin: one tile of pores reads as a fine rash on a big body, so a COARSE octave of
+        // the same skin layer (~3.4x larger: creases, folds, the lumpy hide over the muscle)
+        // is mixed in — albedo blotches + height — which also breaks the tiling. Gradients are
+        // taken here in uniform flow; the samples run only on ork skin.
+        let c_sc = sc * 0.29;
+        let c_dx = dpdx(obj) * c_sc;
+        let c_dy = dpdy(obj) * c_sc;
+        if (ork_body && layer == 0) {
+            let c_alb = cd_tri_grad(cd_alb, 0, obj, on, c_sc, c_dx, c_dy).rgb;
+            let c_orm = cd_tri_grad(cd_ormh, 0, obj, on, c_sc, c_dx, c_dy);
+            alb = mix(alb, c_alb, 0.45);
+            orm = vec4<f32>(orm.r * c_orm.r, mix(orm.g, c_orm.g, 0.5), orm.b, orm.a * 0.55 + c_orm.a * 0.9);
+            bump = bump * 1.2;
+        }
         rgb = rgb * mix(vec3<f32>(1.0), alb * 2.0, k);
         pbr_input.material.base_color = vec4<f32>(max(rgb, vec3<f32>(0.0)), 1.0);
         pbr_input.material.perceptual_roughness = clamp(mix(pbr_input.material.perceptual_roughness, orm.g, 0.7), 0.08, 1.0);
+        if (ork_body) {
+            // Baked gloss: oily brow / nose / chest, wet eyes and lips, polished leather and
+            // scar tissue tighten the highlight; dry knuckles, elbows, knees and dusty feet go
+            // chalky matte.
+            let r0 = pbr_input.material.perceptual_roughness;
+            // (Skin is never mirror-wet: even the oiliest brow stays ~0.4, or the hide reads as latex.)
+            pbr_input.material.perceptual_roughness = clamp(mix(min(r0 + 0.15, 1.0), 0.4, gloss), 0.08, 1.0);
+        }
         if (layer == 4) {
             pbr_input.material.metallic = clamp(spec_lift, 0.0, 1.0);
         }

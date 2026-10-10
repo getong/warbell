@@ -203,6 +203,12 @@ pub struct Ork {
     /// shaman's staff-jab) for [`ATTACK_ANIM_DUR`] after it. `0` = none yet. Stamped by both the
     /// camp brain and the night-wave invader brain (`siege.rs`).
     pub(crate) atk_anim: f32,
+    /// Seconds until this ork's next blow lands, as its brain sees it: the swing cooldown when it
+    /// stands in reach, the closing time while it charges, [`STRIKE_HOLD`](crate::player::anim::ork::STRIKE_HOLD)
+    /// while it prowls the melee ring, `INFINITY` out of a fight. The ork animator winds the blow
+    /// up off this countdown so the club comes down exactly on `atk_anim` (the damage instant).
+    /// Written by both brains every frame.
+    pub(crate) strike_in: f32,
     /// Timestamp of the last blow the ork TOOK; drives a brief springy recoil-wobble (the same
     /// read as the training dummies'). Stamped by `player::combat`. `0` = none.
     pub(crate) hit_recoil: f32,
@@ -311,7 +317,13 @@ impl Plugin for OrksPlugin {
     fn build(&self, app: &mut App) {
         // The melee attack-token ring (shared with the siege invader brain — see `melee_ring`).
         app.init_resource::<crate::melee_ring::MeleeRing>();
-        app.add_systems(Update, (ork_limbs, ork_drive, torch_flame_flicker)); // render anim keeps running while frozen
+        // Render anim keeps running while frozen. `ork_drive` reads what the brains wrote this
+        // frame (a blow's stamp + countdown) and feeds the biped animator the same frame.
+        app.add_systems(Update, (ork_limbs, torch_flame_flicker));
+        app.add_systems(
+            Update,
+            ork_drive.after(ork_brain).after(ork_brawl).after(crate::siege::invader_brain).before(crate::biped::animate_biped),
+        );
         // Ungated + before both brains: hand a slain striker's token straight back, so the horde
         // can't be frozen out of the ring for a full TOKEN_TIME (see `melee_ring`).
         app.add_systems(
@@ -338,7 +350,14 @@ fn ork_brain(
     // a fresh Vec of the whole camp population every single frame.
     mut snap: Local<Vec<(Entity, Faction, Vec2)>>,
     mut q: Query<
-        (Entity, &mut Ork, &mut Transform, Option<&crate::player::Health>, Option<&crate::boss::Slowed>),
+        (
+            Entity,
+            &mut Ork,
+            &mut Transform,
+            Option<&crate::player::Health>,
+            Option<&crate::boss::Slowed>,
+            Has<crate::player::anim::ork::OrkMotion>,
+        ),
         (
             Without<WaveInvader>,
             Without<crate::dying::Dying>,
@@ -358,9 +377,9 @@ fn ork_brain(
 
     // Snapshot (entity, faction, pos) so an ork with no hero in sight can seek a rival to brawl.
     snap.clear();
-    snap.extend(q.iter().map(|(e, o, _, _, _)| (e, o.faction, o.pos)));
+    snap.extend(q.iter().map(|(e, o, _, _, _, _)| (e, o.faction, o.pos)));
 
-    for (self_e, mut o, mut tf, health, slowed) in &mut q {
+    for (self_e, mut o, mut tf, health, slowed, animated) in &mut q {
         // Frostbite boon: a chilled ork crawls (factor < 1; 0 = frozen).
         let slow_mul = slowed.map(|s| s.factor).unwrap_or(1.0);
         o.timer -= dt;
@@ -455,6 +474,8 @@ fn ork_brain(
             o.seated_rest = false;
         }
 
+        // A due blow held back by a wall between it and the hero (it stays cocked, see below).
+        let mut walled = false;
         match o.mode {
             OrkMode::Idle => {
                 o.moving = false;
@@ -543,10 +564,9 @@ fn ork_brain(
                 }
                 // Strike the HERO only (a rival brawl is resolved by `ork_brawl`) — but not
                 // through a wall (LOS-gate both the club and the shaman bolt cast).
-                if o.brawl_target.is_none()
-                    && o.atk_cd <= 0.0
-                    && !crate::blockers::wall_between(o.pos.x, o.pos.y, hero.pos.x, hero.pos.y)
-                {
+                if o.brawl_target.is_none() && o.atk_cd <= 0.0 && crate::blockers::wall_between(o.pos.x, o.pos.y, hero.pos.x, hero.pos.y) {
+                    walled = true;
+                } else if o.brawl_target.is_none() && o.atk_cd <= 0.0 {
                     // Frontier-graded blow: a deep-biome warband hits ~1.6× as hard as one near
                     // the castle (pairs with its distance-scaled HP from `ensure_combat_health`).
                     let (_, dmg_mul) = crate::verbs::frontier_threat(o.pos.x, o.pos.y);
@@ -570,17 +590,31 @@ fn ork_brain(
             }
         }
 
+        // The countdown to the next blow for the animator (see `Ork::strike_in`): the cooldown of
+        // a standing swinger (a wall-blocked one holds cocked), the closing time of a charger (never
+        // under the downswing — that only starts once it is in reach).
+        o.strike_in = match o.mode {
+            OrkMode::Attack if o.brawl_target.is_some() => o.brawl_cd.max(0.0),
+            OrkMode::Attack if walled => crate::player::anim::ork::SWING_T,
+            OrkMode::Attack => o.atk_cd.max(0.0),
+            OrkMode::Hunt if o.holding => crate::player::anim::ork::STRIKE_HOLD,
+            OrkMode::Hunt => {
+                let range = if o.shaman { SHAMAN_CAST_RANGE } else { ORK_ATTACK_RANGE };
+                let gap = (o.pos.distance(o.target) - range).max(0.0);
+                (gap / (o.speed * 1.4).max(0.1)).max(o.atk_cd).max(crate::player::anim::ork::SWING_T)
+            }
+            OrkMode::Idle | OrkMode::Patrol => f32::INFINITY,
+        };
+
         apply_knockback(&mut o, dt);
 
         let gy = steer::footing(o.pos.x, o.pos.y).unwrap_or(tf.translation.y);
-        let bob = if o.moving { (tw * o.gait + o.phase).sin().abs() * o.bob } else { 0.0 };
-        // A melee ork steps into its club-chop (visual only — `pos` is untouched). The shaman
-        // casts at range, so it doesn't lunge.
-        let lunge = if o.shaman {
-            0.0
-        } else {
-            strike_p(o.atk_anim, now).map_or(0.0, |p| (p * std::f32::consts::PI).sin() * 0.35)
-        };
+        // The old box rig bounced its root with the stride; the ork animator plants the feet and
+        // bobs the hips itself, so a root bob would only lift the soles off the ground.
+        let bob = if o.moving && !animated { (tw * o.gait + o.phase).sin().abs() * o.bob } else { 0.0 };
+        // A melee ork steps into its blow (visual only — `pos` is untouched): in over the
+        // downswing, fully in as it lands (the stamp). The shaman casts at range, so it doesn't.
+        let lunge = if o.shaman { 0.0 } else { crate::player::anim::ork::strike_lunge(o.atk_anim, o.strike_in, now) };
         let fwd = Vec2::new(o.facing.sin(), o.facing.cos());
         let mut lp = o.pos + fwd * lunge;
         // Don't let the lunge slide the body into the knight (the shove only pushes him off `pos`).
@@ -806,10 +840,19 @@ const ORK_RIG_OFF: f32 = -0.05;
 /// Glowing-eye offsets in the **head joint's** local frame (studio orc eye spots).
 const ORK_BIPED_EYE_OFFS: [Vec3; 2] = [Vec3::new(-0.07, 0.1, 0.14), Vec3::new(0.07, 0.1, 0.14)];
 
-/// Glowing-eye transforms on the biped head: in the sculpted (kit) head's sockets, small, else
-/// the box head's spots.
-fn ork_eye_xfs() -> [Transform; 2] {
-    if crate::realforest::get().is_some_and(|k| k.has("ork_torso")) {
+/// Glowing-eye transforms on the biped head: a small ember at the front of the skinned head's
+/// eyeballs (orks.py `eyes_body`: 0.031 x the head's width factor off centre), in the sculpted
+/// (kit) head's sockets, else the box head's spots.
+fn ork_eye_xfs(variant: OrkVariant) -> [Transform; 2] {
+    if kit_orks().is_some() {
+        let w = match variant {
+            OrkVariant::Grunt => 1.06,
+            OrkVariant::Scout => 0.94,
+            OrkVariant::Berserker => 1.08,
+            OrkVariant::Shaman => 0.96,
+        };
+        [-1.0f32, 1.0].map(|s| Transform::from_xyz(s * 0.031 * w, 0.034, 0.0785).with_scale(Vec3::splat(0.13)))
+    } else if crate::realforest::get().is_some_and(|k| k.has("ork_torso")) {
         [-1.0f32, 1.0].map(|s| Transform::from_xyz(s * 0.052, 0.088, 0.13).with_scale(Vec3::splat(0.42)))
     } else {
         ORK_BIPED_EYE_OFFS.map(Transform::from_translation)
@@ -907,23 +950,38 @@ fn torch_flame_flicker(time: Res<Time>, mut flames: Query<(&TorchFlame, &mut Tra
     }
 }
 
-/// Drive each (biped) ork's [`crate::biped::BipedDrive`] from its `Ork` AI, so `animate_biped` plays
-/// the studio clips. Mirrors the old `ork_limbs` gait/strike timing (gait `(t+phase)*gait`, the
-/// `strike_p` window → an overhead chop). Camp/patrol/wave orks use this; fortress decorative orks
-/// and the Warlord (no `BipedDrive`) still use `ork_limbs`/`OrkPart`.
-fn ork_drive(time: Res<Time>, mut q: Query<(&Ork, &mut crate::biped::BipedDrive), Without<crate::dying::Dying>>) {
+/// Drive each (biped) ork's animation from its `Ork` AI. Orks with the ork animator
+/// ([`crate::player::anim::ork::OrkMotion`], every camp/patrol/wave ork) hand it the brain's blow
+/// countdown + stamp and their ground motion ([`OrkMotion::track`](crate::player::anim::ork::OrkMotion::track):
+/// the gait cadence is foot-locked to the measured speed, walk → charge by speed). Any other biped
+/// ork falls back to the studio clips (gait `(t+phase)*gait`, the `strike_p` window → an overhead
+/// chop). Fortress decorative orks and the Warlord (no `BipedDrive`) still use `ork_limbs`/`OrkPart`.
+/// Runs after both brains so a blow's stamp and its countdown are read the frame they are written.
+#[allow(clippy::type_complexity)]
+fn ork_drive(
+    time: Res<Time>,
+    mut q: Query<
+        (&Ork, &mut crate::biped::BipedDrive, Option<&mut crate::player::anim::ork::OrkMotion>, &Transform),
+        Without<crate::dying::Dying>,
+    >,
+) {
     let tw = time.elapsed_secs_wrapped();
     let now = time.elapsed_secs();
     let dt = time.delta_secs();
-    for (o, mut d) in &mut q {
+    for (o, mut d, motion, tf) in &mut q {
         // A roosting guard sits while idle; the brain clears `seated_rest` the moment it engages,
         // so this stands it up to fight (and, once woken, it never re-roosts).
         d.sitting = o.seated_rest && matches!(o.mode, OrkMode::Idle);
         let target = if o.moving { 1.0 } else { 0.0 };
         d.moving_amt += (target - d.moving_amt) * (dt * 8.0).min(1.0);
+        d.phase = o.phase; // its own idle clock, so a camp doesn't fidget in unison
+        if let Some(mut m) = motion {
+            d.attacking = false;
+            m.track(&mut d, o.atk_anim, o.strike_in, o.pos, tf.scale.x, now, dt);
+            continue;
+        }
         d.run_amt = if matches!(o.mode, OrkMode::Hunt) { 0.55 } else { 0.0 }; // charging = run-ish
         d.walk_phase = (tw + o.phase) * o.gait;
-        d.phase = o.phase; // its own idle clock, so a camp doesn't fidget in unison
         match strike_p(o.atk_anim, now) {
             Some(p) => {
                 d.attacking = true;
@@ -1047,6 +1105,8 @@ fn ork_brawl(
     for e in landed {
         if let Ok((_, mut o, _h)) = q.get_mut(e) {
             o.brawl_cd = BRAWL_CD;
+            // Play the blow (it was wound up off `strike_in` = this cooldown).
+            o.atk_anim = time.elapsed_secs();
         }
     }
     // Pass 3: apply each landed blow to its target's Health.
@@ -1363,6 +1423,206 @@ pub(crate) fn ork_biped_meshes(variant: OrkVariant, faction: Faction) -> crate::
 
 /// The realistic ork (Blender metaball parts, `creatures.glb`) for the same biped joints, recoloured
 /// per variant (skin) and faction (cloth). `None` without the kit → the box-built ork above.
+// ── Skinned ork bodies (orks.glb, `tools/blender_forest/orks.py`) ────────────────────────
+/// The realistic kit, when it loaded the skinned ork bodies.
+fn kit_orks() -> Option<&'static crate::realforest::Kit> {
+    crate::realforest::get().filter(|k| k.has("ork_trunk_grunt"))
+}
+
+/// The build an orks.glb body is modelled on (orks.py `BUILDS`): `(name, hip_dx, shoulder_dx)`.
+/// Grunts and berserkers are heavy-set, scouts and shamans lean.
+fn kit_build(variant: OrkVariant) -> (&'static str, f32, f32) {
+    match variant {
+        OrkVariant::Grunt | OrkVariant::Berserker => ("heavy", 0.11, 0.25),
+        OrkVariant::Scout | OrkVariant::Shaman => ("lean", 0.1, 0.222),
+    }
+}
+
+/// `(hip_dx, shoulder_dx, head_scale)` for [`crate::biped::spawn_biped`]: the skinned body's own
+/// joint spans (heads modelled life-size) when orks.glb is loaded, else the per-joint parts' wide
+/// stance. Every ork spawn site (camps, sieges, the viewer) must use this so mesh and joints agree.
+pub(crate) fn rig_dims(variant: OrkVariant) -> (f32, f32, f32) {
+    if kit_orks().is_some() {
+        let (_, hip_dx, shoulder_dx) = kit_build(variant);
+        (hip_dx, shoulder_dx, 1.0)
+    } else {
+        (0.17, 0.38, 1.22)
+    }
+}
+
+/// The ork animator's state for a fresh `variant` ork ([`crate::player::anim::ork`]): its rig spans
+/// (as [`rig_dims`] spawned it), how heavily it carries itself, and its weapon habits — grunts
+/// mostly smash, berserkers swipe as often as they smash, scouts are light on their feet, the
+/// shaman leans on a staff and casts.
+pub(crate) fn ork_motion(variant: OrkVariant, seed: u32) -> crate::player::anim::ork::OrkMotion {
+    use crate::player::anim::ork::{OrkBuild, OrkMotion};
+    let (hdx, sdx, _) = rig_dims(variant);
+    let (slot, heavy, swipe) = match variant {
+        OrkVariant::Grunt => (0, 1.0, 0.3),
+        OrkVariant::Scout => (1, 0.25, 0.45),
+        OrkVariant::Berserker => (2, 0.8, 0.5),
+        OrkVariant::Shaman => (3, 0.45, 0.0),
+    };
+    // Cached keyframes are per body build: the kit and the legacy box rig have different spans.
+    let id = slot + if kit_orks().is_some() { 0 } else { 4 };
+    OrkMotion::new(OrkBuild { id, sdx, hdx, heavy, staff: variant == OrkVariant::Shaman, swipe }, seed)
+}
+
+/// The pieces one variant wears (mirrors orks.py `outfit`); `true` = authored in the head frame.
+fn kit_ork_outfit(variant: OrkVariant) -> Vec<(String, bool)> {
+    let (b, _, _) = kit_build(variant);
+    let v = match variant {
+        OrkVariant::Grunt => "grunt",
+        OrkVariant::Scout => "scout",
+        OrkVariant::Berserker => "berserker",
+        OrkVariant::Shaman => "shaman",
+    };
+    let mut names = vec![
+        (format!("ork_trunk_{v}"), false),
+        (format!("ork_arm_{b}_l"), false),
+        (format!("ork_arm_{b}_r"), false),
+        (format!("ork_leg_{b}_l"), false),
+        (format!("ork_leg_{b}_r"), false),
+        (format!("ork_head_{v}"), true),
+        (format!("ork_kilt_{v}"), false),
+    ];
+    let gear = match variant {
+        OrkVariant::Grunt => vec![format!("ork_pauldron_{v}"), format!("ork_bracer_{b}_l"), format!("ork_bracer_{b}_r")],
+        OrkVariant::Berserker => vec![format!("ork_wraps_{b}_l"), format!("ork_wraps_{b}_r")],
+        OrkVariant::Scout => vec![format!("ork_strap_{v}"), format!("ork_bracer_{b}_l")],
+        OrkVariant::Shaman => vec![format!("ork_mantle_{v}")],
+    };
+    names.extend(gear.into_iter().map(|n| (n, false)));
+    names
+}
+
+/// One orks.glb region's look: linear base colour, surface code, and the colour multipliers the
+/// baked TONE (vertex B) walks between — `dark` at 0, 1 at 0.5, `pale` at 1.
+struct OrkRegion {
+    rgb: [f32; 3],
+    surf: crate::creature::Surf,
+    dark: [f32; 3],
+    pale: [f32; 3],
+}
+
+/// Realistic per-variant skin (sRGB): weathered olive, sallow khaki-green, the berserker's
+/// sun-burnt red-brown, the old shaman's ash-grey green. Kept desaturated and dark — a saturated
+/// "toy green" reads plastic under the PBR sun.
+fn kit_ork_skin(variant: OrkVariant) -> u32 {
+    match variant {
+        OrkVariant::Grunt => 0x56603d,
+        OrkVariant::Scout => 0x666846,
+        OrkVariant::Berserker => 0x6a4935,
+        OrkVariant::Shaman => 0x5a5d52,
+    }
+}
+
+/// The 16-region palette (orks.py order: SKIN, DARK, BELLY, LEATHER, CLOTH, BONE, HAIR, WOOD,
+/// IRON, ORB, EYE, PAINT, SCAR, FUR, NAIL, STRAP).
+fn kit_ork_regions(variant: OrkVariant, faction: Faction) -> [OrkRegion; 16] {
+    use crate::creature::Surf;
+    let rgb = |c: [f32; 4]| [c[0], c[1], c[2]];
+    let mix = |a: u32, b: u32, t: f32| {
+        let (a, b) = (lin(a), lin(b));
+        [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
+    };
+    let skin = kit_ork_skin(variant);
+    // Skin darkens toward a ruddy brown (knuckles, elbows, ears, the sun-beaten back) and pales
+    // toward a sallow cream (belly, inner arms) — hue shifts, not just brightness.
+    let (sd, sp) = ([0.62, 0.5, 0.4], [1.32, 1.28, 1.12]);
+    // Leather / cloth / fur: B is wear — grime and shadowed folds toward 0, scuffed and
+    // sun-bleached toward 1.
+    let (gd, gp) = ([0.55, 0.52, 0.48], [1.4, 1.32, 1.18]);
+    let flat = [1.0; 3];
+    let reg = |rgb: [f32; 3], surf: Surf, dark: [f32; 3], pale: [f32; 3]| OrkRegion { rgb, surf, dark, pale };
+    let paint = match faction {
+        Faction::Red => 0x5c1a12,  // dried ochre-blood red
+        Faction::Blue => 0x1e2b46, // woad
+    };
+    [
+        reg(rgb(lin(skin)), Surf::Skin, sd, sp),
+        reg(mix(skin, 0x3a2420, 0.6), Surf::Skin, sd, sp), // lips / nipples
+        reg(rgb(lin_scaled(skin, 1.1)), Surf::Skin, sd, sp),
+        reg(rgb(lin(0x4a3020)), Surf::Scale, gd, gp), // leather
+        reg(mix(faction.hex(), 0x3d3226, 0.45), Surf::Cloth, gd, gp), // warband cloth, dyed and filthy
+        reg(rgb(lin(0xb6a886)), Surf::Bone, [0.7, 0.66, 0.58], [1.1, 1.08, 1.04]),
+        reg(rgb(lin(0x17120e)), Surf::Fur, [0.8; 3], [1.6, 1.5, 1.4]),
+        reg(rgb(lin(0x5a3a1c)), Surf::Stone, flat, flat),
+        reg(rgb(lin(0x55585c)), Surf::Metal, flat, flat),
+        reg(rgb(lin(0xc89cff)), Surf::Bone, flat, flat),
+        reg(rgb(lin(0x6e4c12)), Surf::Bone, flat, flat), // amber eyes
+        reg(mix(paint, skin, 0.15), Surf::Skin, sd, sp),
+        reg(mix(skin, 0x8a7864, 0.55), Surf::Skin, sd, sp), // scar tissue: paler, waxy
+        reg(rgb(lin(0x4b3d30)), Surf::Fur, gd, gp),
+        reg(rgb(lin(0x2f2a20)), Surf::Bone, [0.8; 3], [1.3; 3]),
+        reg(rgb(lin(0x33231a)), Surf::Scale, gd, gp), // straps / thongs
+    ]
+}
+
+/// One skinned ork body from orks.glb: the variant's pieces merged into ONE mesh on
+/// `biped::SKIN_JOINTS`, recoloured from the baked data — vertex colour R = region, G = cavity,
+/// B = tone (see [`OrkRegion`]), A = GLOSS (oily brow and chest .. dry knuckles and scuffed
+/// leather). Like `peasant_model::skinned_body` the rest position goes into UV0.xy + UV1.x for the
+/// creature shader's texture space; UV1.y = 65 + gloss flags an ork body (the shader adds the
+/// skin's coarse wrinkle octave and turns gloss into roughness; the townsfolk's 64 stays untouched).
+fn kit_ork_body(kit: &crate::realforest::Kit, variant: OrkVariant, faction: Faction) -> Option<Mesh> {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues as V};
+    /// Where head pieces hang: the head joint's rest position in the rig frame.
+    const HEAD_PIVOT: Vec3 = Vec3::new(0.0, 1.63, 0.0);
+    let regions = kit_ork_regions(variant, faction);
+    let (mut pos, mut nrm, mut col) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut uv0, mut uv1, mut ji, mut jw, mut idx) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for (name, head) in kit_ork_outfit(variant) {
+        let m = kit.raw_part(&name)?;
+        let base = pos.len() as u32;
+        let (Some(V::Float32x3(p)), Some(V::Float32x3(n)), Some(V::Float32x4(c)), Some(V::Float32x2(a)), Some(V::Float32x2(b))) = (
+            m.attribute(Mesh::ATTRIBUTE_POSITION),
+            m.attribute(Mesh::ATTRIBUTE_NORMAL),
+            m.attribute(Mesh::ATTRIBUTE_COLOR),
+            m.attribute(Mesh::ATTRIBUTE_UV_0),
+            m.attribute(Mesh::ATTRIBUTE_UV_1),
+        ) else {
+            return None;
+        };
+        for k in 0..p.len() {
+            let (j, w) = crate::peasant_model::decode_influences(a[k], b[k]);
+            let v = if head { HEAD_PIVOT + Vec3::from(p[k]) } else { Vec3::from(p[k]) };
+            let r = &regions[((c[k][0] * 16.0).floor() as usize).min(15)];
+            let (cav, tone, gloss) = (c[k][1], c[k][2].clamp(0.0, 1.0), c[k][3].clamp(0.0, 1.0));
+            let mul = |i: usize| {
+                if tone < 0.5 {
+                    r.dark[i] + (1.0 - r.dark[i]) * tone * 2.0
+                } else {
+                    1.0 + (r.pale[i] - 1.0) * (tone * 2.0 - 1.0)
+                }
+            };
+            col.push([r.rgb[0] * mul(0) * cav, r.rgb[1] * mul(1) * cav, r.rgb[2] * mul(2) * cav, crate::creature::surf_code(r.surf)]);
+            pos.push(v.to_array());
+            nrm.push(n[k]);
+            uv0.push([v.x, v.y]);
+            uv1.push([v.z, 65.0 + gloss * 0.999]);
+            ji.push(j);
+            jw.push(w);
+        }
+        match m.indices() {
+            Some(Indices::U32(i)) => idx.extend(i.iter().map(|x| x + base)),
+            Some(Indices::U16(i)) => idx.extend(i.iter().map(|&x| x as u32 + base)),
+            None => idx.extend(base..base + p.len() as u32),
+        }
+    }
+    let mut out = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    out.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
+    out.insert_attribute(Mesh::ATTRIBUTE_NORMAL, nrm);
+    out.insert_attribute(Mesh::ATTRIBUTE_COLOR, V::Float32x4(col));
+    out.insert_attribute(Mesh::ATTRIBUTE_UV_0, uv0);
+    out.insert_attribute(Mesh::ATTRIBUTE_UV_1, uv1);
+    out.insert_attribute(Mesh::ATTRIBUTE_JOINT_INDEX, V::Uint16x4(ji));
+    out.insert_attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT, jw);
+    out.insert_indices(Indices::U32(idx));
+    Some(out)
+}
+
 fn kit_ork_meshes(variant: OrkVariant, faction: Faction) -> Option<crate::biped::BipedMeshes> {
     use crate::creature::Surf;
     let kit = crate::realforest::get().filter(|k| k.has("ork_torso"))?;
@@ -1395,6 +1655,33 @@ fn kit_ork_meshes(variant: OrkVariant, faction: Faction) -> Option<crate::biped:
         OrkVariant::Shaman => "ork_head_shaman",
     };
     let weapon = if matches!(variant, OrkVariant::Shaman) { "ork_staff" } else { "ork_club" };
+    // Same face-forward counter-rotation as the box shield (see `ork_biped_meshes`).
+    let shield = || part("ork_shield").map(|m| m.rotated_by(Quat::from_rotation_y(1.15)));
+    // The skinned body (orks.glb) when it loaded: one mesh on the joints, the per-joint leaves
+    // left empty; the club / staff / buckler stay the creatures.glb props.
+    if let Some(body) = kit_orks().and_then(|k| kit_ork_body(k, variant, faction)) {
+        let empty = || Mesh::new(bevy::mesh::PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default());
+        return Some(crate::biped::BipedMeshes {
+            hips: empty(),
+            torso: empty(),
+            neck: empty(),
+            head: empty(),
+            shoulder_l: empty(),
+            shoulder_r: empty(),
+            elbow_l: empty(),
+            elbow_r: empty(),
+            hip_l: empty(),
+            hip_r: empty(),
+            knee_l: empty(),
+            knee_r: empty(),
+            foot_l: empty(),
+            foot_r: empty(),
+            weapon: part(weapon),
+            shield: shield(),
+            lion: None,
+            skin: Some(body),
+        });
+    }
     Some(crate::biped::BipedMeshes {
         hips: part("ork_hips")?,
         torso: part("ork_torso")?,
@@ -1411,8 +1698,7 @@ fn kit_ork_meshes(variant: OrkVariant, faction: Faction) -> Option<crate::biped:
         foot_l: part("ork_foot")?,
         foot_r: part("ork_foot")?,
         weapon: part(weapon),
-        // Same face-forward counter-rotation as the box shield (see `ork_biped_meshes`).
-        shield: part("ork_shield").map(|m| m.rotated_by(Quat::from_rotation_y(1.15))),
+        shield: shield(),
         lion: None,
         skin: None,
     })
@@ -1732,6 +2018,7 @@ impl Armory {
             timer: rng_range(&mut rng, 0.5, 4.0),
             atk_cd: 0.0,
             atk_anim: 0.0,
+            strike_in: f32::INFINITY,
             hit_recoil: 0.0,
             holding: false,
             shaman: st.shaman,
@@ -1759,6 +2046,7 @@ impl Armory {
                 Visibility::Visible,
                 ork,
                 drive,
+                ork_motion(variant, seed),
                 BiomeEntity,
             ))
             .id();
@@ -1776,13 +2064,14 @@ impl Armory {
         } else {
             t.biped.clone()
         };
+        let (hip_dx, shoulder_dx, head_scale) = rig_dims(variant);
         let (head, off_hand) = crate::biped::spawn_biped(
             commands, root, &self.mat, handles,
-            1.22, 1.0, 0.17, 0.38, ORK_RIG_OFF, Some(ork_shield_xf()),
+            head_scale, 1.0, hip_dx, shoulder_dx, ORK_RIG_OFF, Some(ork_shield_xf()),
         );
         // Two glowing eyes on the head joint (head-local) — the menacing night-glow.
         commands.entity(head).with_children(|p| {
-            for xf in ork_eye_xfs() {
+            for xf in ork_eye_xfs(variant) {
                 p.spawn((Mesh3d(self.eye_mesh.clone()), MeshMaterial3d(self.eye_mat.clone()), xf, OrkEye));
             }
         });
@@ -1820,9 +2109,10 @@ impl Armory {
                 BiomeEntity,
             ))
             .id();
-        let head = crate::biped::spawn_biped(commands, root, &self.mat, t.biped.clone(), 1.22, 1.0, 0.17, 0.38, ORK_RIG_OFF, Some(ork_shield_xf())).0;
+        let (hip_dx, shoulder_dx, head_scale) = rig_dims(variant);
+        let head = crate::biped::spawn_biped(commands, root, &self.mat, t.biped.clone(), head_scale, 1.0, hip_dx, shoulder_dx, ORK_RIG_OFF, Some(ork_shield_xf())).0;
         commands.entity(head).with_children(|p| {
-            for xf in ork_eye_xfs() {
+            for xf in ork_eye_xfs(variant) {
                 p.spawn((Mesh3d(self.eye_mesh.clone()), MeshMaterial3d(self.eye_mat.clone()), xf, OrkEye));
             }
         });
