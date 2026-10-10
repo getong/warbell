@@ -299,7 +299,7 @@ const SKIN_HEAD: u16 = 3;
 
 /// A piece's 4 skin influences from its UV0 + UV1: each component = joint + 0.005 + weight * 0.98
 /// (people.py `encode_weights`). Weights renormalised; no data → all on the hips.
-fn decode_influences(uv0: [f32; 2], uv1: [f32; 2]) -> ([u16; 4], [f32; 4]) {
+pub(crate) fn decode_influences(uv0: [f32; 2], uv1: [f32; 2]) -> ([u16; 4], [f32; 4]) {
     let mut j = [0u16; 4];
     let mut w = [0.0f32; 4];
     for (i, v) in [uv0[0], uv0[1], uv1[0], uv1[1]].into_iter().enumerate() {

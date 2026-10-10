@@ -339,6 +339,16 @@ impl Kit {
         Some(mesh)
     }
 
+    /// A CPU copy of kit part `name` with its baked vertex data untouched (region / cavity / tone /
+    /// gloss in the colour, skin weights in UV0 / UV1) for a caller that decodes it itself (the
+    /// skinned orks, `orks::kit_ork_body`).
+    pub fn raw_part(&self, name: &str) -> Option<Mesh> {
+        let m = self.model(name)?;
+        let mut mesh = self.models[m].parts.first()?.mesh.clone();
+        mesh.remove_attribute(Mesh::ATTRIBUTE_TANGENT);
+        Some(mesh)
+    }
+
     /// A recoloured CPU copy of animal part `name` (animals.glb, `tools/blender_forest/animals.py`).
     /// Vertex colour R = region (region/16), G = baked cavity / AO, B = coat TONE, A = coat TINT.
     /// Region 0 is fur: its colour walks the `coat` ramp by tone (0 = `coat[0]` dark saddle /
@@ -923,11 +933,12 @@ fn try_build(
     let wind = [mat_index["canopy"], mat_index["undergrowth"]];
     let mut models = Vec::new();
     let mut by_name = HashMap::new();
-    for glb in ["forest_pbr/trees.glb", "forest_pbr/undergrowth.glb", "forest_pbr/props.glb", "forest_pbr/structures.glb", "forest_pbr/wayside.glb", "forest_pbr/creatures.glb", "forest_pbr/animals.glb", "forest_pbr/people.glb"] {
-        // The townsfolk parts (people.glb) are optional: without them the villagers keep their
-        // box-built bodies (`peasant_model`), the rest of the kit still loads.
-        if glb.ends_with("people.glb") && !load::asset_path(glb).exists() {
-            warn!("realforest: {glb} missing — townsfolk keep the box-built bodies");
+    for glb in ["forest_pbr/trees.glb", "forest_pbr/undergrowth.glb", "forest_pbr/props.glb", "forest_pbr/structures.glb", "forest_pbr/wayside.glb", "forest_pbr/creatures.glb", "forest_pbr/animals.glb", "forest_pbr/people.glb", "forest_pbr/orks.glb"] {
+        // The townsfolk parts (people.glb) and the skinned ork bodies (orks.glb) are optional:
+        // without them the villagers keep their box-built bodies (`peasant_model`) and the orks
+        // their per-joint creatures.glb parts; the rest of the kit still loads.
+        if (glb.ends_with("people.glb") || glb.ends_with("orks.glb")) && !load::asset_path(glb).exists() {
+            warn!("realforest: {glb} missing — falling back to the older bodies");
             continue;
         }
         let mut objs = load::read_glb(glb)?;

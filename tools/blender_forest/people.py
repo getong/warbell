@@ -308,6 +308,13 @@ class Piece:
         self.name, self.skin, self.frame = name, skin, frame
         self.bodies = []  # (body, cull_fn, cull_depth)
         self.weather = None  # fn(p, n, region) -> 0..1
+        # Optional hooks for other rigs built with these tools (orks.py): `weights(p, kind)` replaces
+        # `skin_weights` (another frame's joint spans), `extra(p, n, region)` -> 0..1 fills vertex
+        # colour A (left at 1 by the townsfolk), `regions(face_centres, regions)` repaints faces
+        # (decals with no relief: war paint).
+        self.weights = None
+        self.extra = None
+        self.regions = None
         # Mirror-symmetric decimation (a body can override with its own `sym`).
         self.sym = frame == "head" or skin == "trunk"
 
@@ -451,13 +458,16 @@ def build_piece(piece, ao_fn):
         if sel.any():
             _, rg = body.eval(cen[sel], want_region=True)
             freg[sel] = rg
+    if piece.regions:
+        freg = piece.regions(cen, freg)
     # Vertex region (for the weathering fn): the region of any face using it.
     vreg = np.zeros(len(ps), np.int64)
     for fi, f in enumerate(faces):
         vreg[f] = freg[fi]
     wth = piece.weather(ps, nrm, vreg) if piece.weather else np.zeros(len(ps))
     wth = np.clip(wth, 0.0, 1.0)
-    W = skin_weights(ps, piece.skin)
+    W = (piece.weights or skin_weights)(ps, piece.skin)
+    ext = np.clip(piece.extra(ps, nrm, vreg), 0.0, 1.0) if piece.extra else np.ones(len(ps))
     uv0, uv1 = encode_weights(W)
 
     me.uv_layers.new(name="UVMap")
@@ -468,7 +478,7 @@ def build_piece(piece, ao_fn):
         rg = freg[poly.index]
         for li in poly.loop_indices:
             vi = me.loops[li].vertex_index
-            cols += [rg / 16.0 + 1.0 / 32.0, cav[vi], wth[vi], 1.0]
+            cols += [rg / 16.0 + 1.0 / 32.0, cav[vi], wth[vi], ext[vi]]
             # The glTF exporter flips V (v -> 1 - v): pre-flip so the file holds the code.
             u0 += [uv0[vi, 0], 1.0 - uv0[vi, 1]]
             u1 += [uv1[vi, 0], 1.0 - uv1[vi, 1]]
