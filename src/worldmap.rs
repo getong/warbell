@@ -2587,111 +2587,244 @@ pub(crate) fn ground_color(x: f32, z: f32) -> [f32; 4] {
     [col[0], col[1], col[2], wet.clamp(0.0, 1.0)]
 }
 
-// ── Shore-distance field (water shader foam / shallows) ─────────────────────────
-/// Max encoded shore distance, in tiles — keep in sync with `SHORE_MAX` in
-/// `assets/shaders/water.wgsl`.
+// ── Water field (water shader: depth stand-in, bog murk, river flow) ────────────────
+/// Texels per world unit of the water field. 2 resolves the marching-squares banks to half a
+/// tile — the old one-texel-per-tile, centre-sampled shore field put the shallows and the foam
+/// line up to a tile off the rendered bank.
+const FIELD_RES: usize = 2;
+/// Signed bank-distance range encoded in the field's R channel, world units: −[`SHORE_LAND`]
+/// (inside the bank) … +[`SHORE_MAX`] offshore. Keep both in sync with `assets/shaders/water.wgsl`.
 const SHORE_MAX: f32 = 8.0;
+const SHORE_LAND: f32 = 1.0;
+/// How far (base units) river flow keeps pushing past the channel edge before fading out — so a
+/// river mouth's current carries a little way into the sea / lake instead of stopping dead.
+const FLOW_FADE: f32 = 2.5;
 
-/// Bake an R8 distance-to-land field over the island (1 texel = 1 world unit, with a
-/// sea margin all round): 0 on land ramping to 1 at ≥ [`SHORE_MAX`] tiles offshore.
-/// The water shader samples it for the shore foam collar + shallow→deep gradient —
-/// the terrain has **no underwater geometry** (cliff walls stop at the waterline), so
-/// scene depth can't measure shallowness; this baked field is the only source.
-/// Returns the image plus the world→UV mapping (`xy` = min corner, `zw` = 1/extent).
-fn bake_shore_distance(images: &mut Assets<Image>) -> (Handle<Image>, Handle<Image>, Vec4) {
-    // Derived from the grid (was hardcoded 288×384 for MAP_SCALE 1.8 — at 2.2 the island reaches
-    // world x ±~156 and the Blight z ~+240, past the old cover, which silently cut the water
-    // shader's foam/shallows off at the fringes). +2·16 texels of open-sea margin all round so
-    // the distance field ramps fully out to SHORE_MAX before clamp-to-edge takes over.
-    let w: usize = COLS as usize + 32; // covers world x ∈ [−GX−16, COLS−GX+16]
-    let h: usize = ROWS as usize + 32; // covers world z ∈ [−GZ−16, ROWS−GZ+16]
-    let min_x = -GX - 16.0;
-    let min_z = -GZ - 16.0;
-    #[allow(non_snake_case)]
-    let (W, H) = (w, h);
-    let idx = |x: usize, z: usize| z * W + x;
-
-    // Land mask → two-pass 8-neighbour chamfer distance transform (≈Euclidean).
-    let mut d = vec![f32::INFINITY; W * H];
-    for z in 0..H {
-        for x in 0..W {
-            let wx = min_x + x as f32 + 0.5;
-            let wz = min_z + z as f32 + 0.5;
-            if ground_at_world(wx, wz).is_some() {
-                d[idx(x, z)] = 0.0;
-            }
-        }
-    }
+/// Two-pass 8-neighbour chamfer distance transform (≈Euclidean, in texels): `d` holds 0 at the
+/// sources and +∞ elsewhere on entry.
+fn chamfer(d: &mut [f32], w: usize, h: usize) {
     const DIAG: f32 = 1.414;
-    for z in 0..H {
-        for x in 0..W {
+    let idx = |x: usize, z: usize| z * w + x;
+    for z in 0..h {
+        for x in 0..w {
             let mut v = d[idx(x, z)];
             if x > 0 { v = v.min(d[idx(x - 1, z)] + 1.0); }
             if z > 0 { v = v.min(d[idx(x, z - 1)] + 1.0); }
             if x > 0 && z > 0 { v = v.min(d[idx(x - 1, z - 1)] + DIAG); }
-            if x + 1 < W && z > 0 { v = v.min(d[idx(x + 1, z - 1)] + DIAG); }
+            if x + 1 < w && z > 0 { v = v.min(d[idx(x + 1, z - 1)] + DIAG); }
             d[idx(x, z)] = v;
         }
     }
-    for z in (0..H).rev() {
-        for x in (0..W).rev() {
+    for z in (0..h).rev() {
+        for x in (0..w).rev() {
             let mut v = d[idx(x, z)];
-            if x + 1 < W { v = v.min(d[idx(x + 1, z)] + 1.0); }
-            if z + 1 < H { v = v.min(d[idx(x, z + 1)] + 1.0); }
-            if x + 1 < W && z + 1 < H { v = v.min(d[idx(x + 1, z + 1)] + DIAG); }
-            if x > 0 && z + 1 < H { v = v.min(d[idx(x - 1, z + 1)] + DIAG); }
+            if x + 1 < w { v = v.min(d[idx(x + 1, z)] + 1.0); }
+            if z + 1 < h { v = v.min(d[idx(x, z + 1)] + 1.0); }
+            if x + 1 < w && z + 1 < h { v = v.min(d[idx(x + 1, z + 1)] + DIAG); }
+            if x > 0 && z + 1 < h { v = v.min(d[idx(x - 1, z + 1)] + DIAG); }
             d[idx(x, z)] = v;
+        }
+    }
+}
+
+/// Bake the RGBA8 water field the water shader reads (one texture, one sample — it replaced the
+/// separate R8 shore + bog masks), [`FIELD_RES`] texels per world unit over the whole grid plus a
+/// sea margin:
+/// - **R** — SIGNED distance to the rendered bank, world units (−[`SHORE_LAND`] … +[`SHORE_MAX`]).
+///   The terrain has **no underwater geometry** (cliff walls stop at the waterline), so scene depth
+///   can't measure shallowness; this is the shader's depth stand-in (shallows, absorption, foam
+///   line, and the reflected-bank march). Signed so the filtered zero crossing lands on the bank
+///   at sub-texel accuracy.
+/// - **G** — bog murk mask: the swamp's standing pools + the river stretches threading the marsh
+///   (keyed on `pool_sd`, NOT `is_pool` — the latter also covers the lake's blue feeder/drain
+///   streams, which must stay CLEAR water).
+/// - **BA** — river flow, direction × speed (0.5-biased, world XZ): along each river's centreline
+///   from source to mouth, and along the lake's plunge stream + outflow brook. Zero on still water.
+/// Returns the image plus the world→UV mapping (`xy` = min corner, `zw` = 1/extent).
+fn bake_water_field(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
+    const MARGIN: f32 = 16.0; // open sea all round, so the distance ramps out before the edge
+    let r = FIELD_RES as f32;
+    let (min_x, min_z) = (-GX - MARGIN, -GZ - MARGIN);
+    let (ext_x, ext_z) = (COLS as f32 + 2.0 * MARGIN, ROWS as f32 + 2.0 * MARGIN);
+    let (w, h) = ((ext_x * r) as usize, (ext_z * r) as usize);
+    let centre = |i: usize| (min_x + ((i % w) as f32 + 0.5) / r, min_z + ((i / w) as f32 + 0.5) / r);
+
+    // 1. Water mask AS RENDERED — mirrors `build_terrain_chunk`'s per-cell decision (keep the two in
+    //    step): a river / low-wetland-coast cell with 1–3 wet corners is cut along the `= 0` contour
+    //    of its corner field (bilinear here); every other cell is all land or all water by its
+    //    tile. The footing sampler (`ground_at_world`, what the old field used) staircases the
+    //    plain coast and the lake, which put the foam line a tile off the drawn bank.
+    enum Cell {
+        Dry,
+        Wet,
+        Cut([f32; 4]),
+    }
+    const NB: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
+    let cw = COLS as usize + 1;
+    let mut corner: Vec<Option<(f32, bool)>> = vec![None; cw * (ROWS as usize + 1)];
+    let mut cells = Vec::with_capacity((COLS * ROWS) as usize);
+    for iz in 0..ROWS {
+        for ix in 0..COLS {
+            let mut cwat = [(0.0, false); 4];
+            for (k, (cx, cz)) in [(ix, iz), (ix + 1, iz), (ix + 1, iz + 1), (ix, iz + 1)].into_iter().enumerate() {
+                cwat[k] = *corner[cz as usize * cw + cx as usize].get_or_insert_with(|| corner_water(cx, cz));
+            }
+            let has_river = cwat.iter().any(|c| c.1);
+            let here = tile_at(ix, iz);
+            let coast_biome = here.or_else(|| NB.iter().find_map(|&(dx, dz)| tile_at(ix + dx, iz + dz)));
+            let low_coast = matches!(coast_biome, Some((TB::Swamp | TB::Blight, h)) if h <= 1)
+                || matches!(coast_biome, Some((_, h)) if h <= 1
+                    && (is_arena()
+                        || nw_headland((ix as f32 + 0.5) / MAP_SCALE, (iz as f32 + 0.5) / MAP_SCALE) > 0.0));
+            let low_wet_coast = !has_river && low_coast && cwat.iter().any(|c| c.0 < 0.0);
+            let rs = if low_wet_coast {
+                let sf = |cx: i32, cz: i32| sea_field(cx as f32 / MAP_SCALE, cz as f32 / MAP_SCALE);
+                [sf(ix, iz), sf(ix + 1, iz), sf(ix + 1, iz + 1), sf(ix, iz + 1)]
+            } else {
+                [cwat[0].0, cwat[1].0, cwat[2].0, cwat[3].0]
+            };
+            let wetn = rs.iter().filter(|&&s| s < 0.0).count();
+            let saddle = wetn == 2 && (rs[0] < 0.0) == (rs[2] < 0.0);
+            let cut = (1..=3).contains(&wetn) && !saddle && (has_river || low_wet_coast);
+            cells.push(if wetn == 4 || (here.is_none() && !cut) {
+                Cell::Wet
+            } else if cut {
+                Cell::Cut(rs)
+            } else {
+                Cell::Dry
+            });
+        }
+    }
+    let wet: Vec<bool> = (0..w * h)
+        .map(|i| {
+            let (wx, wz) = centre(i);
+            let (gx, gz) = (wx + GX, wz + GZ);
+            let (ix, iz) = (gx.floor() as i32, gz.floor() as i32);
+            if ix < 0 || iz < 0 || ix >= COLS || iz >= ROWS {
+                return true; // open sea
+            }
+            match &cells[(iz * COLS + ix) as usize] {
+                Cell::Wet => true,
+                Cell::Dry => false,
+                Cell::Cut(rs) => {
+                    // rs = [c00, c10, c11, c01] (corner order as the mesher's).
+                    let (fx, fz) = (gx - ix as f32, gz - iz as f32);
+                    let a = rs[0] + (rs[1] - rs[0]) * fx;
+                    let b = rs[3] + (rs[2] - rs[3]) * fx;
+                    a + (b - a) * fz < 0.0
+                }
+            }
+        })
+        .collect();
+    drop(cells);
+
+    // 2. Signed distance: water texels measure to the nearest land, land texels to the nearest
+    //    water; the half-texel shift puts the zero between the two texel centres.
+    let mut d_land: Vec<f32> = wet.iter().map(|&wv| if wv { f32::INFINITY } else { 0.0 }).collect();
+    let mut d_water: Vec<f32> = wet.iter().map(|&wv| if wv { 0.0 } else { f32::INFINITY }).collect();
+    chamfer(&mut d_land, w, h);
+    chamfer(&mut d_water, w, h);
+
+    // 3. River channel distance + flow. The nearest centreline point is SPLATTED per point over its
+    //    reach (a per-texel scan of every point would be ~10⁸ distance tests at load): base-unit
+    //    distance (`river_sd` minus its edge fray) + the point's index. Unit tangents run source →
+    //    mouth; the point list concatenates every river, so a big jump between neighbours marks a
+    //    new river (the points themselves are 0.6 apart).
+    let rf = river_points();
+    let pts = &rf.pts;
+    let tang: Vec<Vec2> = (0..pts.len())
+        .map(|i| {
+            let near = |j: usize| (pts[j].0 - pts[i].0).hypot(pts[j].1 - pts[i].1) < 2.0;
+            let a = if i > 0 && near(i - 1) { i - 1 } else { i };
+            let b = if i + 1 < pts.len() && near(i + 1) { i + 1 } else { i };
+            Vec2::new(pts[b].0 - pts[a].0, pts[b].1 - pts[a].1).normalize_or_zero()
+        })
+        .collect();
+    let mut chan = vec![(f32::INFINITY, 0u32); w * h];
+    for (pi, &(px, pz, half)) in pts.iter().enumerate() {
+        let (cx, cz) = (px * MAP_SCALE - GX, pz * MAP_SCALE - GZ);
+        let reach = (half + FLOW_FADE) * MAP_SCALE;
+        let span = |c: f32, lo: f32, n: usize| {
+            let a = ((c - reach - lo) * r).floor().max(0.0) as usize;
+            let b = (((c + reach - lo) * r).ceil().max(0.0) as usize).min(n);
+            a..b
+        };
+        for tz in span(cz, min_z, h) {
+            for tx in span(cx, min_x, w) {
+                let i = tz * w + tx;
+                let (wx, wz) = centre(i);
+                let d = ((wx + GX) / MAP_SCALE - px).hypot((wz + GZ) / MAP_SCALE - pz) - half;
+                if d < chan[i].0 {
+                    chan[i] = (d, pi as u32);
+                }
+            }
         }
     }
 
-    let data: Vec<u8> =
-        d.iter().map(|v| ((v / SHORE_MAX).clamp(0.0, 1.0) * 255.0) as u8).collect();
-    let linear = ImageSampler::Descriptor(ImageSamplerDescriptor {
-        mag_filter: ImageFilterMode::Linear,
-        min_filter: ImageFilterMode::Linear,
-        ..default()
-    });
+    // 4. Encode. Bog + flow only where the shader can ever sample them (water + the bank margin, so
+    //    linear filtering doesn't fade them at the waterline); deeper land stays zeroed.
+    let enc = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+    let mut data = vec![0u8; w * h * 4];
+    for i in 0..w * h {
+        let sd = if wet[i] { (d_land[i] - 0.5) / r } else { -(d_water[i] - 0.5) / r };
+        let o = i * 4;
+        data[o] = enc((sd + SHORE_LAND) / (SHORE_LAND + SHORE_MAX));
+        data[o + 2] = 128;
+        data[o + 3] = 128;
+        if sd <= -SHORE_LAND {
+            continue;
+        }
+        let (wx, wz) = centre(i);
+        let (bx, bz) = ((wx + GX) / MAP_SCALE, (wz + GZ) / MAP_SCALE);
+        let (cd, pi) = chan[i];
+        let river = cd < FLOW_FADE && !river_blocked(bx, bz);
+        let (mut flow, mut wgt) = (Vec2::ZERO, 0.0);
+        if river {
+            wgt = 1.0 - smoothstep(0.0, FLOW_FADE, cd);
+            // Narrow upper reaches run faster than the broad mouths.
+            let speed = (0.42 / pts[pi as usize].2).clamp(0.55, 1.0);
+            flow = tang[pi as usize] * speed * wgt;
+        }
+        if !is_arena() {
+            for (k, &((ax, az), (ex, ez), half)) in BLUE_STREAMS.iter().enumerate() {
+                let (abx, abz) = (ex - ax, ez - az);
+                let t = (((bx - ax) * abx + (bz - az) * abz) / (abx * abx + abz * abz)).clamp(0.0, 1.0);
+                let d = (bx - ax - abx * t).hypot(bz - az - abz * t) - half;
+                let wv = 1.0 - smoothstep(0.0, FLOW_FADE, d);
+                if wv > wgt {
+                    // The waterfall plunge ([0]) races into the lake; the outflow brook ambles.
+                    let speed = if k == 0 { 1.0 } else { 0.7 };
+                    flow = Vec2::new(abx, abz).normalize() * speed * wv;
+                    wgt = wv;
+                }
+            }
+        }
+        let bog = pool_sd(bx, bz) < 0.4 || (river && cd < 0.4 && in_swamp_region_world(wx, wz));
+        data[o + 1] = if bog { 255 } else { 0 };
+        data[o + 2] = enc(0.5 + 0.5 * flow.x);
+        data[o + 3] = enc(0.5 + 0.5 * flow.y);
+    }
+
     let mut img = Image::new(
-        Extent3d { width: W as u32, height: H as u32, depth_or_array_layers: 1 },
+        Extent3d { width: w as u32, height: h as u32, depth_or_array_layers: 1 },
         TextureDimension::D2,
         data,
-        TextureFormat::R8Unorm,
+        TextureFormat::Rgba8Unorm, // linear data, NOT sRGB
         // MAIN_WORLD too (not RENDER_WORLD-only): terrain/water materials are re-minted on
         // every in-process world rebuild, and a handle whose CPU copy was dropped after the
         // first extract can leave the new material's bind group unpreparable — the sheet
         // then never renders ("ground textures didn't load"). See terrain.rs::make_material.
         RenderAssetUsages::default(),
     );
-    // Linear filtering smooths the 1-texel bands; the default clamp-to-edge address
-    // mode makes off-texture samples read the border (open sea = max distance).
-    img.sampler = linear.clone();
-    // BOG mask (map-character overhaul pass 3): 1 over the swamp's carved standing POOLS AND over
-    // river water inside the swamp regions, same region mapping as the shore field — the water
-    // shader swaps the vivid river palette for still dark-olive murk there and kills the foam
-    // collar (a bog doesn't lap; a marsh stream shouldn't glow turquoise between pools).
-    // NB: keys on `pool_sd` (the olive blobs), NOT `is_pool` — the latter also covers the lake's
-    // blue feeder/drain streams (`BLUE_STREAMS`), which must render as CLEAR water, not bog.
-    let bog_data: Vec<u8> = (0..W * H)
-        .map(|i| {
-            let wx = min_x + (i % W) as f32 + 0.5;
-            let wz = min_z + (i / W) as f32 + 0.5;
-            if pool_sd_world(wx, wz) < 0.0 || (in_swamp_region_world(wx, wz) && is_river_world(wx, wz)) {
-                255
-            } else {
-                0
-            }
-        })
-        .collect();
-    let mut bog_img = Image::new(
-        Extent3d { width: W as u32, height: H as u32, depth_or_array_layers: 1 },
-        TextureDimension::D2,
-        bog_data,
-        TextureFormat::R8Unorm,
-        RenderAssetUsages::default(), // MAIN_WORLD too — same rebuild hazard as the shore mask above
-    );
-    bog_img.sampler = linear;
-    let region = Vec4::new(min_x, min_z, 1.0 / W as f32, 1.0 / H as f32);
-    (images.add(img), images.add(bog_img), region)
+    // Linear filtering smooths the half-unit texels; clamp-to-edge is moot (the shader reads
+    // "deep, still, clear" outside the field's UV square).
+    img.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        mag_filter: ImageFilterMode::Linear,
+        min_filter: ImageFilterMode::Linear,
+        ..default()
+    });
+    let region = Vec4::new(min_x, min_z, 1.0 / ext_x, 1.0 / ext_z);
+    (images.add(img), region)
 }
 
 // ── Build ────────────────────────────────────────────────────────────────────────
@@ -2962,31 +3095,38 @@ fn bs_sea_and_boats(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: 
     // gameplay-height eye (y≈2, rim angle 0.25° vs dip 0.045°). So it's an overview/marketing-shot
     // problem, not a play-view one. Real fixes, none of them one-liners: extend the sea past the
     // true horizon (≈19.5k units at y=30 — needs a separate cheap backdrop quad, because this
-    // mesh's extent is tied to `bake_shore_distance`'s `shore_region` UV mapping), or match the fog
+    // mesh's extent is tied to `bake_water_field`'s region UV mapping), or match the fog
     // colour to the Atmosphere's horizon colour across the whole day cycle, or drop `DistanceFog`
     // on the sea in favour of the Atmosphere's own aerial perspective.
     let sea_mesh = meshes.add(Plane3d::default().mesh().size(900.0, 900.0).subdivisions(8).build());
-    let (shore_tex, bog_tex, shore_region) = bake_shore_distance(images);
+    let (field, region) = bake_water_field(images);
+    // The ONE water material (sea, rivers, lake, bog pools). The shader overrides base colour and
+    // normal per fragment; the base only supplies the PBR constants: roughness is the calm-water
+    // floor (the ripple map's mip variance widens it with distance) and reflectance 0.35 gives
+    // F0 ≈ 0.02, water's real normal-incidence reflectance (the old 0.5 = 0.04 was glassy).
     let sea = water_mats.add(ExtendedMaterial {
         base: StandardMaterial {
-            base_color: Color::srgba(0x2f as f32 / 255.0, 0x6f as f32 / 255.0, 0xae as f32 / 255.0, 0.9),
-            perceptual_roughness: 0.24,
-            reflectance: 0.5,
-            alpha_mode: AlphaMode::Blend,
+            base_color: Color::WHITE,
+            perceptual_roughness: 0.08,
+            reflectance: 0.35,
             cull_mode: None,
             ..default()
         },
         extension: WaterExt {
-            params: WaterParams {
-                params: Vec4::new(0.22, 0.45, 0.4, 0.85),
-                sky_tint: Vec4::new(0.70, 0.82, 0.93, 1.0),
-                region: shore_region,
-            },
-            shore: Some(shore_tex),
-            bog: Some(bog_tex),
+            params: WaterParams { params: Vec4::new(1.0, 0.55, 1.0, 0.0), region },
+            field: Some(field),
+            ripples: Some(crate::water::ripple_map(images)),
         },
     });
-    commands.spawn((Mesh3d(sea_mesh), MeshMaterial3d(sea), Transform::from_xyz(0.0, SEA_Y, 0.0), crate::biome::BiomeEntity));
+    // NotShadowCaster: there is nothing under the waterline for the plane to shadow, so keep it out
+    // of every shadow cascade (it still RECEIVES shadows — trees darken the water as they should).
+    commands.spawn((
+        Mesh3d(sea_mesh),
+        MeshMaterial3d(sea),
+        Transform::from_xyz(0.0, SEA_Y, 0.0),
+        bevy::light::NotShadowCaster,
+        crate::biome::BiomeEntity,
+    ));
 
     // The arena wants the sea plane + shore bake (so its coast foams), but none of the campaign
     // dressing: no background sailboats, and no ork-camp planning (camps never spawn on it).
