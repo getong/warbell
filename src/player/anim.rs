@@ -1298,6 +1298,8 @@ fn guard_overlay(p: &mut Pose, amt: f32, moving: f32) {
     }
     p.hips.r = e3(0.05 * lower_amt, 0.0, 0.0) * p.hips.r;
     p.torso.r = e3(0.09 * a, 0.0, 0.0) * p.torso.r;
+    // Eyes on the foe: the calm idle's wandering gaze settles straight ahead.
+    p.head.r = p.head.r.slerp(Quat::IDENTITY, lower_amt);
     p.knee_l.r = p.knee_l.r * rx(0.22 * lower_amt);
     p.knee_r.r = p.knee_r.r * rx(0.20 * lower_amt);
     p.hip_l.r = p.hip_l.r * rx(-0.11 * lower_amt);
