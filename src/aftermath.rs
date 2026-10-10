@@ -5,6 +5,9 @@
 //! but these stay through the following day and are swept only when the NEXT assault
 //! begins (Prep→Wave), so each day you walk a battlefield that reads as last night.
 //!
+//! The stains + scorches are `combat_marks` decals (feathered, seeded, multiply-blended). They
+//! used to be 8–14-sided vertex-coloured discs, which read as stamped polygons on the PBR ground.
+//!
 //! Bounded: a FIFO cap reaps the oldest marks so a marathon run can't litter thousands of
 //! entities. Everything is tagged `BiomeEntity` too, so world rebuilds wipe it like any
 //! other dressing.
@@ -12,9 +15,11 @@
 use std::collections::VecDeque;
 
 use bevy::light::NotShadowCaster;
+use bevy::mesh::MeshTag;
 use bevy::prelude::*;
 
 use crate::biome::BiomeEntity;
+use crate::combat_marks::{self, MarkAssets, MarkKind};
 use crate::dying::Dying;
 use crate::orks::Ork;
 use crate::palette::lin;
@@ -31,20 +36,18 @@ const DROP_CHANCE: f32 = 0.45;
 const BLOOD_HOLD: f32 = 12.0;
 const BLOOD_FADE: f32 = 18.0;
 
-/// Positive `StandardMaterial::depth_bias` for flat ground decals (blood stains, scorches) so they
-/// render in front of whatever flat surface they're stamped on instead of z-fighting it. The
-/// courtyard cobble is an opaque slab at y≈0.04 and a decal landing at the same height ties in the
-/// depth buffer → flicker. The bias breaks the tie toward the decal without lifting the geometry
-/// (which would make discs float/clip on sloped biome ground).
-const GROUND_DECAL_DEPTH_BIAS: f32 = 50.0;
+/// World diameter of a dried stain / a scorch quad at scale 1 (the shader's pool fills ~60% of
+/// its quad, with a few thrown droplets out toward the edge — so this matches the old ~0.5u-radius
+/// stain disc + satellites, and the old 0.62u scorch rim).
+const STAIN_DIAMETER: f32 = 1.7;
+const SCORCH_DIAMETER: f32 = 1.5;
+/// Stain strength before its fade (the shader's dried tone already sits near-black crimson).
+const STAIN_ALPHA: f32 = 0.85;
 
 const TAU: f32 = std::f32::consts::TAU;
 const FRAC_PI_2: f32 = std::f32::consts::FRAC_PI_2;
 
-// Palette (aftermath-only tones).
-const BLOOD_DRY: u32 = 0x3c120c; // dried near-black crimson
-const CHAR: u32 = 0x16130f; // scorched earth
-const CHAR_RIM: u32 = 0x2e2218; // singed rim around a scorch
+// Palette (dropped-gear tones; the stain / scorch tones live in `ground_mark.wgsl`).
 const CLUB_WOOD: u32 = 0x4b3724;
 const CLUB_KNOB: u32 = 0x33271a;
 const SPEAR_SHAFT: u32 = 0x3a2a1a;
@@ -61,13 +64,14 @@ pub struct BattleMark {
 struct Aftermath;
 
 /// A blood stain that fades out on its own (unlike gear/scorches, which persist till the next
-/// assault). Carries its OWN material handle — the stain's alpha lives in the mesh vertex colour,
-/// so [`fade_blood`] dims this per-stain material's `base_color` alpha (which multiplies it) to
-/// ramp the whole splat out, then despawns it.
+/// assault). [`fade_blood`] ramps the decal's `MeshTag` strength down, then despawns it — every
+/// stain shares the one `combat_marks` stain material (the old per-stain `StandardMaterial` clone,
+/// re-uploaded on every fade step, is gone).
 #[derive(Component)]
 struct BloodStain {
     born: f32,
-    mat: Handle<StandardMaterial>,
+    /// Shape seed, re-packed with the fading strength so the pool keeps its outline.
+    seed: u32,
 }
 
 /// FIFO of live marks for the cap.
@@ -77,13 +81,11 @@ struct MarkLog {
     rng: u32,
 }
 
-/// Prebuilt mark meshes + the two materials (solid gear vs alpha-blended ground decals).
+/// Prebuilt dropped-gear meshes + their shared solid material. (The ground stains / scorches use
+/// the shared `combat_marks::MarkAssets`.)
 #[derive(Resource)]
-struct MarkAssets {
+struct GearAssets {
     solid_mat: Handle<StandardMaterial>,
-    decal_mat: Handle<StandardMaterial>,
-    stain: Handle<Mesh>,
-    scorch: Handle<Mesh>,
     club: Handle<Mesh>,
     spear: Handle<Mesh>,
     helmet: Handle<Mesh>,
@@ -109,28 +111,14 @@ fn setup_assets(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    // Gear shares the standard white vertex-colour recipe so it batches with other props;
-    // the ground decals need alpha (a hard opaque disc reads stamped-on, not soaked-in).
+    // Gear shares the standard white vertex-colour recipe so it batches with other props.
     let solid_mat = materials.add(StandardMaterial {
         base_color: Color::WHITE,
         perceptual_roughness: 0.9,
         ..default()
     });
-    let decal_mat = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        perceptual_roughness: 1.0,
-        alpha_mode: AlphaMode::Blend,
-        // Ground decals lie ~coplanar with the cobble courtyard slab (a flat opaque sheet at
-        // y≈0.04). Without a depth bias the two surfaces tie in the depth buffer and flicker.
-        // A positive bias renders the decal consistently in front of whatever it's stamped on.
-        depth_bias: GROUND_DECAL_DEPTH_BIAS,
-        ..default()
-    });
-    commands.insert_resource(MarkAssets {
+    commands.insert_resource(GearAssets {
         solid_mat,
-        decal_mat,
-        stain: meshes.add(stain_mesh(BLOOD_DRY, 0.5, 0.78)),
-        scorch: meshes.add(scorch_mesh()),
         club: meshes.add(club_mesh()),
         spear: meshes.add(spear_mesh()),
         helmet: meshes.add(helmet_mesh()),
@@ -145,39 +133,38 @@ fn setup_assets(
 fn mark_ork_falls(
     time: Res<Time>,
     fallen: Query<&GlobalTransform, (With<Ork>, Added<Dying>)>,
-    assets: Option<Res<MarkAssets>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    gear: Option<Res<GearAssets>>,
+    marks: Option<Res<MarkAssets>>,
     mut log: ResMut<MarkLog>,
     mut commands: Commands,
 ) {
-    let Some(assets) = assets else { return };
+    let (Some(gear), Some(marks)) = (gear, marks) else { return };
     let now = time.elapsed_secs();
     for gt in &fallen {
         let p = gt.translation();
         let yaw = rng01(&mut log.rng) * TAU;
         let s = 0.8 + rng01(&mut log.rng) * 0.6;
-        // Squash one axis so no two stains read as the same stamped circle.
+        // Squash one axis (on top of the shader's seeded lumpy rim) so no two stains match.
         let squash = 0.6 + rng01(&mut log.rng) * 0.4;
-        let stain_tf = Transform {
-            translation: Vec3::new(p.x, p.y + 0.025, p.z),
-            rotation: Quat::from_rotation_y(yaw),
-            scale: Vec3::new(s, 1.0, s * squash),
-        };
-        // Each stain gets its own (alpha-blended) material so `fade_blood` can dim it solo.
-        let stain_mat = materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            perceptual_roughness: 1.0,
-            alpha_mode: AlphaMode::Blend,
-            depth_bias: GROUND_DECAL_DEPTH_BIAS, // win the depth tie vs. the courtyard cobble
-            ..default()
-        });
-        let e = spawn_mark(&mut commands, &mut log, assets.stain.clone(), stain_mat.clone(), stain_tf);
-        commands.entity(e).try_insert(BloodStain { born: now, mat: stain_mat });
+        let seed = (rng01(&mut log.rng) * 256.0) as u32;
+        let e = combat_marks::spawn_mark(
+            &mut commands,
+            &marks,
+            MarkKind::BloodDry,
+            Vec3::new(p.x, p.y + 0.025, p.z),
+            STAIN_DIAMETER * s,
+            yaw,
+            squash,
+            STAIN_ALPHA,
+            seed,
+        );
+        log_mark(&mut commands, &mut log, e);
+        commands.entity(e).try_insert(BloodStain { born: now, seed });
         if rng01(&mut log.rng) < DROP_CHANCE {
             let mesh = match (rng01(&mut log.rng) * 3.0) as u32 {
-                0 => assets.club.clone(),
-                1 => assets.spear.clone(),
-                _ => assets.helmet.clone(),
+                0 => gear.club.clone(),
+                1 => gear.spear.clone(),
+                _ => gear.helmet.clone(),
             };
             let a = rng01(&mut log.rng) * TAU;
             let d = 0.5 + rng01(&mut log.rng) * 0.6;
@@ -187,62 +174,65 @@ fn mark_ork_falls(
                 rotation: Quat::from_rotation_y(gear_yaw),
                 scale: Vec3::ONE,
             };
-            spawn_mark(&mut commands, &mut log, mesh, assets.solid_mat.clone(), gear_tf);
+            let g = commands
+                .spawn((Mesh3d(mesh), MeshMaterial3d(gear.solid_mat.clone()), gear_tf, NotShadowCaster))
+                .id();
+            log_mark(&mut commands, &mut log, g);
         }
     }
 }
 
 /// Scorch the ground where a shaman bolt burst (written by `projectile.rs`).
 fn mark_scorches(
-    mut marks: MessageReader<BattleMark>,
-    assets: Option<Res<MarkAssets>>,
+    mut bursts: MessageReader<BattleMark>,
+    marks: Option<Res<MarkAssets>>,
     mut log: ResMut<MarkLog>,
     mut commands: Commands,
 ) {
-    let Some(assets) = assets else { return };
-    for m in marks.read() {
+    let Some(marks) = marks else { return };
+    for m in bursts.read() {
         let ground = crate::worldmap::ground_at_world(m.at.x, m.at.z).unwrap_or(m.at.y - 1.0);
         let s = 0.8 + rng01(&mut log.rng) * 0.5;
         let yaw = rng01(&mut log.rng) * TAU;
         let squash = 0.75 + rng01(&mut log.rng) * 0.25;
-        let tf = Transform {
-            translation: Vec3::new(m.at.x, ground + 0.03, m.at.z),
-            rotation: Quat::from_rotation_y(yaw),
-            scale: Vec3::new(s, 1.0, s * squash),
-        };
-        spawn_mark(&mut commands, &mut log, assets.scorch.clone(), assets.decal_mat.clone(), tf);
+        let seed = (rng01(&mut log.rng) * 256.0) as u32;
+        let e = combat_marks::spawn_mark(
+            &mut commands,
+            &marks,
+            MarkKind::Scorch,
+            Vec3::new(m.at.x, ground + 0.03, m.at.z),
+            SCORCH_DIAMETER * s,
+            yaw,
+            squash,
+            1.0,
+            seed,
+        );
+        log_mark(&mut commands, &mut log, e);
     }
 }
 
-fn spawn_mark(
-    commands: &mut Commands,
-    log: &mut MarkLog,
-    mesh: Handle<Mesh>,
-    mat: Handle<StandardMaterial>,
-    tf: Transform,
-) -> Entity {
-    let e = commands
-        .spawn((Mesh3d(mesh), MeshMaterial3d(mat), tf, NotShadowCaster, Aftermath, BiomeEntity))
-        .id();
+/// Tag a freshly spawned mark as aftermath (swept at the next assault, wiped by a world rebuild)
+/// and push it on the FIFO, reaping the oldest past [`MAX_MARKS`].
+fn log_mark(commands: &mut Commands, log: &mut MarkLog, e: Entity) {
+    commands.entity(e).try_insert((Aftermath, BiomeEntity));
     log.entities.push_back(e);
     while log.entities.len() > MAX_MARKS {
         if let Some(old) = log.entities.pop_front() {
             commands.entity(old).try_despawn();
         }
     }
-    e
 }
 
-/// Ramp each blood stain's per-stain material alpha down after [`BLOOD_HOLD`]s and despawn it once
-/// fully faded — so blood clears within ~30s while gear/scorches keep the day-long battlefield read.
+/// Ramp each blood stain's strength down after [`BLOOD_HOLD`]s and despawn it once fully faded —
+/// so blood clears within ~30s while gear/scorches keep the day-long battlefield read. Only the
+/// stain's `MeshTag` moves (and only when its packed 8-bit strength actually steps).
 fn fade_blood(
     time: Res<Time>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    stains: Query<(Entity, &BloodStain)>,
+    mut stains: Query<(Entity, &BloodStain, &mut MeshTag)>,
     mut commands: Commands,
 ) {
     let now = time.elapsed_secs();
-    for (e, b) in &stains {
+    for (e, b, mut tag) in &mut stains {
         let age = now - b.born;
         if age < BLOOD_HOLD {
             continue;
@@ -250,8 +240,11 @@ fn fade_blood(
         let f = ((age - BLOOD_HOLD) / BLOOD_FADE).min(1.0); // 0 → 1 across the fade window
         if f >= 1.0 {
             commands.entity(e).try_despawn();
-        } else if let Some(mut m) = materials.get_mut(&b.mat) {
-            m.base_color = m.base_color.with_alpha(1.0 - f); // multiplies the mesh's vertex alpha
+            continue;
+        }
+        let want = combat_marks::tag(MarkKind::BloodDry, STAIN_ALPHA * (1.0 - f), b.seed, 0.0);
+        if tag.0 != want.0 {
+            tag.0 = want.0;
         }
     }
 }
@@ -273,42 +266,12 @@ fn sweep_at_next_assault(
     }
 }
 
-// ── Mark meshes (contract: base y=0, ATTRIBUTE_COLOR, flat-shaded merge) ───────────
+// ── Gear meshes (contract: base y=0, ATTRIBUTE_COLOR, flat-shaded merge) ───────────
 
 fn tint(mut m: Mesh, c: [f32; 4]) -> Mesh {
     let n = m.count_vertices();
     m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![c; n]);
     m
-}
-
-fn tint_a(mut m: Mesh, hex: u32, alpha: f32) -> Mesh {
-    let mut c = lin(hex);
-    c[3] = alpha;
-    let n = m.count_vertices();
-    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![c; n]);
-    m
-}
-
-/// Flat ground disc (lying in XZ, normal up) — the stain / scorch base shape.
-fn disc(r: f32, res: u32) -> Mesh {
-    Circle::new(r).mesh().resolution(res).build().rotated_by(Quat::from_rotation_x(-FRAC_PI_2))
-}
-
-fn stain_mesh(hex: u32, r: f32, alpha: f32) -> Mesh {
-    // A main pool + two satellite spatters so it reads soaked, not stamped.
-    merged_flat(vec![
-        tint_a(disc(r, 12), hex, alpha),
-        tint_a(disc(r * 0.35, 8).translated_by(Vec3::new(r * 0.95, 0.005, r * 0.25)), hex, alpha * 0.9),
-        tint_a(disc(r * 0.22, 8).translated_by(Vec3::new(-r * 0.7, 0.005, -r * 0.75)), hex, alpha * 0.8),
-    ])
-}
-
-fn scorch_mesh() -> Mesh {
-    // Charred core with a singed rim peeking out under it.
-    merged_flat(vec![
-        tint_a(disc(0.62, 14), CHAR_RIM, 0.6),
-        tint_a(disc(0.45, 12).translated_by(Vec3::Y * 0.006), CHAR, 0.85),
-    ])
 }
 
 /// A dropped ork club lying on its side.

@@ -32,7 +32,7 @@ use crate::creature::{make_viewmodel_material, CreatureMaterial};
 use crate::game_state::{AppState, CampaignOnly};
 use crate::inventory::Inventory;
 use crate::villagers::NpcHp;
-use crate::ui::theme::rgb;
+use crate::ui::theme::{rgb, BAR_FRAME, HP_BOT, HP_TOP};
 
 use super::camera::{spring, FirstPerson, OrbitCam, FP_FOV_DEG};
 use super::combat::{CHARGE_GRACE, CHARGE_THRESHOLD, HEAVY_VARIANT};
@@ -719,8 +719,8 @@ pub(crate) fn spawn_reticle(mut commands: Commands) {
                     top: Val::Px(RING * 0.5 + 9.0),
                     width: Val::Px(HP_TRACK_W),
                     height: Val::Px(HP_TRACK_H),
+                    // Square-cut, the shared vitals look (`ui::vitals`) at reticle scale.
                     border: UiRect::all(Val::Px(1.0)),
-                    border_radius: BorderRadius::all(Val::Px(3.0)),
                     overflow: Overflow::clip(),
                     ..default()
                 },
@@ -823,11 +823,13 @@ pub(crate) fn sync_reticle(
         mem.shown_for = None;
     }
     if let Ok((mut bg, mut border)) = track_q.single_mut() {
-        bg.0 = Color::srgba(0.05, 0.03, 0.03, 0.62 * a);
-        *border = BorderColor::all(Color::srgba(0.02, 0.01, 0.01, 0.85 * a));
+        bg.0 = Color::srgba(0.06, 0.05, 0.04, 0.78 * a);
+        *border = BorderColor::all(BAR_FRAME.with_alpha(0.9 * a));
     }
     if let Ok((mut node, mut bg)) = fill_q.single_mut() {
         node.width = Val::Percent(mem.shown_hp * 100.0);
-        bg.0 = Color::srgba(0.86, 0.22, 0.16, a);
+        // The vitals blood (between the HUD bar's lit top and its deep bottom) — it was a hot
+        // orange-red that glared against the muted world bars.
+        bg.0 = HP_TOP.mix(&HP_BOT, 0.35).with_alpha(a);
     }
 }

@@ -25,7 +25,6 @@ use crate::siege::{GamePhase, Siege};
 use crate::ui::anim::{anim, AnimKind};
 use crate::ui::fonts::{label, UiFonts};
 use crate::ui::theme::*;
-use crate::ui::widgets;
 use crate::{steer, worldmap};
 use crate::game_state::SimAppExt;
 
@@ -129,7 +128,6 @@ fn warlord_brain(
     mut pending: ResMut<PendingHeroDamage>,
     mut crit: ResMut<PendingCrit>,
     fx: Option<Res<CombatFx>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
     mut commands: Commands,
     mut npc_dmg: ResMut<crate::villagers::NpcDamage>,
@@ -192,7 +190,7 @@ fn warlord_brain(
                     cues.write(crate::audio::AudioCue::Slam);
                 }
                 if let Some(fx) = &fx {
-                    crate::player::spawn_shockwave(&mut commands, fx, &mut materials, Vec3::new(w.pos.x, gy + 0.05, w.pos.y), now);
+                    crate::player::spawn_shockwave(&mut commands, fx, Vec3::new(w.pos.x, gy + 0.05, w.pos.y), now);
                 }
             }
         } else if engaged {
@@ -374,6 +372,12 @@ fn despawn_warlord_bar(mut commands: Commands, q: Query<Entity, With<WarlordBarR
     }
 }
 
+/// The Warlord's fill: the Hold's warp-green, muted down to a bile/moss tone so it sits in the same
+/// desaturated family as the blood bars (the old flat `rgb(150,196,54)` was a neon lime).
+const WARLORD_TOP: Color = rgb(112, 132, 58);
+const WARLORD_BOT: Color = rgb(66, 82, 32);
+
+/// Same Souls-style layout + [`crate::ui::vitals`] look as the warden bar (`boss::spawn_boss_bar`).
 fn spawn_warlord_bar(commands: &mut Commands, fonts: &UiFonts, ratio: f32) {
     commands
         .spawn((
@@ -384,8 +388,8 @@ fn spawn_warlord_bar(commands: &mut Commands, fonts: &UiFonts, ratio: f32) {
                 width: Val::Px(560.0),
                 margin: UiRect::left(Val::Px(-280.0)),
                 flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                row_gap: Val::Px(4.0),
+                align_items: AlignItems::FlexStart,
+                row_gap: Val::Px(5.0),
                 ..default()
             },
             GlobalZIndex(40),
@@ -394,31 +398,12 @@ fn spawn_warlord_bar(commands: &mut Commands, fonts: &UiFonts, ratio: f32) {
         ))
         .with_children(|r| {
             r.spawn((
-                label(&fonts.display, "THE WARLORD OF GNASHFANG HOLD", 18.0, rgb(255, 224, 170)),
-                TextShadow { offset: Vec2::new(0.0, 2.0), color: rgba(0, 0, 0, 0.8) },
+                label(&fonts.display, "THE WARLORD OF GNASHFANG HOLD", 16.0, rgb(232, 220, 196)),
+                TextShadow { offset: Vec2::new(0.0, 1.0), color: rgba(0, 0, 0, 0.85) },
             ));
-            r.spawn((
-                Node {
-                    width: Val::Percent(100.0),
-                    height: Val::Px(14.0),
-                    border: widgets::border(1.0),
-                    border_radius: radius(6.0),
-                    ..default()
-                },
-                BackgroundColor(rgba(20, 12, 10, 0.82)),
-                BorderColor::all(rgba(224, 168, 74, 0.7)),
-            ))
-            .with_children(|track| {
-                track.spawn((
-                    Node {
-                        width: Val::Percent(ratio * 100.0),
-                        height: Val::Percent(100.0),
-                        border_radius: radius(6.0),
-                        ..default()
-                    },
-                    BackgroundColor(rgb(150, 196, 54)), // warp-green, the Hold's hue
-                    WarlordBarFill,
-                ));
+            r.spawn(crate::ui::vitals::track(Val::Percent(100.0), 11.0)).with_children(|t| {
+                let fill = t.spawn(crate::ui::vitals::fill(WARLORD_TOP, WARLORD_BOT, ratio, WarlordBarFill)).id();
+                t.spawn(crate::ui::vitals::trail(fill));
             });
         });
 }

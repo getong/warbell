@@ -405,7 +405,6 @@ fn drive_felling(
     hero: Res<HeroState>,
     fxa: Option<Res<TreeFx>>,
     fx: Option<Res<crate::player::CombatFx>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     mut cues: MessageWriter<AudioCue>,
     mut q: Query<(Entity, &mut Felling, &mut Transform, &mut Visibility, Has<Cactus>)>,
 ) {
@@ -424,7 +423,7 @@ fn drive_felling(
                 );
             }
             if let Some(fx) = &fx {
-                crate::player::spawn_shockwave(&mut commands, fx, &mut materials, Vec3::new(at.x, gy, at.z), now);
+                crate::player::spawn_shockwave(&mut commands, fx, Vec3::new(at.x, gy, at.z), now);
             }
             commands.entity(e).try_remove::<Felling>();
             continue;

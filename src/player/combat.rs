@@ -393,14 +393,13 @@ pub(crate) struct CombatFx {
     dust: Handle<StandardMaterial>,
     /// Green — Bramble-Sweep leaf/thorn motes flung outward.
     leaf: Handle<StandardMaterial>,
-    /// A unit quad (slash streak) + flat ring (kill shockwave) + disc (blood splat).
+    /// A unit quad (slash streak / blade-trail segment).
     quad: Handle<Mesh>,
-    ring: Handle<Mesh>,
-    disc: Handle<Mesh>,
     /// Base materials cloned per planar-flash instance (see `spawn_fade`).
     slash_mat: Handle<StandardMaterial>,
-    ring_mat: Handle<StandardMaterial>,
-    splat_mat: Handle<StandardMaterial>,
+    /// The shared feathered ground-decal quad + materials (`combat_marks`) the kill / slam
+    /// shockwave and the blood splats are drawn with — no per-mark material clones.
+    marks: crate::combat_marks::MarkAssets,
     /// Non-emissive pale gold for the blade-trail ribbon (bloom must never catch the trail).
     trail_mat: Handle<StandardMaterial>,
 }
@@ -409,6 +408,7 @@ pub fn setup_combat_fx(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    marks: Res<crate::combat_marks::MarkAssets>,
 ) {
     let mesh = meshes.add(Sphere::new(0.07).mesh().ico(1).unwrap());
     let hit = materials.add(StandardMaterial {
@@ -454,8 +454,6 @@ pub fn setup_combat_fx(
         ..default()
     });
     let quad = meshes.add(Rectangle::new(1.0, 1.0).mesh().build());
-    let ring = meshes.add(Annulus::new(0.72, 1.0).mesh().build());
-    let disc = meshes.add(Circle::new(0.5).mesh().build());
     // Planar flashes blend over the scene (alpha-faded each frame) and carry an emissive so
     // bloom picks them up while they're bright. Double-sided so they read from either face.
     let flash = |base: Color, emissive: LinearRgba| StandardMaterial {
@@ -472,11 +470,9 @@ pub fn setup_combat_fx(
     // The blade-trail ribbon: pale gold with ZERO emissive, so bloom can never whiten it — the
     // trail should read as a translucent smear of motion, not a light source.
     let trail_mat = materials.add(flash(Color::srgba(0.95, 0.87, 0.62, 0.28), LinearRgba::BLACK));
-    let ring_mat = materials.add(flash(Color::srgba(1.0, 0.86, 0.6, 0.45), LinearRgba::rgb(1.4, 0.95, 0.4)));
-    let splat_mat = materials.add(flash(Color::srgba(0.42, 0.06, 0.06, 0.72), LinearRgba::BLACK));
     commands.insert_resource(CombatFx {
-        mesh, hit, kill, heal, blood, chip, dust, leaf, quad, ring, disc, slash_mat, ring_mat,
-        splat_mat, trail_mat,
+        mesh, hit, kill, heal, blood, chip, dust, leaf, quad, slash_mat, trail_mat,
+        marks: marks.clone(),
     });
 }
 
@@ -512,7 +508,8 @@ pub(crate) fn spawn_sweep_burst(commands: &mut Commands, fx: &CombatFx, at: Vec3
     }
 }
 
-/// A short-lived planar flash (slash streak / kill shockwave / blood splat / blade-trail ribbon).
+/// A short-lived planar flash (slash streak / blade-trail ribbon). (The ground-flat shockwave and
+/// blood splats moved to `combat_marks`, which fades through the instance tag, not a material.)
 /// Owns a cloned material so it can alpha-fade alone; [`update_fx_fades`] frees that material on
 /// despawn so per-hit clones never leak (verified: the `mats.remove(&f.mat)` on the ring-out path
 /// below is the only exit, and an effect swept early by a biome rebuild drops its last strong
@@ -532,17 +529,14 @@ pub(crate) struct FxFade {
     last_a: f32,
 }
 
-/// Minimum alpha change worth re-writing a fade's material for. A blood splat lives 3.5s (≈210
-/// frames) and drains 0.72 → 0 alpha; at this step that's ~35 material writes instead of 210, with
-/// each step far under the eye's threshold on a translucent decal. The short flashes (a 0.11s slash)
-/// step every frame anyway, so they're unaffected.
+/// Minimum alpha change worth re-writing a fade's material for — at this step a long fade writes
+/// ~35 times instead of every frame, each step far under the eye's threshold on a translucent
+/// quad. The short flashes (a 0.11s slash) step every frame anyway, so they're unaffected.
 const FADE_ALPHA_STEP: f32 = 0.02;
 
 /// How a fading quad orients each frame.
 #[derive(Clone, Copy)]
 pub(crate) enum FadeFace {
-    /// Keep the spawn pose (the ground-flat shockwave + splat).
-    Keep,
     /// Re-face the camera flat-on each frame (the contact slash flash).
     Camera,
     /// Cylindrical billboard: the quad's local X stays pinned along this world axis while it
@@ -883,14 +877,14 @@ pub fn player_attack(
         // Heavy flourish: an extra ground shockwave ring + a bright spark gout on every heavy
         // contact (cosmetic only — the heavy is a single-target hit, no splash damage).
         if hero.heavy {
-            spawn_shockwave(&mut commands, &fx, &mut juice.materials, Vec3::new(p.x, p.y + 0.05, p.z), now_s);
+            spawn_shockwave(&mut commands, &fx, Vec3::new(p.x, p.y + 0.05, p.z), now_s);
             spawn_burst(&mut commands, &fx, mid, true);
             spawn_impact_light(&mut commands, &mut live_lights, mid, Color::srgb(1.0, 0.85, 0.5), 26_000.0, 0.18, now_s);
         }
         // A blood splat under the target on EVERY hit (small + brief), big + lingering on a kill.
-        spawn_splat(&mut commands, &fx, &mut juice.materials, Vec3::new(p.x, p.y, p.z), dead, now_s);
+        spawn_splat(&mut commands, &fx, Vec3::new(p.x, p.y, p.z), dead, now_s);
         if dead {
-            spawn_shockwave(&mut commands, &fx, &mut juice.materials, Vec3::new(p.x, p.y + 0.05, p.z), now_s);
+            spawn_shockwave(&mut commands, &fx, Vec3::new(p.x, p.y + 0.05, p.z), now_s);
             spawn_impact_light(&mut commands, &mut live_lights, mid, Color::srgb(1.0, 0.9, 0.6), 18_000.0, 0.15, now_s);
         }
         hit_any = true;
@@ -1018,8 +1012,8 @@ pub fn player_attack(
                 // Cleave splash has no single blow direction → radial blood puff.
                 spawn_blood(&mut commands, &fx, mid, Vec2::ZERO, hp.hp <= 0.0);
                 if hp.hp <= 0.0 {
-                    spawn_shockwave(&mut commands, &fx, &mut juice.materials, Vec3::new(p.x, p.y + 0.05, p.z), now_s);
-                    spawn_splat(&mut commands, &fx, &mut juice.materials, Vec3::new(p.x, p.y, p.z), true, now_s);
+                    spawn_shockwave(&mut commands, &fx, Vec3::new(p.x, p.y + 0.05, p.z), now_s);
+                    spawn_splat(&mut commands, &fx, Vec3::new(p.x, p.y, p.z), true, now_s);
                     floats.0.push(crate::combat_fx::FloatReq {
                         world: head,
                         text: "†".into(),
@@ -1047,7 +1041,7 @@ pub fn player_attack(
                     // No HurtFlash on cleave splash: one swing used to blink every nearby ork
                     // white at once, which read as scene-wide flicker. The float number, recoil
                     // and squash still mark splash victims; only the direct target flashes.
-                    spawn_splat(&mut commands, &fx, &mut juice.materials, Vec3::new(p.x, p.y, p.z), false, now_s);
+                    spawn_splat(&mut commands, &fx, Vec3::new(p.x, p.y, p.z), false, now_s);
                     if let Some(mut o) = ork {
                         o.hit_recoil = now_s;
                     }
@@ -1326,22 +1320,39 @@ pub(crate) fn spawn_slash(commands: &mut Commands, fx: &CombatFx, mats: &mut Ass
     );
 }
 
-/// An expanding ground ring on a kill — flat shockwave that rushes out + fades.
-pub(crate) fn spawn_shockwave(commands: &mut Commands, fx: &CombatFx, mats: &mut Assets<StandardMaterial>, at: Vec3, now: f32) {
-    let pose = Transform::from_translation(at + Vec3::Y * 0.05)
-        .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2));
-    spawn_fade(commands, mats, &fx.ring_mat, &fx.ring, pose, Vec3::splat(0.4), Vec3::splat(1.6), 0.45, 0.22, FadeFace::Keep, now);
+/// A kill / slam / heavy-blow shockwave: a soft ring of thrown dust that rushes out across the
+/// ground and frays as it fades (`combat_marks`, PBR-lit so it sits in the scene's light). It used
+/// to be a glowing amber `Annulus` — an arcade "energy ring" that read low-poly.
+pub(crate) fn spawn_shockwave(commands: &mut Commands, fx: &CombatFx, at: Vec3, now: f32) {
+    use crate::combat_marks::{spawn_mark, MarkFade, MarkKind};
+    let seed = mark_seed(at, now);
+    let e = spawn_mark(commands, &fx.marks, MarkKind::Shock, at + Vec3::Y * 0.02, 0.9, seed as f32, 1.0, 0.5, seed);
+    commands.entity(e).insert((
+        MarkFade { kind: MarkKind::Shock, seed, born: now, hold: 0.0, life: 0.42, a0: 0.5, s0: 0.9, s1: 3.6 },
+        crate::biome::BiomeEntity,
+    ));
 }
 
-/// A dark blood splat on the ground under a struck creature — fades slowly so a fight leaves a
-/// brief trail of where blows landed. Bigger on a kill.
-pub(crate) fn spawn_splat(commands: &mut Commands, fx: &CombatFx, mats: &mut Assets<StandardMaterial>, at: Vec3, kill: bool, now: f32) {
-    let pose = Transform::from_translation(Vec3::new(at.x, at.y + 0.03, at.z))
-        .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2));
-    // A kill leaves a big, long-lived pool; a glancing hit just flecks the ground briefly.
-    let (size, life, a0) = if kill { (1.4, 3.5, 0.72) } else { (0.55, 1.6, 0.6) };
-    let s = Vec3::splat(size);
-    spawn_fade(commands, mats, &fx.splat_mat, &fx.disc, pose, s, s, a0, life, FadeFace::Keep, now);
+/// A blood splat on the ground under a struck creature — an irregular, soaked-in pool (seeded, so
+/// no two match) that fades slowly, so a fight leaves a brief trail of where blows landed. A kill
+/// leaves a big, long-lived pool; a glancing hit just flecks the ground.
+pub(crate) fn spawn_splat(commands: &mut Commands, fx: &CombatFx, at: Vec3, kill: bool, now: f32) {
+    use crate::combat_marks::{spawn_mark, MarkFade, MarkKind};
+    let seed = mark_seed(at, now);
+    let (size, hold, life, a0) = if kill { (1.5, 1.5, 2.0, 0.85) } else { (0.6, 0.5, 1.1, 0.7) };
+    // Squash one axis a little (seeded) so pools never read as a stamped circle.
+    let squash = 0.72 + (seed % 23) as f32 / 23.0 * 0.28;
+    let e = spawn_mark(commands, &fx.marks, MarkKind::Blood, Vec3::new(at.x, at.y + 0.02, at.z), size, seed as f32 * 0.37, squash, a0, seed);
+    commands.entity(e).insert((
+        MarkFade { kind: MarkKind::Blood, seed, born: now, hold, life, a0, s0: size * 0.8, s1: size },
+        crate::biome::BiomeEntity,
+    ));
+}
+
+/// A cheap per-mark shape seed from where + when it landed (deterministic, no RNG resource).
+fn mark_seed(at: Vec3, now: f32) -> u32 {
+    let h = (at.x * 73.1).to_bits() ^ (at.z * 19.7).to_bits().rotate_left(13) ^ (now * 997.0).to_bits().rotate_left(7);
+    h.wrapping_mul(0x9e37_79b9) >> 8
 }
 
 /// Emit a translucent ribbon along the sword tip's path across the fast part of the swing — a

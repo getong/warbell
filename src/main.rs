@@ -42,6 +42,7 @@ mod castle;
 mod castle_decor;
 mod chest;
 mod combat_fx;
+mod combat_marks; // shared procedural ground-decal shader: target ring, shockwave, blood, scorch
 mod compass;
 mod controls;
 mod creature;
@@ -317,6 +318,9 @@ fn main() {
         // quality.rs (`god_rays`); same custom-post-pass family as dof/outline. Standalone call
         // because the tuples above are at the `Plugins` arity-15 cap.
         .add_plugins(godrays::GodRaysPlugin)
+        // Feathered procedural combat ground marks (target ring / shockwave / blood / scorch) —
+        // standalone for the same arity reason.
+        .add_plugins(combat_marks::CombatMarksPlugin)
         // Experimental photoreal trees (`FOREST_PHOTOTREES=1`) — builds the procedural tree meshes
         // + foliage atlas at PreStartup so the world build can spawn them. A no-op unless the env
         // var is set. Standalone call for the same reason as godrays: the tuples above are at the

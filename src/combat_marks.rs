@@ -1,0 +1,188 @@
+//! **Combat ground marks** — the rings and pools a fight paints on the ground: the soft-lock target
+//! ring (`player::softlock`), the kill / slam dust shockwave and the blood splats (`player::combat`),
+//! and the battlefield's lingering stains + scorches (`aftermath`).
+//!
+//! They used to be flat `Annulus` / `Circle` meshes (12–40 hard segments, flat unlit amber or a
+//! solid disc) — with the realistic PBR forest around them they read as low-poly stamps. Now every
+//! mark is ONE flat quad drawn by `assets/shaders/ground_mark.wgsl`, which builds the shape
+//! analytically (feathered gaussian lines, noise-frayed edges, seeded satellite droplets), so there
+//! is no polygon edge anywhere and no two pools are the same disc.
+//!
+//! Two shared material instances, one per blend recipe:
+//! - [`MarkAssets::light`] (premultiplied, PBR-lit pale albedo) — target ring + shockwave. Lit by
+//!   the same sun / moon / IBL / torches as the ground, so the ring is a quiet chalk-pale line by
+//!   day and dims with the scene at night instead of glowing like the old emissive hoop.
+//! - [`MarkAssets::stain`] (multiply) — blood + scorch. Darkens the already-lit ground, so a stain
+//!   is never a glowing or pitch-black cut-out whatever the time of day.
+//!
+//! Per-mark state (kind, seed, fade alpha, shockwave age) is packed into the instance's
+//! [`MeshTag`] by [`tag`]: every mark of a recipe shares one material + one quad, so the renderer
+//! instances them into a single draw and a fading mark only rewrites a `u32` — no per-mark
+//! material clone (the old splats / stains minted one `StandardMaterial` each and re-uploaded it
+//! every fade step).
+
+use bevy::mesh::MeshTag;
+use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialPlugin};
+use bevy::prelude::*;
+use bevy::render::render_resource::AsBindGroup;
+use bevy::shader::ShaderRef;
+
+const SHADER: &str = "shaders/ground_mark.wgsl";
+
+/// Positive depth bias so a mark lying on the courtyard cobble (an opaque slab at y≈0.04) wins the
+/// depth tie instead of z-fighting it — same value + reason as `aftermath`'s old decals.
+const MARK_DEPTH_BIAS: f32 = 50.0;
+
+pub type MarkMaterial = ExtendedMaterial<StandardMaterial, MarkExt>;
+
+/// No uniforms: the whole look is in the shader, the per-mark knobs ride the `MeshTag`.
+#[derive(Asset, AsBindGroup, Clone, TypePath, Debug, Default)]
+pub struct MarkExt {}
+
+impl MaterialExtension for MarkExt {
+    fn fragment_shader() -> ShaderRef {
+        SHADER.into()
+    }
+}
+
+/// What a mark draws as (the shader's `KIND_*`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MarkKind {
+    /// Soft-lock target ring — use with [`MarkAssets::light`].
+    Ring = 0,
+    /// Kill / slam dust shockwave — [`MarkAssets::light`].
+    Shock = 1,
+    /// Fresh blood pool / fleck — [`MarkAssets::stain`].
+    Blood = 2,
+    /// Dried, browner blood (the aftermath stain) — [`MarkAssets::stain`].
+    BloodDry = 3,
+    /// Shaman-bolt scorch — [`MarkAssets::stain`].
+    Scorch = 4,
+}
+
+/// Pack a mark's per-instance state for `ground_mark.wgsl`: `alpha` (0..1 strength), `kind`, a
+/// shape `seed` (any u32 — only its low byte is used), and `aux` (0..1, the shockwave's age).
+pub fn tag(kind: MarkKind, alpha: f32, seed: u32, aux: f32) -> MeshTag {
+    let a = (alpha.clamp(0.0, 1.0) * 255.0).round() as u32;
+    let x = (aux.clamp(0.0, 1.0) * 255.0).round() as u32;
+    MeshTag(a | (kind as u32) << 8 | (seed & 0xff) << 12 | x << 20)
+}
+
+/// The shared quad + the two material recipes. Every mark spawns `Mesh3d(quad)` with one of them.
+#[derive(Resource, Clone)]
+pub struct MarkAssets {
+    /// Unit flat quad in XZ (normal +Y, spans ±0.5) — scale it to the mark's world diameter.
+    pub quad: Handle<Mesh>,
+    /// Lit, premultiplied: target ring + shockwave.
+    pub light: Handle<MarkMaterial>,
+    /// Multiply: blood + scorch.
+    pub stain: Handle<MarkMaterial>,
+}
+
+fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mats: ResMut<Assets<MarkMaterial>>) {
+    let quad = meshes.add(Plane3d::new(Vec3::Y, Vec2::splat(0.5)).mesh().build());
+    let base = |alpha_mode: AlphaMode| StandardMaterial {
+        base_color: Color::WHITE, // the shader writes the albedo
+        // Bone-dry matte: no specular glint off a chalk line or a pool of dust.
+        perceptual_roughness: 1.0,
+        reflectance: 0.2,
+        alpha_mode,
+        depth_bias: MARK_DEPTH_BIAS,
+        ..default()
+    };
+    let light = mats.add(ExtendedMaterial { base: base(AlphaMode::Premultiplied), extension: MarkExt {} });
+    let stain = mats.add(ExtendedMaterial { base: base(AlphaMode::Multiply), extension: MarkExt {} });
+    commands.insert_resource(MarkAssets { quad, light, stain });
+}
+
+/// A mark that fades (and optionally grows) over its life, then despawns — the shockwave and the
+/// combat blood splats. Drives scale + the tag's alpha/age; the material is never touched.
+#[derive(Component)]
+pub struct MarkFade {
+    pub kind: MarkKind,
+    pub seed: u32,
+    pub born: f32,
+    /// Seconds at full strength before the fade starts.
+    pub hold: f32,
+    /// Seconds the fade (and the growth) takes after the hold.
+    pub life: f32,
+    pub a0: f32,
+    /// World diameter at birth → at the end of the growth (equal = a static pool).
+    pub s0: f32,
+    pub s1: f32,
+}
+
+/// Spawn a ground mark at `at` (world, already on the ground). `yaw` spins the quad so seeded
+/// shapes don't all face one way; `squash` (≤1) stretches a pool along one axis.
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_mark(
+    commands: &mut Commands,
+    marks: &MarkAssets,
+    kind: MarkKind,
+    at: Vec3,
+    diameter: f32,
+    yaw: f32,
+    squash: f32,
+    alpha: f32,
+    seed: u32,
+) -> Entity {
+    let mat = match kind {
+        MarkKind::Ring | MarkKind::Shock => marks.light.clone(),
+        _ => marks.stain.clone(),
+    };
+    commands
+        .spawn((
+            Mesh3d(marks.quad.clone()),
+            MeshMaterial3d(mat),
+            Transform {
+                translation: at,
+                rotation: Quat::from_rotation_y(yaw),
+                scale: Vec3::new(diameter, 1.0, diameter * squash),
+            },
+            tag(kind, alpha, seed, 0.0),
+            // Casts nothing, but RECEIVES: the lit ring/dust darken under a foe's shadow exactly
+            // like the ground they lie on (the multiply stains inherit the ground's shading anyway).
+            bevy::light::NotShadowCaster,
+        ))
+        .id()
+}
+
+/// Drive every [`MarkFade`]: ease the diameter out `s0 → s1`, hold then drain the alpha, age the
+/// shockwave's fray, and reap at the end. Only writes the tag when its packed value moves.
+fn drive_mark_fades(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut q: Query<(Entity, &MarkFade, &mut Transform, &mut MeshTag)>,
+) {
+    let now = time.elapsed_secs();
+    for (e, f, mut tf, mut mt) in &mut q {
+        let t = now - f.born;
+        let k = ((t - f.hold) / f.life.max(1e-3)).clamp(0.0, 1.0);
+        if t >= f.hold + f.life {
+            // `try_despawn`: marks are `BiomeEntity`, so a rebuild can wipe one the same frame.
+            commands.entity(e).try_despawn();
+            continue;
+        }
+        let grow = (t / (f.hold + f.life).max(1e-3)).clamp(0.0, 1.0);
+        let ease = 1.0 - (1.0 - grow) * (1.0 - grow);
+        let s = f.s0 + (f.s1 - f.s0) * ease;
+        let squash = tf.scale.z / tf.scale.x.max(1e-4);
+        tf.scale = Vec3::new(s, 1.0, s * squash);
+        let want = tag(f.kind, f.a0 * (1.0 - k * k * (3.0 - 2.0 * k)), f.seed, grow);
+        if mt.0 != want.0 {
+            mt.0 = want.0;
+        }
+    }
+}
+
+pub struct CombatMarksPlugin;
+
+impl Plugin for CombatMarksPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins(MaterialPlugin::<MarkMaterial>::default())
+            // PreStartup so every `Startup` spawner (the soft-lock ring, `CombatFx`) can take the
+            // shared handles without an ordering edge.
+            .add_systems(PreStartup, setup)
+            .add_systems(Update, drive_mark_fades);
+    }
+}
