@@ -1108,6 +1108,8 @@ pub fn scatter_region(
                         || story_clearing
                         // Realistic forest: no tree crowns over the ork camps / story clearings.
                         || (kit.is_some() && crate::realforest::keep_clear(cx, cz, 1.6))
+                        // Snow massif: bare rock and snow above the tree line (a fallback prop there).
+                        || (snow_kit.is_some() && crate::alpine::above_treeline(cx, cz, py))
                         || tree_pts.iter().any(|q| q.distance_squared(p) < min_d2)
                         // Tree spacing follows trunks and solid scenery. Bush crowns and low
                         // rocks are understorey, not empty circles that evict future trees.

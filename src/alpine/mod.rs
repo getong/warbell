@@ -164,6 +164,16 @@ pub fn snow_cover(x: f32, z: f32) -> f32 {
     0.22 + 0.78 * smoothstep(0.6, 3.4, y)
 }
 
+/// Tree line on the snow massif (base height band): trees thin out from the low end and none grow
+/// past the high one, so the upper slopes and summits read as bare snow and rock, not a wooded hill.
+const TREELINE: (f32, f32) = (9.0, 13.0);
+
+/// Is ground height `y` at `(x, z)` above the (per-spot jittered, so its edge is no contour) tree line?
+pub fn above_treeline(x: f32, z: f32, y: f32) -> bool {
+    let (a, _) = crate::realforest::rolls(x, z);
+    y > TREELINE.0 + (TREELINE.1 - TREELINE.0) * a
+}
+
 /// RGBA8 alpine mask over the whole tile grid at 2 texels / unit:
 /// - R = snow cover target ([`snow_cover`]), feathered ~2u past the snow edge (frost);
 /// - G = alpine meadow: the snow biome itself (under its patchy snow) and the grass / forest
