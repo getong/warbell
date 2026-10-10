@@ -44,6 +44,10 @@ mod alpine_relief;
 pub(crate) use alpine_relief::relief_at_world;
 #[path = "alpine/terrain_cliff.rs"]
 mod alpine_cliff;
+// The snow massif's continuous mountain surface (ridges, summits, pass valleys) — replaces the
+// snow region's tiered mesa; the rock range keeps its mesa shelves + walls.
+#[path = "alpine/terrain_massif.rs"]
+mod alpine_massif;
 
 // ── Map dimensions ───────────────────────────────────────────────────────────────
 /// Map enlargement vs the original base island (more tiles → more land + props).
@@ -1086,6 +1090,10 @@ const SNOW_TIERS: [f32; 4] = [0.17, 0.44, 0.70, 0.90];
 /// descents off a shelf work). The authored pass corridors are the only ways UP; outside the
 /// lowest tier a 1–2-class apron ring meets the surrounding terrain smoothly.
 fn mesa_height(x: f32, z: f32, reg: &Region) -> i32 {
+    // The snow massif is a continuous mountain now (`alpine_massif`), not tiered shelves.
+    if reg.biome == TB::Snow {
+        return alpine_massif::massif_class(x, z, reg);
+    }
     if let Some(rc) = pass_class(x, z, reg) {
         return rc;
     }
@@ -1910,6 +1918,8 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
     for reg in active_map().regions {
         if reg.cliffy && reg.peak > 0 {
             if let Some(cls) = pass_class(x, z, reg) {
+                // The snow massif's trail floors are its continuous valley ramps.
+                let cls = if reg.biome == TB::Snow { alpine_massif::massif_class(x, z, reg) } else { cls };
                 return Some((reg.biome, cls));
             }
         }
@@ -2327,6 +2337,11 @@ fn corner_top_y_for(cx: i32, cz: i32, h_ref: i32) -> Option<f32> {
     corner_top_y_in(&tiles(), cx, cz, h_ref)
 }
 fn corner_top_y_in(grid: &Grid, cx: i32, cz: i32, h_ref: i32) -> Option<f32> {
+    // Inside the snow massif every corner is the exact continuous mountain surface (all four
+    // tiles are massif ground, so every cluster agrees — no terraces, no split walls).
+    if let Some(y) = alpine_massif::corner_y(cx, cz) {
+        return Some(y);
+    }
     let mut hs: [Option<i32>; 4] = [None; 4];
     for (k, (ax, az)) in [(cx - 1, cz - 1), (cx, cz - 1), (cx - 1, cz), (cx, cz)].into_iter().enumerate() {
         hs[k] = tile_in(grid, ax, az).map(|(_, h)| h);
@@ -4972,5 +4987,84 @@ mod tests {
                 reg.biome
             );
         }
+    }
+
+    /// The snow massif must read as a MOUNTAIN, not stacked mesa discs: tall summits well above
+    /// the trail col, almost no dead-flat ground inside it, and steep (unwalkable) ground only a
+    /// minority of it. `MASSIF_DUMP=<file.pgm>` writes a hillshade of the region for eyeballing.
+    #[test]
+    fn snow_massif_is_a_natural_mountain() {
+        let reg = MAP_HOME.regions.iter().find(|r| r.biome == TB::Snow).unwrap();
+        let (x0, x1) = (((reg.x - reg.r * 1.3) * MAP_SCALE).max(1.0) as i32, ((reg.x + reg.r * 1.3) * MAP_SCALE) as i32);
+        let (z0, z1) = (((reg.z - reg.r * 1.3) * MAP_SCALE).max(1.0) as i32, ((reg.z + reg.r * 1.3) * MAP_SCALE) as i32);
+        let (x1, z1) = (x1.min(COLS - 2), z1.min(ROWS - 2));
+        let (mut n, mut flat, mut steep, mut top) = (0u32, 0u32, 0u32, (f32::MIN, 0, 0));
+        for iz in z0..=z1 {
+            for ix in x0..=x1 {
+                if !matches!(tile_at(ix, iz), Some((TB::Snow, _))) {
+                    continue;
+                }
+                let Some(c) = tile_centre_ground(ix, iz) else { continue };
+                if c > top.0 {
+                    top = (c, ix, iz);
+                }
+                let (bx, bz) = (ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE);
+                if mesa_t(bx, bz, reg) < 0.3 {
+                    continue; // the foot apron is meant to be gentle
+                }
+                n += 1;
+                let d = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+                    .iter()
+                    .filter_map(|&(dx, dz)| tile_centre_ground(ix + dx, iz + dz).map(|h| (h - c).abs()))
+                    .fold(0.0f32, f32::max);
+                flat += (d < 0.03) as u32;
+                steep += (d > GROUND_STEP + 0.1) as u32;
+            }
+        }
+        let (flat_f, steep_f) = (flat as f32 / n as f32, steep as f32 / n as f32);
+        eprintln!(
+            "massif: {n} interior tiles, summit {:.2} at grid ({},{}), flat {:.1}%, steep {:.1}%",
+            top.0,
+            top.1,
+            top.2,
+            flat_f * 100.0,
+            steep_f * 100.0
+        );
+        if let Ok(path) = std::env::var("MASSIF_DUMP") {
+            let (w, h) = ((x1 - x0 + 1) as usize, (z1 - z0 + 1) as usize);
+            let mut px = Vec::with_capacity(w * h);
+            for iz in z0..=z1 {
+                for ix in x0..=x1 {
+                    let y = |x: i32, z: i32| ground_at_world(x as f32 - GX + 0.5, z as f32 - GZ + 0.5);
+                    let v = match (y(ix, iz), y(ix + 1, iz), y(ix, iz + 1)) {
+                        (Some(c), Some(e), Some(s)) => {
+                            // Hillshade (light from the NW) + a little altitude tint.
+                            let nrm = Vec3::new(c - e, 1.0, c - s).normalize();
+                            let l = nrm.dot(Vec3::new(-0.6, 0.7, -0.4).normalize()).max(0.0);
+                            (l * 200.0 + c * 3.0).clamp(0.0, 255.0) as u8
+                        }
+                        _ => 0,
+                    };
+                    px.push(v);
+                }
+            }
+            let mut out = format!("P5\n{w} {h}\n255\n").into_bytes();
+            out.extend_from_slice(&px);
+            std::fs::write(path, out).unwrap();
+        }
+        // `HEIGHT_DUMP=<file>`: the whole map's tile-centre ground heights as raw little-endian
+        // f32 (COLS × ROWS, row-major, NaN = water) — for offline silhouette renders.
+        if let Ok(path) = std::env::var("HEIGHT_DUMP") {
+            let mut out = Vec::with_capacity((COLS * ROWS * 4) as usize);
+            for iz in 0..ROWS {
+                for ix in 0..COLS {
+                    out.extend_from_slice(&tile_centre_ground(ix, iz).unwrap_or(f32::NAN).to_le_bytes());
+                }
+            }
+            std::fs::write(path, out).unwrap();
+        }
+        assert!(top.0 > (reg.peak - 1) as f32 * GROUND_STEP + 4.0, "summit {:.2} barely clears the col", top.0);
+        assert!(flat_f < 0.08, "{:.1}% of the massif interior is dead flat (mesa shelves?)", flat_f * 100.0);
+        assert!(steep_f < 0.45, "{:.1}% of the massif interior is too steep to walk", steep_f * 100.0);
     }
 }
