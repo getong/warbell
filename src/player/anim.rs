@@ -197,21 +197,21 @@ fn rest() -> Pose {
 }
 
 // ── Locomotion clips ───────────────────────────────────────────────────────────────────
+/// A studio-rig biped (orks, townsfolk) at rest: the measured idle ([`idle_sample`]) toned down for
+/// a rig without leg IK — the hips drift only a few cm (the knees take it up) while the trunk
+/// sways and the head looks round as recorded.
 fn idle_pose(t: f32) -> Pose {
+    let s = idle_sample(t);
     let breath = (t * 2.2).sin();
-    let s11 = (t * 1.1).sin();
     let c11 = (t * 1.1).cos();
-    // Slow weight shift (≈14s full cycle): a person at rest settles onto one hip, then the other.
-    // The pelvis slides + rolls a touch, the torso counter-rolls to keep the head over the feet,
-    // and the legs take up the slack — kills the "statue with a breathing chest" read.
-    let w = (t * 0.45).sin();
+    // The weight across the feet, −1..1.
+    let w = (s.lat / 0.75).clamp(-1.0, 1.0);
     let mut p = rest();
-    p.hips = Jp {
-        t: Some(Vec3::new(w * 0.03, 1.05 + breath * 0.015 - w.abs() * 0.008, 0.0)),
-        r: e3(0.0, s11 * 0.02, w * 0.035),
-    };
-    p.torso = Jp::r(e3(breath * 0.01, -s11 * 0.012, -w * 0.028));
-    p.head = Jp::r(e3(-breath * 0.015, s11 * 0.04, s11 * 0.006 - w * 0.012));
+    let pelvis = e3(0.0, 0.5 * s.yaw, s.roll);
+    p.hips = Jp { t: Some(Vec3::new(w * 0.03, 1.05 + breath * 0.004 - w.abs() * 0.008, 0.0)), r: pelvis };
+    let trunk = Quat::from_rotation_y(0.5 * s.sh_yaw) * e3(0.7 * s.lean + breath * 0.01, 0.0, -0.7 * s.side);
+    p.torso = Jp::r(pelvis.inverse() * trunk);
+    p.head = Jp::r(trunk.inverse() * Quat::from_rotation_y(0.7 * s.head_yaw) * rx(0.4 * s.head_pitch - breath * 0.015));
     // The footman's bind pose IS the standing carry (arms already clear of the torso). Idle only
     // breathes — the old +0.1 / −0.4 elbow bend was compensating for a straight-down mesh.
     p.sh_l = Jp::r(e3(breath * 0.035, 0.0, c11 * 0.012 + w * 0.01));
@@ -219,14 +219,14 @@ fn idle_pose(t: f32) -> Pose {
     p.sh_r = Jp::r(e3(breath * 0.035, 0.0, -c11 * 0.012 + w * 0.01));
     p.el_r = Jp::r(rx(-0.04 - breath * 0.015));
     // Stance leg straightens, free leg softens at the knee as the weight rides across.
-    p.hip_l = Jp::r(e3(0.0, 0.0, w.max(0.0) * 0.05));
-    p.hip_r = Jp::r(e3(0.0, 0.0, w.min(0.0) * 0.05));
+    p.hip_l = Jp::r(pelvis.inverse() * e3(0.0, 0.0, w.max(0.0) * 0.05));
+    p.hip_r = Jp::r(pelvis.inverse() * e3(0.0, 0.0, w.min(0.0) * 0.05));
     p.knee_l = Jp::r(rx((-w).max(0.0) * 0.08));
     p.knee_r = Jp::r(rx(w.max(0.0) * 0.08));
     p
 }
 
-// â”€â”€ The hero at rest: motion-captured â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── The hero at rest: motion-captured ──────────────────────────────────────────────────
 // A man standing at ease (CMU 139_02, 7.8 s, sampled at 10 Hz, each channel relative to his mean
 // stance): the weight drifting from foot to foot, the hips rolling and turning with it, the trunk
 // swaying over them and the head looking round now and then. Body frame = his planted feet.
@@ -320,28 +320,59 @@ fn loop_curve(v: &[f32], x: f32) -> f32 {
     0.5 * (2.0 * p1 + (p2 - p0) * t + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t * t + (3.0 * (p1 - p2) + p3 - p0) * t * t * t)
 }
 
-/// The footman hero standing at rest at time `t` (s): the measured idle above over the breathing,
-/// the boots planted where the rest pose puts them (the legs are solved to them, so the hips can
-/// drift and roll freely).
-fn footman_idle_pose(t: f32) -> Pose {
-    let rig = super::footman::leg_rig();
-    let n = IDLE_LAT.len() as f32;
-    let period = n / IDLE_HZ;
+/// One instant of the measured idle: `lat` in half foot-spacings, `fwd`/`dip` in metres, the rest
+/// in radians, the sideways channels already turned for the pass (see [`idle_sample`]).
+struct IdleSample {
+    lat: f32,
+    fwd: f32,
+    dip: f32,
+    roll: f32,
+    yaw: f32,
+    lean: f32,
+    side: f32,
+    sh_yaw: f32,
+    head_yaw: f32,
+    head_pitch: f32,
+}
+
+/// The measured idle at time `t` (s). Sideways channels play as recorded on even passes and as
+/// their mirror image on odd ones, crossing over smoothly through the centre.
+fn idle_sample(t: f32) -> IdleSample {
+    let period = IDLE_LAT.len() as f32 / IDLE_HZ;
     let pass = (t / period).floor();
     let local = t - pass * period;
-    // Sideways channels: +1 on even passes, −1 (the mirror image) on odd ones, crossing over smoothly.
     let side = if (pass as i64).rem_euclid(2) == 0 { 1.0 } else { -1.0 };
     let flip = side * (PI * smoothstep((local - (period - IDLE_FADE)) / IDLE_FADE)).cos();
     let x = local * IDLE_HZ;
     let ch = |v: &[f32]| loop_curve(v, x);
     let deg = |v: &[f32]| loop_curve(v, x).to_radians();
+    IdleSample {
+        lat: flip * ch(&IDLE_LAT),
+        fwd: ch(&IDLE_FWD),
+        dip: ch(&IDLE_DIP),
+        roll: flip * deg(&IDLE_ROLL),
+        yaw: flip * deg(&IDLE_YAW),
+        lean: deg(&IDLE_LEAN),
+        side: flip * deg(&IDLE_SIDE),
+        sh_yaw: flip * deg(&IDLE_SH_YAW),
+        head_yaw: flip * deg(&IDLE_HEAD_YAW),
+        head_pitch: deg(&IDLE_HEAD_PITCH),
+    }
+}
+
+/// The footman hero standing at rest at time `t` (s): the measured idle above over the breathing,
+/// the boots planted where the rest pose puts them (the legs are solved to them, so the hips can
+/// drift and roll freely).
+fn footman_idle_pose(t: f32) -> Pose {
+    let rig = super::footman::leg_rig();
+    let s = idle_sample(t);
     let breath = (t * 2.2).sin();
 
     let mut p = rest();
     // ── Pelvis: the weight rides across over the feet; the hips roll and turn with it ──
-    let pelvis = e3(0.0, 0.6 * flip * deg(&IDLE_YAW), flip * deg(&IDLE_ROLL));
+    let pelvis = e3(0.0, 0.6 * s.yaw, s.roll);
     let half = rig.hip.x.abs();
-    let mut hips = Vec3::new(0.85 * half * flip * ch(&IDLE_LAT), super::model::HIP_REST_Y + ch(&IDLE_DIP) + 0.004 * breath, ch(&IDLE_FWD));
+    let mut hips = Vec3::new(0.85 * half * s.lat, super::model::HIP_REST_Y + s.dip + 0.004 * breath, s.fwd);
     // Each boot stays where the rest pose stands it: flat, under its hip joint.
     let (upper, lower) = (rig.knee.y.hypot(rig.knee.z), rig.foot.y.hypot(rig.foot.z));
     let reach = 0.995 * (upper + lower);
@@ -377,10 +408,10 @@ fn footman_idle_pose(t: f32) -> Pose {
 
     // ── Trunk and head: swaying over the hips, the chest rising with each breath; the gaze
     // wanders (a little less far, and less often down, than the subject's) ──
-    let bend = e3(deg(&IDLE_LEAN) + 0.01 * breath, 0.0, -flip * deg(&IDLE_SIDE));
-    let trunk = Quat::from_rotation_y(0.6 * flip * deg(&IDLE_SH_YAW)) * bend;
+    let bend = e3(s.lean + 0.01 * breath, 0.0, -s.side);
+    let trunk = Quat::from_rotation_y(0.6 * s.sh_yaw) * bend;
     p.torso = Jp::r(pelvis.inverse() * trunk);
-    let gaze = Quat::from_rotation_y(0.75 * flip * deg(&IDLE_HEAD_YAW)) * rx(0.5 * deg(&IDLE_HEAD_PITCH) - 0.015 * breath);
+    let gaze = Quat::from_rotation_y(0.75 * s.head_yaw) * rx(0.5 * s.head_pitch - 0.015 * breath);
     p.head = Jp::r(trunk.inverse() * gaze);
 
     // ── Arms: the bind pose IS the standing carry; they hang plumb as the trunk bends (and

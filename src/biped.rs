@@ -81,7 +81,9 @@ pub(crate) fn biped_pose(d: &BipedDrive, now: f32) -> Pose {
         return sit_pose();
     }
     let moving = d.moving_amt.clamp(0.0, 1.0);
-    let loco = loco_pose(now, d.walk_phase, moving, d.run_amt.clamp(0.0, 1.0));
+    // The idle runs on the mob's own clock offset, so a crowd doesn't shift its weight and look
+    // round in unison.
+    let loco = loco_pose(now + 2.5 * d.phase, d.walk_phase, moving, d.run_amt.clamp(0.0, 1.0));
     if d.bow {
         // An archer's draw-and-loose. Shot mid-step (a repositioning archer) it layers over the
         // gait like a running attack; planted, the full braced stance plays.

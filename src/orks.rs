@@ -923,6 +923,7 @@ fn ork_drive(time: Res<Time>, mut q: Query<(&Ork, &mut crate::biped::BipedDrive)
         d.moving_amt += (target - d.moving_amt) * (dt * 8.0).min(1.0);
         d.run_amt = if matches!(o.mode, OrkMode::Hunt) { 0.55 } else { 0.0 }; // charging = run-ish
         d.walk_phase = (tw + o.phase) * o.gait;
+        d.phase = o.phase; // its own idle clock, so a camp doesn't fidget in unison
         match strike_p(o.atk_anim, now) {
             Some(p) => {
                 d.attacking = true;
