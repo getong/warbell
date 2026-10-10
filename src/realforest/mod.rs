@@ -611,6 +611,87 @@ impl Kit {
     }
 }
 
+impl Kit {
+    /// Shoreline dressing on the eroded river / lake / pool banks ([`crate::worldmap::shore_sample`]):
+    /// small pebbles strewn along the waterline (half drowned — the slope runs on under the water),
+    /// the odd bigger stone down the damp face, and grass / fern tufts hanging over the lip. Five
+    /// hashed probes per tile, all off the scatter's RNG; off the banks a probe is one mask lookup.
+    /// Lands in the near-clutter merge buckets (same cull distance, no extra draw groups).
+    pub fn scatter_shore(
+        &self,
+        chunks: &mut Chunks,
+        lo: f32,
+        hi: f32,
+        mask: &dyn Fn(f32, f32) -> bool,
+    ) {
+        const PEBBLES: [&str; 6] = ["rock_01_a", "rock_01_c", "rock_01_e", "rock_02_b", "rock_02_d", "rock_02_f"];
+        const GRASS: [&str; 4] = ["grass_a", "grass_b", "grass_c", "grass_d"];
+        const FERN: [&str; 3] = ["fern_a", "fern_b", "fern_c"];
+        let mut gx = lo;
+        while gx < hi {
+            let mut gz = lo;
+            while gz < hi {
+                for k in 0..5u32 {
+                    let (a, b) = rolls(gx + 0.71 + k as f32 * 0.23, gz - 0.37 + k as f32 * 0.57);
+                    let (c, d) = rolls(gx - 0.19 - k as f32 * 0.41, gz + 0.83 + k as f32 * 0.13);
+                    let (x, z) = (gx + a, gz + b);
+                    let Some((sd, bank, ground)) = crate::worldmap::shore_sample(x, z) else { continue };
+                    if sd < 0.04 || crate::bridges::near_bridge(x, z, 1.0) || crate::ruins::near_landmark_visual_footprint(x, z) {
+                        continue;
+                    }
+                    // The lower slope runs out over the water TILE beside the bank, which belongs to
+                    // no biome: judge such a point by its first land neighbour (fixed order, so
+                    // exactly one biome pass claims it).
+                    let land = |px: f32, pz: f32| crate::worldmap::is_land_tile_world(px, pz);
+                    let owner = if land(x, z) {
+                        Some((x, z))
+                    } else {
+                        [(0.9f32, 0.0f32), (-0.9, 0.0), (0.0, 0.9), (0.0, -0.9)]
+                            .into_iter()
+                            .map(|(ox, oz)| (x + ox, z + oz))
+                            .find(|&(px, pz)| land(px, pz))
+                    };
+                    let Some((ox, oz)) = owner else { continue };
+                    if !mask(ox, oz) {
+                        continue;
+                    }
+                    let pick = |names: &[&str], s: f32| self.pick(names, d).map(|m| (m, s));
+                    let (choice, sink) = if sd < 0.6 {
+                        // Waterline gravel: a loose string of small stones, thinning out of the water.
+                        (if c < 0.62 - sd * 0.6 { pick(&PEBBLES, 0.07 + d * 0.11) } else { None }, 0.35)
+                    } else if bank > 0.3 && sd < 2.4 {
+                        // The odd stone washed out of the face.
+                        (if c < 0.07 { pick(&PEBBLES, 0.15 + d * 0.18) } else { None }, 0.3)
+                    } else if bank > 0.01 {
+                        // The grass / fern fringe overhanging the lip.
+                        (
+                            if c < 0.30 {
+                                pick(&GRASS, 0.55 + d * 0.45)
+                            } else if c < 0.40 {
+                                pick(&FERN, 0.65 + d * 0.4)
+                            } else {
+                                None
+                            },
+                            0.0,
+                        )
+                    } else {
+                        (None, 0.0)
+                    };
+                    let Some((m, s)) = choice else { continue };
+                    let rot = Quat::from_rotation_y(c * 113.0 % std::f32::consts::TAU);
+                    // Stones sit IN the ground (a fraction of their own height), not perched on it.
+                    // `ground` is the bank surface itself — also where the slope runs out over the
+                    // water tile, which the general ground sampler has no footing for.
+                    let y = ground - self.models[m].height * s * sink;
+                    chunks.push(self, m, Vec3::new(x, y, z), rot, s, Tier::Clutter);
+                }
+                gz += 1.0;
+            }
+            gx += 1.0;
+        }
+    }
+}
+
 // ── Chunk merging for passive props / ground cover ───────────────────────────────────────────
 
 /// Queued kit props, grouped by (16u chunk, cover?, material) so each group merges to one mesh.
@@ -974,14 +1055,44 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
     let (x0, z0) = (-GX, -GZ);
     let (w, h) = ((COLS as f32 * RES) as usize, (ROWS as f32 * RES) as usize);
     let mut forest = vec![0.0f32; w * h];
+    let mut land = vec![false; w * h];
     let mut road = vec![0u8; w * h];
     for j in 0..h {
         let wz = z0 + (j as f32 + 0.5) / RES;
         for i in 0..w {
             let wx = x0 + (i as f32 + 0.5) / RES;
             let k = j * w + i;
+            land[k] = crate::worldmap::is_land_tile_world(wx, wz);
             forest[k] = (crate::worldmap::tile_biome_world(wx, wz) == Some(crate::biome::Biome::Forest)) as u8 as f32;
             road[k] = (crate::roads::road_strength(wx, wz).clamp(0.0, 1.0) * 255.0) as u8;
+        }
+    }
+    // Carry the land's forest weight a few units OUT over the water tiles first: an eroded river /
+    // lake bank runs down into the water tile beside it, and without this the floor faded to bare
+    // vertex green along every forest stream (the bright strip on the bank lip). Each water texel
+    // takes the mean of its already-filled neighbours, ring by ring (nearest land wins), so a
+    // stream between forest and meadow splits down the middle instead of one side taking both.
+    let mut filled = land;
+    for _ in 0..6 {
+        let (prev, prev_filled) = (forest.clone(), filled.clone());
+        for j in 0..h {
+            for i in 0..w {
+                let k = j * w + i;
+                if prev_filled[k] {
+                    continue;
+                }
+                let (mut s, mut n) = (0.0, 0u32);
+                for (ok, kk) in [(i > 0, k.wrapping_sub(1)), (i + 1 < w, k + 1), (j > 0, k.wrapping_sub(w)), (j + 1 < h, k + w)] {
+                    if ok && prev_filled[kk] {
+                        s += prev[kk];
+                        n += 1;
+                    }
+                }
+                if n > 0 {
+                    forest[k] = s / n as f32;
+                    filled[k] = true;
+                }
+            }
         }
     }
     // Separable box blur (radius 3 texels = 1.5u) so the forest edge feathers instead of

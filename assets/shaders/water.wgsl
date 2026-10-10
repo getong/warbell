@@ -34,7 +34,8 @@ struct WaterParams {
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> water: WaterParams;
 // RGBA8 water field (`worldmap::bake_water_field`, linear-filtered): R = signed distance to the
-// bank (−SHORE_LAND … +SHORE_MAX world units), G = bog mask, BA = river flow (0.5-biased XZ).
+// bank (−SHORE_LAND … +SHORE_MAX world units), G = 0..INLAND_G inland (river / lake / pool) weight
+// with the bog mask stacked above it (255), BA = river flow (0.5-biased XZ).
 @group(#{MATERIAL_BIND_GROUP}) @binding(101) var field_tex: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(102) var field_samp: sampler;
 // Tileable slope map (`water::ripple_map`, repeat + mipmapped + anisotropic): RG = slope
@@ -45,10 +46,13 @@ struct WaterParams {
 // Keep in sync with `worldmap::SHORE_MAX` / `worldmap::SHORE_LAND`.
 const SHORE_MAX: f32 = 8.0;
 const SHORE_LAND: f32 = 1.0;
+// `worldmap::INLAND_G / 255`: G below it is the inland weight, above it the bog mask.
+const INLAND_G: f32 = 0.392157;
 
 struct Field {
     shore: f32,
     bog: f32,
+    inland: f32,
     flow: vec2<f32>,
 };
 
@@ -60,12 +64,14 @@ fn water_field(p: vec2<f32>) -> Field {
     if any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0)) {
         f.shore = SHORE_MAX;
         f.bog = 0.0;
+        f.inland = 0.0;
         f.flow = vec2<f32>(0.0);
         return f;
     }
     let s = textureSampleLevel(field_tex, field_samp, uv, 0.0);
     f.shore = s.r * (SHORE_LAND + SHORE_MAX) - SHORE_LAND;
-    f.bog = s.g;
+    f.bog = clamp((s.g - INLAND_G) / (1.0 - INLAND_G), 0.0, 1.0);
+    f.inland = clamp(s.g / INLAND_G, 0.0, 1.0);
     f.flow = (s.ba * 255.0 - 128.0) / 127.0; // 128 = still
     return f;
 }
@@ -150,16 +156,22 @@ fn fragment(
     // Bed: mottled silt / sand (static — the bed doesn't drift), wobbled by refraction; dark peat
     // under the bog.
     let mott = textureSample(ripple_tex, ripple_samp, (p + N.xz * (min(depth, 2.0) * 0.35)) / 7.3).a;
-    let bed = mix(mix(vec3<f32>(0.15, 0.13, 0.09), vec3<f32>(0.28, 0.24, 0.17), mott),
-        vec3<f32>(0.045, 0.035, 0.022), bog);
+    let sand = mix(vec3<f32>(0.15, 0.13, 0.09), vec3<f32>(0.28, 0.24, 0.17), mott);
+    // Rivers, the lake and pools sit on silt and drowned soil — the bank's wet earth carried on
+    // under the surface. The sea's pale sand there read as a bright band along every bank.
+    let silt = mix(vec3<f32>(0.045, 0.042, 0.028), vec3<f32>(0.090, 0.082, 0.055), mott);
+    let bed = mix(mix(sand, silt, fld.inland), vec3<f32>(0.045, 0.035, 0.022), bog);
     var body = bed * trans + scat * (1.0 - trans);
 
     // Foam: a thin broken line right at the bank, a little wider on open water and in the current.
+    // Calm inland water barely laps at its bank — only a running river keeps a faint broken line.
     let lively = max(open, river);
     let edge = 1.0 - smoothstep(0.0, mix(0.3, 0.5, lively), shore);
     let breakup = smoothstep(0.45, 0.8, l1.w * 0.6 + l2.w * 0.4 + edge * 0.25);
-    let foam = edge * breakup * water.params.z * mix(0.35, 0.6, lively) * (1.0 - bog);
-    body = mix(body, vec3<f32>(0.60, 0.63, 0.62), foam);
+    let calm = mix(1.0, 0.04 + 0.16 * river, fld.inland);
+    let foam = edge * breakup * water.params.z * mix(0.35, 0.6, lively) * (1.0 - bog) * calm;
+    // ...and what little there is carries the bank's silt, not sea-spray white.
+    body = mix(body, mix(vec3<f32>(0.60, 0.63, 0.62), vec3<f32>(0.36, 0.34, 0.29), fld.inland), foam);
 
     // What the surface reflects isn't transmitted: weight the body by (1 − Fresnel).
     let n_dot_v = max(dot(N, V), 1e-4);
