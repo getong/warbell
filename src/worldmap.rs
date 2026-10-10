@@ -36,6 +36,15 @@ use crate::palette::lin;
 use crate::terrain::TerrainMaterial;
 use crate::water::{WaterExt, WaterMaterial, WaterParams};
 
+// Alpine mountain geometry (child modules: they read the private tile grid). Shelf relief is
+// added at the single corner-height point every consumer samples; the cliff module builds the
+// wall faces and slides mesa-rim corners onto the tier contour.
+#[path = "alpine/terrain_relief.rs"]
+mod alpine_relief;
+pub(crate) use alpine_relief::relief_at_world;
+#[path = "alpine/terrain_cliff.rs"]
+mod alpine_cliff;
+
 // ── Map dimensions ───────────────────────────────────────────────────────────────
 /// Map enlargement vs the original base island (more tiles → more land + props).
 /// Bumped 1.5 → 1.8 (a clean +20% on every axis), then 1.8 → 2.0 to give the strongholds (esp.
@@ -2346,7 +2355,8 @@ fn corner_top_y_in(grid: &Grid, cx: i32, cz: i32, h_ref: i32) -> Option<f32> {
             n += 1;
         }
     }
-    (n > 0).then(|| sum / n as f32)
+    // + the eroded mesa-shelf relief (0 near every class change, so clusters never disagree).
+    (n > 0).then(|| sum / n as f32 + alpine_relief::corner_relief(cx, cz))
 }
 
 /// Water field at a grid CORNER `(cx, cz)` (grid index → base XZ is `c / MAP_SCALE`) for the bank
@@ -3593,6 +3603,10 @@ fn bs_snow_drifts(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: 
     });
     let drift_meshes: Vec<Handle<Mesh>> =
         (0..3).map(|v| meshes.add(crate::biome_snow::build_mound_mesh(v))).collect();
+    // Alpine kit: frosted talus boulders from the forest kit instead of the low-poly mounds (the
+    // terrain shader already piles the snow drift at every wall foot). Same spots, same RNG.
+    let alp_kit = crate::realforest::get().filter(|_| crate::alpine::enabled());
+    let mut alp_chunks = crate::realforest::Chunks::default();
     for iz in 0..ROWS {
         for ix in 0..COLS {
             let Some((TB::Snow, h)) = tile_at(ix, iz) else { continue };
@@ -3609,18 +3623,33 @@ fn bs_snow_drifts(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: 
                     continue; // keep drift mounds off the plank decks
                 }
                 let v = (rng.next() * 3.0) as u32;
+                let tf = Transform {
+                    translation: Vec3::new(wx, tile_top_y_world(wx, wz), wz),
+                    rotation: Quat::from_rotation_y(rng.next() as f32 * std::f32::consts::TAU),
+                    scale: Vec3::splat(0.9 + rng.next() as f32 * 0.7),
+                };
+                if let Some(k) = alp_kit {
+                    // Only at real wall feet (a 1-class step is a pass ramp — keep it clear), and
+                    // walk-through: pure dressing against a face nobody can climb anyway.
+                    if nh - h >= 2 {
+                        if let Some((m, sm, snowy)) = crate::alpine::snowkit::talus(k, wx, wz) {
+                            let s = tf.scale.x * sm;
+                            alp_chunks.push_snowy(k, m, tf.translation, tf.rotation, s, crate::realforest::Tier::Props, snowy);
+                        }
+                    }
+                    continue;
+                }
                 commands.spawn((
                     Mesh3d(drift_meshes[(v % 3) as usize].clone()),
                     MeshMaterial3d(drift_mat.clone()),
-                    Transform {
-                        translation: Vec3::new(wx, tile_top_y_world(wx, wz), wz),
-                        rotation: Quat::from_rotation_y(rng.next() as f32 * std::f32::consts::TAU),
-                        scale: Vec3::splat(0.9 + rng.next() as f32 * 0.7),
-                    },
+                    tf,
                     crate::biome::BiomeEntity,
                 ));
             }
         }
+    }
+    if let Some(k) = alp_kit {
+        alp_chunks.spawn(k, commands, meshes, crate::biome::scatter_cull_enabled());
     }
 }
 
@@ -4067,43 +4096,11 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
         [v[0] / l, v[1] / l, v[2] / l]
     };
 
-    // Direction pointing DOWNHILL at world `(wx, wz)` — a pure function of position, so every
-    // wall piece touching a shared corner column (including the PERPENDICULAR pair at a convex
-    // cliff corner) computes the identical lean there and the displaced faces stay welded.
-    let downhill = |wx: f32, wz: f32| -> (f32, f32) {
-        let hcl = |dx: f32, dz: f32| -> f32 {
-            tile_at((wx + GX + dx).floor() as i32, (wz + GZ + dz).floor() as i32)
-                .map(|(_, h)| h as f32)
-                .unwrap_or(0.0) // off-map / sea reads as low → coastal cliffs lean seaward
-        };
-        let d = 0.9;
-        let ox = hcl(-d, 0.0) - hcl(d, 0.0);
-        let oz = hcl(0.0, -d) - hcl(0.0, d);
-        let l = (ox * ox + oz * oz).sqrt();
-        if l < 1e-3 { (0.0, 0.0) } else { (ox / l, oz / l) }
-    };
-
-    // Horizontal displacement for a cliff-face vertex. `w` is the lip-relative depth weight
-    // (0 at the top edge → 1 from ~1u down): zero at the lip keeps the face glued to the top
-    // quad; below, a downhill talus lean (the base swells outward like real scree-footed rock)
-    // plus two independent value-noise fields (sampled in a Y-sheared domain so every elevation
-    // band bulges differently) break the dead-flat axis-aligned plane into a natural crag.
-    // Everything is a pure function of world position + `w`, which shared columns agree on.
-    let cliff_disp = |wx: f32, y: f32, wz: f32, w: f32| -> (f32, f32) {
-        if w <= 0.001 {
-            return (0.0, 0.0);
-        }
-        let (ox, oz) = downhill(wx, wz);
-        let j1 = vnoise(wx * 1.6 + y * 1.1, wz * 1.6 - y * 0.8) - 0.5;
-        let j2 = vnoise(wz * 1.7 + y * 0.9 + 37.0, wx * 1.7 + y * 1.3) - 0.5;
-        (ox * 0.34 * w + j1 * 0.44 * w, oz * 0.34 * w + j2 * 0.44 * w)
-    };
-
     // One tile-edge wall from the top edge (`ya`→`yb` over `pa`→`pb`) down to the lower shelf
     // (`ba`, `bb`). A low bank keeps the old single flat quad; a real cliff (mean drop ≥
-    // CLIFF_MIN_DROP — the ≥2-class mesa/ridge walls) becomes a 3×N lattice of noise-displaced
-    // flat-shaded facets. Vertex alpha carries a NEGATIVE "cliffness" so the terrain shader
-    // paints procedural rock strata there (positive alpha stays the marsh-wetness lane).
+    // CLIFF_MIN_DROP — the ≥2-class mesa/ridge walls) becomes an eroded, smooth-shaded lattice
+    // (`alpine_cliff::wall`). Vertex alpha carries a NEGATIVE "cliffness" so the terrain shader
+    // paints rock there (positive alpha stays the marsh-wetness lane).
     let cliff_wall = |pa: (f32, f32), pb: (f32, f32), ya: f32, yb: f32, ba: f32, bb: f32,
                       n: [f32; 3], ctop: [f32; 4], cbot: [f32; 4],
                       idx: &mut Vec<u32>, pos: &mut Vec<[f32; 3]>, nrm: &mut Vec<[f32; 3]>, col: &mut Vec<[f32; 4]>| {
@@ -4120,85 +4117,7 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
             idx.extend_from_slice(&[b, b + 1, b + 2, b, b + 2, b + 3]);
             return;
         }
-        let cliffk = ((drop - 0.40) / 0.90).clamp(0.0, 1.0);
-        let bot_a = ba - CLIFF_SKIRT;
-        let bot_b = bb - CLIFF_SKIRT;
-        // Interior rows on fixed world-Y levels (see CLIFF_ROW doc) — welded shared columns.
-        let lip_hi = ya.max(yb);
-        let bot_lo = bot_a.min(bot_b);
-        let k_hi = ((lip_hi - 0.10) / CLIFF_ROW).floor() as i32;
-        let k_lo = ((bot_lo + 0.10) / CLIFF_ROW).ceil() as i32;
-        let mut levels: Vec<f32> = Vec::new();
-        let mut k = k_hi;
-        while k >= k_lo && levels.len() < 14 {
-            levels.push(k as f32 * CLIFF_ROW);
-            k -= 1;
-        }
-        let nrows = levels.len() + 2;
-        const NC: usize = 3; // facet columns per 1-tile wall
-        let mut grid: Vec<[f32; 3]> = Vec::with_capacity((NC + 1) * nrows);
-        let mut gcol: Vec<[f32; 4]> = Vec::with_capacity((NC + 1) * nrows);
-        for ci in 0..=NC {
-            let t = ci as f32 / NC as f32;
-            let x0 = pa.0 + (pb.0 - pa.0) * t;
-            let z0 = pa.1 + (pb.1 - pa.1) * t;
-            let lip = ya + (yb - ya) * t;
-            let bot = bot_a + (bot_b - bot_a) * t;
-            for rj in 0..nrows {
-                let y = if rj == 0 {
-                    lip
-                } else if rj == nrows - 1 {
-                    bot
-                } else {
-                    levels[rj - 1].clamp(bot, lip)
-                };
-                let w = ((lip - y) / 1.1).clamp(0.0, 1.0);
-                let (dx, dz) = cliff_disp(x0, y, z0, w);
-                // Top→bottom tone gradient + a facet-scale value jitter so a tall face
-                // reads as varied rock, not one flat colour ramp.
-                let fr = ((lip - y) / (lip - bot).max(0.3)).clamp(0.0, 1.0);
-                let tone = 0.85 + (vnoise(x0 * 1.2 + y * 0.8, z0 * 1.2 - y * 0.6) - 0.5) * 0.60;
-                grid.push([x0 + dx, y, z0 + dz]);
-                gcol.push([
-                    (ctop[0] + (cbot[0] - ctop[0]) * fr) * tone,
-                    (ctop[1] + (cbot[1] - ctop[1]) * fr) * tone,
-                    (ctop[2] + (cbot[2] - ctop[2]) * fr) * tone,
-                    // Cliffness fades in over the first ~0.5u below the lip so the rock
-                    // albedo melts out of the top-surface colour instead of a hard seam.
-                    -(cliffk * ((lip - y) / 0.5).clamp(0.0, 1.0)),
-                ]);
-            }
-        }
-        // Flat-shaded facet triangles — the crisp low-poly crag look (per-face normals from
-        // the displaced geometry, matching the outward winding of the old wall quad).
-        for ci in 0..NC {
-            for rj in 0..nrows - 1 {
-                let ia = ci * nrows + rj;
-                let ib = (ci + 1) * nrows + rj;
-                let ic = (ci + 1) * nrows + rj + 1;
-                let id = ci * nrows + rj + 1;
-                for tri in [[ia, ib, ic], [ia, ic, id]] {
-                    let p0 = grid[tri[0]];
-                    let p1 = grid[tri[1]];
-                    let p2 = grid[tri[2]];
-                    let e1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
-                    let e2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
-                    let cr = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
-                    let l = (cr[0] * cr[0] + cr[1] * cr[1] + cr[2] * cr[2]).sqrt();
-                    if l < 1e-6 {
-                        continue; // clamped row → degenerate sliver
-                    }
-                    let fnrm = [cr[0] / l, cr[1] / l, cr[2] / l];
-                    let b = pos.len() as u32;
-                    for &vi in &tri {
-                        pos.push(grid[vi]);
-                        nrm.push(fnrm);
-                        col.push(gcol[vi]);
-                    }
-                    idx.extend_from_slice(&[b, b + 1, b + 2]);
-                }
-            }
-        }
+        alpine_cliff::wall(pa, pb, ya, yb, ba, bb, n, ctop, cbot, idx, pos, nrm, col);
     };
 
     const NB: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
@@ -4292,12 +4211,11 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
                 corner_top_y_for(ix + 1, iz + 1, h).unwrap_or(flat),
                 corner_top_y_for(ix, iz + 1, h).unwrap_or(flat),
             ];
-            let cxz = [
-                (ix as f32 - GX, iz as f32 - GZ),
-                (ix as f32 + 1.0 - GX, iz as f32 - GZ),
-                (ix as f32 + 1.0 - GX, iz as f32 + 1.0 - GZ),
-                (ix as f32 - GX, iz as f32 + 1.0 - GZ),
-            ];
+            // Corner XZ: the tile grid, except mesa-rim lip corners slide onto the smooth tier
+            // contour (`alpine_cliff::corner_xz`) so walls curve instead of staircasing.
+            let cxz = [(ix, iz), (ix + 1, iz), (ix + 1, iz + 1), (ix, iz + 1)].map(|(gx, gz)| {
+                if cut { (gx as f32 - GX, gz as f32 - GZ) } else { alpine_cliff::corner_xz(gx, gz) }
+            });
             let cn = |cx: i32, cz: i32| {
                 let e = corner_top_y_for(cx + 1, cz, h).unwrap_or(flat);
                 let w = corner_top_y_for(cx - 1, cz, h).unwrap_or(flat);
@@ -5056,4 +4974,3 @@ mod tests {
         }
     }
 }
-

@@ -15,6 +15,7 @@
 //! conventions and `docs/superpowers/specs/` for the parity roadmap.
 
 mod aftermath;
+mod alpine; // snow / meadow / scree / rock terrain layers + snow-dusted kit scatter (FOREST_ALPINE=0 disables)
 mod ambient_life;
 mod atmospherics;
 mod meadow;
@@ -328,6 +329,8 @@ fn main() {
         // `Plugins` arity-15 cap, and appending to one is what broke the build first try.
         .add_plugins(phototrees::PhotoTreesPlugin)
         .add_plugins(realforest::RealForestPlugin)
+        // Alpine terrain layers + the snow-dusted kit materials (standalone: tuple arity cap).
+        .add_plugins(alpine::AlpinePlugin)
         // Cinematic atmospherics post pass (height fog + sun in-scatter + cloud light patches).
         // Toggled per-preset alongside god-rays in quality.rs; same custom-post-pass family.
         .add_plugins(atmospherics::AtmosphericsPlugin)

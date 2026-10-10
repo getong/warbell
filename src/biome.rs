@@ -621,6 +621,25 @@ fn register_passive_blocker(x: f32, z: f32, footprint: Vec2, scale: f32, authore
     crate::blockers::add_obb(x, z, half.x, half.y, yaw);
 }
 
+/// Draw a snow-biome prop from the forest kit (`alpine::snowkit::prop`) for scatter class `class`,
+/// tinted variant `vi`, into `chunks`; returns whether anything was drawn. Gameplay stays the
+/// low-poly prop's: the caller registers its blocker either way (blockers feed tree spacing and
+/// every later placer, so swapping in the kit mesh's own footprint would reshuffle the region and
+/// the vignette / decor sites with it), and the caller falls back to the low-poly prop on a SOLID
+/// spot the kit leaves bare, so no blocker is ever invisible.
+fn snow_prop(
+    k: &crate::realforest::Kit,
+    chunks: &mut crate::realforest::Chunks,
+    class: usize,
+    vi: usize,
+    at: Vec3,
+    rot: Quat,
+    s: f32,
+) -> bool {
+    crate::alpine::snowkit::prop(k, class, vi / PROP_TINTS.len(), at.x, at.z)
+        .is_some_and(|(m, sm, snowy)| chunks.push_snowy(k, m, at, rot, s * sm, crate::realforest::Tier::Props, snowy))
+}
+
 /// Soft undergrowth can layer with other plants, but it must stay off actual solids.
 /// A solid boulder still needs its whole visible footprint clear of earlier scenery.
 /// All props keep reserving their visible extent for later structural set-pieces; those
@@ -1015,6 +1034,11 @@ pub fn scatter_region(
         crate::realforest::begin_scatter();
     }
     let class_index = |c: &ClassHandles| classes.iter().position(|x| std::ptr::eq(x, c)).unwrap_or(usize::MAX);
+    // Alpine kit (`alpine::snowkit`): the SNOW biome draws its trees / rocks / cover from the same
+    // Blender kit, snow-dusted up in the snow and green on the meadow apron. Placement is untouched
+    // (position-hashed picks, like the forest); the hand-built snowmen stay.
+    let snow_kit = if cfg.biome == Biome::Snow && crate::alpine::enabled() { crate::realforest::get() } else { None };
+    let mut alp_chunks = crate::realforest::Chunks::default();
 
     // ── Main per-tile scatter ──
     let mut gx = lo;
@@ -1036,8 +1060,13 @@ pub fn scatter_region(
             // crag instead of carpeting a wall. Gentle rolling hills (< SLOPE_FREE) are untouched.
             let tree_mult = {
                 let d = 1.6;
-                let gx = height_fn(cx + d, cz) - py; // forward diff off the already-sampled py (cheap)
-                let gz = height_fn(cx, cz + d) - py;
+                // On the PRE-relief terrain: the alpine shelf relief (gentle, nav-capped) must not
+                // flip a tile's pick — every pick feeds the region's one RNG stream, so a single
+                // flip would reshuffle all later props (and the vignette / decor sites after them).
+                let lay = |x: f32, z: f32, y: f32| y - crate::worldmap::relief_at_world(x, z);
+                let p0 = lay(cx, cz, py);
+                let gx = lay(cx + d, cz, height_fn(cx + d, cz)) - p0; // forward diff off the already-sampled py (cheap)
+                let gz = lay(cx, cz + d, height_fn(cx, cz + d)) - p0;
                 let slope = (gx * gx + gz * gz).sqrt() / d;
                 (1.0 - (slope - SLOPE_FREE).max(0.0) * SLOPE_TREE_THIN).clamp(SLOPE_TREE_FLOOR, 1.0)
             };
@@ -1095,6 +1124,8 @@ pub fn scatter_region(
                                 && !story_clearings.overlaps(cx, cz, footprint)
                             {
                                 let rot = yaw(&mut r);
+                                let snow_fb = snow_kit.filter(|_| crate::alpine::snowkit::handles_prop(class_index(fb)));
+                                // The snow kit keeps the low-poly prop's blocker (see `snow_prop`).
                                 if kit.is_none() {
                                     register_passive_blocker(cx, cz, fb.footprints[fi], fs, fb.block_radius, rot);
                                 }
@@ -1105,6 +1136,11 @@ pub fn scatter_region(
                                         if kit_chunks.push(k, m, Vec3::new(cx, py, cz), rot, fs * sm, crate::realforest::Tier::Props) {
                                             k.register_solid(m, cx, cz, fs * sm, rot);
                                         }
+                                    }
+                                } else if let Some(k) = snow_fb {
+                                    let at = Vec3::new(cx, py, cz);
+                                    if !snow_prop(k, &mut alp_chunks, class_index(fb), fi, at, rot, fs) && fb.block_radius * fs >= 0.30 {
+                                        queue(false, fb.variants[fi].clone(), at, rot, fs);
                                     }
                                 } else {
                                     queue(false, fb.variants[fi].clone(), Vec3::new(cx, py, cz), rot, fs);
@@ -1153,6 +1189,29 @@ pub fn scatter_region(
                             ));
                             k.attach_tree(&mut tree, lod0, scatter_cull_enabled());
                             crate::realforest::splat(cx, cz, 0.35 * s);
+                            gz += 1.0;
+                            continue;
+                        }
+                        // Snow biome: the kit conifers / bare trees, frosted above the meadow apron.
+                        let snow_tree = snow_kit.and_then(|k| {
+                            crate::alpine::snowkit::tree(k, vi / PROP_TINTS.len(), cx, cz).map(|(t, f)| (k, t, f))
+                        });
+                        if let Some((k, lod0, frosted)) = snow_tree {
+                            // Keeps the low-poly tree's per-kind blocker (`trunk_r` above): tree
+                            // spacing reads blockers, so a kit trunk radius here would reshuffle
+                            // every later pick in the region — and, through the shared blocker
+                            // grid, the vignette sites (the Lost Caravan moved 100u).
+                            let mut tree = commands.spawn((
+                                Transform {
+                                    translation: Vec3::new(cx, py, cz),
+                                    rotation: Quat::IDENTITY,
+                                    scale: Vec3::splat(s),
+                                },
+                                crate::wind::sway_for(cx, cz, base),
+                                crate::verbs::ChopTree::new(trunk_r),
+                                BiomeEntity,
+                            ));
+                            k.attach_tree_snowy(&mut tree, lod0, scatter_cull_enabled(), frosted);
                             gz += 1.0;
                             continue;
                         }
@@ -1206,6 +1265,8 @@ pub fn scatter_region(
                         continue;
                     }
                     let rot = yaw(&mut r);
+                    let snow_p = snow_kit.filter(|_| crate::alpine::snowkit::handles_prop(class_index(c)));
+                    // The snow kit keeps the low-poly prop's blocker (see `snow_prop`).
                     if kit.is_none() {
                         register_passive_blocker(cx, cz, c.footprints[vi], s, c.block_radius, rot);
                     }
@@ -1216,6 +1277,11 @@ pub fn scatter_region(
                             if kit_chunks.push(k, m, Vec3::new(cx, py, cz), rot, s * sm, crate::realforest::Tier::Props) {
                                 k.register_solid(m, cx, cz, s * sm, rot);
                             }
+                        }
+                    } else if let Some(k) = snow_p {
+                        let at = Vec3::new(cx, py, cz);
+                        if !snow_prop(k, &mut alp_chunks, class_index(c), vi, at, rot, s) && c.block_radius * s >= 0.30 {
+                            queue(false, c.variants[vi].clone(), at, rot, s);
                         }
                     } else {
                         queue(false, c.variants[vi].clone(), Vec3::new(cx, py, cz), rot, s);
@@ -1291,6 +1357,11 @@ pub fn scatter_region(
                                     if let Some((m, sm)) = k.passive_for(i, true, a, b).filter(|_| !no_grass()) {
                                         kit_chunks.push(k, m, Vec3::new(x, py, z), rot, s * sm, crate::realforest::Tier::Cover);
                                     }
+                                } else if let Some(k) = snow_kit {
+                                    if let Some((m, sm, snowy)) = crate::alpine::snowkit::cover(k, i, x, z).filter(|_| !no_grass()) {
+                                        let at = Vec3::new(x, py, z);
+                                        alp_chunks.push_snowy(k, m, at, rot, s * sm, crate::realforest::Tier::Cover, snowy);
+                                    }
                                 } else {
                                     queue(true, c.variants[vi].clone(), Vec3::new(x, py, z), rot, s);
                                 }
@@ -1318,6 +1389,9 @@ pub fn scatter_region(
         // Pebbles at the waterline + the grass fringe on the eroded river / lake banks.
         k.scatter_shore(&mut kit_chunks, lo, hi, mask);
         kit_chunks.spawn(k, commands, meshes, scatter_cull_enabled());
+    }
+    if let Some(k) = snow_kit {
+        alp_chunks.spawn(k, commands, meshes, scatter_cull_enabled());
     }
 }
 

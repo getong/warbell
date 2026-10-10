@@ -72,6 +72,21 @@ pub struct ForestExtension {
     #[texture(109)]
     #[sampler(110)]
     pub fp_mask: Handle<Image>,
+    /// Alpine terrain (`crate::alpine`, `assets/shaders/alpine.wgsl`): snow / meadow / scree /
+    /// rock PBR layers as 2D arrays + the RGBA8 alpine mask. Placeholders until
+    /// `alpine::patch_terrain` binds them (`alpine.on.x == 1`).
+    #[uniform(111)]
+    pub alpine: crate::alpine::AlpineParams,
+    #[texture(112, dimension = "2d_array")]
+    #[sampler(115)]
+    pub alp_albedo: Handle<Image>,
+    #[texture(113, dimension = "2d_array")]
+    pub alp_normal: Handle<Image>,
+    #[texture(114, dimension = "2d_array")]
+    pub alp_ormh: Handle<Image>,
+    #[texture(116)]
+    #[sampler(117)]
+    pub alp_mask: Handle<Image>,
 }
 
 impl MaterialExtension for ForestExtension {
@@ -141,6 +156,11 @@ pub fn make_material(
             fp_normal: forest_floor_placeholder(images),
             fp_ormh: forest_floor_placeholder(images),
             fp_mask: forest_mask_placeholder(images),
+            alpine: crate::alpine::AlpineParams::default(),
+            alp_albedo: crate::alpine::layers_placeholder(images),
+            alp_normal: crate::alpine::layers_placeholder(images),
+            alp_ormh: crate::alpine::layers_placeholder(images),
+            alp_mask: crate::alpine::mask_placeholder(images),
         },
     })
 }

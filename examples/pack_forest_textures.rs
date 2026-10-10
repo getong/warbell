@@ -24,6 +24,8 @@ const GROUND: [&str; 3] = ["litter", "moss", "path"];
 const STRUCT: [&str; 3] = ["wood", "stone", "cloth"];
 /// Creature surface detail layers, in `creature::Surf` code order.
 const CREATURE: [&str; 7] = ["skin", "fur", "leather", "wood", "metal", "cloth", "bone"];
+/// Alpine terrain splat layers, in `alpine.wgsl` layer order (`tools/blender_forest/alpine.py`).
+const ALPINE: [&str; 4] = ["snow", "meadow", "scree", "rock"];
 const MAPS: [&str; 3] = ["albedo", "normal", "ormh"];
 
 fn srgb_to_lin(c: f32) -> f32 {
@@ -142,7 +144,7 @@ fn main() {
     // other file — for regenerating one set when the other PNG intermediates aren't on disk.
     let only = std::env::var("PACK_ONLY").ok();
     // Ground + structure re-skin: three layers per map → one array file each.
-    for (prefix, names) in [("ground", &GROUND[..]), ("struct", &STRUCT[..]), ("creature", &CREATURE[..])] {
+    for (prefix, names) in [("ground", &GROUND[..]), ("struct", &STRUCT[..]), ("creature", &CREATURE[..]), ("alpine", &ALPINE[..])] {
         if only.as_deref().is_some_and(|o| o != prefix) {
             continue;
         }
@@ -176,7 +178,7 @@ fn main() {
         .filter(|p| p.extension().is_some_and(|x| x == "png"))
         .filter(|p| {
             let n = p.file_name().unwrap().to_string_lossy().to_string();
-            !n.starts_with("ground_") && !n.starts_with("struct_") && !n.starts_with("creature_")
+            !["ground_", "struct_", "creature_", "alpine_"].iter().any(|p| n.starts_with(p))
         })
         .collect();
     pngs.sort();

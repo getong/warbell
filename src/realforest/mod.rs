@@ -134,6 +134,8 @@ pub struct GroundTextures {
 pub enum KitMat {
     Std(Handle<StandardMaterial>),
     Foliage(Handle<foliage::FoliageMaterial>),
+    /// Snow-dusted twin (`alpine::snowkit`) — the snow biome's trees, rocks and cover.
+    Snow(Handle<crate::alpine::snowkit::SnowKitMaterial>),
 }
 
 impl KitMat {
@@ -141,12 +143,15 @@ impl KitMat {
         match self {
             KitMat::Std(h) => e.insert(MeshMaterial3d(h.clone())),
             KitMat::Foliage(h) => e.insert(MeshMaterial3d(h.clone())),
+            KitMat::Snow(h) => e.insert(MeshMaterial3d(h.clone())),
         };
     }
 }
 
 pub struct Kit {
     mats: Vec<KitMat>,
+    /// Snow-dusted twin per material (`None` = no twin, the plain material is used).
+    snow_mats: Vec<Option<KitMat>>,
     models: Vec<Model>,
     by_name: HashMap<String, usize>,
     pub ground: GroundTextures,
@@ -195,6 +200,19 @@ impl Kit {
     fn pick(&self, names: &[&str], roll: f32) -> Option<usize> {
         let i = ((roll * names.len() as f32) as usize).min(names.len() - 1);
         self.model(names[i])
+    }
+
+    /// [`Self::pick`] for other scatter tables (`alpine::snowkit`).
+    pub fn pick_named(&self, names: &[&str], roll: f32) -> Option<usize> {
+        self.pick(names, roll)
+    }
+
+    /// Material `i`, or its snow-dusted twin when `snow` (falls back to the plain one).
+    fn mat(&self, i: usize, snow: bool) -> &KitMat {
+        match self.snow_mats.get(i) {
+            Some(Some(m)) if snow => m,
+            _ => &self.mats[i],
+        }
     }
 
     /// Which tree to draw for forest tree class `class` (0 = canopy mix, 1 = ancient giants) and
@@ -432,6 +450,15 @@ impl Kit {
     /// [`Self::attach_tree`], also inserting `fruit_tag` on every fruit part (both LODs) so
     /// gameplay can hide / show the apples (harvest + regrow).
     pub fn attach_tree_tagged<B: Bundle + Clone>(&self, e: &mut EntityCommands, lod0: usize, cull: bool, fruit_tag: B) {
+        self.attach_tree_with(e, lod0, cull, fruit_tag, false);
+    }
+
+    /// [`Self::attach_tree`] with the snow-dusted material twins when `snow` (snow biome).
+    pub fn attach_tree_snowy(&self, e: &mut EntityCommands, lod0: usize, cull: bool, snow: bool) {
+        self.attach_tree_with(e, lod0, cull, (), snow);
+    }
+
+    fn attach_tree_with<B: Bundle + Clone>(&self, e: &mut EntityCommands, lod0: usize, cull: bool, fruit_tag: B, snow: bool) {
         let fruit = self.mat_by_name("fruit");
         let lod1 = self.models.get(lod0 + 1);
         e.insert(Visibility::default());
@@ -452,7 +479,7 @@ impl Kit {
             for (model, range) in lods {
                 for part in &model.parts {
                     let mut c = p.spawn((Mesh3d(part.handle.clone()), tf, range.clone()));
-                    self.mats[part.mat].insert(&mut c);
+                    self.mat(part.mat, snow).insert(&mut c);
                     if Some(part.mat) == fruit {
                         c.insert((fruit_tag.clone(), Visibility::Visible));
                     }
@@ -707,7 +734,8 @@ impl Kit {
 /// Queued kit props, grouped by (16u chunk, cover?, material) so each group merges to one mesh.
 #[derive(Default)]
 pub struct Chunks {
-    groups: HashMap<((i32, i32), Tier, u8, usize), Vec<(usize, usize, Transform)>>,
+    /// (chunk, tier, density slice, material, snow twin?) -> queued parts.
+    groups: HashMap<((i32, i32), Tier, u8, usize, bool), Vec<(usize, usize, Transform)>>,
 }
 
 /// Undergrowth density slice a merged chunk belongs to. Every plant / clutter piece is hashed into
@@ -776,6 +804,12 @@ impl Chunks {
     /// Queue a kit prop for its chunk merge. Returns false (nothing queued) where the spot must
     /// stay clear of a set-piece ([`keep_clear`]).
     pub fn push(&mut self, kit: &Kit, model: usize, world: Vec3, rot: Quat, scale: f32, tier: Tier) -> bool {
+        self.push_snowy(kit, model, world, rot, scale, tier, false)
+    }
+
+    /// [`Self::push`], drawn with the snow-dusted material twins when `snow`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn push_snowy(&mut self, kit: &Kit, model: usize, world: Vec3, rot: Quat, scale: f32, tier: Tier, snow: bool) -> bool {
         if keep_clear(world.x, world.z, kit.models[model].half.max_element() * scale) {
             return false;
         }
@@ -783,7 +817,7 @@ impl Chunks {
         let t = Transform { translation: world - chunk_center(key), rotation: rot, scale: Vec3::splat(scale) };
         let slice = density_slice(tier, world);
         for (pi, part) in kit.models[model].parts.iter().enumerate() {
-            self.groups.entry((key, tier, slice, part.mat)).or_default().push((model, pi, t));
+            self.groups.entry((key, tier, slice, part.mat, snow)).or_default().push((model, pi, t));
         }
         if tier == Tier::Props {
             splat(world.x, world.z, 0.55 * scale);
@@ -793,7 +827,7 @@ impl Chunks {
 
     pub fn spawn(self, kit: &Kit, commands: &mut Commands, meshes: &mut Assets<Mesh>, cull: bool) {
         SCATTER_DONE.store(true, std::sync::atomic::Ordering::Release);
-        for ((key, tier, slice, mat), items) in self.groups {
+        for ((key, tier, slice, mat, snow), items) in self.groups {
             let mut it = items.into_iter();
             let Some((m0, p0, t0)) = it.next() else { continue };
             let mut base = kit.models[m0].parts[p0].mesh.clone().transformed_by(t0);
@@ -818,7 +852,7 @@ impl Chunks {
                 DensitySlice(slice),
                 Visibility::default(),
             ));
-            kit.mats[mat].insert(&mut e);
+            kit.mat(mat, snow).insert(&mut e);
             if tier != Tier::Props {
                 e.insert(crate::biome::GroundCoverChunk);
             }
@@ -915,13 +949,25 @@ fn try_build(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
     foliage_mats: &mut Assets<foliage::FoliageMaterial>,
+    mut snow_mats: Option<&mut Assets<crate::alpine::snowkit::SnowKitMaterial>>,
     images: &mut Assets<Image>,
 ) -> Result<Kit, String> {
     let mut mats = Vec::new();
+    let mut snow_twins = Vec::new();
     let mut mat_index = HashMap::new();
     for (name, set, card) in MATERIALS {
         mat_index.insert(name.to_string(), mats.len());
         let m = pbr_material(images, set, card)?;
+        // Snow-dusted twin for the snow biome (`alpine::snowkit`): same textures, crown tint kept.
+        let tint = match name {
+            "canopy" => 0.6,
+            "undergrowth" => 0.35,
+            _ => 0.0,
+        };
+        snow_twins.push(match (crate::alpine::snowkit::snow_amount(name), snow_mats.as_deref_mut()) {
+            (Some(amount), Some(sm)) => Some(KitMat::Snow(sm.add(crate::alpine::snowkit::twin(&m, tint, amount)))),
+            _ => None,
+        });
         // Leaf cards sway a little at the crown edge, undergrowth blades more at the tips; plus
         // crown / undergrowth colour variety (see `foliage`).
         mats.push(match name {
@@ -981,7 +1027,7 @@ fn try_build(
         [Ok(a), Ok(o)] => crate::creature::set_detail_layers(images.add(a), images.add(o)),
         _ => warn!("realforest: creature detail layers missing — creatures keep the procedural surfaces"),
     }
-    Ok(Kit { mats, models, by_name, ground })
+    Ok(Kit { mats, snow_mats: snow_twins, models, by_name, ground })
 }
 
 /// (XZ half-extent, trunk-base radius) of a model from its CPU meshes. The trunk radius is the
@@ -1010,10 +1056,11 @@ pub(crate) fn build_kit(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut foliage_mats: ResMut<Assets<foliage::FoliageMaterial>>,
+    mut snow_mats: Option<ResMut<Assets<crate::alpine::snowkit::SnowKitMaterial>>>,
     mut images: ResMut<Assets<Image>>,
 ) {
     let t0 = std::time::Instant::now();
-    match try_build(&mut meshes, &mut materials, &mut foliage_mats, &mut images) {
+    match try_build(&mut meshes, &mut materials, &mut foliage_mats, snow_mats.as_deref_mut(), &mut images) {
         Ok(kit) => {
             info!("realforest: kit loaded ({} models) in {:.2}s", kit.models.len(), t0.elapsed().as_secs_f32());
             let _ = KIT.set(kit);

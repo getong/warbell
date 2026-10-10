@@ -18,6 +18,7 @@
     forward_io::{VertexOutput, FragmentOutput},
     mesh_view_bindings::{view, lights},
 }
+#import warbell::alpine::alpine_apply
 
 struct ForestParams {
     // x=detailScale, y=detailStrength, z=variation, w=meanLuminance
@@ -700,6 +701,13 @@ fn fragment(
         pbr_input.material.perceptual_roughness = mix(pbr_input.material.perceptual_roughness, fp_rough, fp_w);
     }
 
+    // Alpine terrain: snow / meadow / scree / rock over the mountains and the snow line
+    // (`alpine.wgsl`, a no-op until `alpine::patch_terrain` binds its layers).
+    let wp3_dx = dpdx(in.world_position.xyz);
+    let wp3_dy = dpdy(in.world_position.xyz);
+    let alp_road = select(0.0, fmask.g, forest.pbr.x > 0.5);
+    let alp_k = alpine_apply(&pbr_input, in.world_position.xyz, in.world_normal, cliff, fp_w, alp_road, wp3_dx, wp3_dy, forest.params2.y);
+
     // ── Wet ground (marsh) — the vertex-colour ALPHA carries a per-vertex wetness (0 = dry … 1 =
     //    standing bog), which `worldmap::ground_color` feathers over the biome BLEND band. Lower the
     //    roughness toward a damp sheen by it, so the marsh catches a broad specular highlight AND the
@@ -707,7 +715,7 @@ fn fragment(
     //    sheet (the tile-square "kwadraty" a player saw where the swamp begins). Every terrain sheet
     //    runs this identically, so a shared boundary vertex resolves the SAME roughness from either
     //    side — no seam. A no-op (wet≈0) on all dry ground, so grass/sand/snow are unaffected.
-    let wet = clamp(pbr_input.material.base_color.a, 0.0, 1.0);
+    let wet = clamp(pbr_input.material.base_color.a, 0.0, 1.0) * (1.0 - alp_k);
     if wet > 0.001 {
         let rw = pbr_input.material.perceptual_roughness;
         pbr_input.material.perceptual_roughness = mix(rw, 0.40, wet);
@@ -723,7 +731,7 @@ fn fragment(
     // slightly specular highlight across the new relief. Subtle; green-gated.
     if forest.params2.y >= 2.0 {
         let r0 = pbr_input.material.perceptual_roughness;
-        pbr_input.material.perceptual_roughness = mix(r0, r0 * 0.82, green);
+        pbr_input.material.perceptual_roughness = mix(r0, r0 * 0.82, green * (1.0 - alp_k));
     }
 
     var out: FragmentOutput;
