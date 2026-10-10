@@ -5052,6 +5052,17 @@ mod tests {
             out.extend_from_slice(&px);
             std::fs::write(path, out).unwrap();
         }
+        // `HEIGHT_DUMP=<file>`: the whole map's tile-centre ground heights as raw little-endian
+        // f32 (COLS × ROWS, row-major, NaN = water) — for offline silhouette renders.
+        if let Ok(path) = std::env::var("HEIGHT_DUMP") {
+            let mut out = Vec::with_capacity((COLS * ROWS * 4) as usize);
+            for iz in 0..ROWS {
+                for ix in 0..COLS {
+                    out.extend_from_slice(&tile_centre_ground(ix, iz).unwrap_or(f32::NAN).to_le_bytes());
+                }
+            }
+            std::fs::write(path, out).unwrap();
+        }
         assert!(top.0 > (reg.peak - 1) as f32 * GROUND_STEP + 4.0, "summit {:.2} barely clears the col", top.0);
         assert!(flat_f < 0.08, "{:.1}% of the massif interior is dead flat (mesa shelves?)", flat_f * 100.0);
         assert!(steep_f < 0.45, "{:.1}% of the massif interior is too steep to walk", steep_f * 100.0);
