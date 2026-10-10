@@ -7,6 +7,11 @@ Same contract as `ground.py` (one 4-layer texture array per map after packing):
   alpine_<layer>_normal.png  tangent-space normal, OpenGL (+Y) convention
   alpine_<layer>_ormh.png    linear: R = AO, G = roughness, B = metallic (0), A = height (0..1)
 
+NOTE (Oct 2026): the SHIPPED snow / scree / rock layers are now the Poly Haven scans snow_02 /
+gray_rocks / rock_face (`alpine_scans.sh`); only the meadow layer still comes from this script.
+Re-running it and packing all four would bring the old procedural snow back - pack with
+`ALPINE_SRC` pointing at a dir holding just the layers you mean to replace.
+
 Layers (order = texture-array layer index in `alpine.wgsl`):
   0 snow    procedural wind-packed snow: soft sastrugi ripples, crust/powder roughness, faint
             blue cavities. PROCEDURAL ONLY because no snow scan is on disk yet - swap in

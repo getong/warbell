@@ -111,9 +111,19 @@ fn load(path: &Path) -> (Vec<u8>, u32, u32) {
     (img.into_raw(), w, h)
 }
 
-fn write_dds(out: &Path, layers: Vec<Vec<(Vec<u8>, u32, u32)>>, srgb: bool, alpha: bool) {
-    let (w, h) = (layers[0][0].1, layers[0][0].2);
-    let levels = layers[0].len() as u32;
+/// One array layer to write: a fresh mip chain to BC7-encode, or a layer's already-encoded bytes
+/// (all mips) lifted verbatim from the previous `.dds` (no second compression pass).
+enum Layer {
+    Px(Vec<(Vec<u8>, u32, u32)>),
+    Raw(Vec<u8>),
+}
+
+fn write_dds(out: &Path, layers: Vec<Layer>, srgb: bool, alpha: bool) {
+    let Some(Layer::Px(first)) = layers.iter().find(|l| matches!(l, Layer::Px(_))) else {
+        panic!("{}: no fresh layer to size the array from", out.display());
+    };
+    let (w, h) = (first[0].1, first[0].2);
+    let levels = first.len() as u32;
     let mut dds = Dds::new_dxgi(NewDxgiParams {
         height: h,
         width: w,
@@ -129,8 +139,13 @@ fn write_dds(out: &Path, layers: Vec<Vec<(Vec<u8>, u32, u32)>>, srgb: bool, alph
     .expect("dds header");
     let mut data = Vec::new();
     for layer in &layers {
-        for (px, lw, lh) in layer {
-            data.extend(bc7_level(px, *lw, *lh, alpha));
+        match layer {
+            Layer::Px(chain) => {
+                for (px, lw, lh) in chain {
+                    data.extend(bc7_level(px, *lw, *lh, alpha));
+                }
+            }
+            Layer::Raw(bytes) => data.extend_from_slice(bytes),
         }
     }
     dds.data = data;
@@ -148,24 +163,39 @@ fn main() {
         if only.as_deref().is_some_and(|o| o != prefix) {
             continue;
         }
-        // A layer group whose PNGs aren't all present (only one material script was re-run) keeps
-        // its existing packed array.
-        if let Some(miss) =
-            names.iter().flat_map(|l| MAPS.map(|m| dir.join(format!("{prefix}_{l}_{m}.png")))).find(|p| !p.exists())
-        {
-            println!("{prefix}: skipped ({} missing)", miss.display());
+        // Layer PNGs come from `<PREFIX>_SRC` when set (e.g. `ALPINE_SRC=<scratch dir>` for
+        // intermediates that shouldn't land in the repo), else from `assets/forest_pbr`.
+        let src = std::env::var(format!("{}_SRC", prefix.to_uppercase())).map(PathBuf::from).unwrap_or(dir.clone());
+        let png = |l: &str, m: &str| src.join(format!("{prefix}_{l}_{m}.png"));
+        let fresh = |l: &str| MAPS.iter().all(|m| png(l, m).exists());
+        // A group with no fresh layer (only another material script was re-run) keeps its packed
+        // array. A PARTLY fresh group re-packs those layers and lifts the others' encoded bytes
+        // verbatim from the existing array (e.g. new scans for three alpine layers while the
+        // fourth's Blender intermediates aren't on disk).
+        if !names.iter().any(|l| fresh(l)) {
+            println!("{prefix}: skipped (no layer PNGs in {})", src.display());
             continue;
         }
         for map in MAPS {
             let srgb = map == "albedo";
+            let out = dir.join(format!("{prefix}_{map}.dds"));
+            let old = names.iter().any(|l| !fresh(l)).then(|| {
+                Dds::read(File::open(&out).unwrap_or_else(|e| panic!("{}: {e}", out.display()))).expect("read dds")
+            });
             let layers = names
                 .iter()
-                .map(|l| {
-                    let (px, w, h) = load(&dir.join(format!("{prefix}_{l}_{map}.png")));
-                    mips(px, w, h, srgb, None)
+                .enumerate()
+                .map(|(i, l)| {
+                    if fresh(l) {
+                        let (px, w, h) = load(&png(l, map));
+                        Layer::Px(mips(px, w, h, srgb, None))
+                    } else {
+                        println!("  {prefix}_{l}_{map}: kept from {}", out.display());
+                        Layer::Raw(old.as_ref().unwrap().get_data(i as u32).expect("old dds layer").to_vec())
+                    }
                 })
                 .collect();
-            write_dds(&dir.join(format!("{prefix}_{map}.dds")), layers, srgb, map == "ormh");
+            write_dds(&out, layers, srgb, map == "ormh");
         }
     }
     if only.is_some() {
@@ -189,6 +219,6 @@ fn main() {
         let alpha = card || stem.ends_with("_ormh");
         let (px, w, h) = load(&png);
         let chain = mips(px, w, h, srgb, card.then_some(CARD_CUTOFF));
-        write_dds(&png.with_extension("dds"), vec![chain], srgb, alpha);
+        write_dds(&png.with_extension("dds"), vec![Layer::Px(chain)], srgb, alpha);
     }
 }
