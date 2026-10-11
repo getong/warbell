@@ -68,7 +68,7 @@ def snow_col(centre, nz, base=PACKED, litter=0.0, axis=None, joints=(), ground=0
 
 
 def snowball(g, centre, r, rng, squash=0.92, lo=0.8, hi=0.86, lumps=0.045, tilt=(0.0, 0.0), litter=0.0,
-             joints=(), base=PACKED, detail=3, pats=5):
+             joints=(), base=PACKED, detail=2, pats=5):
     """A rolled snowball: oblate (`squash` on Y), flattened at unit height -`lo` (where it sits) and
     +`hi` (where the next ball was pressed on), low packing lumps and a few shallow flats where a
     gloved hand patted it firm. Returns (centre, r, squash)."""
@@ -203,7 +203,7 @@ def skirt(g, rng, rx=0.52, rz=0.48, h=0.11, off=(0.0, 0.0), base=PACKED):
     still meets the ground instead of showing a plate under the snowman."""
     nz = Noise(rng, 4, 1.5)
     snow_mound(g, (off[0], -0.02, off[1]), rx, rz, h, rng, mat=M_SNOW,
-          col_fn=snow_col((off[0], -1.0, off[1]), nz, base=base, ground=-0.3), tile=0.9, rings=7, seg=26,
+          col_fn=snow_col((off[0], -1.0, off[1]), nz, base=base, ground=-0.3), tile=0.9, rings=5, seg=18,
           skirt=0.4, rough=0.1, edge=0.16, power=1.2)
 
 
@@ -218,7 +218,7 @@ def on_ball(b, d, inset=0.0):
 # ─────────────────────────────────────────────────────────────── features
 def pebble(g, p, s, rng, col=PEBBLE):
     stone(g, tuple(p), (s, s * 0.85, s * 0.75), rng, mat=M_ROCK, col_fn=lambda q, n: scale(col, 0.9 + 0.2 * n.y),
-          detail=1, rough=0.18, cuts=1, tile=0.25)
+          detail=0, rough=0.18, cuts=1, tile=0.25)
 
 
 def face(g, rng, head, yaw=0.0, eyes=True, mouth=7, carrot=True, eye_drop=(0.0, 0.0)):
@@ -355,7 +355,7 @@ def kettle_hat(g, rng, head):
     def iron(p, n):
         rust = smoothstep(0.15, 0.6, nz(p * 6.0) + 0.3 * (1 - n.y))
         return scale(mix(IRON, RUST, rust * 0.45), 0.72 + 0.25 * smoothstep(-0.2, 0.8, n.y))
-    lathe(g, outer + under, centre, rot, 28, M_IRON, iron, 0.3, dent=dent)
+    lathe(g, outer + under, centre, rot, 18, M_IRON, iron, 0.3, dent=dent)
     snow_mound(g, tuple(centre + rot @ Vector((-0.01, 0.13, 0.0))), 0.1, 0.09, 0.035, rng, mat=M_SNOW,
           col_fn=snow_col(tuple(centre), nz, base=(0.94, 0.96, 1.0)), tile=0.6, rings=3, seg=14, skirt=0.01,
           rough=0.1, edge=0.15, power=0.6)
