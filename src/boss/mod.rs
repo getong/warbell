@@ -293,6 +293,8 @@ fn spawn_wardens(
         let scale = models::root_scale(biome);
         let spec = models::build(biome);
         let facing = i as f32 * 1.3;
+        // For framing a warden with `FOREST_CAM` (its face looks along (sin facing, 0, cos facing)).
+        info!("warden {biome:?} at {:.1},{:.2},{:.1} facing {facing:.2}", pos.x, y, pos.y);
         let root = commands
             .spawn((
                 Transform {
@@ -410,6 +412,14 @@ fn despawn_slain_wardens(
 }
 
 // ── Brain: roam → aggro-on-hit → chase + melee + signature ──────────────────────────────
+
+/// Screenshot hook: `FOREST_WARDEN_HOLD=<yaw radians>` keeps passive wardens standing at home,
+/// turned to that yaw (0 = facing +Z), so a `FOREST_CAM` capture can frame a warden's face
+/// (they otherwise roam, so the pose at capture time is a lottery). Unset in play.
+fn hold_yaw() -> Option<f32> {
+    static HOLD: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+    *HOLD.get_or_init(|| std::env::var("FOREST_WARDEN_HOLD").ok().and_then(|s| s.trim().parse().ok()))
+}
 
 #[allow(clippy::too_many_arguments)]
 fn boss_brain(
@@ -562,6 +572,10 @@ fn boss_brain(
                     }
                 }
             }
+        } else if let Some(yaw) = hold_yaw() {
+            // Screenshot hook: stand at home, turned to the given yaw (see `hold_yaw`).
+            b.facing = yaw;
+            b.moving = false;
         } else {
             // Passive roam around its home region — but if it strayed far (e.g. just broke off a
             // chase), march straight home first.
