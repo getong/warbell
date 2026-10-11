@@ -305,8 +305,9 @@ def batter(g, x0, x1, z0, z1, y0, y1, colf, out=(0.4, 0.4, 0.4, 0.4), tile=2.0):
             q = q[::-1]
         cols = [colf(p.y) for p in q]
         g.flat(q, M_MASON, cols, tile)
-    # plinth course (not past an end with no flare, so wall modules butt cleanly)
-    ex = [0.05 if o > 0 else 0.0 for o in out]
+    # plinth course (not past an end with no flare, so wall modules butt cleanly; 3 mm SHORT of such
+    # an end, so its end cap is not coplanar with the batter's and the body's end faces)
+    ex = [0.05 if o > 0 else -0.003 for o in out]
     sbox(g, x0 - ex[3], x1 + ex[1], y1 - 0.02, y1 + 0.12, z0 - ex[0], z1 + ex[2], colf, tile=tile)
 
 
@@ -1009,8 +1010,10 @@ def ck_keep_t1(rng):
     run = math.hypot(ry - ey, Z + 0.3)
     for s in (-1, 1):
         c = V(0.1, (ey + ry) / 2 + 0.2, s * (Z + 0.3) / 2)
-        lbox(g, c, (2 * X + 0.7, 0.35, run + 0.4), quat_x(s * slope), M_THATCH, [scale(THATCH, 0.8), None, THATCH],
-             tile=1.4, grain=2)
+        # The N slab runs 1 cm further at both gables: the two slabs' end caps overlap at the ridge
+        # and were coplanar (z-fighting up the gable ends).
+        lbox(g, c, (2 * X + 0.7 + (0.02 if s > 0 else 0.0), 0.35, run + 0.4), quat_x(s * slope), M_THATCH,
+             [scale(THATCH, 0.8), None, THATCH], tile=1.4, grain=2)
     # Planked gable triangles (both faces) at each end, above the stone.
     for x in (-X + 0.45, X - 0.3):
         tri = [V(x, ey - 0.1, -Z - 0.1), V(x, ry - 0.1, 0.0), V(x, ey - 0.1, Z + 0.1)]
