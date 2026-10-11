@@ -276,7 +276,7 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
     // Civic: the tax-collector's counting booth inside the west (King's Road) gate — the Crown
     // taxes what comes in; the shrine the heal aura lives in by the infirmary on the east side.
     set(tax_booth_parts(), Vec3::new(-HALF_X + 3.6, 0.0, W_GATE_Z - 3.4), HALF_PI, DecorGate::TaxOffice, Vec2::new(0.65, 0.45));
-    let shrine = Vec2::new(HALF_X * 0.6, -HALF_Z * 0.12);
+    let shrine = crate::castle::SHRINE_POS;
     set(shrine_parts(), Vec3::new(shrine.x, 0.0, shrine.y), -HALF_PI, DecorGate::Shrine, Vec2::new(0.4, 0.32));
 
     // Bounty board inside the north postern — wanted papers for the ork warlords.

@@ -353,6 +353,16 @@ fn keep_march_goal(from: Vec2) -> Vec2 {
     gate.interior(4.0)
 }
 
+/// The keep-march goal for a wave invader, honouring the castle gates (`gates.rs`): inside the
+/// walls → the keep steps (as [`keep_march_goal`]); outside → the nearest OPEN gate's interior, or —
+/// when every gate is shut at night — the hacking standoff outside the nearest shut gate.
+fn ork_march_goal(from: Vec2, gates: &crate::gates::Gates) -> Vec2 {
+    if crate::castle::in_courtyard(from.x, from.y) {
+        return crate::castle::KEEP_STEPS;
+    }
+    gates.ork_goal(from).point()
+}
+
 /// Index of the nearest guard within `engage` of `from`, if any — the guard an invader diverts
 /// onto instead of marching the keep. Pure so the hero > guard > keep priority is unit-tested
 /// without the ECS (the invader brain maps the index back to the guard entity).
@@ -1009,7 +1019,7 @@ pub(crate) fn invader_brain(
     game: Res<GameTime>,
     hero: Res<HeroState>,
     siege: Res<Siege>,
-    mut keep: ResMut<KeepHp>,
+    (mut keep, mut gates): (ResMut<KeepHp>, ResMut<crate::gates::Gates>),
     mut pending: ResMut<PendingHeroDamage>,
     mut guard_dmg: ResMut<crate::villagers::NpcDamage>,
     mut bolts: ResMut<BoltSpawns>,
@@ -1045,6 +1055,10 @@ pub(crate) fn invader_brain(
     let rnow = time.elapsed_secs(); // raw clock for visuals/corpse-fade (matches ork_limbs & dying.rs)
     // Per-night attack ramp: later sieges hit much harder than the opener (see WAVES.dmg_scale).
     let dmg_scale = night_dmg_scale(siege.wave_index);
+    // The shut gates' gap boxes — solid for every invader's A* this frame (a handful of boxes; a
+    // gate closing/breaking needs no forced replan: routes refresh on their staggered throttle and
+    // the step clamp below keeps anyone from walking a stale route through a shut gap).
+    let ork_boxes = gates.ork_boxes();
 
     // Living guards this frame (the dying are already filtered out — death is permanent now).
     live_guards.clear();
@@ -1123,6 +1137,16 @@ pub(crate) fn invader_brain(
             !chase_hero && guard_tgt.is_none() && building_goal.is_none() && in_yard && dist_keep <= KEEP_ATTACK_RANGE;
         let at_building = !chase_hero && guard_tgt.is_none()
             && building_goal.is_some_and(|(_, bp)| o.pos.distance(bp) < BUILDING_ATTACK_RANGE);
+        // Every route in is shut and this invader stands at the shut gate it was sent to: hack it.
+        let gate_hack = if !chase_hero && guard_tgt.is_none() && building_goal.is_none() && !in_yard {
+            match gates.ork_goal(o.pos) {
+                crate::gates::OrkGoal::Hack(gi, _) => gates.hackable_at(o.pos).filter(|&h| h == gi),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let at_gate = gate_hack.is_some();
         if at_building {
             if let Some((bidx, _)) = building_goal {
                 building_dmg.0.push((bidx, BUILDING_DPS * dmg_scale * dt));
@@ -1134,10 +1158,11 @@ pub(crate) fn invader_brain(
         // ignore the building and march the keep.
         let chase_direct = chase_hero || guard_tgt.is_some() || building_goal.is_some();
 
-        if at_hero || at_guard || at_keep || at_building {
+        if at_hero || at_guard || at_keep || at_building || at_gate {
             o.moving = false;
-            // Turn to face the target at a capped rate.
-            let to = target - o.pos;
+            // Turn to face the target (the gate being hacked, else `target`) at a capped rate.
+            let face = gate_hack.map(|gi| crate::castle::Gate::ALL[gi].center()).unwrap_or(target);
+            let to = face - o.pos;
             if to.length_squared() > 1e-4 {
                 let want = to.x.atan2(to.y);
                 let turn = (orks::ORK_MAX_TURN * 2.0 * dt).abs();
@@ -1176,6 +1201,10 @@ pub(crate) fn invader_brain(
                 } else if at_building {
                     // The fire damage above is continuous; animate the raider battering the farm.
                     o.atk_cd = orks::ORK_ATTACK_CD;
+                } else if let Some(gi) = gate_hack {
+                    // Hacking the shut gate (the leaves / the wagon barricade).
+                    o.atk_cd = if o.shaman { orks::SHAMAN_CAST_CD } else { orks::ORK_ATTACK_CD * frenzy_cd };
+                    gates.damage(gi, orks::variant_melee(o.variant) * dmg_scale);
                 } else {
                     // Hammering the keep.
                     o.atk_cd =
@@ -1202,9 +1231,9 @@ pub(crate) fn invader_brain(
                 // invader wedges at the wall ("just there, can't approach"). The gate-interior
                 // goal threads them through the gap; the in-yard press above then closes to
                 // batter range.
-                let keep_goal = keep_march_goal(o.pos);
-                if path.refresh_due(now) {
-                    path.waypoints = crate::navgrid::path_to(o.pos, keep_goal);
+                let keep_goal = ork_march_goal(o.pos, &gates);
+                if path.refresh_due(now) || path.goal_cached.distance(keep_goal) > 2.0 {
+                    path.waypoints = crate::navgrid::path_to_avoiding(o.pos, keep_goal, crate::navgrid::NAV_MAX_NODES, &ork_boxes);
                     path.cursor = 0;
                     path.goal_cached = keep_goal;
                     // Stagger replans across the horde so they don't all path on one frame.
@@ -1235,6 +1264,12 @@ pub(crate) fn invader_brain(
             // Positional only — never conjoined with `hero.alive`; see `steer::LOD_R`.
             let near = hero_d < steer::LOD_R || in_yard;
             match steer::advance_lod(near, o.pos, o.facing, step_target, speed * dt, o.body_r, cur_y, orks::ORK_MAX_TURN * 1.6 * dt) {
+                // A shut gate is solid for orks only (it isn't in the shared blocker set — the hero
+                // and townsfolk pass): refuse any step INTO its gap.
+                Some(s) if gates.blocks_ork(s.pos, o.body_r * 0.8) && !gates.blocks_ork(o.pos, o.body_r * 0.8) => {
+                    o.facing = s.facing;
+                    o.moving = false;
+                }
                 Some(s) => {
                     o.facing = s.facing;
                     o.pos = s.pos;
@@ -1926,6 +1961,37 @@ mod tests {
             let inner = keep_march_goal(g);
             assert!(crate::castle::in_keep_yard(inner.x, inner.y), "inner goal {inner:?} not in the open yard");
         }
+    }
+
+    #[test]
+    fn ork_route_ends_at_a_shut_gate_and_enters_through_a_breach() {
+        use crate::castle::Gate;
+        use crate::gates::{GateKind, Gates, HACK_RANGE, WOOD_GATE_HP};
+        let _guard = crate::blockers::TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        crate::blockers::reset();
+        crate::castle::register_walls_blockers();
+        let mut gates = Gates::default();
+        gates.set_night(true, GateKind::Wood);
+        let from = KEEP_POS + Vec2::new(1.5, SPAWN_RING); // the southern spawn arc
+        let boxes = gates.ork_boxes();
+        // Every gate shut: the route ends OUTSIDE the S gate, at hacking range, never inside.
+        let goal = ork_march_goal(from, &gates);
+        let path = crate::navgrid::path_to_avoiding(from, goal, crate::navgrid::NAV_MAX_NODES, &boxes);
+        let end = *path.last().expect("a route to the S gate");
+        assert!(end.distance(Gate::South.center()) < HACK_RANGE + 1.0, "route ends at the S gate: {end:?}");
+        assert!(path.iter().all(|p| !crate::castle::in_courtyard(p.x, p.y)), "no waypoint inside the walls");
+        // The shut gates really are walls for the ork's A*: no route into the yard at all.
+        let blocked = crate::navgrid::path_to_avoiding(from, crate::castle::KEEP_STEPS, crate::navgrid::NAV_MAX_NODES, &boxes);
+        assert!(blocked.is_empty(), "a shut castle has no way in for orks");
+        // ...while the hero's/townsfolk's A* (no ork boxes) walks straight through.
+        assert!(!crate::navgrid::path_to(from, crate::castle::KEEP_STEPS).is_empty());
+        // Hack it down: the next route runs through the breach into the yard.
+        gates.damage(1, WOOD_GATE_HP);
+        let goal = ork_march_goal(from, &gates);
+        let path = crate::navgrid::path_to_avoiding(from, goal, crate::navgrid::NAV_MAX_NODES, &gates.ork_boxes());
+        let end = *path.last().expect("a route through the breach");
+        assert!(crate::castle::in_courtyard(end.x, end.y), "into the yard: {end:?}");
+        crate::blockers::reset();
     }
 
     #[test]
