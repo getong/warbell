@@ -298,6 +298,9 @@ static STORY_SITES: std::sync::Mutex<Vec<StorySite>> = std::sync::Mutex::new(Vec
 
 pub fn reset_plan() { STORY_SITES.lock().unwrap().clear(); }
 
+/// Extra clear radius around a cold story site (see [`story_clearings`]).
+const COLD_SIGHTLINE: f32 = 3.5;
+
 pub struct StoryClearings(Vec<(Vec2, f32)>);
 impl StoryClearings {
     pub fn overlaps(&self, x: f32, z: f32, radius: f32) -> bool {
@@ -314,7 +317,9 @@ pub fn story_clearings() -> StoryClearings {
     spots.extend(crate::wayside::planned_footprints());
     spots.extend(crate::vignettes::planned_footprint());
     spots.extend(crate::stories_warm::planned_footprints());
-    spots.extend(crate::stories_cold::planned_footprints());
+    // The cold sites stand out in the snow forest: a wider glade (no trunks or crowns right up to
+    // the drift) so the scene reads from a distance instead of through a screen of branches.
+    spots.extend(crate::stories_cold::planned_footprints().into_iter().map(|(p, foot)| (p, foot + COLD_SIGHTLINE)));
     StoryClearings(spots)
 }
 /// Does a circle at `(x, z)` of radius `radius` overlap a planned story clearing (gallows

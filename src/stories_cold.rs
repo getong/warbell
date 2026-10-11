@@ -198,6 +198,12 @@ pub fn planned_footprints() -> Vec<(Vec2, f32)> {
     SITES.lock().unwrap().iter().map(|s| (s.pos, SCENES[s.scene].foot)).collect()
 }
 
+/// `(centre, visual radius)` of every planned SNOW story site: the alpine mask bakes a pocket of
+/// snow under each (`alpine::bake_mask`), so a site at the snow line stands in its own drift.
+pub fn snow_footprints() -> Vec<(Vec2, f32)> {
+    SITES.lock().unwrap().iter().filter(|s| SCENES[s.scene].biome == Biome::Snow).map(|s| (s.pos, SCENES[s.scene].foot)).collect()
+}
+
 /// Does a circle at `(x, z)` of radius `r` overlap a planned cold story site?
 pub fn overlaps_planned(x: f32, z: f32, r: f32) -> bool {
     let p = Vec2::new(x, z);

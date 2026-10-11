@@ -295,6 +295,28 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
             snow[k] += (1.0 - snow[k]) * drift;
         }
     }
+    // Story sites low on the slopes (the pass-trail convoy, the steadings, the camps) sit in a
+    // pocket of their own snow, so their drift skirts melt into white ground instead of reading as
+    // white blobs on the meadow.
+    let sites = crate::stories_cold::snow_footprints();
+    for &(c, foot) in &sites {
+        let r = foot + 5.0;
+        let reach = r / 0.75;
+        let (i0, i1) = (((c.x - reach - x0) * RES).max(0.0) as usize, (((c.x + reach - x0) * RES) as usize).min(w - 1));
+        let (j0, j1) = (((c.y - reach - z0) * RES).max(0.0) as usize, (((c.y + reach - z0) * RES) as usize).min(h - 1));
+        for j in j0..=j1 {
+            for i in i0..=i1 {
+                let k = j * w + i;
+                if is_snow[k] {
+                    let q = Vec2::new(x0 + (i as f32 + 0.5) / RES, z0 + (j as f32 + 0.5) / RES);
+                    // A ragged drift edge (lobes ~4u across), not a clean disc on the meadow.
+                    let d = q.distance(c) * (0.75 + 0.5 * value_noise(q.x * 0.22 + 31.0, q.y * 0.22 - 17.0));
+                    snow[k] = snow[k].max(0.92 * (1.0 - smoothstep(foot + 1.0, r, d)));
+                }
+            }
+        }
+    }
+    info!("alpine: snow pockets under {} story sites", sites.len());
     let snow = blur(&blur(&snow, w, h, 3, true), w, h, 3, false);
     let mount = blur(&blur(&mount, w, h, 4, true), w, h, 4, false);
     let mut data = vec![0u8; w * h * 4];
