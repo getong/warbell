@@ -17,9 +17,10 @@
 //!
 //! `FOREST_CASTLEKIT_SHOWCASE=1` lays every piece out in three rows on open flat ground away from the
 //! castle (old colony / timber tier / stone tier), logged as `castle_kit showcase:`, for screenshots
-//! beside the hero (`FOREST_HERO`). `FOREST_CASTLEKIT_SHOWCASE=old|timber|stone|keep` instead lays
+//! beside the hero (`FOREST_HERO`). `FOREST_CASTLEKIT_SHOWCASE=old|timber|stone|keep|enceinte` instead lays
 //! ONE group north-south on the flat meadow ring just outside the castle's E wall (x 37.5,
-//! z -15..15), outer faces turned east.
+//! z -15..15), outer faces turned east; `=corner` builds a polygon-corner mock-up there (two curtain
+//! runs meeting at 135° on a `ck_round_tower`).
 
 use bevy::prelude::*;
 use std::sync::Mutex;
@@ -27,7 +28,7 @@ use std::sync::Mutex;
 use crate::biome::{Biome, BiomeEntity};
 
 /// Every node in `castle_kit.glb`.
-pub const PIECES: [&str; 15] = [
+pub const PIECES: [&str; 22] = [
     "ck_bell_tower",
     "ck_ruin_keep",
     "ck_ruin_wall_a",
@@ -43,7 +44,23 @@ pub const PIECES: [&str; 15] = [
     "ck_gatehouse",
     "ck_keep_t1",
     "ck_keep_t2",
+    // Irregular-polygon enceinte: fillers so runs land on a vertex, and vertex pieces that hide a
+    // joint at any corner angle (105-170°). Stone runs start `ATTACH_STONE` from the vertex along
+    // each edge, palisade runs `ATTACH_TIMBER`; see the manifest in castle_kit.py.
+    "ck_curtain_2",
+    "ck_curtain_1",
+    "ck_palisade_2",
+    "ck_palisade_1",
+    "ck_palisade_post",
+    "ck_round_tower",
+    "ck_d_tower",
 ];
+
+/// Distance from a polygon vertex (the `ck_round_tower` / `ck_d_tower` pivot) to where the curtain
+/// runs on both edges start: the tower hides their ends at any corner angle 105-170°.
+pub const ATTACH_STONE: f32 = 2.0;
+/// The same for palisade runs meeting at a `ck_palisade_post`.
+pub const ATTACH_TIMBER: f32 = 0.9;
 
 /// Handle to the loaded kit (the shared realforest kit, checked to contain `castle_kit.glb`).
 /// Inserted as a resource by the first `populate`; [`CastleKit::get`] works any time after the
@@ -110,13 +127,18 @@ fn x_extent(name: &str, yaw: f32) -> (f32, f32) {
         "ck_gatehouse" => (-3.2, 3.2),
         "ck_keep_t1" => (-4.05, 4.25),
         "ck_keep_t2" => (-4.45, 4.82),
+        "ck_curtain_2" | "ck_palisade_2" => (-1.0, 1.0),
+        "ck_curtain_1" | "ck_palisade_1" => (-0.5, 0.5),
+        // vertex pieces: the runs attach this far out (inside the tower / post cluster)
+        "ck_round_tower" | "ck_d_tower" => (-ATTACH_STONE, ATTACH_STONE),
+        "ck_palisade_post" => (-ATTACH_TIMBER, ATTACH_TIMBER),
         _ => (-2.0, 2.0), // palisade, timber gate, curtain: 4u modules
     }
 }
 
 /// (piece, gap before it, yaw). A zero gap abuts the previous piece (one modular wall run).
 type Row = &'static [(&'static str, f32, f32)];
-const ROWS: [(&str, f32, Row); 3] = [
+const ROWS: [(&str, f32, Row); 4] = [
     ("old colony", -18.0, &[
         ("ck_bell_tower", 0.0, 0.0),
         ("ck_ruin_keep", 5.0, 0.0),
@@ -144,11 +166,20 @@ const ROWS: [(&str, f32, Row); 3] = [
         ("ck_stone_tower", 4.0, 0.0),
         ("ck_keep_t2", 5.0, 0.0),
     ]),
+    ("enceinte", 36.0, &[
+        ("ck_round_tower", 0.0, 0.0),
+        ("ck_curtain_2", 0.0, 0.0),
+        ("ck_curtain_1", 0.0, 0.0),
+        ("ck_d_tower", 0.0, 0.0),
+        ("ck_palisade_post", 4.0, 0.0),
+        ("ck_palisade_2", 0.0, 0.0),
+        ("ck_palisade_1", 0.0, 0.0),
+    ]),
 ];
 
 /// Groups for `FOREST_CASTLEKIT_SHOWCASE=<group>`: one row, ≤31u long, laid north-south (row yaw
 /// -90°: local +X -> world +Z, outer faces -Z -> +X, east) at x = `STRIP_X`, centred on z = 0.
-const STRIP_ROWS: [(&str, Row); 4] = [
+const STRIP_ROWS: [(&str, Row); 5] = [
     ("old", &[
         ("ck_bell_tower", 0.0, 0.0),
         ("ck_ruin_keep", 3.0, 0.0),
@@ -174,6 +205,15 @@ const STRIP_ROWS: [(&str, Row); 4] = [
         ("ck_keep_t2", 4.0, 0.0),
         ("ck_ruin_wall_b", 3.0, 0.0),
     ]),
+    ("enceinte", &[
+        ("ck_round_tower", 0.0, 0.0),
+        ("ck_curtain_2", 0.0, 0.0),
+        ("ck_curtain_1", 0.0, 0.0),
+        ("ck_d_tower", 0.0, 0.0),
+        ("ck_palisade_post", 4.0, 0.0),
+        ("ck_palisade_2", 0.0, 0.0),
+        ("ck_palisade_1", 0.0, 0.0),
+    ]),
 ];
 /// The open meadow ring outside the castle's E wall (zamek v2: flat grass, nothing built there).
 const STRIP_X: f32 = 37.5;
@@ -191,14 +231,15 @@ struct Placed {
     /// The piece's own yaw within its row (what `x_extent` takes).
     yaw: f32,
     group: usize,
-    /// Yaw of the whole row: 0 (runs along +X) or -90° (runs along +Z, the E-ring strip).
+    /// Yaw of the whole row: 0 (runs along +X), -90° (along +Z, the E-ring strip) or any angle
+    /// (the corner mock-up).
     row_yaw: f32,
 }
 
 impl Placed {
-    /// Unit direction the row runs in, in world (x, z).
+    /// Unit direction the row runs in (local +X turned by `row_yaw`), in world (x, z).
     fn along(&self) -> Vec2 {
-        if self.row_yaw == 0.0 { Vec2::X } else { Vec2::Y }
+        Vec2::new(self.row_yaw.cos(), -self.row_yaw.sin())
     }
 }
 
@@ -234,6 +275,34 @@ fn layout_row(row: Row, z: f32, group: &mut usize) -> Vec<Placed> {
 fn layout() -> Vec<Placed> {
     let mut group = 0;
     ROWS.iter().flat_map(|&(_, z, row)| layout_row(row, z, &mut group)).collect()
+}
+
+/// `FOREST_CASTLEKIT_SHOWCASE=corner`: a polygon-corner mock-up on the E ring — two curtain runs
+/// (4 + 4 + 2 + 1 u each) meeting at a 135° corner with a `ck_round_tower` on the vertex at
+/// (41, 0); the outward bisector points east (+X), the yard lies west.
+fn corner_mockup() -> Vec<Placed> {
+    let vertex = Vec2::new(41.0, 0.0);
+    let outward = Vec2::X;
+    let half = (135.0f32 / 2.0).to_radians();
+    // yaw turning local +X to `dir` (Bevy: local +X -> (cos θ, -sin θ) in x, z)
+    let yaw_of = |dir: Vec2| (-dir.y).atan2(dir.x);
+    let mut out = vec![Placed { name: "ck_round_tower", pos: vertex, yaw: 0.0, group: 0, row_yaw: -std::f32::consts::FRAC_PI_2 }];
+    for side in [-1.0f32, 1.0] {
+        // the run leaves the vertex into the yard side, half the corner angle off the inward bisector
+        let dir = Vec2::new(-half.cos(), side * half.sin());
+        let mut d = ATTACH_STONE;
+        for (name, len) in [("ck_curtain", 4.0), ("ck_curtain", 4.0), ("ck_curtain_2", 2.0), ("ck_curtain_1", 1.0)] {
+            // local +X along ±dir, whichever puts the outer face (local -Z) toward the outside
+            let mut x_dir = dir;
+            let outer = |x: Vec2| Vec2::new(x.y, -x.x); // local -Z for local +X = x (Bevy yaw about +Y)
+            if outer(x_dir).dot(outward) < 0.0 {
+                x_dir = -x_dir;
+            }
+            out.push(Placed { name, pos: vertex + dir * (d + len / 2.0), yaw: 0.0, group: 0, row_yaw: yaw_of(x_dir) });
+            d += len;
+        }
+    }
+    out
 }
 
 /// `FOREST_CASTLEKIT_SHOWCASE=<group>`: that group north-south on the E-ring strip.
@@ -296,8 +365,9 @@ pub fn plan() {
         return;
     }
     let want = std::env::var("FOREST_CASTLEKIT_SHOWCASE").unwrap_or_default();
-    if let Some((label, row)) = STRIP_ROWS.iter().find(|r| r.0 == want.trim()) {
-        let placed = strip(row);
+    let group = STRIP_ROWS.iter().find(|r| r.0 == want.trim()).map(|&(label, row)| (label, strip(row)));
+    let group = group.or_else(|| (want.trim() == "corner").then(|| ("corner", corner_mockup())));
+    if let Some((label, placed)) = group {
         info!("castle_kit showcase: group '{label}' north-south at x {STRIP_X} (E ring)");
         for p in &placed {
             let (lo, hi) = x_extent(p.name, p.yaw);
