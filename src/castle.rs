@@ -1054,8 +1054,8 @@ enum HouseStyle {
 /// settlement mixes a hut, cottages and a townhouse rather than clones.
 const HOUSE_STYLES: [HouseStyle; 12] = [
     HouseStyle::Hut, HouseStyle::Cottage, HouseStyle::Townhouse, HouseStyle::Cottage, // N row
-    HouseStyle::Cottage, HouseStyle::Longhouse, HouseStyle::Cottage, HouseStyle::Hut, // S row
-    HouseStyle::Townhouse, HouseStyle::Hut, HouseStyle::Longhouse, HouseStyle::Townhouse, // E/W
+    HouseStyle::Cottage, HouseStyle::Longhouse, HouseStyle::Cottage, HouseStyle::Longhouse, // S row | W/E flanks
+    HouseStyle::Townhouse, HouseStyle::Hut, HouseStyle::Hut, HouseStyle::Townhouse, // W/E flanks (a hut fits between the smithy and the tavern)
 ];
 
 /// Roof material per slot — huts thatch; the rest alternate warm vs weathered shingle.
@@ -1766,6 +1766,21 @@ fn snap_cardinal(a: f32) -> f32 {
 fn face_center(wx: f32, wz: f32) -> f32 {
     snap_cardinal((-wx).atan2(-wz))
 }
+/// Yaw for a building at `(wx, wz)`: inside the walls it turns its back to the NEAREST wall and its
+/// front to the yard (houses and plots line the walls, spec v2 §2); outside it faces the castle.
+fn face_yard(wx: f32, wz: f32) -> f32 {
+    let (dx, dz) = (HALF_X - wx.abs(), HALF_Z - wz.abs());
+    if dx <= 0.0 || dz <= 0.0 {
+        return face_center(wx, wz);
+    }
+    if dz < dx {
+        if wz > 0.0 { std::f32::consts::PI } else { 0.0 }
+    } else if wx > 0.0 {
+        -HALF_PI
+    } else {
+        HALF_PI
+    }
+}
 
 // ── Build ────────────────────────────────────────────────────────────────────────
 pub fn build(
@@ -1847,7 +1862,7 @@ pub fn build(
         spawn(gate_parts(GATE_GAP), Vec3::new(x, 0.0, z), rot, Vec3::ONE, CastleKind::Gate);
     }
     for (i, (x, z)) in houses().into_iter().enumerate() {
-        spawn(house_parts_for(i), Vec3::new(x, 0.0, z), face_center(x, z), HOUSE_SCALE, CastleKind::House(i as u8));
+        spawn(house_parts_for(i), Vec3::new(x, 0.0, z), face_yard(x, z), HOUSE_SCALE, CastleKind::House(i as u8));
     }
     spawn(bell_frame_parts(), Vec3::new(BELL_POS.x, 0.0, BELL_POS.y), BELL_YAW, Vec3::ONE, CastleKind::Always);
 
@@ -1906,7 +1921,7 @@ pub fn build(
             mats.get(M::Wood),
             hx,
             hz,
-            face_center(hx, hz),
+            face_yard(hx, hz),
             CastleKind::House(i as u8),
             house_window(HOUSE_STYLES[i]),
         );
@@ -2012,7 +2027,7 @@ pub fn build(
     for (hi, (hx, hz)) in houses().into_iter().enumerate() {
         // Smoke rises from the archetype's own stack; huts have none (they vent through thatch).
         let Some((ch, ch_top)) = house_chimney(HOUSE_STYLES[hi]) else { continue };
-        let rot = face_center(hx, hz);
+        let rot = face_yard(hx, hz);
         let local = Quat::from_rotation_y(rot) * Vec3::new(ch.x * HOUSE_SCALE.x, 0.0, ch.y * HOUSE_SCALE.z);
         let (cx, cz) = (hx + local.x, hz + local.z);
         let base_y = ch_top * HOUSE_SCALE.y + 0.2;
@@ -2096,7 +2111,7 @@ pub(crate) fn plot_clear(x: f32, z: f32, margin: f32) -> bool {
 /// A plot building facing the courtyard: (yaw, local width, local depth) for world half-extents
 /// `half` — a quarter-turned building swaps its local width/depth.
 fn plot_frame(tp: &TownPlot) -> (f32, f32, f32) {
-    let yaw = face_center(tp.pos.x, tp.pos.y);
+    let yaw = face_yard(tp.pos.x, tp.pos.y);
     let turned = (yaw.abs() - HALF_PI).abs() < 0.1;
     let (w, d) = if turned { (tp.half.y * 2.0, tp.half.x * 2.0) } else { (tp.half.x * 2.0, tp.half.y * 2.0) };
     (yaw, w, d)
@@ -2297,7 +2312,7 @@ fn register_house_blocker(i: usize) {
     let (x, z) = houses()[i];
     let (w, d) = house_dims(HOUSE_STYLES[i]);
     let (hx, hz) = (w * HOUSE_SCALE.x / 2.0 + p, d * HOUSE_SCALE.z / 2.0 + p);
-    let (hw, hd) = if (face_center(x, z).abs() - HALF_PI).abs() < 0.1 { (hz, hx) } else { (hx, hz) };
+    let (hw, hd) = if (face_yard(x, z).abs() - HALF_PI).abs() < 0.1 { (hz, hx) } else { (hx, hz) };
     crate::blockers::add_box(x, z, hw, hd);
 }
 
@@ -2567,7 +2582,7 @@ mod tests {
         for (i, (x, z)) in houses().into_iter().enumerate() {
             let (w, d) = house_dims(HOUSE_STYLES[i]);
             let (a, b) = (w * HOUSE_SCALE.x / 2.0, d * HOUSE_SCALE.z / 2.0);
-            let half = if (face_center(x, z).abs() - HALF_PI).abs() < 0.1 { Vec2::new(b, a) } else { Vec2::new(a, b) };
+            let half = if (face_yard(x, z).abs() - HALF_PI).abs() < 0.1 { Vec2::new(b, a) } else { Vec2::new(a, b) };
             assert!(x.abs() + half.x < HALF_X - WALL_THICK / 2.0 && z.abs() + half.y < HALF_Z - WALL_THICK / 2.0, "house {i} in the wall");
             boxes.push(("house", Vec2::new(x, z), half));
         }
