@@ -30,6 +30,49 @@ pub struct CamGate<'w, 's> {
     succ: Res<'w, crate::succession::Succession>,
     /// Solid buildings the follow boom collides with (see [`super::boom`]).
     occ: super::boom::Occluders<'w, 's>,
+    /// Build-cam framing inputs: the producer plots, the next house site (via the town's house
+    /// count), the docked palette's laid-out height and the window — see [`CamGate::build_pose`].
+    spots: Option<Res<'w, crate::town::PlotSpots>>,
+    town: Option<Res<'w, crate::town::TownRes>>,
+    palette: Query<'w, 's, &'static ComputedNode, With<crate::town::BuildUi>>,
+    windows: Query<'w, 's, &'static Window, With<PrimaryWindow>>,
+    /// The eased build-cam `(eye, look)` (a newly revealed house site or the palette's first layout
+    /// pass glides the framing instead of cutting it).
+    build_frame: Local<'s, Option<(Vec3, Vec3)>>,
+}
+
+impl CamGate<'_, '_> {
+    /// The build-mode camera pose, fitted every frame to the REAL town bounds (see
+    /// [`build_frame_points`]) for the current lens + window: the whole enceinte, every producer plot
+    /// and the next house site fit between the top HUD strip and the docked build palette, at any
+    /// aspect / scale factor. `snap` (entering build mode) skips the ease.
+    fn build_pose(&mut self, proj: &Projection, dt: f32, snap: bool) -> (Vec3, Vec3) {
+        let (fov, aspect) = match proj {
+            Projection::Perspective(p) => (p.fov, p.aspect_ratio),
+            _ => (50f32.to_radians(), 16.0 / 9.0),
+        };
+        let win_h = self.windows.single().map_or(720.0, |w| w.height()).max(1.0);
+        // The palette root's laid-out height (physical px → logical), plus its bottom inset; before its
+        // first layout pass, a measured-once estimate.
+        let measured = self
+            .palette
+            .iter()
+            .map(|n| n.size().y * n.inverse_scale_factor())
+            .fold(0.0_f32, f32::max);
+        let palette_px = if measured > 1.0 { measured + BUILD_PALETTE_INSET_PX } else { BUILD_PALETTE_FALLBACK_PX };
+        let bottom = ((palette_px + 8.0) / win_h).min(0.55);
+        let top = (BUILD_CAM_TOP_PX / win_h).min(0.2);
+        let house = self.town.as_ref().and_then(|t| crate::castle::next_house_site(t.0.houses));
+        let plots = self.spots.as_ref().map_or(&[][..], |s| s.0.as_slice());
+        let pts = build_frame_points(plots, house);
+        let ground = crate::worldmap::ground_at_world(0.0, 0.0).unwrap_or(0.0);
+        let target = fit_build_cam(&pts, fov, aspect, bottom, top, ground);
+        let k = if snap || self.build_frame.is_none() { 1.0 } else { 1.0 - (-dt * 5.0).exp() };
+        let (e, l) = self.build_frame.unwrap_or(target);
+        let pose = (e.lerp(target.0, k), l.lerp(target.1, k));
+        *self.build_frame = Some(pose);
+        pose
+    }
 }
 
 const SENS_X: f32 = 0.0035;
@@ -81,12 +124,118 @@ pub const FP_FOV_DEG: f32 = 62.0;
 /// terrain snaps `hero.y` by 0.5u per tile edge, and a stiff follow turns every step into a hitch.
 const FP_VERT_RATE: f32 = 11.0;
 
-/// Build-mode camera pose — eye + look-at, framing the WHOLE settlement (the castle at the origin)
-/// centred above the bottom build palette. The look-target is pushed forward (z = 5, toward the
-/// camera) so the town sits high enough that the near plots clear the palette. Verified against a
-/// staged capture; tune here if the framing drifts.
-const BUILD_CAM_EYE: Vec3 = Vec3::new(0.0, 30.0, 22.0);
-const BUILD_CAM_LOOK: Vec3 = Vec3::new(0.0, 0.0, 5.0);
+/// Build-mode camera: a fixed north-up heading (the eye south of the town, looking north) tilted
+/// this far below the horizon (≈60°). The pose itself is NOT a constant — the old hand-placed
+/// `(0, 30, 22) → (0, 0, 5)` framed the 17×12 castle and lost most of the enlarged enceinte, its
+/// outer plots and the village house sites; [`fit_build_cam`] derives it from the real bounds.
+const BUILD_CAM_PITCH: f32 = 1.05;
+/// Slack kept between the framed town and the usable band's edges (NDC units, of a 2-unit screen).
+const BUILD_CAM_MARGIN: f32 = 0.03;
+/// Logical px reserved at the top of the screen for the compass strip.
+const BUILD_CAM_TOP_PX: f32 = 64.0;
+/// The build palette's bottom inset (`town::spawn_build_strip`'s `bottom: 22px`).
+const BUILD_PALETTE_INSET_PX: f32 = 22.0;
+/// The palette's height (logical px, inset included) assumed before its first layout pass.
+const BUILD_PALETTE_FALLBACK_PX: f32 = 250.0;
+
+/// World points the build camera must keep in frame, each padded by its footprint radius and taken
+/// at the ground and at roof height: every enceinte corner tower, the keep, the three gates (and the
+/// ballista outside the N postern), every producer plot (`town::PlotSpots`) and the next house site
+/// in the street village (`castle::next_house_site`). So the framing follows the castle polygon, the
+/// plots and the village rather than a hand-placed pose.
+pub(crate) fn build_frame_points(plots: &[Vec2], house: Option<Vec2>) -> Vec<Vec3> {
+    use crate::castle;
+    let mut pts = Vec::with_capacity(8 * (castle::ENCEINTE.len() + plots.len() + 6));
+    let mut push = |c: Vec2, r: f32, h: f32| {
+        let g = crate::worldmap::ground_at_world(c.x, c.y).unwrap_or(0.0);
+        for o in [Vec2::X, Vec2::NEG_X, Vec2::Y, Vec2::NEG_Y] {
+            let p = c + o * r;
+            pts.push(Vec3::new(p.x, g, p.y));
+            pts.push(Vec3::new(p.x, g + h, p.y));
+        }
+    };
+    for v in castle::ENCEINTE {
+        push(v, 3.5, 8.0); // corner towers (kit towers stand ~7–8u)
+    }
+    push(castle::KEEP_POS, 5.0, castle::KEEP_ROOF_Y + 1.5);
+    for gate in castle::Gate::ALL {
+        push(gate.center(), 5.0, 5.0); // gatehouse + the ballista flanking the N postern
+    }
+    for &p in plots {
+        push(p, crate::town::PLOT_CLEAR_R, 4.0);
+    }
+    if let Some(h) = house {
+        push(h, 4.5, 5.0);
+    }
+    pts
+}
+
+/// Fit the build camera to `pts` for a lens of vertical FOV `fov_y` and `aspect`: the heading and
+/// [`BUILD_CAM_PITCH`] are fixed, and the eye is pulled back / slid until every point projects
+/// inside the usable band — full width, minus `bottom` (the docked palette) and `top` (the compass)
+/// as fractions of the screen height — then centred in its slack. For a fixed orientation the
+/// "point inside the frustum band" tests are linear in the eye offset, so this bisects the dolly
+/// and reads the slide straight off the tightest constraints. Returns `(eye, look)`, `look` on the
+/// plane `ground_y` (so a blend from the follow pose eases sensibly).
+pub(crate) fn fit_build_cam(pts: &[Vec3], fov_y: f32, aspect: f32, bottom: f32, top: f32, ground_y: f32) -> (Vec3, Vec3) {
+    let (sp, cp) = BUILD_CAM_PITCH.sin_cos();
+    let f = Vec3::new(0.0, -sp, -cp); // forward: north and down
+    let r = Vec3::X; // forward × up
+    let u = Vec3::new(0.0, cp, -sp); // right × forward
+    let ty = (fov_y * 0.5).tan();
+    let kx = ty * aspect.max(0.1) * (1.0 - BUILD_CAM_MARGIN);
+    // NDC band (y up): above the palette, below the top strip — never thinner than 0.4.
+    let ndc_top = 1.0 - 2.0 * top - BUILD_CAM_MARGIN;
+    let ndc_bot = (-1.0 + 2.0 * bottom + BUILD_CAM_MARGIN).min(ndc_top - 0.4);
+    let (ylo, yhi) = (ndc_bot * ty, ndc_top * ty);
+    if pts.is_empty() {
+        return (Vec3::new(0.0, 30.0, 22.0), Vec3::new(0.0, ground_y, 5.0));
+    }
+    let centroid = pts.iter().copied().sum::<Vec3>() / pts.len() as f32;
+    // Eye = e0 + a·r + b·u + t·f, so a point's camera coords are (X − a, Y − b, Z − t).
+    let e0 = centroid - f * 2000.0;
+    let cam: Vec<Vec3> = pts
+        .iter()
+        .map(|&p| {
+            let v = p - e0;
+            Vec3::new(v.dot(r), v.dot(u), v.dot(f))
+        })
+        .collect();
+    let bounds = |t: f32| {
+        let (mut alo, mut ahi, mut blo, mut bhi) = (f32::MIN, f32::MAX, f32::MIN, f32::MAX);
+        for c in &cam {
+            let z = c.z - t;
+            alo = alo.max(c.x - kx * z);
+            ahi = ahi.min(c.x + kx * z);
+            blo = blo.max(c.y - yhi * z);
+            bhi = bhi.min(c.y - ylo * z);
+        }
+        (alo, ahi, blo, bhi)
+    };
+    let fits = |t: f32| {
+        let (alo, ahi, blo, bhi) = bounds(t);
+        alo <= ahi && blo <= bhi
+    };
+    // Bisect the dolly: `lo` always fits (2000u back), `hi` is just short of the nearest point.
+    let zmin = cam.iter().map(|c| c.z).fold(f32::INFINITY, f32::min);
+    let (mut lo, mut hi) = (0.0_f32, zmin - 1.0);
+    if fits(hi) {
+        lo = hi;
+    } else {
+        for _ in 0..60 {
+            let mid = 0.5 * (lo + hi);
+            if fits(mid) {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+    }
+    let (alo, ahi, blo, bhi) = bounds(lo);
+    let eye = e0 + r * (0.5 * (alo + ahi)) + u * (0.5 * (blo + bhi)) + f * lo;
+    let look = eye + f * ((eye.y - ground_y) / sp);
+    (eye, look)
+}
 
 #[derive(Resource)]
 pub struct OrbitCam {
@@ -548,8 +697,12 @@ pub fn player_camera(
         base_eye = base_eye.lerp(ce, k);
         base_look = base_look.lerp(ct, k);
     }
-    let eye = base_eye.lerp(BUILD_CAM_EYE, blend);
-    let look = base_look.lerp(BUILD_CAM_LOOK, blend);
+    let (eye, look) = if gate.build_mode.active || blend > 0.001 {
+        let (build_eye, build_look) = gate.build_pose(&cam_proj, time.delta_secs(), blend < 0.02);
+        (base_eye.lerp(build_eye, blend), base_look.lerp(build_look, blend))
+    } else {
+        (base_eye, base_look)
+    };
     cam_tf.translation = eye;
     cam_tf.look_at(look, Vec3::Y);
 
@@ -605,5 +758,45 @@ pub fn player_camera(
         let combat_fov = orbit.combat * COMBAT_FOV_PER_UNIT;
         let fp_wide = (FP_FOV_DEG.to_radians() - base).max(0.0) * fpb;
         p.fov = base + fp_wide + (kick + speed_fov + combat_fov + fp.close_fov * fpb).to_radians();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Project `p` through a camera at `eye` looking at `look` (vertical FOV `fov`, `aspect`) to NDC.
+    fn ndc(p: Vec3, eye: Vec3, look: Vec3, fov: f32, aspect: f32) -> Vec2 {
+        let f = (look - eye).normalize();
+        let r = f.cross(Vec3::Y).normalize();
+        let u = r.cross(f);
+        let v = p - eye;
+        let z = v.dot(f);
+        let t = (fov * 0.5).tan();
+        Vec2::new(v.dot(r) / (z * t * aspect), v.dot(u) / (z * t))
+    }
+
+    /// The real town (castle polygon + outer plots + the farthest village house site) fits the band
+    /// between the top strip and the palette at 16:9, 4:3 and a tall phone-ish aspect — and fills it
+    /// (some point touches an edge, so the framing isn't needlessly far).
+    #[test]
+    fn build_cam_frames_the_whole_town() {
+        let fov = 50f32.to_radians();
+        let plots = crate::town::PLOT_OFFSETS.to_vec();
+        let house = crate::castle::houses().iter().map(|h| h.pos).min_by(|a, b| a.x.total_cmp(&b.x));
+        let pts = build_frame_points(&plots, house);
+        for (aspect, bottom, top) in [(16.0 / 9.0, 0.3, 0.06), (4.0 / 3.0, 0.25, 0.05), (0.75, 0.2, 0.05)] {
+            let (eye, look) = fit_build_cam(&pts, fov, aspect, bottom, top, 0.0);
+            let (lo, hi) = (-1.0 + 2.0 * bottom, 1.0 - 2.0 * top);
+            let mut touch = 0.0_f32;
+            for &p in &pts {
+                let n = ndc(p, eye, look, fov, aspect);
+                assert!(n.x.abs() <= 1.0 + 1e-3, "x off-screen: {n} for {p} at aspect {aspect}");
+                assert!(n.y >= lo - 1e-3 && n.y <= hi + 1e-3, "y outside band: {n} for {p} at aspect {aspect}");
+                touch = touch.max(n.x.abs()).max(((n.y - lo) / (hi - lo) * 2.0 - 1.0).abs());
+            }
+            assert!(touch > 0.9, "framing too loose at aspect {aspect}: max extent {touch}");
+            assert!((look.y).abs() < 1e-3, "look target on the ground plane");
+        }
     }
 }

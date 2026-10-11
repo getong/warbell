@@ -33,7 +33,7 @@ impl Plugin for TreeUiPlugin {
             .add_systems(OnExit(Modal::UpgradeTree), despawn_tree)
             .add_systems(
                 Update,
-                (tree_interact, tree_paint, tree_detail, tree_close)
+                (tree_interact, tree_paint, tree_detail, tree_close, tree_fit)
                     .run_if(in_state(Modal::UpgradeTree)),
             );
         // Temp diagnostics for the hover-dead-on-medallions bug (FOREST_UILOG=1).
@@ -83,6 +83,11 @@ fn open_tree(
 
 #[derive(Component)]
 struct TreeUi;
+/// The wrapper between the centring scrim and the parchment sheet: [`tree_fit`] scales it down
+/// (about its centre) when the sheet is bigger than the window, so the War Table always opens fully
+/// on screen, centred, at any resolution / scale factor (it's laid out for ≥1280×720 logical px).
+#[derive(Component)]
+struct TreeFit;
 /// The clickable medallion (the `Button` + `Focusable`).
 #[derive(Component)]
 struct TreeNodeButton(&'static str);
@@ -227,7 +232,8 @@ fn spawn_tree(
     let ink_faint = rgba(36, 27, 12, 0.55);
     commands
         .spawn((widgets::scrim(60), TreeUi))
-        .with_children(|root| {
+        .with_children(|scrim| {
+            scrim.spawn((Node::default(), UiTransform::IDENTITY, TreeFit)).with_children(|root| {
             root.spawn((
                 Node {
                     flex_direction: FlexDirection::Column,
@@ -334,7 +340,28 @@ fn spawn_tree(
                     )],
                 ));
             });
+            });
         });
+}
+
+/// Fit the War Table to the window: scale the [`TreeFit`] wrapper (about its centre — the scrim
+/// centres it) so the whole sheet stays on screen with a small margin; never upscales. Layout is
+/// untouched (a `UiTransform`), so the board doesn't reflow and picking follows the transform.
+fn tree_fit(
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    mut q: Query<(&ComputedNode, &mut UiTransform), With<TreeFit>>,
+) {
+    let Ok(win) = windows.single() else { return };
+    for (node, mut tf) in &mut q {
+        let size = node.size() * node.inverse_scale_factor(); // logical px
+        if size.x < 1.0 || size.y < 1.0 {
+            continue;
+        }
+        let s = ((win.width() - 24.0) / size.x).min((win.height() - 24.0) / size.y).clamp(0.3, 1.0);
+        if (tf.scale.x - s).abs() > 1e-3 {
+            tf.scale = Vec2::splat(s);
+        }
+    }
 }
 
 /// Parchment-sheet chrome: tiled grain + inset ink hairline + ink corner notches

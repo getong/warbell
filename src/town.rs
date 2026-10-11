@@ -195,14 +195,20 @@ impl BuildMode {
     }
 }
 
-/// How close to the castle (origin) the hero must be for the **B** Build prompt / build mode. Covers
-/// the courtyard + the outer plot ring (plots sit ≤ ~21 units out).
-pub const TOWN_BUILD_RADIUS: f32 = 26.0;
+/// How far outside the enceinte wall line (`castle::outside_dist`) the hero may stand for the **B**
+/// Build prompt / build mode: the whole bailey plus the outer plot ring (plots sit ≤ ~8u off the
+/// wall, `PLOT_CLEAR_R` 3.4 round each). The old `|pos| < 26` circle dated from the 17×12 castle —
+/// the enlarged polygon's corners reach ~32u out, so it cut off the E/W ends of the bailey.
+pub const TOWN_BUILD_WALL_REACH: f32 = 14.0;
+/// …and how far off the village street (`castle::village_dist`) — where the house sites stand.
+pub const TOWN_BUILD_STREET_REACH: f32 = 12.0;
 
-/// Is the hero in the town build-zone (near the castle at the origin)? Public so the unified
-/// near-castle hint row (`interaction.rs`) gates the B/K chips on the same zone build mode uses.
+/// Is the hero in the town build-zone (the castle, its outer plots or the street village)? Public so
+/// the unified near-castle hint row (`interaction.rs`) gates the B/K chips on the same zone build
+/// mode uses.
 pub fn in_town(pos: Vec2) -> bool {
-    pos.length() < TOWN_BUILD_RADIUS
+    crate::castle::outside_dist(pos.x, pos.y) < TOWN_BUILD_WALL_REACH
+        || crate::castle::village_dist(pos.x, pos.y) < TOWN_BUILD_STREET_REACH
 }
 
 /// **B** enters build mode when the hero is in the town during Prep (the contextual prompt only shows
@@ -1073,8 +1079,10 @@ pub fn director_build_timelapse(
 
 // ── Build mode: the docked palette (what to raise) ──────────────────────────────────────────
 
+/// The docked build palette's root node. `pub(crate)` so the build camera
+/// (`player::camera`) can read its laid-out height and frame the town above it.
 #[derive(Component)]
-struct BuildUi;
+pub(crate) struct BuildUi;
 
 /// A row in the unified Build palette — its index into [`BUILD_TYPES`] (House + the producers).
 #[derive(Component)]
