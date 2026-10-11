@@ -119,9 +119,9 @@ const SCENES: [Scene; 10] = [
         lore: "Every stone is cut with rings like a bell's voice; the orks still bring tusks, as if to a law.",
         trail: false },
     // The burned log house, the well, the palisade stub, the tipped hand-cart.
-    Scene { model: "story_ruined_homestead", biome: Biome::Snow, foot: 3.4,
-        solids: &[(-0.75, 0.2, 1.45, 1.15, 0.0), (1.75, -1.05, 0.6, 0.6, 0.0), (1.9, 1.75, 1.0, 0.35, -0.3),
-            (-2.35, -1.65, 0.6, 0.45, 0.7)],
+    Scene { model: "story_ruined_homestead", biome: Biome::Snow, foot: 3.0,
+        solids: &[(-0.6, 0.2, 1.3, 1.05, 0.0), (1.55, -0.95, 0.6, 0.6, 0.0), (1.7, 1.5, 0.9, 0.35, -0.3),
+            (-2.0, -1.35, 0.55, 0.45, 0.7)],
         want: 3, names: &["The Outlying Steading", "The Burned Homestead", "The Palisade Farm"],
         lore: "They farmed beyond the reach of the chapel bell and raised a palisade instead; it was not enough.",
         trail: false },
@@ -168,6 +168,9 @@ const SNOW_ROAD_KEEP: f32 = 2.0;
 /// Last-resort flatness for snow scenes: the model is then sunk by part of the spread
 /// ([`seat_y`]) and its drift skirts swallow the uphill side.
 const FLAT_DELTA_SNOW_MAX: f32 = 1.0;
+/// Spawn-time last resort: a claimed site with no free alternative is still spawned in place when
+/// nothing solid stands inside this fraction of its footprint (only the drift rim is intruded on).
+const RIM_GRACE: f32 = 0.8;
 
 #[derive(Clone, Debug, PartialEq)]
 struct Site {
@@ -481,15 +484,35 @@ pub fn populate(commands: &mut Commands, _meshes: &mut Assets<Mesh>, _materials:
             info!("stories_cold: {} at {:.1},{:.1} claimed (ground ok: {}, solid within: {})", s.model, site.pos.x,
                 site.pos.y, ground_ok(site.pos.x, site.pos.y, s.foot, s.biome, max_flat(s.biome), &trails),
                 crate::blockers::any_within(site.pos.x, site.pos.y, s.foot + 0.2));
-            if seat(site.scene, 1, &mut others, &trails, false) == 0 {
-                warn!("stories_cold: {} at {:.1},{:.1} was claimed and no other spot is free",
-                    SCENES[site.scene].model, site.pos.x, site.pos.y);
-                continue;
+            // What claimed it: the blocked probe points over the footprint (debug aid for the log).
+            let mut hits: Vec<String> = Vec::new();
+            for k in 0..48 {
+                let (a, r) = (k as f32 * 0.7, s.foot * (0.25 + 0.75 * ((k % 4) as f32 / 3.0)));
+                let (px, pz) = (site.pos.x + a.cos() * r, site.pos.y + a.sin() * r);
+                if crate::blockers::is_blocked(px, pz) {
+                    hits.push(format!("{px:.1},{pz:.1}"));
+                }
             }
+            info!("stories_cold: {} blocked probes: {}", s.model, hits.join(" "));
+            if seat(site.scene, 1, &mut others, &trails, false) == 0 {
+                // Last resort: keep the planned spot when the intruder only grazes the outer rim
+                // (a trunk or rock at the drift's edge) — a missing discoverable is worse.
+                if ground_ok(site.pos.x, site.pos.y, s.foot, s.biome, max_flat(s.biome), &trails)
+                    && !crate::blockers::any_within(site.pos.x, site.pos.y, s.foot * RIM_GRACE)
+                {
+                    warn!("stories_cold: {} at {:.1},{:.1} kept: only its rim is claimed", s.model, site.pos.x, site.pos.y);
+                    site.clone()
+                } else {
+                    warn!("stories_cold: {} at {:.1},{:.1} was claimed and no other spot is free",
+                        SCENES[site.scene].model, site.pos.x, site.pos.y);
+                    continue;
+                }
+            } else {
             let moved = others.swap_remove(n);
             info!("stories_cold: {} at {:.1},{:.1} was claimed, moved to {:.1},{:.1}",
                 SCENES[site.scene].model, site.pos.x, site.pos.y, moved.pos.x, moved.pos.y);
             moved
+            }
         };
         let s = &SCENES[site.scene];
         let y = seat_y(site.pos.x, site.pos.y, s.foot);

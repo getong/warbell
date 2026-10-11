@@ -188,14 +188,14 @@ def body(g, rng, balls, creases, base=PACKED):
         mid = (lower["c"] + upper["c"]) * 0.5
         tr = 0.045 if i == 0 else 0.032
         pts, radii = [], []
-        for k in range(19):
-            a = 2 * math.pi * k / 18
+        for k in range(15):
+            a = 2 * math.pi * k / 14
             w = 1.0 + 0.12 * nz(Vector((math.cos(a), 0.0, math.sin(a))))
             pts.append(V(mid.x + math.cos(a) * ring_r * w, cy + 0.01 * nz(Vector((a, 1.0, 0.0))),
                          mid.z + math.sin(a) * ring_r * w))
             radii.append(tr * (0.8 + 0.4 * max(0.0, nz(Vector((0.0, a, 2.0))))))
         pts[-1], radii[-1] = pts[0], radii[0]
-        tube(g, pts, radii, 7, M_SNOW, PACKED, tile=0.9, cap=False)
+        tube(g, pts, radii, 5, M_SNOW, PACKED, tile=0.9, cap=False)
 
 
 def skirt(g, rng, rx=0.52, rz=0.48, h=0.11, off=(0.0, 0.0), base=PACKED):
@@ -285,13 +285,13 @@ def scarf(g, rng, head, mid, crease):
         return (0.5, 0.16, 0.12) if int(t * 9) % 3 else (0.76, 0.7, 0.58)
     for turn, (dy, rr) in enumerate(((0.0, 0.042), (0.045, 0.036))):
         pts = []
-        for k in range(25):
-            a = 2 * math.pi * k / 24
+        for k in range(17):
+            a = 2 * math.pi * k / 16
             w = 1.0 + 0.06 * nz(Vector((math.cos(a), turn, math.sin(a))))
             pts.append(V(c.x + math.cos(a) * neck_r * w, crease + dy + 0.012 * math.sin(a * 2 + turn),
                          c.z + math.sin(a) * neck_r * w))
         pts[-1] = pts[0]
-        tube(g, pts, [rr] * len(pts), 8, M_CLOTH, (0.5, 0.16, 0.12), tile=0.25, cap=False,
+        tube(g, pts, [rr] * len(pts), 6, M_CLOTH, (0.5, 0.16, 0.12), tile=0.25, cap=False,
              col_fn=lambda t: stripes(t * 4.0))
     # Knot + tails hanging over the mid ball (following its surface, a little lifted off it).
     ka = math.radians(62)

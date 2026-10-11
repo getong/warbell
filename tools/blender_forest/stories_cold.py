@@ -232,7 +232,7 @@ def shield(g, centre, rot, r, rng, broken=False, paint=(0.45, 0.12, 0.1)):
         tube(g, pts, [0.016] * len(pts), 4, M_IRON, IRON, tile=0.3, cap=False)
 
 
-def rubble(g, rng, n, cx, cz, spread, rmin, rmax, col_fn, y=0.0, detail=1):
+def rubble(g, rng, n, cx, cz, spread, rmin, rmax, col_fn, y=0.0, detail=0):
     for _ in range(n):
         r = rng.uniform(rmin, rmax)
         stone(g, (cx + rng.uniform(-spread, spread), y + r * 0.25, cz + rng.uniform(-spread, spread)),
@@ -651,7 +651,7 @@ def course_wall(g, rng, axis, fixed, a0, a1, top, depth=0.3, double=False, lean=
                 if capped:
                     rx, rz = (size[0] * 0.42, size[2] * 0.4) if axis == 'x' else (size[0] * 0.4, size[2] * 0.42)
                     mound(g, (c[0], y + h - 0.02, c[2]), rx, rz, 0.06, rng, mat=M_SNOW, col_fn=snow_fn(nz), tile=1.6,
-                          rings=2, seg=6, skirt=0.0, rough=0.08, edge=0.1, power=0.6)
+                          rings=1, seg=6, skirt=0.0, rough=0.08, edge=0.1, power=0.6)
         y += h
         ci += 1
 
@@ -807,8 +807,8 @@ def story_old_ones_ring(rng):
 
 
 def story_ruined_homestead(rng):
-    """Footprint r <= 3.4; masses: the burned log house (local -0.75, 0.2, 1.45 x 1.15), the well
-    (1.75, -1.05, r 0.6), the palisade stub (1.9, 1.75), the hand-cart (-2.35, -1.65). A first-colony
+    """Footprint r <= 3.0; masses: the burned log house (local -0.6, 0.2, 1.3 x 1.05), the well
+    (1.55, -0.95, r 0.6), the palisade stub (1.7, 1.5), the hand-cart (-2.0, -1.35). A first-colony
     steading out past the chapel bell's reach: the log house burned and fell in, its charred roof
     beams jutting from the drift; a few courses of the walls still stand at two corners; a short run
     of sharpened palisade stakes, half of them snapped or leaning out; the stone well with its winch
@@ -817,11 +817,11 @@ def story_ruined_homestead(rng):
     g = G(b)
     char = (0.2, 0.18, 0.17)
     log = (0.58, 0.53, 0.48)
-    drift(g, (0.0, 0.0, 0.0), 3.2, 2.6, 0.2, rng, power=0.7, rings=5, seg=20)
+    drift(g, (0.0, 0.0, 0.0), 2.8, 2.35, 0.2, rng, power=0.7, rings=5, seg=20)
     # ── the log house: two standing corners of notched logs (the rest burned down to the sill),
     # a drift filling the inside, charred rafters and the ridge beam jutting out of it.
-    hx, hz = -0.75, 0.2
-    w, d = 2.7, 2.1
+    hx, hz = -0.6, 0.2
+    w, d = 2.4, 1.9
     for k in range(5):
         y = 0.12 + k * 0.21
         col = mix(log, char, 0.15 + 0.15 * k)
@@ -855,7 +855,7 @@ def story_ruined_homestead(rng):
     # ── the palisade stub: sharpened stakes, a few leaning out or snapped, on a buried rail.
     for k in range(7):
         t = k / 6
-        x, z = 1.0 + t * 1.9, 1.35 + 0.65 * math.sin(t * 2.2)
+        x, z = 0.95 + t * 1.55, 1.15 + 0.55 * math.sin(t * 2.2)
         hgt = rng.uniform(1.3, 1.65)
         lean = V(rng.uniform(-0.08, 0.08), 0, rng.uniform(0.05, 0.25) if k in (2, 5) else rng.uniform(-0.05, 0.05))
         top = V(x, hgt, z) + lean * hgt
@@ -866,12 +866,12 @@ def story_ruined_homestead(rng):
         pole(g, V(x, -0.15, z), top, 0.085, 0.075, rng, col=(0.66, 0.6, 0.53), sides=6)
         tube(g, [top, top + (top - V(x, 0, z)).normalized() * 0.22], [0.075, 0.004], 6, M_PLANK, (0.72, 0.64, 0.52),
              tile=0.3, cap=False)
-    tube(g, [V(0.95, 0.75, 1.3), V(1.95, 0.8, 1.98)], [0.05, 0.05], 5, M_BARK, (0.6, 0.55, 0.5), tile=0.7)
-    tube(g, [V(2.3, 0.06, 2.15), V(2.75, 0.3, 2.6)], [0.07, 0.07], 6, M_BARK, (0.6, 0.55, 0.5), tile=0.7)  # a toppled stake
-    drift(g, (2.0, 0.0, 1.85), 1.25, 0.5, 0.35, rng, power=1.0, rings=4, seg=14)
+    tube(g, [V(0.9, 0.75, 1.1), V(1.75, 0.8, 1.7)], [0.05, 0.05], 5, M_BARK, (0.6, 0.55, 0.5), tile=0.7)
+    tube(g, [V(1.75, 0.06, 2.0), V(2.05, 0.3, 2.35)], [0.07, 0.07], 6, M_BARK, (0.6, 0.55, 0.5), tile=0.7)  # a toppled stake
+    drift(g, (1.75, 0.0, 1.6), 1.1, 0.45, 0.35, rng, power=1.0, rings=4, seg=14)
     # ── the well: two courses of dressed fieldstones in a ring, frost on top; one winch post still
     # standing, the other down; the windlass roller lying across the mouth with its rope.
-    wx, wz = 1.75, -1.05
+    wx, wz = 1.55, -0.95
     for course in range(2):
         for k in range(10):
             a = (k + 0.5 * course) / 10 * 2 * math.pi
@@ -881,23 +881,23 @@ def story_ruined_homestead(rng):
                  tile=0.8)
     disc(g, (wx, 0.1, wz), quat_y(0.0), 0.38, 0.02, 10, M_STONE, (0.05, 0.05, 0.06), tile=1.0)  # the dark shaft
     beam(g, [V(wx - 0.62, -0.1, wz), V(wx - 0.62, 1.25, wz)], 0.12, 0.12, mat=M_PLANK, mode="timber", col=OLD_WOOD, rng=rng)
-    beam(g, [V(wx + 0.75, 0.08, wz + 0.25), V(wx + 1.85, 0.12, wz + 0.75)], 0.12, 0.12, mat=M_PLANK, mode="timber",
+    beam(g, [V(wx + 0.7, 0.08, wz + 0.2), V(wx + 1.4, 0.12, wz + 0.6)], 0.12, 0.12, mat=M_PLANK, mode="timber",
          col=OLD_WOOD, rng=rng, jag=(0.12, 0.0))
     roll0, roll1 = V(wx - 0.6, 0.55, wz + 0.1), V(wx + 0.55, 0.38, wz - 0.35)
     tube(g, [roll0, roll1], [0.08, 0.08], 7, M_BARK, (0.55, 0.5, 0.45), tile=0.6)
     tube(g, [roll1, roll1 + V(0.0, 0.0, -0.22), roll1 + V(0.0, -0.18, -0.25)], [0.025] * 3, 4, M_IRON, IRON, tile=0.2,
          cap=False)  # the crank
-    tube(g, [roll0.lerp(roll1, 0.5), roll0.lerp(roll1, 0.5) + V(0.1, -0.2, 0.0), V(wx + 0.25, 0.05, wz - 0.75),
-             V(wx + 0.45, 0.03, wz - 1.15)], [0.02] * 4, 4, M_HIDE, (0.6, 0.52, 0.38), tile=0.3, cap=False)
+    tube(g, [roll0.lerp(roll1, 0.5), roll0.lerp(roll1, 0.5) + V(0.1, -0.2, 0.0), V(wx + 0.15, 0.05, wz - 0.65),
+             V(wx + 0.1, 0.03, wz - 0.95)], [0.02] * 4, 4, M_HIDE, (0.6, 0.52, 0.38), tile=0.3, cap=False)
     # its bucket, on its side in the snow
-    tube(g, [V(wx + 0.5, 0.15, wz - 1.25), V(wx + 0.75, 0.13, wz - 1.42)], [0.15, 0.17], 8, M_PLANK, OLD_WOOD, tile=0.5)
+    tube(g, [V(wx + 0.05, 0.15, wz - 1.05), V(wx + 0.3, 0.13, wz - 1.2)], [0.15, 0.17], 8, M_PLANK, OLD_WOOD, tile=0.5)
     snow_cap(g, (wx - 0.62, 1.27, wz), 0.08, 0.08, 0.04, rng)
     # ── the hand-cart, tipped onto its nose and left.
     qc = quat_y(0.7) @ quat_z(0.32)
-    cc = V(-2.35, 0.42, -1.65)
+    cc = V(-2.0, 0.42, -1.35)
     wagon_bed(g, rng, cc, qc, length=1.2, width=0.75)
     for sz in (-0.33, 0.33):
-        beam(g, [cc + qc @ V(-0.55, -0.05, sz), cc + qc @ V(-1.45, -0.02, sz * 0.85)], 0.06, 0.06, mat=M_PLANK,
+        beam(g, [cc + qc @ V(-0.55, -0.05, sz), cc + qc @ V(-1.25, -0.02, sz * 0.85)], 0.06, 0.06, mat=M_PLANK,
              col=OLD_WOOD, rng=rng)
     wheel(g, cc + qc @ V(0.15, -0.3, 0.48), qc @ quat_x(math.pi / 2), 0.42, rng, spokes=6)
     snow_cap(g, tuple(cc + qc @ V(0.0, 0.08, 0.0)), 0.45, 0.28, 0.07, rng)
