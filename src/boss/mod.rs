@@ -325,18 +325,43 @@ fn spawn_wardens(
                 Health { hp: max_hp(1), max: max_hp(1) },
             ))
             .id();
-        commands.entity(root).with_children(|p| {
-            p.spawn((Mesh3d(meshes.add(spec.torso)), MeshMaterial3d(mat.clone()), Transform::default()));
-            for part in spec.parts {
-                p.spawn((
-                    Mesh3d(meshes.add(part.mesh)),
-                    MeshMaterial3d(mat.clone()),
-                    Transform::from_translation(part.pivot),
-                    BossPart { kind: part.kind },
-                ));
-            }
-        });
+        spawn_body(&mut commands, root, biome, spec, &mut meshes, &mat, true);
     }
+}
+
+/// Hang a warden's body under `root`: the realistic kit build ([`models::kit_parts`]) when the kit
+/// carries every piece, else the procedural `spec`. `rig` tags the limbs with [`BossPart`] so
+/// [`boss_limbs`] swings them (the standalone viewer shows the rest pose without it).
+pub(crate) fn spawn_body(
+    commands: &mut Commands,
+    root: Entity,
+    biome: Biome,
+    spec: models::BossSpec,
+    meshes: &mut Assets<Mesh>,
+    mat: &Handle<crate::creature::CreatureMaterial>,
+    rig: bool,
+) {
+    if let (Some(parts), Some(kit)) = (models::kit_parts(biome), crate::realforest::get()) {
+        if parts.iter().all(|(name, _, _)| kit.has(name)) {
+            for (name, kind, pivot) in parts {
+                let mut e = commands.spawn((Transform::from_translation(pivot), Visibility::default(), ChildOf(root)));
+                if let (Some(kind), true) = (kind, rig) {
+                    e.insert(BossPart { kind });
+                }
+                kit.attach_static(&mut e, name, Transform::IDENTITY);
+            }
+            return;
+        }
+    }
+    commands.entity(root).with_children(|p| {
+        p.spawn((Mesh3d(meshes.add(spec.torso)), MeshMaterial3d(mat.clone()), Transform::default()));
+        for part in spec.parts {
+            let mut c = p.spawn((Mesh3d(meshes.add(part.mesh)), MeshMaterial3d(mat.clone()), Transform::from_translation(part.pivot)));
+            if rig {
+                c.insert(BossPart { kind: part.kind });
+            }
+        }
+    });
 }
 
 /// New Game / Restart / Play Again (a fresh in-process run — no `GameLoaded`, so `despawn_slain_wardens`

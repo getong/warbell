@@ -207,6 +207,25 @@ pub fn build(biome: Biome) -> BossSpec {
     }
 }
 
+/// The realistic Blender build of a warden (`tools/blender_forest/snowmen.py` → `snowmen.glb`, drawn
+/// on the kit's PBR materials), when it has one: `(kit model, limb kind, pivot)` per piece — `None`
+/// = the static torso (at the root). Same rig contract as [`BossSpec`]: each limb's mesh is built
+/// around its pivot, so `boss::boss_limbs` swings it in place; the pivots come from the script's
+/// `WARDEN_PIVOTS` print. The spawn falls back to [`build`] when the kit lacks any piece.
+pub fn kit_parts(biome: Biome) -> Option<[(&'static str, Option<PartKind>, Vec3); 6]> {
+    match biome {
+        Biome::Snow => Some([
+            ("warden_balwan_torso", None, Vec3::ZERO),
+            ("warden_balwan_foot", Some(PartKind::Leg(1.0)), v(-0.28, 0.14, 0.42)),
+            ("warden_balwan_foot", Some(PartKind::Leg(-1.0)), v(0.28, 0.14, 0.42)),
+            ("warden_balwan_arm_r", Some(PartKind::Arm(1.0)), v(0.45, 1.498, -0.02)),
+            ("warden_balwan_arm_l", Some(PartKind::Arm(-1.0)), v(-0.41, 1.498, -0.02)),
+            ("warden_balwan_head", Some(PartKind::Head), v(0.0, 2.096, 0.0)),
+        ]),
+        _ => None,
+    }
+}
+
 /// The spawn-time root scale for each warden (multiplies the in-mesh ~1.7u height → a towering boss).
 pub fn root_scale(biome: Biome) -> f32 {
     match biome {

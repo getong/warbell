@@ -599,16 +599,7 @@ fn spawn_model(
             let spec = crate::boss::models::build(biome);
             let scale = crate::boss::models::root_scale(biome);
             commands.entity(root).insert(Transform::from_scale(Vec3::splat(scale)));
-            commands.entity(root).with_children(|p| {
-                p.spawn((Mesh3d(meshes.add(spec.torso)), MeshMaterial3d(mat.clone()), Transform::default()));
-                for part in spec.parts {
-                    p.spawn((
-                        Mesh3d(meshes.add(part.mesh)),
-                        MeshMaterial3d(mat.clone()),
-                        Transform::from_translation(part.pivot),
-                    ));
-                }
-            });
+            crate::boss::spawn_body(commands, root, biome, spec, meshes, mat, false);
         }
         // Isolated 1:1 transcription of the three.js previs knight (static rest pose).
         "knight2" => crate::previs_knight::spawn(commands, root, meshes, mat.clone()),
