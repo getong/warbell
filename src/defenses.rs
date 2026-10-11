@@ -411,7 +411,11 @@ fn revive_towers(siege: Res<Siege>, mut prev: Local<Option<GamePhase>>, mut towe
     *prev = Some(siege.phase);
 }
 
-/// The healing shrine: mend the hero a few HP/s while he stands inside the walls (whole-HP
+/// Castle v2: the shrine's heal aura radius (world units) — the infirmary quarter, not the whole
+/// 28×21 bailey (the old `in_footprint` test covered the entire 17×12 castle).
+const SHRINE_HEAL_R: f32 = 9.0;
+
+/// The healing shrine: mend the hero a few HP/s while he stands near it (whole-HP
 /// accumulator, so the HUD ticks on integers). Gated on the Bulwark shrine upgrade.
 fn shrine_heal(
     time: Res<Time>,
@@ -421,7 +425,7 @@ fn shrine_heal(
     mut acc: Local<f64>,
     mut speak: MessageWriter<crate::audio::Speak>,
 ) {
-    if !defenses.shrine || !hero.alive || !crate::castle::in_footprint(hero.pos.x, hero.pos.y) {
+    if !defenses.shrine || !hero.alive || hero.pos.distance(crate::castle::SHRINE_POS) > SHRINE_HEAL_R {
         return;
     }
     let p = &mut player.0;

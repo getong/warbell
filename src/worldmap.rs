@@ -3378,6 +3378,7 @@ pub fn build_step(
             crate::stories_warm::populate(commands);
             // Cold-biome story set-pieces (snow / rocky), planned at phase 4 with the POIs.
             crate::stories_cold::populate(commands, meshes, std_mats);
+            crate::castle_kit::populate(commands);
         }
         // Vista pass (pass 5): the lake waterfall off the mesa wall + three framed overlooks.
         33 => crate::vista::populate(commands, meshes, std_mats),
@@ -3591,6 +3592,8 @@ fn bs_sea_and_boats(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: 
     crate::wayside::plan();
     // After every other planned piece, before the scatter: the snow / rocky story scenes.
     crate::stories_cold::plan();
+    // FOREST_CASTLEKIT_SHOWCASE: reserve open ground for the castle-kit showcase rows.
+    crate::castle_kit::plan();
 }
 
 /// Scatter one biome's props on its tiles (height-aware), and capture its atmosphere/weather into

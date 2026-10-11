@@ -72,7 +72,7 @@ const TILE: f32 = 1.5;
 pub(crate) const HALF_X: f32 = 28.0;
 pub(crate) const HALF_Z: f32 = 21.0;
 /// Gap left in a wall run for a gate; the gate posts stand inside it (opening ≈2.9u, a cart passes).
-const GATE_GAP: f32 = 3.8;
+pub(crate) const GATE_GAP: f32 = 3.8;
 /// Gate positions along their walls (spec v2 §5): the WEST main gate (King's Road to the bay) at
 /// mid-wall, the SOUTH gate (the orc side, under the bell tower) at mid-wall, the NORTH postern
 /// (forest + quarry) east of the keep. The EAST wall is solid.
@@ -941,7 +941,7 @@ fn keep_tier2_parts() -> Vec<(Mesh, M)> {
 
 /// Curtain wall to the wall-walk (spec v2 §1: 3.6–4.0u to the merlon tops, 1.2–1.5u thick).
 const WALL_H: f32 = 3.4;
-const WALL_THICK: f32 = 1.3;
+pub(crate) const WALL_THICK: f32 = 1.3;
 
 fn wall_parts(len: f32) -> Vec<(Mesh, M)> {
     let mut v: Vec<(Mesh, M)> = Vec::new();
@@ -986,7 +986,7 @@ fn tower_parts() -> Vec<(Mesh, M)> {
 }
 
 /// Gate passage clear height (spec v2 §1: 2.6–2.8u high × 2.6–3.0u wide — a loaded cart passes).
-const GATE_H: f32 = 2.8;
+pub(crate) const GATE_H: f32 = 2.8;
 
 fn gate_parts(width: f32) -> Vec<(Mesh, M)> {
     let mut v: Vec<(Mesh, M)> = Vec::new();
@@ -1000,11 +1000,7 @@ fn gate_parts(width: f32) -> Vec<(Mesh, M)> {
     v.push((bx(width + 0.9, WALL_H - GATE_H + 0.2, WALL_THICK, 0.0, (GATE_H + WALL_H + 0.2) / 2.0, 0.0), M::Stone));
     v.push((bx(width + 1.2, 0.3, WALL_THICK + 0.2, 0.0, GATE_H + 0.1, 0.0), M::Beam)); // lintel beam
     v.push((bx(0.6, 0.5, 0.12, 0.0, GATE_H + 0.75, WALL_THICK / 2.0 + 0.04), M::Gold)); // crest
-    // Open door leaves swung against the posts (with iron band).
-    for (sx, rot) in [(-half + 0.1, 0.9_f32), (half - 0.1, -0.9)] {
-        let leaf = (half - 0.1).max(0.3);
-        v.push((bake(bx(leaf, GATE_H - 0.1, 0.12, 0.0, 0.0, 0.0), Vec3::new(sx, (GATE_H - 0.1) / 2.0, WALL_THICK / 2.0 + 0.5), rot, Vec3::ONE), M::Wood));
-    }
+    // The door leaves are separate hinged entities now (`gates.rs`): they swing shut at dusk.
     v
 }
 
@@ -1030,9 +1026,10 @@ pub(crate) const HOUSE_SCALE: Vec3 =
     Vec3::new(0.9 * WORLD_BUMP * 1.2, 0.74 * WORLD_BUMP * BUILDING_TALLER * 1.32, 0.9 * WORLD_BUMP * 1.2);
 /// Keep root scale (shared by the keep + both grandeur tiers so their parts stay registered). Y is
 /// ×[`BUILDING_TALLER`]; footprint unchanged.
-/// Castle v2 (spec §1): a keep that dominates the yard — ≈9.5×8u footprint, the body ≈5u, the
-/// central tower ≈8u, the roof peak ≈10u (interim primitive heights until `castle_kit.glb`).
-const KEEP_SCALE: Vec3 = Vec3::new(1.35, 2.3, 1.35);
+/// Castle v2 (spec §1): a keep that dominates the yard — ≈9.5×8u footprint, the body ≈4.4u, the
+/// central tower ≈7u, turret caps ≈9.0u and gilded spire tips ≈9.9u — all ≤10u (Y 2.0; interim
+/// primitive heights until `castle_kit.glb`).
+const KEEP_SCALE: Vec3 = Vec3::new(1.35, 2.0, 1.35);
 /// Corner-tower root scale. Y is ×[`BUILDING_TALLER`]; footprint unchanged.
 /// Castle v2: 2.7u-square towers, the shaft ([`TOWER_H`]) at full height.
 const TOWER_SCALE: Vec3 = Vec3::new(1.5, 1.0, 1.5);
@@ -1737,6 +1734,10 @@ pub fn in_courtyard(wx: f32, wz: f32) -> bool {
 
 /// The keep's footprint half-extents (body, without the plinth) — for props that dress its walls.
 /// World Y of the keep's flat roof (the body top) — where the keep-roof archers stand.
+/// The healing shrine (castle_decor, Bulwark upgrade) by the infirmary on the east side — and the
+/// centre of its heal aura (`defenses::shrine_heal`).
+pub(crate) const SHRINE_POS: Vec2 = Vec2::new(HALF_X * 0.6, -HALF_Z * 0.12);
+
 pub(crate) const KEEP_ROOF_Y: f32 = (KEEP_FOUND + KEEP_H) * KEEP_SCALE.y;
 /// World Y of a corner tower's fighting top — the tower defenders' muzzle height.
 pub(crate) const TOWER_TOP: f32 = TOWER_H * TOWER_SCALE.y;
@@ -2081,6 +2082,7 @@ pub fn build(
     // Courtyard set dressing + the upgrade-bought set pieces (armory, tax booth, shrine, …) —
     // a separate module so the structures stay readable here.
     crate::castle_decor::build(commands, meshes, &mats);
+    crate::gates::build(commands, meshes, &mats);
 
     // The always-present keep and work-yard props are solid from the start; gated structures
     // register their blockers when their upgrade reveals them (see `sync_castle`), so the
@@ -2291,7 +2293,7 @@ fn register_yard_blockers() {
 }
 
 /// Perimeter wall blockers — one box per segment (registered when Walls is built).
-fn register_walls_blockers() {
+pub(crate) fn register_walls_blockers() {
     let p = COLLISION_PAD;
     for (x, z, rot, len) in wall_segments() {
         let along = len / 2.0;

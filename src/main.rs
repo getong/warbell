@@ -42,6 +42,7 @@ mod capture;
 mod cinematic;
 mod castle;
 mod castle_decor;
+mod gates; // castle gate mechanics: shut at dusk (oak leaves / wagon barricade), orks hack them
 mod market; // castle market: kit stalls + cart + barrels, vendors behind the counters, shoppers
 mod town_kit; // castle town kit (town_kit.glb): spawn_piece handle + FOREST_TOWNKIT_SHOWCASE row
 mod castle_ground; // lived-in castle yard ground: lanes, ruts, plaza, worn grass (baked into the terrain masks)
@@ -131,6 +132,7 @@ mod vignettes;
 mod bog;
 mod poi;
 mod stories_cold;
+mod castle_kit;
 mod stories_warm;
 mod villagers;
 mod vista;
@@ -248,6 +250,7 @@ fn main() {
             decor::DecorPlugin, // firefly bob system (decor itself spawned per-biome)
             dof::DofPlugin,     // custom CoC bokeh depth-of-field post pass (player-focused)
         ))
+        .add_plugins(gates::GatesPlugin) // gates shut at dusk, open at dawn; ork-only solid, hackable
         .add_plugins(market::MarketPlugin) // the living market on the west lane: stalls, vendors, vendor greetings
         .add_plugins(town_kit::TownKitPlugin) // town-kit pieces (showcase only until the phase-4 layout)
         .add_plugins(bog::BogPlugin) // swamp-pool will-o'-wisp hover anim (dressing spawned at build)

@@ -21,6 +21,11 @@ All photographic sources are CC0 1.0 (public domain) from Poly Haven, https://po
   castle paving (s_cobble_*.dds, the keep apron + gate passages, castle.rs):
             cobblestone_05  https://polyhaven.com/a/cobblestone_05  (CC0 1.0, Rob Tuytel)
             (graded + packed by tools/blender_forest/cobble_set.sh + pack_forest_textures)
+  castle kit masonry + roofs (castle_kit.glb):
+            s_ashlar   medieval_blocks_03  https://polyhaven.com/a/medieval_blocks_03  (CC0 1.0, Rob Tuytel)
+            s_rubble   broken_wall         https://polyhaven.com/a/broken_wall         (CC0 1.0, Rob Tuytel)
+            s_shingle  roof_slates_02      https://polyhaven.com/a/roof_slates_02      (CC0 1.0, Rob Tuytel)
+            (graded + packed by tools/blender_forest/masonry_set.sh + pack_forest_textures)
   town whitewash (s_plaster_*.dds, the timber-frame infill of town_kit.glb):
             white_rough_plaster  https://polyhaven.com/a/white_rough_plaster  (CC0 1.0)
             (graded + packed by tools/blender_forest/plaster_set.sh + pack_forest_textures)
