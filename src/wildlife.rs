@@ -1170,6 +1170,7 @@ pub fn populate(
             let p = Vec2::new(ax, az);
             // Open grass, outside the keep core, off any wall/house/prop blocker or build plot.
             if p.distance(crate::castle::KEEP_POS) < 7.0
+                || !crate::castle::in_courtyard(ax, az)
                 || !worldmap::is_grass_world(ax, az)
                 || crate::blockers::is_blocked(ax, az)
                 || crate::town::near_build_plot(ax, az)

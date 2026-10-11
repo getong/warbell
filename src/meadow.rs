@@ -36,7 +36,7 @@ const REST_HPS: f64 = 3.5;
 /// below keeps its old place RELATIVE TO THE WALLS by moving out by this much per quadrant (the old
 /// literals are the 17×12 layout; `+DX` east / `−DX` west, `+DZ` south / `−DZ` north).
 const DX: f32 = crate::castle::HALF_X - 17.0;
-const DZ: f32 = crate::castle::HALF_Z - 12.0;
+const DZ: f32 = 21.0 - 12.0; // the v2 rectangle's N/S line (the polygon's S side moved to 24 — the meadow stays put)
 
 /// The campfire's world spot — forest side, next to the hero's new spawn (see
 /// `player::spawn_point`), clear of the SW town plot and the west gate lane.

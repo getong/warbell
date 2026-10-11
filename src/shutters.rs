@@ -59,7 +59,7 @@ fn drive_shutters(
 /// four dwelling silhouettes hang their glass at different spots). The two leaf meshes (built
 /// once by the caller against the castle's shared material) are baked at world size, so the
 /// house's non-uniform scale folds into the placement here, not the geometry.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, dead_code)] // the town-kit houses carry their own shutters
 pub fn spawn_house_shutters(
     commands: &mut Commands,
     right_leaf: &Handle<Mesh>,

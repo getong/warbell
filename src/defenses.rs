@@ -36,7 +36,6 @@ use crate::game_state::SimAppExt;
 /// ~7.8 dmg/bolt (≈7.8 DPS), a ballista ~29/bolt, so a fully-built castle chips ~50 DPS into a
 /// wave: real help, not an auto-clear.
 const DMG_SCALE: f32 = 0.65;
-use crate::castle::{HALF_X, HALF_Z};
 const DEFENDER_BOLT_TTL: f32 = 3.0;
 /// World Y of the keep roof the archer figures stand on (the keep body top, ≈ `(KEEP_FOUND + KEEP_H)`
 /// scaled by the keep's 0.7 y-scale). Tuned against a staged shot.
@@ -159,20 +158,23 @@ fn setup_bolt_gfx(
     commands.insert_resource(BoltGfx { mesh, mat });
 }
 
-/// `FOREST_DEFEND=1` arms every defense at boot so the harness can shoot a defended wave.
+/// `FOREST_DEFEND=1` arms every defense at boot so the harness can shoot a defended wave (the
+/// stone-curtain tier). `FOREST_DEFEND=palisade` stages the timber tier with watchtowers,
+/// `=stone` the timber tier with Tower Mastery's stone towers (no curtain yet).
 fn debug_enable_defenses(mut defenses: ResMut<Defenses>) {
-    if std::env::var("FOREST_DEFEND").is_ok() {
+    if let Ok(tier) = std::env::var("FOREST_DEFEND") {
+        let timber = matches!(tier.as_str(), "palisade" | "stone");
         *defenses = Defenses {
             walls: true, // build the perimeter + gates so A* has gates to route invaders through
             gate: true,
             towers: true,
-            tower_mastery: true,
+            tower_mastery: tier != "palisade",
             keep_archers: true,
             ballista: true,
             shrine: true,
             // Visual-only in the harness: stage the armory corner + the mason's scaffold
             // (castle_decor) so a defended shot shows the full courtyard.
-            reinforced: true,
+            reinforced: !timber,
             villager_arms_tier: 2,
             guard_hp_bonus: 0.0,
         };
@@ -445,7 +447,9 @@ fn shrine_heal(
 /// night, not only during a siege). The bodies are real bipeds now — the shared idle clip keeps
 /// them alive, so no manual bob; this only gates visibility.
 fn sync_keep_archers(defenses: Res<Defenses>, mut q: Query<&mut Visibility, With<KeepArcher>>) {
-    let want = if defenses.keep_archers { Visibility::Inherited } else { Visibility::Hidden };
+    // They man the stone donjon's parapet (`castle::KEEP_ROOF_Y`); the ruin shell and the
+    // thatched timber keep of the earlier tiers have no fighting top to stand on yet.
+    let want = if defenses.keep_archers && defenses.reinforced { Visibility::Inherited } else { Visibility::Hidden };
     for mut vis in &mut q {
         if *vis != want {
             *vis = want;
@@ -466,7 +470,7 @@ pub fn populate_defenders(
     creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
 ) {
     let tower_hp = TOWER_MAX_HP as f32;
-    for (x, z) in [(-HALF_X, -HALF_Z), (HALF_X, -HALF_Z), (HALF_X, HALF_Z), (-HALF_X, HALF_Z)] {
+    for (x, z) in crate::castle::defender_towers().map(|t| (t.x, t.y)) {
         commands.spawn((
             Defender {
                 kind: Kind::Tower,

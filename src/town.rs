@@ -599,29 +599,25 @@ fn restore_buildings(
 #[derive(Resource, Default)]
 pub struct PlotSpots(pub Vec<Vec2>);
 
-/// Castle v2 moved the walls out from 17×12 to `castle::HALF_X`×`HALF_Z` (28×21); the plots keep
-/// their old place RELATIVE TO THE WALLS (the fields in the open ring outside them, spec v2 §1).
-const PDX: f32 = crate::castle::HALF_X - 17.0;
-const PDZ: f32 = crate::castle::HALF_Z - 12.0;
-
-/// Fixed plot offsets from the castle origin — the fields in the open ring OUTSIDE the castle
-/// walls (in_footprint: |x|<=HALF_X+1.6 && |z|<=HALF_Z+1.6), OFF the gate lanes (W at z=0, S at
-/// x=0, N postern at x≈8) and the W-gate outer plots (Crown depot, gallows, grave), all inside the
-/// forced-flat grass of `worldmap::SAFE_R`.
+/// Fixed plot centres (world XZ) — the fields in the open ring OUTSIDE the castle's polygon
+/// enceinte (`castle::ENCEINTE`; each ≥6u off the wall line and clear of the corner towers), off
+/// the gate lanes (W at z=0, S at x=0, N postern at x=6), the street village along the King's Road
+/// west of the W gate, and inside the forced-flat ring (`worldmap::castle_ring_dist`). The castle v2
+/// spots, nudged where the polygon's corner towers or the village now stand.
 const PLOT_OFFSETS: [Vec2; PLOT_COUNT] = [
-    Vec2::new(10.0 + PDX, 15.5 + PDZ),   // S side, east of the south gate lane
-    Vec2::new(-10.0 - PDX, 15.5 + PDZ),  // S side, west of the south gate lane
-    Vec2::new(10.0 + PDX, -15.5 - PDZ),  // N side, east of the postern lane
-    Vec2::new(-10.0 - PDX, -15.5 - PDZ), // N side, west
-    Vec2::new(20.0 + PDX, 8.0 + PDZ),    // E — off the solid east wall
-    Vec2::new(-20.0 - PDX, 8.0 + PDZ),   // W — south of the King's Road
-    Vec2::new(20.0 + PDX, -8.0 - PDZ),   // E
-    Vec2::new(-20.0 - PDX, -8.0 - PDZ),  // W — north of the King's Road, behind the Crown depot
+    Vec2::new(24.0, 27.5),   // S side, east of the south gate lane (off the SE tower)
+    Vec2::new(-21.0, 24.5),  // S side, west of the south gate lane
+    Vec2::new(21.0, -24.5),  // N side, east of the postern lane
+    Vec2::new(-21.0, -27.5), // N side, west (off the NW tower)
+    Vec2::new(31.0, 17.0),   // E — off the solid east wall
+    Vec2::new(-34.0, 19.0),  // W — south of the King's Road, behind Maud's house
+    Vec2::new(35.0, -17.0),  // E (off the NE tower)
+    Vec2::new(-31.0, -17.0), // W — north of the King's Road, behind the tavern
     // Outer corner ring — diagonal of each quadrant, still on forced-flat grass.
-    Vec2::new(18.0 + PDX, 17.0 + PDZ),   // SE corner
-    Vec2::new(-18.0 - PDX, 17.0 + PDZ),  // SW corner
-    Vec2::new(18.0 + PDX, -17.0 - PDZ),  // NE corner
-    Vec2::new(-18.0 - PDX, -17.0 - PDZ), // NW corner
+    Vec2::new(29.0, 26.0),   // SE corner
+    Vec2::new(-29.0, 26.0),  // SW corner
+    Vec2::new(29.0, -26.0),  // NE corner
+    Vec2::new(-29.0, -26.0), // NW corner
 ];
 
 /// World-XZ radius around each plot centre that must stay clear so a future building has room:

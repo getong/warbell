@@ -417,6 +417,22 @@ impl Kit {
         self.by_name.contains_key(name)
     }
 
+    /// The parts (one mesh per material) of model `name` — for callers that edit a kit mesh
+    /// before spawning it (`castle_kit::spawn_piece_edited`).
+    pub fn parts_of(&self, name: &str) -> Option<&[Part]> {
+        self.model(name).map(|m| self.models[m].parts.as_slice())
+    }
+
+    /// Is part material `mat` the kit material called `name`?
+    pub fn mat_is(&self, mat: usize, name: &str) -> bool {
+        self.mat_by_name(name) == Some(mat)
+    }
+
+    /// Insert kit material `mat` on `e` (pairs with [`Self::parts_of`]).
+    pub fn insert_mat(&self, mat: usize, e: &mut EntityCommands) {
+        self.mats[mat].insert(e);
+    }
+
     /// (XZ half-extents, height) of kit model `name`, unscaled.
     pub fn extents(&self, name: &str) -> Option<(Vec2, f32)> {
         self.model(name).map(|m| (self.models[m].half, self.models[m].height))
@@ -814,6 +830,7 @@ pub fn keep_clear(x: f32, z: f32, r: f32) -> bool {
         || crate::wayside::overlaps_planned(x, z, r)
         || crate::vignettes::overlaps_planned(x, z, r)
         || crate::ruins::near_landmark_visual_footprint(x, z)
+        || crate::castle::village_keep_clear(x, z, r)
 }
 
 impl Chunks {
