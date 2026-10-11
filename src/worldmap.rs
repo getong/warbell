@@ -49,6 +49,12 @@ mod alpine_cliff;
 #[path = "alpine/terrain_massif.rs"]
 mod alpine_massif;
 
+/// Is grid corner `(cx, cz)` on the continuous snow-massif surface (no walls there — steep ground
+/// is just steep)? The alpine mask keeps its wall-foot drifts / talus off it.
+pub fn on_massif_corner(cx: i32, cz: i32) -> bool {
+    alpine_massif::corner_y(cx, cz).is_some()
+}
+
 // ── Map dimensions ───────────────────────────────────────────────────────────────
 /// Map enlargement vs the original base island (more tiles → more land + props).
 /// Bumped 1.5 → 1.8 (a clean +20% on every axis), then 1.8 → 2.0 to give the strongholds (esp.
@@ -3625,6 +3631,11 @@ fn bs_snow_drifts(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: 
     for iz in 0..ROWS {
         for ix in 0..COLS {
             let Some((TB::Snow, h)) = tile_at(ix, iz) else { continue };
+            // The massif has no terrace walls: its class jumps are just steep slope, and a talus
+            // boulder at every one strewed the summits with rocks.
+            if alpine_massif::corner_y(ix, iz).is_some() {
+                continue;
+            }
             let mut rng = tileworld_core::rng::Mulberry32::new((iz * COLS + ix) as u32 ^ 0x5eed_d81f);
             for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
                 let Some((_, nh)) = tile_at(ix + dx, iz + dz) else { continue };

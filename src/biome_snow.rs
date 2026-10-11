@@ -169,6 +169,19 @@ fn ball_at(r: f32, off: Vec3, squash: f32, c: u32) -> Mesh {
     )
 }
 
+/// [`ball_at`] with a smooth, finely subdivided sphere (the snowman's packed-snow body).
+fn smooth_ball_at(r: f32, off: Vec3, squash: f32, c: u32) -> Mesh {
+    tinted(
+        Sphere::new(r)
+            .mesh()
+            .ico(3)
+            .expect("ico detail in range")
+            .scaled_by(Vec3::new(1.0, squash, 1.0))
+            .translated_by(off),
+        lin(c),
+    )
+}
+
 /// An angular rock chunk: an icosphere squashed non-uniformly THEN tilted, so its facets
 /// skew into a fractured-block read instead of a pebble. `detail` 0 (20 tris) or 1 (80).
 fn chunk_at(r: f32, off: Vec3, scale: Vec3, yaw: f32, pitch: f32, detail: u32, c: u32) -> Mesh {
@@ -533,16 +546,18 @@ pub(crate) fn build_snowman_mesh() -> Mesh {
 
     // ── Body: three stacked near-round snow balls (lightly squashed so they read packed).
     // Centres chosen so each ball overlaps the one below (no gap), bottom resting on y=0.
+    // Smooth (ico 3) balls: the 20-facet ico(0) body read as a faceted toy next to the
+    // realistic snow kit, and at the ambusher's close range every facet showed.
     let bottom_cy = 0.285;
-    parts.push(ball_at(0.30, y(bottom_cy), 0.95, SNOWMAN_BODY));
+    parts.push(smooth_ball_at(0.30, y(bottom_cy), 0.95, SNOWMAN_BODY));
     let mid_cy = 0.58;
-    parts.push(ball_at(0.225, y(mid_cy), 0.96, SNOWMAN_BODY));
+    parts.push(smooth_ball_at(0.225, y(mid_cy), 0.96, SNOWMAN_BODY));
     let head_cy = 0.84;
-    parts.push(ball_at(0.165, y(head_cy), 0.97, SNOWMAN_BODY));
+    parts.push(smooth_ball_at(0.165, y(head_cy), 0.97, SNOWMAN_BODY));
 
     // ── Drift skirt banked against the base (bright lee lobe / blue windward lobe).
-    parts.push(ball_at(0.20, Vec3::new(0.16, 0.05, 0.14), 0.45, SNOW_CAP));
-    parts.push(ball_at(0.17, Vec3::new(-0.20, 0.04, -0.08), 0.45, SNOW_SHADE));
+    parts.push(smooth_ball_at(0.20, Vec3::new(0.16, 0.05, 0.14), 0.45, SNOW_CAP));
+    parts.push(smooth_ball_at(0.17, Vec3::new(-0.20, 0.04, -0.08), 0.45, SNOW_SHADE));
 
     // ── Face (on the +Z front of the head): two coal eyes + a carrot nose + a coal smile.
     let face_z = 0.135;
@@ -615,7 +630,8 @@ pub(crate) fn build_snowman_mesh() -> Mesh {
     parts.push(cyl_up(0.135, 0.20, head_top + 0.10, 10, HAT)); // crown
     parts.push(cyl_up(0.142, 0.045, head_top + 0.035, 10, SCARF)); // band
 
-    shaded(merged(parts))
+    // Smooth normals (not `shaded`): the facet bake made the round body a disco ball.
+    merged(parts)
 }
 
 // ── Ground cover: snow tuft + ice glint ─────────────────────────────────────────
@@ -909,11 +925,14 @@ pub fn config() -> BiomeConfig {
                 tree: false,
                 block_radius: 0.28, // only big frost boulders block (scale ≳1.07 clears the 0.30 floor); small ones walk-through
             },
-            // Snowman (bałwan) — a rare charming centrepiece, sprinkled sparsely (~10 per
-            // patch). Kept LAST so it never becomes the tree-too-close fallback.
+            // Snowman (bałwan) — a rare charming centrepiece, sprinkled sparsely. Kept LAST so it
+            // never becomes the tree-too-close fallback. 0.007 → 0.0008 (~30 over the massif): at
+            // 0.007 the grown snow region held ~250, a snowman in every frame, which turned the
+            // realistic snow biome into a toy shop; the 10 ambush snowmen (`snowman.rs`) are
+            // spawned separately and unaffected.
             PropClass {
                 variants: vec![(build_snowman_mesh(), 1.0)],
-                chance: 0.007,
+                chance: 0.0008,
                 scale: (0.9, 1.2),
                 tree: false,
                 block_radius: 0.34, // a snowman is a solid body-sized figure — don't walk through

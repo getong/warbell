@@ -41,7 +41,9 @@ pub fn snow_amount(material: &str) -> Option<f32> {
     Some(match material {
         // Needle cards: enough to load the sky-facing tops; more turned the sparse kit crowns
         // into white skeletons at range.
-        "canopy" => 0.62,
+        // 0.62 → 0.48: at 0.62 the snowy crowns went white-on-white against the snowfield and
+        // the forest read as bare poles from the meadow.
+        "canopy" => 0.48,
         "undergrowth" => 0.45,
         "bark_pine" | "bark_oak" | "bark_beech" => 0.55,
         "prop_rock_a" | "prop_rock_b" | "prop_log" | "prop_stump" | "prop_branches" => 0.85,
@@ -69,9 +71,11 @@ pub fn tree(kit: &Kit, src: usize, x: f32, z: f32) -> Option<(usize, bool)> {
         0 => "pine_a_lod0",
         1 => "pine_b_lod0",
         2 => "pine_c_lod0",
-        // A bare tree among the conifers; on the green apron a beech in leaf instead.
+        // On the green apron a beech in leaf; up in the snow mostly another conifer, the odd bare
+        // snag (a fifth of the scatter as dead trees made the snow forest look burnt out).
         _ if super::snow_cover(x, z) < FROST_AT => ["beech_a_lod0", "beech_b_lod0"][(a * 2.0) as usize % 2],
-        _ => "dead_a_lod0",
+        _ if a < 0.3 => "dead_a_lod0",
+        _ => ["pine_a_lod0", "pine_b_lod0", "pine_c_lod0"][(a * 7.0) as usize % 3],
     };
     kit.pick_named(&[name], 0.0).map(|m| (m, super::snow_cover(x, z) >= FROST_AT))
 }

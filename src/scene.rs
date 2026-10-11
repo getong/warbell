@@ -277,6 +277,7 @@ fn track_biome_atmo(
             cur.fog_density += (target.fog_density - cur.fog_density) * k;
             cur.bloom_scale += (target.bloom_scale - cur.bloom_scale) * k;
             cur.ambient_scale += (target.ambient_scale - cur.ambient_scale) * k;
+            cur.ambient_tint += (target.ambient_tint - cur.ambient_tint) * k;
         }
     }
 }
@@ -484,7 +485,7 @@ fn advance_sky(
     // from the FOG (which builds with distance), not the flat fill, so the ambient only leans
     // gently toward the biome colour.
     if let Some(t) = tint {
-        ambient.color = lerp_col(ambient.color, t.ambient_color, bw * AMBIENT_TINT_SCALE);
+        ambient.color = lerp_col(ambient.color, t.ambient_color, (bw * AMBIENT_TINT_SCALE * t.ambient_tint).min(1.0));
     }
 
     // IBL (baked daytime) dimmed at night to a ≈360 floor (was 400) so surfaces still catch

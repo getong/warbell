@@ -113,6 +113,10 @@ pub struct AtmoSample {
     /// marsh + mire still looked "too dark / everything shadowed" (player). This lifts the fill in
     /// those regions only, rescuing the shadow side without washing the sun-keyed ground.
     pub ambient_scale: f32,
+    /// Per-region weight on how far the ambient fill leans toward the biome's `ambient_color`
+    /// (× `scene::AMBIENT_TINT_SCALE`; 1.0 = the island base). The snow raises it: shade on a
+    /// snowfield is lit by blue sky, and the warm island fill turned shadowed snow brown.
+    pub ambient_tint: f32,
 }
 
 impl AtmoSample {
@@ -141,8 +145,12 @@ impl AtmoSample {
                 // The realistic forest (`realforest`) has a closed leaf canopy: away from the trails
                 // the floor sees no sun at all, so without a lift it crushes to near-black.
                 Biome::Forest if crate::realforest::get().is_some() => 2.6,
+                // Snow: open sky + the bounce off a white snowfield light the shadow side far more
+                // than grass does — without it shaded snow crushed to dark brown smudges.
+                Biome::Snow => 1.8,
                 _ => 1.0,
             },
+            ambient_tint: if c.biome == Biome::Snow { 2.0 } else { 1.0 },
         }
     }
     /// Build from the island-wide [`crate::worldmap::ATMOSPHERE`] tuple (the grass/ocean base).
@@ -165,6 +173,7 @@ impl AtmoSample {
             bloom_scale: 1.0,
             // Island base: neutral ambient. The Blight bumps it in `blight_ambience`.
             ambient_scale: 1.0,
+            ambient_tint: 1.0,
         }
     }
 }
@@ -1058,7 +1067,7 @@ pub fn scatter_region(
             // Terrain-aware tree thinning: estimate the local ground gradient and drop TREE density
             // on steep ground (cliffs, mountain faces, coastal ridges) so woods thin toward bare
             // crag instead of carpeting a wall. Gentle rolling hills (< SLOPE_FREE) are untouched.
-            let tree_mult = {
+            let slope = {
                 let d = 1.6;
                 // On the PRE-relief terrain: the alpine shelf relief (gentle, nav-capped) must not
                 // flip a tile's pick — every pick feeds the region's one RNG stream, so a single
@@ -1067,9 +1076,9 @@ pub fn scatter_region(
                 let p0 = lay(cx, cz, py);
                 let gx = lay(cx + d, cz, height_fn(cx + d, cz)) - p0; // forward diff off the already-sampled py (cheap)
                 let gz = lay(cx, cz + d, height_fn(cx, cz + d)) - p0;
-                let slope = (gx * gx + gz * gz).sqrt() / d;
-                (1.0 - (slope - SLOPE_FREE).max(0.0) * SLOPE_TREE_THIN).clamp(SLOPE_TREE_FLOOR, 1.0)
+                (gx * gx + gz * gz).sqrt() / d
             };
+            let tree_mult = (1.0 - (slope - SLOPE_FREE).max(0.0) * SLOPE_TREE_THIN).clamp(SLOPE_TREE_FLOOR, 1.0);
             // Realistic forest: trees clump into groves around open glades (density-neutral overall).
             let grove_mult = if kit.is_some() && cfg.name != "Grass" {
                 0.12 + 1.45 * fg_smoothstep(0.12, 0.62, forest_grove(cx, cz))
@@ -1110,13 +1119,20 @@ pub fn scatter_region(
                         || (kit.is_some() && crate::realforest::keep_clear(cx, cz, 1.6))
                         // Snow massif: bare rock and snow above the tree line (a fallback prop there).
                         || (snow_kit.is_some() && crate::alpine::above_treeline(cx, cz, py))
+                        // ...and no trunk on a crag face (> ~45°: its root hangs off the downhill side).
+                        || (snow_kit.is_some() && slope > 1.0)
                         || tree_pts.iter().any(|q| q.distance_squared(p) < min_d2)
                         // Tree spacing follows trunks and solid scenery. Bush crowns and low
                         // rocks are understorey, not empty circles that evict future trees.
                         || crate::blockers::any_within(cx, cz, tree_clear)
                     {
-                        // Passive non-tree prop, so it merges into the chunk's props bucket.
+                        // Passive non-tree prop, so it merges into the chunk's props bucket. Not on
+                        // the bare upper massif / its crags (every tree spot above the tree line fell
+                        // back to a stone, which strewed the summits with boulders) — bar the odd one.
+                        let bare_alp = snow_kit.is_some()
+                            && (slope > 0.7 || (crate::alpine::above_treeline(cx, cz, py) && crate::realforest::rolls(cx, cz).1 > 0.12));
                         if let Some(fb) = fallback
+                            .filter(|_| !bare_alp)
                             .filter(|fb| !landmark_core && (fb.block_radius <= 0.0 || !landmark_buffered))
                         {
                             let fi = pick_weighted(&fb.weights, r.next());
@@ -1259,6 +1275,15 @@ pub fn scatter_region(
                         gz += 1.0;
                         continue;
                     }
+                    // Snow massif: nothing perches on a crag — a boulder / stump / snowman on a
+                    // > ~35° slope hangs off its downhill side and reads as floating. Steep ground
+                    // stays bare rock + snow (the shader's slope rock).
+                    if snow_kit.is_some()
+                        && (slope > 0.7 || (crate::alpine::above_treeline(cx, cz, py) && crate::realforest::rolls(cx, cz).1 > 0.35))
+                    {
+                        gz += 1.0;
+                        continue;
+                    }
                     // Structural scenery stays separated; shrubs and small stones can layer
                     // beneath trees and beside other undergrowth without thinning the forest.
                     let footprint = c.visual_radii[vi] * s;
@@ -1281,7 +1306,8 @@ pub fn scatter_region(
                             }
                         }
                     } else if let Some(k) = snow_p {
-                        let at = Vec3::new(cx, py, cz);
+                        // Bedded into a sloping hillside rather than balanced on its centre point.
+                        let at = Vec3::new(cx, py - slope * 0.3 * s, cz);
                         if !snow_prop(k, &mut alp_chunks, class_index(c), vi, at, rot, s) && c.block_radius * s >= 0.30 {
                             queue(false, c.variants[vi].clone(), at, rot, s);
                         }
