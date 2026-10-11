@@ -1283,15 +1283,16 @@ def bounds(builder):
     return {"tris": builder.tris(), "radius": round(float(r), 3), "x": rng_of(gx), "z": rng_of(gz), "y": rng_of(gy)}
 
 
-clear_scene()
-objs = []
-report = {}
-for i, (name, fn) in enumerate(MODELS.items()):
-    b = fn(np.random.default_rng(2000 + i))
-    report[name] = bounds(b)
-    objs.append(b.build(name, MATS))
-export_glb(OUT / "wayside.glb", objs)
-(OUT / "wayside_report.json").write_text(json.dumps(report, indent=1), encoding="utf-8")
-for k, v in report.items():
-    print(f"{k}: {v}")
-print("WAYSIDE_DONE")
+if __name__ == "__main__":  # importable: stories_cold.py reuses the primitives above
+    clear_scene()
+    objs = []
+    report = {}
+    for i, (name, fn) in enumerate(MODELS.items()):
+        b = fn(np.random.default_rng(2000 + i))
+        report[name] = bounds(b)
+        objs.append(b.build(name, MATS))
+    export_glb(OUT / "wayside.glb", objs)
+    (OUT / "wayside_report.json").write_text(json.dumps(report, indent=1), encoding="utf-8")
+    for k, v in report.items():
+        print(f"{k}: {v}")
+    print("WAYSIDE_DONE")
