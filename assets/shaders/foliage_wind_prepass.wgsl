@@ -7,6 +7,12 @@
     prepass_io::{Vertex, VertexOutput},
     view_transformations::position_world_to_clip,
 }
+#import bevy_render::globals::Globals
+
+// The prepass / shadow view layout carries Globals at binding 1 (bevy_pbr `prepass_view_layout_*`)
+// but `prepass_bindings` doesn't declare it, so bind it here. Wind clock = `globals.time`, same as
+// the main pass (see `foliage_wind.wgsl` for why it isn't a material field).
+@group(0) @binding(1) var<uniform> fw_globals: Globals;
 
 struct FoliageWind {
     wind: vec4<f32>,
@@ -39,7 +45,7 @@ fn vertex(vertex: Vertex) -> VertexOutput {
 #endif
 
     let wp = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position, 1.0)).xyz;
-    out.world_position = vec4<f32>(wp + wind_offset(wp, origin, w, fw.wind.x), 1.0);
+    out.world_position = vec4<f32>(wp + wind_offset(wp, origin, w, fw_globals.time), 1.0);
     out.position = position_world_to_clip(out.world_position.xyz);
 #ifdef UNCLIPPED_DEPTH_ORTHO_EMULATION
     out.unclipped_depth = out.position.z;
@@ -66,7 +72,7 @@ fn vertex(vertex: Vertex) -> VertexOutput {
 #ifdef MOTION_VECTOR_PREPASS
     let prev_model = mesh_functions::get_previous_world_from_local(vertex.instance_index);
     let pwp = mesh_functions::mesh_position_local_to_world(prev_model, vec4<f32>(vertex.position, 1.0)).xyz;
-    out.previous_world_position = vec4<f32>(pwp + wind_offset(pwp, prev_model[3].xyz, w, fw.wind.y), 1.0);
+    out.previous_world_position = vec4<f32>(pwp + wind_offset(pwp, prev_model[3].xyz, w, fw_globals.time - fw_globals.delta_time), 1.0);
 #endif
 
 #ifdef VERTEX_OUTPUT_INSTANCE_INDEX

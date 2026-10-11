@@ -1,13 +1,11 @@
-//! **Crown colour variety (+ dormant wind)** — the kit's leaf-card and undergrowth materials as
+//! **Crown colour variety + wind** — the kit's leaf-card and undergrowth materials as
 //! `ExtendedMaterial<StandardMaterial, FoliageExt>`: stock PBR shading, plus a vertex stage
-//! (`foliage_wind.wgsl`) that tints each tree's crown (yellow-green .. deep blue-green) and drifts
-//! the undergrowth colour in broad patches.
+//! (`foliage_wind.wgsl`) that tints each tree's crown (yellow-green .. deep blue-green), drifts
+//! the undergrowth colour in broad patches and bends vertices by an analytic wind field.
 //!
-//! The same vertex stage can bend vertices by an analytic wind field, but wind is OFF (amplitude
-//! 0, clock not ticked, stock prepass) — a static forest was the call for now. To enable: set an
-//! amplitude in `realforest::try_build`, register `tick_wind`, and return
-//! `foliage_wind_prepass.wgsl` from `prepass_vertex_shader` so depth / shadows / motion vectors
-//! bend identically.
+//! Wind is on unless `FOREST_WIND=0`; `foliage_wind_prepass.wgsl` bends depth / shadows / motion
+//! vectors identically. The wind clock is Bevy's `globals.time` — never tick it through the
+//! material (see the note below `material`).
 //!
 //! Per-vertex freedom (0 = rooted, 1 = free tip) rides in `UV_1.x`, baked by [`bake_weights`]
 //! from each model's height when the kit loads, so blade bases and trunk-side twigs stay put.
@@ -54,9 +52,6 @@ pub struct FoliagePlugin;
 impl Plugin for FoliagePlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(MaterialPlugin::<FoliageMaterial>::default());
-        if wind_enabled() {
-            app.add_systems(Update, tick_wind);
-        }
     }
 }
 
@@ -72,19 +67,9 @@ pub fn material(base: StandardMaterial, amplitude: f32, ripple: f32, tint: f32) 
     }
 }
 
-/// Advance the wind clock in every foliage material (a handful of assets — the uniform re-upload
-/// is trivial). Only registered when [`wind_enabled`].
-fn tick_wind(time: Res<Time>, mut mats: ResMut<Assets<FoliageMaterial>>) {
-    let t = time.elapsed_secs_wrapped();
-    let ids: Vec<_> = mats.ids().collect();
-    for id in ids {
-        if let Some(mut m) = mats.get_mut(id) {
-            let w = &mut m.extension.wind.wind;
-            w.y = w.x;
-            w.x = t;
-        }
-    }
-}
+// No per-frame wind tick: the shaders read Bevy's `globals.time`. Writing the clock into these
+// materials every frame marked them all modified, and Bevy then re-specialized every foliage mesh
+// (main pass, prepass, every shadow cascade) every frame — 32-60 fps -> 90-108 fps when removed.
 
 /// Write each vertex's wind freedom into `UV_1.x` for one MODEL (all its parts): height above the
 /// model base over the model's height, eased, so the lower part of a plant stays rooted. Only the

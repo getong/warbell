@@ -6,15 +6,22 @@
 //
 // Per-vertex wind weight comes in UV_1.x (0 = rooted: blade base / twig, 1 = free tip), written
 // by the kit loader from each model's height.
+//
+// The wind clock is Bevy's `globals.time`, NOT a material field: writing the time into the
+// material every frame marked every foliage material modified, which made Bevy re-specialize
+// every foliage mesh for the main pass, the prepass and each shadow cascade every frame (~10 ms
+// of CPU on the 1.5x map).
 
 #import bevy_pbr::{
     mesh_functions,
     forward_io::{Vertex, VertexOutput},
     view_transformations::position_world_to_clip,
+    mesh_view_bindings::globals,
 }
 
 struct FoliageWind {
-    // x = time (s), y = previous frame's time, z = amplitude (world units at weight 1), w = ripple
+    // x, y unused (the wind clock is `globals.time`, see the header), z = amplitude (world units at
+    // weight 1), w = ripple
     wind: vec4<f32>,
     // x = crown tint strength (0..1), yzw reserved
     tint: vec4<f32>,
@@ -51,7 +58,7 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     out.uv_b = vertex.uv_b;
 #endif
     out.world_position = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position, 1.0));
-    out.world_position = vec4<f32>(out.world_position.xyz + wind_offset(out.world_position.xyz, origin, w, fw.wind.x), 1.0);
+    out.world_position = vec4<f32>(out.world_position.xyz + wind_offset(out.world_position.xyz, origin, w, globals.time), 1.0);
     out.position = position_world_to_clip(out.world_position.xyz);
 
 #ifdef VERTEX_UVS_A
