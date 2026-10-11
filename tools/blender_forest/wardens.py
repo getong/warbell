@@ -400,10 +400,10 @@ def treant_torso(rng):
     for az in (0.25, -0.35, math.pi - 0.3, math.pi + 0.35):
         d = V(math.sin(az), 0.0, math.cos(az))
         # Hugging the trunk foot (sagging into the trunk/ground corner), not arching over air.
-        p0 = V(0, 0.78, 0) + d * 0.26
-        p1 = V(0, -0.06, 0) + d * rng.uniform(0.72, 0.82)
-        rp = curve(p0, p1, bend=(0, -0.09, 0), n=10, wob=0.01, rng=rng)
-        sculpt(g, rp, [0.15 * (1 - k / 10) ** 0.7 + 0.015 for k in range(11)], M_BARK, base_col, sides=12,
+        p0 = V(0, 0.74, 0) + d * 0.26
+        p1 = V(0, -0.04, 0) + d * rng.uniform(0.95, 1.05)
+        rp = curve(p0, p1, bend=(0, -0.16, 0), n=12, wob=0.012, rng=rng)
+        sculpt(g, rp, [0.17 * (1 - k / 12) ** 0.7 + 0.015 for k in range(13)], M_BARK, base_col, sides=12,
                disp=gnarl(rng, amp=0.012, ridge=0.008), tile=0.6)
     # Shoulder burls the boughs grow out of.
     for sx in (-1, 1):
@@ -477,8 +477,8 @@ def treant_leg(rng, sx):
         big = k < 3
         ln = rng.uniform(0.34, 0.48) if big else rng.uniform(0.22, 0.3)
         p0 = split + d * 0.04 + V(0, 0.02, 0)
-        p1 = split + d * ln + V(0, -0.24, 0)
-        pts = curve(p0, p1, bend=(0, 0.08, 0), n=9, wob=0.014, rng=rng)
+        p1 = split + d * (ln * 1.3) + V(0, -0.22, 0)
+        pts = curve(p0, p1, bend=(0, 0.02, 0), n=9, wob=0.014, rng=rng)
         r0 = 0.12 if big else 0.075
         sculpt(g, pts, [r0 * (1 - k2 / 9) ** 0.9 + 0.012 for k2 in range(10)], M_BARK, col, sides=12 if big else 9,
                disp=gnarl(rng, amp=0.012, ridge=0.008), tile=0.6)
@@ -791,6 +791,10 @@ def revenant_arm(rng, sx):
     sculpt(g, curve(elbow, wrist, n=6), [0.04, 0.048, 0.05, 0.048, 0.044, 0.04, 0.036], M_IRON, plate, sides=12,
            tile=0.35)  # vambrace
     lump(g, elbow, (0.07, 0.07, 0.07), rng, M_IRON, plate, rough=0.05, cuts=1, detail=2, tile=0.3)
+    # A pauldron of three overlapping lames, each tilted further down off the shoulder.
+    for k in range(3):
+        lump(g, piv + V(sx * (0.03 + 0.035 * k), 0.06 - 0.065 * k, 0.0), (0.14 - 0.012 * k, 0.045, 0.13 - 0.01 * k),
+             rng, M_IRON, plate, rough=0.04, cuts=1, detail=2, rot=quat_z(-sx * (0.3 + 0.2 * k)), tile=0.3)
     rag(g, rng, piv + V(sx * 0.05, -0.05, 0.0), (0, 0, 1), (sx * 0.2, -1, 0), 0.16, 0.45, M_CLOTH, SURCOAT, cols=4,
         rows=5, outward=(sx, 0, 0))
     hand_d = (wrist - elbow).normalized()
