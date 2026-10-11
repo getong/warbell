@@ -1139,7 +1139,7 @@ fn forest_h(x: f32, z: f32, dc: f32) -> f32 {
     let v2 = vnoise(x * 0.11 + 21.0, z * 0.11 - 3.0);
     let swell = { let s = ((v1 - 0.22) / 0.6).clamp(0.0, 1.0); s * s * (3.0 - 2.0 * s) };
     let (r1, _, _) = alpine_massif::ridges3(x * 0.7 - 30.0, z * 0.7 + 12.0);
-    let rise = 19.0 * swell * (0.62 + 0.38 * v2) + 5.0 * r1 * swell;
+    let rise = 26.0 * swell * (0.62 + 0.38 * v2) + 7.0 * r1 * swell;
     base + w * rise
 }
 
