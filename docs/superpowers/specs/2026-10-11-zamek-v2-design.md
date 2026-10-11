@@ -36,7 +36,13 @@ przeszkodzie (spring-arm jak w Wiedźminie / KCD2), inaczej nie podnosimy murów
 miasteczko (**podgrodzie**) rośnie **za bramą, wzdłuż drogi**. Rząd identycznych domków plecami
 do muru wygląda jak gra, nie jak miejsce.
 
-**W murach (podzamcze, obwód 28×21 zostaje — zamki nizinne typu Malbork/Radzyń są prostokątne):**
+**Obrys murów: nieregularny wielokąt, nie prostokąt** (autor: „fort nie musi być kwadratowy”). Stały,
+ręcznie zaprojektowany (ten sam w każdym seedzie): 7–9 narożników, boki 10–30 u, kąty wypukłe
+105–170°, wieża w każdym narożniku (okrągła lub D-kształtna ukrywa każdy kąt), keep od północy
+(może stać w linii kurtyny jak bergfried), brama S z wieżą dzwonu na południu, brama W, furta N.
+Powierzchnia jak dotąd (mieści się w ok. x −31…31, z −26…24).
+
+**W murach (podzamcze):**
 - keep, wieża dzwonu przy bramie S, **otwarty dziedziniec ≥ 24×16** z ogniskiem i studnią;
 - zabudowa gospodarcza **przyklejona do kurtyny** (przybudówki pod murem, dachy pulpitowe):
   koszary, stajnia, kuźnia zamkowa (Armoury), spichlerz (płonie w Rozdz. 8 — musi być w środku),
