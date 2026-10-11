@@ -86,6 +86,7 @@ mod mainmenu;
 mod miner;
 mod navgrid;
 mod nightsky;
+mod clouds; // realistic high cloud deck: far-plane sky dome, ray-cast Perlin-Worley deck, live sun/moon light
 mod orbs;
 mod ork_fortress;
 mod orks;
