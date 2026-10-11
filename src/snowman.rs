@@ -6,7 +6,10 @@
 //! interest, waddles back to its spot and **re-freezes** into decor (re-triggerable).
 //!
 //! Reuse, not reinvention:
-//! * Its mesh is [`crate::biome_snow::build_snowman_mesh`] (the same charming bałwan).
+//! * Its body is one of the realistic kit snowmen ([`KIT_MODELS`], `snowmen.glb` from
+//!   `tools/blender_forest/snowmen.py`) — the same models `biome_snow`'s rare decor snowman
+//!   draws, so a dormant one still reads as decor. Without the kit it falls back to the
+//!   low-poly [`crate::biome_snow::build_snowman_mesh`].
 //! * It carries [`crate::player::Health`], so the hero's existing melee cone
 //!   (`player::combat::player_attack`, which lists `With<Snowman>`) damages, floats, blood-
 //!   sprays and **kills** it through the shared path — a kill routes into [`crate::dying`] like
@@ -60,6 +63,10 @@ fn snow_centre() -> Vec2 {
 const SCATTER_R: f32 = 30.0;
 /// Target number of ambush snowmen on the island.
 const COUNT: usize = 10;
+
+/// The realistic snowmen in the forest kit (classic + scarf, the soldier's kettle hat, the old
+/// slumped one). Shared with the decor scatter (`alpine::snowkit::prop`).
+pub(crate) const KIT_MODELS: [&str; 3] = ["snowman_a", "snowman_b", "snowman_c"];
 /// Minimum spacing between two snowmen so each reads as its own ambush.
 const MIN_SEP: f32 = 6.0;
 
@@ -180,6 +187,7 @@ fn seed_snowmen(
         let p = snow_centre() + Vec2::new(ang.cos(), ang.sin()) * rad;
         // Must be walkable snow, off any build plot, and spaced from its siblings.
         if footing(p.x, p.y).is_none()
+            || too_steep(p)
             || crate::worldmap::biome_at_world(p.x, p.y) != Some(crate::biome::Biome::Snow)
             || crate::town::near_build_plot(p.x, p.y)
             || accepted.iter().any(|q| q.distance(p) < MIN_SEP)
@@ -190,17 +198,25 @@ fn seed_snowmen(
         let facing = frand(&mut rng) * std::f32::consts::TAU;
         let scale = 1.0 + frand(&mut rng) * 0.28; // a touch bigger than decor — these are minibosses
         let slot = field.slots.len();
+        // (For shot framing: the face looks along (sin facing, cos facing).)
+        info!("snowman: slot {slot} at ({:.1}, {:.2}, {:.1}) facing {facing:.2}", p.x, footing(p.x, p.y).unwrap_or(0.0), p.y);
         field.slots.push(Slot { pos: p, facing, scale, occupied: true, respawn_at: 0.0 });
         spawn_one(&mut commands, &field, slot, p, facing, scale);
     }
 }
 
+/// A home spot must be near level: the round base on a slope hangs off its downhill side (and
+/// the snow banked at its foot shows as a slab there).
+fn too_steep(p: Vec2) -> bool {
+    let probes = [(0.7, 0.0), (-0.7, 0.0), (0.0, 0.7), (0.0, -0.7)].map(|(dx, dz)| footing(p.x + dx, p.y + dz));
+    let ys: Vec<f32> = probes.iter().flatten().copied().collect();
+    ys.len() < probes.len() || ys.iter().copied().fold(f32::MIN, f32::max) - ys.iter().copied().fold(f32::MAX, f32::min) > 0.3
+}
+
 /// Spawn one dormant snowman entity for `slot` at `pos`.
 fn spawn_one(commands: &mut Commands, field: &SnowmanField, slot: usize, pos: Vec2, facing: f32, scale: f32) {
     let y = footing(pos.x, pos.y).unwrap_or(0.0);
-    commands.spawn((
-        Mesh3d(field.mesh.clone()),
-        MeshMaterial3d(field.mat.clone()),
+    let mut e = commands.spawn((
         Transform::from_translation(Vec3::new(pos.x, y, pos.y))
             .with_rotation(Quat::from_rotation_y(facing))
             .with_scale(Vec3::splat(scale)),
@@ -220,6 +236,13 @@ fn spawn_one(commands: &mut Commands, field: &SnowmanField, slot: usize, pos: Ve
             last_hp: HP,
         },
     ));
+    // The realistic kit body (one model per home slot, so a respawn keeps its look), else the
+    // low-poly mesh on the root.
+    let kit = crate::realforest::get();
+    let kit_body = kit.is_some_and(|k| k.attach_static(&mut e, KIT_MODELS[slot % KIT_MODELS.len()], Transform::IDENTITY));
+    if !kit_body {
+        e.insert((Mesh3d(field.mesh.clone()), MeshMaterial3d(field.mat.clone())));
+    }
 }
 
 /// The whole snowman AI + animation: state machine, shamble steering, the slam, and the "come

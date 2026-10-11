@@ -82,11 +82,12 @@ pub fn tree(kit: &Kit, src: usize, x: f32, z: f32) -> Option<(usize, bool)> {
 
 /// Does the kit take over snow scatter class `class` (props)? The snowman stays the hand-built one.
 pub fn handles_prop(class: usize) -> bool {
-    matches!(class, 1 | 2)
+    matches!(class, 1 | 2 | 3)
 }
 
 /// Kit prop for snow scatter class `class` (1 = drift / frozen shrub / stump+log, 2 = frost
-/// boulders), source variant `src`: (model, scale ×, frosted?). `None` = leave the spot bare.
+/// boulders, 3 = the rare decor snowman — the same realistic models as the `snowman.rs`
+/// ambushers, so a dormant ambusher still can't be told from decor), source variant `src`: (model, scale ×, frosted?). `None` = leave the spot bare.
 pub fn prop(kit: &Kit, class: usize, src: usize, x: f32, z: f32) -> Option<(usize, f32, bool)> {
     const ROCKS: [&str; 13] = [
         "rock_01_a", "rock_01_b", "rock_01_c", "rock_01_d", "rock_01_e", "rock_01_f", "rock_02_a",
@@ -102,6 +103,7 @@ pub fn prop(kit: &Kit, class: usize, src: usize, x: f32, z: f32) -> Option<(usiz
         (1, _) if a < 0.5 => pick(&["stump_a"], 1.0),
         (1, _) => pick(&["log_a"], 0.8),
         (2, _) => pick(&ROCKS, 1.0),
+        (3, _) => kit.pick_named(&crate::snowman::KIT_MODELS, a).map(|m| (m, 1.0, false)),
         _ => None,
     }
 }
