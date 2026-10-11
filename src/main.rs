@@ -42,6 +42,7 @@ mod capture;
 mod cinematic;
 mod castle;
 mod castle_decor;
+mod market; // castle market: kit stalls + cart + barrels, vendors behind the counters, shoppers
 mod castle_ground; // lived-in castle yard ground: lanes, ruts, plaza, worn grass (baked into the terrain masks)
 mod chest;
 mod combat_fx;
@@ -246,6 +247,7 @@ fn main() {
             decor::DecorPlugin, // firefly bob system (decor itself spawned per-biome)
             dof::DofPlugin,     // custom CoC bokeh depth-of-field post pass (player-focused)
         ))
+        .add_plugins(market::MarketPlugin) // the living market on the west lane: stalls, vendors, vendor greetings
         .add_plugins(bog::BogPlugin) // swamp-pool will-o'-wisp hover anim (dressing spawned at build)
         .add_plugins(poi::PoiPlugin) // micro-POI flags: fortress smoke column + wheeling crows
         .add_plugins(vista::VistaPlugin) // waterfall foam/mist animation
