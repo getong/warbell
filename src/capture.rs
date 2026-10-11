@@ -293,21 +293,29 @@ fn drive_clip(
     cfg: Res<ClipCfg>,
     mut clock: ResMut<ClipClock>,
     mut prog: ResMut<ClipProgress>,
+    time: Res<Time<Real>>,
     mut commands: Commands,
     mut exit: MessageWriter<AppExit>,
 ) {
-    prog.recording = clock.frame >= cfg.warmup;
+    // Warm-up = the frame count AND the same >= 10 s wall-clock floor as `drive_shot`. A bare
+    // frame count elapses in well under a second on a fast preset (SMAA instead of TAA runs ~3x the
+    // frame rate during the load): every screenshot was requested before the window rendered at
+    // all, none ever landed, and the harness exited with no frames and no error.
+    let warm = clock.frame >= cfg.warmup && time.elapsed_secs() >= 10.0;
+    prog.recording = warm;
     prog.frame = clock.saved;
-    // Flush tail: all frames written → wait a few ticks for the async disk writes to land, exit.
+    // Flush tail: all frames requested → keep rendering until the LAST one is on disk (the async
+    // readback + PNG write land a few frames later), with a safety cap, then exit.
     if let Some(done) = clock.done_at {
-        if clock.frame >= done + 15 {
+        let last = format!("{}/frame_{:05}.png", cfg.dir, cfg.frames);
+        if (clock.frame >= done + 15 && std::path::Path::new(&last).exists()) || clock.frame >= done + 1800 {
             exit.write(AppExit::Success);
         }
         clock.frame += 1;
         return;
     }
 
-    if clock.frame >= cfg.warmup && clock.saved < cfg.frames {
+    if warm && clock.saved < cfg.frames {
         clock.saved += 1;
         let path = format!("{}/frame_{:05}.png", cfg.dir, clock.saved);
         commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path));

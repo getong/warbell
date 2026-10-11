@@ -726,6 +726,14 @@ fn setup_camera(
     commands.spawn(Atmosphere::earth(medium));
 }
 
+/// The sun's (depth, normal) shadow bias; `FOREST_SHADOWBIAS="d,n"` overrides it for A/B shots.
+fn shadow_bias() -> (f32, f32) {
+    let v: Vec<f32> = std::env::var("FOREST_SHADOWBIAS")
+        .map(|s| s.split(',').filter_map(|p| p.trim().parse().ok()).collect())
+        .unwrap_or_default();
+    if v.len() == 2 { (v[0], v[1]) } else { (0.05, 2.8) }
+}
+
 /// Parse `FOREST_CAM="x,y,z,tx,ty,tz"` into a camera transform, if set.
 fn env_cam() -> Option<Transform> {
     let s = std::env::var("FOREST_CAM").ok()?;
@@ -823,8 +831,8 @@ fn setup_sun(mut commands: Commands) {
             // normal→2.8 to push the comparison off the lit surface. Kept moderate so cast shadows
             // don't visibly detach from their casters (peter-panning); small-scale ground contact
             // is handled by `contact_shadows` above, not the cascade, so this can run a touch high.
-            shadow_depth_bias: 0.05,
-            shadow_normal_bias: 2.8,
+            shadow_depth_bias: shadow_bias().0,
+            shadow_normal_bias: shadow_bias().1,
             ..default()
         },
         // God rays are screen-space now (`godrays.rs`), so the sun needs no `VolumetricLight`.
@@ -859,8 +867,8 @@ fn setup_sun(mut commands: Commands) {
             shadow_maps_enabled: false,
             // Same acne fix as the sun (see there): the moon is night's key light at an even
             // shallower angle, so it needs the bias bump just as much on the fortress walls.
-            shadow_depth_bias: 0.05,
-            shadow_normal_bias: 2.8,
+            shadow_depth_bias: shadow_bias().0,
+            shadow_normal_bias: shadow_bias().1,
             ..default()
         },
         CascadeShadowConfigBuilder {

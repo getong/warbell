@@ -968,9 +968,11 @@ fn pbr_material(images: &mut Assets<Image>, set: &str, card: bool) -> Result<Sta
         });
     }
     let ormh = images.add(load::texture(&format!("forest_pbr/{set}_ormh.png"), false, None)?);
+    // `FOREST_NONORMAL=s_rubble,...`: A/B knob, drop these sets' normal maps.
+    let no_normal = std::env::var("FOREST_NONORMAL").is_ok_and(|v| v.split(',').any(|s| s.trim() == set));
     Ok(StandardMaterial {
         base_color_texture: Some(albedo),
-        normal_map_texture: Some(normal),
+        normal_map_texture: (!no_normal).then_some(normal),
         occlusion_texture: Some(ormh.clone()),
         metallic_roughness_texture: Some(ormh),
         // Both act as multipliers on the texture channels (G roughness, B metal = 0).
