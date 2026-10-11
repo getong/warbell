@@ -105,9 +105,11 @@ fn drive_grade(
     // (a faint green-neutral cast under a canopy, not a warm sepia).
     let forest_w = forest.as_ref().map_or(0.0, |f| f.0);
     let sat = look.saturation * (1.0 - 0.08 * forest_w) * (1.0 - drain).max(0.0);
-    // Plus the region's own white-balance offset (the snow cools the warm base back to white).
+    // Plus the region's own white-balance offset (the snow leans a touch cool).
+    // Base 0.0 (was +0.03): the warm lean stacked on the warm key + haze into a sepia cast at noon;
+    // warmth now comes from the light itself (low sun / golden hour), not a global grade.
     let wb = atmo.as_ref().and_then(|a| a.0.as_ref()).map_or(0.0, |s| s.white_balance);
-    let temperature = 0.03 - 0.035 * forest_w + wb;
+    let temperature = -0.035 * forest_w + wb;
     if (sat - *last_sat).abs() > 1e-4 || (temperature - *last_temp).abs() > 1e-4 {
         *last_sat = sat;
         *last_temp = temperature;
