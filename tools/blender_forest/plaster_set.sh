@@ -5,7 +5,7 @@
 # (assets/forest_pbr/s_plaster_{albedo,normal,ormh}.png, 1024^2), the infill of the timber-frame
 # houses (town_kit.py). Graded to off-white KCD2 limewash: grey, the chips' contrast squeezed into
 # the top of the range (+level), then multiplied by a warm cream so the mean lands near sRGB #d8d1c2
-# (it must still read light in shade); roughness lifted to ~0.9 (matte lime), AO softened. The
+# (it must still read light in shade); roughness lifted to ~0.9 (matte lime), AO softened, the normal map flattened to ~55% (the pits speckled the walls dark in shade). The
 # models' vertex colour adds only a little splash-back grime at the wall feet. Then pack:
 #   cargo run --release --example pack_forest_textures      (packs every loose PNG in forest_pbr)
 set -e
@@ -14,7 +14,7 @@ O="$(dirname "$0")/../../assets/forest_pbr"
 id=white_rough_plaster
 LO=${PLASTER_LO:-48}
 magick "$D/${id}_diff_1k.jpg" -resize 1024x1024 -colorspace Gray +level "$LO%,100%" -colorspace sRGB \( +clone -fill "#fff7e5" -colorize 100 \) -compose multiply -composite -depth 8 -define png:color-type=2 "$O/s_plaster_albedo.png"
-magick "$D/${id}_nor_gl_1k.jpg" -resize 1024x1024 -depth 8 -define png:color-type=2 "$O/s_plaster_normal.png"
+magick "$D/${id}_nor_gl_1k.jpg" -resize 1024x1024 -fill "rgb(128,128,255)" -colorize 45% -depth 8 -define png:color-type=2 "$O/s_plaster_normal.png"
 magick "$D/${id}_ao_1k.jpg" -colorspace Gray -resize 1024x1024 +level 70%,100% "$O/_ao.png"
 magick "$D/${id}_rough_1k.jpg" -colorspace Gray -resize 1024x1024 +level 80%,98% "$O/_r.png"
 magick "$D/${id}_disp_1k.jpg" -colorspace Gray -resize 1024x1024 -contrast-stretch 0.5%x0.5% "$O/_h.png"
