@@ -2867,6 +2867,13 @@ pub(crate) fn ground_color(x: f32, z: f32) -> [f32; 4] {
     // the baked paths invisible and left the courtyard relying on an overlaid slab.)
     let wx = x * MAP_SCALE - GX;
     let wz = z * MAP_SCALE - GZ;
+    // The castle meadow is grazed and walked: knock the lawn's saturated green toward a trodden,
+    // olive field green within ~30u of the keep (fading out by ~44u), before the road / yard dirt
+    // tints below. Map-centre rework, phase 2 (`castle_ground` does the worn patches).
+    let meadow = (1.0 - smoothstep(30.0, 44.0, wx.hypot(wz))) * (1.0 - blight_w);
+    if meadow > 0.0 {
+        col = mix3(col, lin3(0x5d6b33), meadow * 0.42);
+    }
     let road_s = crate::roads::road_strength(wx, wz);
     if road_s > 0.0 {
         // Rock ground is dark grey-slate, so the warm path tint barely showed — trails through the

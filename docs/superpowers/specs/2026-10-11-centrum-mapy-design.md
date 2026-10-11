@@ -112,8 +112,12 @@ przegląd testów i jedna sesja screenshotów. Przystań Crane’a (Rozdz. 7) ja
 
 1. **Faza 1 (ta sesja):** ten dokument; zróżnicowane podłoże pod zamkiem (maska PBR, koleiny,
    kałuże, wydeptana trawa); jeśli starczy czasu — pierwszy stragan z handlarzem.
-2. **Faza 2:** rynek z kitu (stragany ≤3k tri, towary, wóz), handlarze-NPC z barkami (istniejące
-   linie `merchant`, `market_a/b`), sklepy (kuźnia, piekarnia, karczma) jako fasady domów.
+2. **Faza 2 (zrobione):** rynek przy zachodnim trakcie (`src/market.rs`, `tools/blender_forest/market.py`
+   → `market.glb`): 4 stragany (chleb, sukno, garnki, warzywa + ryby), wózek, beczki; handlarz za
+   każdą ladą, 2 kupujących; handlarze witają bohatera pulą `Greeting` (m.in. linia `merchant`).
+   Bruk ze skanu `s_cobble` (Poly Haven cobblestone_05, `cobble_set.sh`). Trakty kończą się kilka
+   jednostek za bramą, dalej prowadzi droga wyspy. **Dalej:** sklepy (kuźnia, piekarnia, karczma)
+   jako fasady domów, własne barki handlarzy (§6), stragany na navgridzie.
 3. **Faza 3:** progresja zamku: palisada → kamienna kurtyna → większy keep (modele Blender).
 4. **Faza 4:** powiększenie obwodu i `SAFE_R` (§5), wieża dzwonu jako budynek.
 5. **Faza 5:** warianty aktowe (chorągwie Crane’a, puste stragany Aktu III, pomnik/lemiesz) + VO.
