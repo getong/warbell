@@ -66,119 +66,14 @@ pub struct VisualPlugin;
 impl Plugin for VisualPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<VisualSettings>()
-            .add_systems(Startup, (spawn_pollen, spawn_clouds))
-            .add_systems(Update, (drift_pollen, drift_clouds, apply_visual_settings));
+            .add_plugins(crate::clouds::CloudsPlugin)
+            .add_systems(Startup, spawn_pollen)
+            .add_systems(Update, (drift_pollen, apply_visual_settings));
     }
 }
 
-// ── Low-poly clouds ────────────────────────────────────────────────────────────────
-//
-// Fluffy clouds in the game's own flat-shaded style: each cloud is a merged cluster of
-// squashed white icosphere puffs, lit by the sun (bright top, sky-blue IBL fill on the
-// underside) with a little emissive so it never reads as a grey blob. They drift slowly on
-// the wind and wrap around, filling the previously-empty sky.
-
-const CLOUD_DRIFT: f32 = 0.6; // world units / sec
-const CLOUD_BOUND: f32 = 130.0; // wrap-around half-extent in X
-
-#[derive(Component)]
-struct Cloud;
-
-/// One cloud = 6–9 flattened white puffs clustered into a lozenge. `seed` varies the shape.
-fn build_cloud_mesh(seed: u32) -> Mesh {
-    let mut s = seed;
-    let mut next = move || {
-        s = s.wrapping_add(0x6d2b_79f5);
-        let mut t = s;
-        t = (t ^ (t >> 15)).wrapping_mul(t | 1);
-        t ^= t.wrapping_add((t ^ (t >> 7)).wrapping_mul(t | 61));
-        ((t ^ (t >> 14)) as f32) / 4_294_967_296.0
-    };
-    let n = 6 + (next() * 4.0) as usize;
-    let mut parts: Vec<Mesh> = Vec::new();
-    for _ in 0..n {
-        let rad = 0.8 + next() * 0.7;
-        let dx = (next() * 2.0 - 1.0) * 2.4;
-        let dz = (next() * 2.0 - 1.0) * 1.1;
-        let dy = next() * 0.4;
-        parts.push(
-            Sphere::new(rad)
-                .mesh()
-                .ico(1)
-                .expect("ico detail in range")
-                .scaled_by(Vec3::new(1.0, 0.6, 1.0))
-                .translated_by(Vec3::new(dx, dy, dz)),
-        );
-    }
-    let mut it = parts.into_iter();
-    let mut base = it.next().expect("at least one puff");
-    for p in it {
-        base.merge(&p).expect("cloud puffs share attributes");
-    }
-    base.duplicate_vertices();
-    base.compute_flat_normals();
-    base
-}
-
-/// Scatter a few dozen clouds across the sky over the patch. Deterministic, persists across
-/// biome switches. Lit white material with a touch of emissive so undersides stay bright.
-fn spawn_clouds(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut mats: ResMut<Assets<StandardMaterial>>,
-) {
-    // Capture aid: a top-down overview shot is blanketed by the cloud layer (32 large puffs at
-    // y≈42–80), so let a shot suppress them. No effect on normal play.
-    if std::env::var("FOREST_NOCLOUDS").is_ok() {
-        return;
-    }
-    // Same blanket problem in the RTS skirmish: the iso ortho camera looks down through the
-    // cloud band the whole match. The layer is spawned regardless (the mode can now flip
-    // mid-process) and tagged `CampaignOnly`, so `game_state::apply_mode_visibility` hides it
-    // for the arena and re-shows it back in the campaign.
-    let cloud_mat = mats.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 1.0, 1.0),
-        // Small white emissive keeps the shaded side bright (clouds, not grey rocks).
-        emissive: LinearRgba::rgb(0.35, 0.37, 0.42),
-        perceptual_roughness: 1.0,
-        ..default()
-    });
-    let shapes: Vec<Handle<Mesh>> = (0..4).map(|v| meshes.add(build_cloud_mesh(0x1234 + v * 977))).collect();
-
-    let mut seed = 0xC10D_u32;
-    let mut next = || {
-        seed = seed.wrapping_add(0x6d2b_79f5);
-        let mut t = seed;
-        t = (t ^ (t >> 15)).wrapping_mul(t | 1);
-        t ^= t.wrapping_add((t ^ (t >> 7)).wrapping_mul(t | 61));
-        ((t ^ (t >> 14)) as f32) / 4_294_967_296.0
-    };
-    for _ in 0..32 {
-        let x = -CLOUD_BOUND + next() * (CLOUD_BOUND * 2.0);
-        let z = -120.0 + next() * 240.0;
-        let y = 42.0 + next() * 38.0;
-        let s = 5.0 + next() * 10.0;
-        commands.spawn((
-            Mesh3d(shapes[(next() * 4.0) as usize % 4].clone()),
-            MeshMaterial3d(cloud_mat.clone()),
-            Transform::from_xyz(x, y, z).with_scale(Vec3::splat(s)),
-            NotShadowCaster,
-            Cloud,
-            crate::game_state::CampaignOnly,
-        ));
-    }
-}
-
-/// Slow wind drift on the clouds; wrap back around once they sail past the far edge.
-fn drift_clouds(time: Res<Time>, mut q: Query<&mut Transform, With<Cloud>>) {
-    let dx = CLOUD_DRIFT * time.delta_secs();
-    for mut tf in &mut q {
-        tf.translation.x += dx;
-        if tf.translation.x > CLOUD_BOUND {
-            tf.translation.x -= CLOUD_BOUND * 2.0;
-        }
-    }
-}
+// The cloud sky (a realistic high deck, replacing the old low-poly icosphere puffs) lives in
+// `crate::clouds`; this plugin installs it since the clouds were always part of the visual layer.
 
 /// Scatter ~150 small unlit emissive motes across the patch, drifting slowly. Deterministic
 /// placement (Mulberry32, no `random()`), persists across biome switches (not `BiomeEntity`).
@@ -263,7 +158,7 @@ fn apply_visual_settings(
         .filter_map(|(id, m)| {
             let c = m.base_color.to_linear();
             let white = c.red > 0.85 && c.green > 0.85 && c.blue > 0.85;
-            // White, opaque, non-emissive prop mats only (skips clouds = emissive, wisps =
+            // White, opaque, non-emissive prop mats only (skips emissive glow mats, wisps =
             // unlit, tinted set-pieces = non-white). Textured PBR mats (the `realforest` kit) are
             // left alone: their roughness lives in a texture and the scalar is its multiplier.
             (white && !m.unlit && m.emissive == LinearRgba::BLACK && m.base_color_texture.is_none()).then_some(id)
