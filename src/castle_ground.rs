@@ -18,6 +18,8 @@
 
 use bevy::math::Vec2;
 
+use crate::castle::{COURTYARD, HALF_X, HALF_Z, KEEP_FRONT, MARKET_CENTRE, N_GATE_X, S_GATE_X, W_GATE_Z};
+
 /// What the castle ground wants at one world point. All 0..1.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct CastleGround {
@@ -30,20 +32,38 @@ pub struct CastleGround {
     pub debris: f32,
 }
 
-/// World bounds the castle ground can touch (beyond it [`sample`] is all zero).
-pub const REACH_X: f32 = 34.0;
-pub const REACH_Z: f32 = 30.0;
+/// World bounds the castle ground can touch (beyond it [`sample`] is all zero): the walls plus
+/// the ~16u lawn feather outside them.
+pub const REACH_X: f32 = HALF_X + 16.0;
+pub const REACH_Z: f32 = HALF_Z + 16.0;
 
-/// Cart lanes, gate by gate: from the plaza rim, through the gate gap, a short leg out onto the
-/// approach (where the island's own road trunk, which starts at the gate centre, takes over —
-/// running the lane further drew a second, offset verge beside the road). Gently bent inside —
-/// carts never run a ruler line. World XZ, castle at the origin; the gates sit at (0, ±12) and
-/// (±17, 0) (`castle::gate_centers`), always the third point.
-const LANES: [[Vec2; 4]; 4] = [
-    [Vec2::new(0.2, -4.6), Vec2::new(0.45, -8.2), Vec2::new(0.0, -12.0), Vec2::new(0.0, -17.0)],
-    [Vec2::new(0.6, 8.6), Vec2::new(0.2, 10.4), Vec2::new(0.0, 12.0), Vec2::new(0.0, 17.0)],
-    [Vec2::new(-6.6, 0.6), Vec2::new(-12.0, -0.35), Vec2::new(-17.0, 0.0), Vec2::new(-22.0, 0.0)],
-    [Vec2::new(6.6, 0.2), Vec2::new(12.0, 0.4), Vec2::new(17.0, 0.0), Vec2::new(22.0, 0.0)],
+/// Cart lanes, gate by gate (castle v2: W main, S under the bell, N postern; the east wall is
+/// solid): from the courtyard rim, through the gate gap, a short leg out onto the approach (where
+/// the island's own road trunk, which starts at the gate centre, takes over — running the lane
+/// further drew a second, offset verge beside the road). Gently bent inside — carts never run a
+/// ruler line. World XZ; the gate centre (`castle::Gate::center`) is always the third point.
+const LANES: [[Vec2; 4]; 3] = [
+    // North postern → down past the keep's east flank to the keep apron.
+    [
+        Vec2::new(N_GATE_X - 1.6, KEEP_FRONT + 0.6),
+        Vec2::new(N_GATE_X + 0.35, -HALF_Z + 4.6),
+        Vec2::new(N_GATE_X, -HALF_Z),
+        Vec2::new(N_GATE_X, -HALF_Z - 5.0),
+    ],
+    // South gate (under the bell tower) → straight up the courtyard.
+    [
+        Vec2::new(S_GATE_X + 0.6, HALF_Z - 9.0),
+        Vec2::new(S_GATE_X + 0.2, HALF_Z - 4.0),
+        Vec2::new(S_GATE_X, HALF_Z),
+        Vec2::new(S_GATE_X, HALF_Z + 5.0),
+    ],
+    // West main gate → through the market → the courtyard's west rim.
+    [
+        Vec2::new(-COURTYARD.2 + 2.0, W_GATE_Z + 0.6),
+        Vec2::new(MARKET_CENTRE.x - 3.0, W_GATE_Z - 0.35),
+        Vec2::new(-HALF_X, W_GATE_Z),
+        Vec2::new(-HALF_X - 5.0, W_GATE_Z),
+    ],
 ];
 
 /// The cart lanes as polylines, for the wheel-rut bake.
@@ -115,9 +135,9 @@ pub fn sample(wx: f32, wz: f32) -> CastleGround {
         crown = crown.max((1.0 - smoothstep(0.12, 0.45, d)) * fade);
     }
 
-    // The muster plaza round the keep + bell: trampled almost everywhere, a few worn-grass
-    // islands where nobody stands.
-    let (cx, cz, w, d) = (0.0, 2.0, 13.0, 13.0);
+    // The muster plaza — the open courtyard (`castle::COURTYARD`) in front of the keep: trampled
+    // almost everywhere, a few worn-grass islands where nobody stands.
+    let (cx, cz, w, d) = (COURTYARD.0, COURTYARD.1, COURTYARD.2 * 2.0, COURTYARD.3 * 2.0);
     let din = (w / 2.0 - (wx - cx).abs()).min(d / 2.0 - (wz - cz).abs());
     let plaza = smoothstep(-1.4, 1.2, din + (n_mid - 0.5) * 2.2) * (0.72 + 0.28 * smoothstep(0.3, 0.6, n_lo));
 
@@ -143,12 +163,15 @@ pub fn sample(wx: f32, wz: f32) -> CastleGround {
     let yard = if d_in > 1.2 { smoothstep(0.52, 0.78, n_lo) * 0.62 * (0.6 + 0.4 * n_hi) } else { 0.0 };
 
     // The working corners (`castle::build`): mud round the well, a cart stand, chips and bark
-    // round the wood yard, straw spill by the hay store.
+    // round the wood yard, straw spill by the hay store, the market square churned to mud.
     let near = |c: Vec2, r: f32| 1.0 - smoothstep(r * 0.45, r, p.distance(c) + (n_mid - 0.5) * 1.2);
-    let well = near(Vec2::new(10.0, -6.0), 3.0) * 0.85;
-    let cart = near(Vec2::new(-10.0, -6.0), 3.2) * 0.8;
-    let wood = near(Vec2::new(-10.0, 6.0), 3.6);
-    let hay = near(Vec2::new(10.0, 6.0), 3.4);
+    let at = |t: (f32, f32, f32)| Vec2::new(t.0, t.1);
+    let well_pos = crate::castle::town_plot("well").map_or(Vec2::new(5.5, KEEP_FRONT + 2.8), |tp| tp.pos);
+    let well = near(well_pos, 3.0) * 0.85;
+    let cart = near(at(crate::castle::CART_CORNER), 3.2) * 0.8;
+    let wood = near(at(crate::castle::WOOD_YARD), 3.6);
+    let hay = near(at(crate::castle::HAY_CORNER), 3.4);
+    let market = near(MARKET_CENTRE, 6.5) * 0.8;
 
     let path = (lane * 0.84 + crown * 0.16)
         .max(plaza * 0.84)
@@ -156,6 +179,7 @@ pub fn sample(wx: f32, wz: f32) -> CastleGround {
         .max(ring_out)
         .max(yard)
         .max(well)
+        .max(market)
         .max(cart)
         .max(wood * 0.55)
         .max(hay * 0.45)
@@ -179,8 +203,8 @@ mod tests {
 
     #[test]
     fn lanes_are_trodden_and_corners_keep_their_grass() {
-        // Mid-lane inside the north gate: bare trodden earth on the full scanned floor.
-        let g = sample(0.35, -9.0);
+        // Mid-lane inside the north postern: bare trodden earth on the full scanned floor.
+        let g = sample(N_GATE_X + 0.3, -HALF_Z + 3.0);
         assert!(g.path > 0.8 && g.floor > 0.95, "{g:?}");
         // Far out on the meadow: untouched.
         assert_eq!(sample(60.0, 60.0), CastleGround::default());

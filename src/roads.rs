@@ -285,7 +285,7 @@ static JUNCTIONS: std::sync::Mutex<Vec<Vec2>> = std::sync::Mutex::new(Vec::new()
 /// Record a junction (dedup within 8u; skip the castle's own yard — the gates have their own
 /// dressing). Called only from within the one-time `build_curves` bake.
 fn note_junction(p: Vec2) {
-    if p.length() < 28.0 {
+    if p.length() < crate::castle::HALF_X + 11.0 {
         return;
     }
     let mut j = JUNCTIONS.lock().expect("junctions poisoned");
@@ -438,7 +438,9 @@ fn build_curves() -> Vec<(Vec<Vec2>, f32)> {
             (sample(Vec2::ZERO, crate::rts::RIVAL_BASE), HALF_W),
         ];
     }
-    let gates = crate::castle::gate_centers();
+    // The three gates (spec v2 §5: W main, S under the bell, N postern — the east wall is solid,
+    // so an east-lying biome is trunked from whichever of the three is nearest).
+    let gates = crate::castle::Gate::ALL.map(crate::castle::Gate::center);
     let biomes = biome_centres();
     let seed = 0x51ED_2A37u32;
     let mut curves: Vec<Vec<Vec2>> = Vec::new();
