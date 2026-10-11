@@ -7,6 +7,8 @@
 //             (`tools/blender_forest/alpine.py`)
 //   2 scree   Poly Haven gray_rocks — talus at the feet of the walls
 //   3 rock    Poly Haven rock_face, graded cold grey — TRIPLANAR on cliff faces and steep slopes
+//   4 dolomite Poly Haven marble_cliff_04, graded pale warm grey — the rock range's limestone walls
+//             (mask B = 0.5 there: pale rock from ~28 deg, talus fans, sparse grey-green turf)
 //
 // Cost budget (main pass): only the near fine snow and the rock use anisotropic (Grad) fetches;
 // the macro snow, far snow and the meadow means are trilinear at an explicit LOD, triplanar rock
@@ -99,7 +101,7 @@ fn a_planar(layer: i32, u: vec2<f32>, gx: vec2<f32>, gy: vec2<f32>) -> ALayer {
 // fetches): the weights are pushed down by `cut` and renormalised, so a wall facing one axis pays
 // for one projection, an edge or slope for two, and only true corners for all three. `cut` is
 // larger on the Low lane (≈ biplanar). Continuous: a weight reaches 0 before its fetch is dropped.
-fn a_rock(p: vec3<f32>, n: vec3<f32>, dpx: vec3<f32>, dpy: vec3<f32>, cut: f32) -> ALayer {
+fn a_rock(p: vec3<f32>, n: vec3<f32>, dpx: vec3<f32>, dpy: vec3<f32>, cut: f32, layer: i32) -> ALayer {
     var w = pow(abs(n), vec3<f32>(4.0));
     w /= (w.x + w.y + w.z);
     w = max(w - cut, vec3<f32>(0.0));
@@ -112,27 +114,27 @@ fn a_rock(p: vec3<f32>, n: vec3<f32>, dpx: vec3<f32>, dpy: vec3<f32>, cut: f32) 
         let u = p.zy / T_ROCK;
         let gx = dpx.zy / T_ROCK;
         let gy = dpy.zy / T_ROCK;
-        o.alb += textureSampleGrad(alp_albedo, alp_samp, u, 3, gx, gy).rgb * w.x;
-        o.orm += textureSampleGrad(alp_ormh, alp_samp, u, 3, gx, gy) * w.x;
-        let t = textureSampleGrad(alp_normal, alp_samp, u, 3, gx, gy).xyz * 2.0 - 1.0;
+        o.alb += textureSampleGrad(alp_albedo, alp_samp, u, layer, gx, gy).rgb * w.x;
+        o.orm += textureSampleGrad(alp_ormh, alp_samp, u, layer, gx, gy) * w.x;
+        let t = textureSampleGrad(alp_normal, alp_samp, u, layer, gx, gy).xyz * 2.0 - 1.0;
         nn += vec3<f32>(t.xy * 1.3 + n.zy, abs(t.z) * n.x).zyx * w.x;
     }
     if w.y > 0.0 {
         let u = p.xz / T_ROCK + vec2<f32>(0.31, 0.57);
         let gx = dpx.xz / T_ROCK;
         let gy = dpy.xz / T_ROCK;
-        o.alb += textureSampleGrad(alp_albedo, alp_samp, u, 3, gx, gy).rgb * w.y;
-        o.orm += textureSampleGrad(alp_ormh, alp_samp, u, 3, gx, gy) * w.y;
-        let t = textureSampleGrad(alp_normal, alp_samp, u, 3, gx, gy).xyz * 2.0 - 1.0;
+        o.alb += textureSampleGrad(alp_albedo, alp_samp, u, layer, gx, gy).rgb * w.y;
+        o.orm += textureSampleGrad(alp_ormh, alp_samp, u, layer, gx, gy) * w.y;
+        let t = textureSampleGrad(alp_normal, alp_samp, u, layer, gx, gy).xyz * 2.0 - 1.0;
         nn += vec3<f32>(t.xy * 1.3 + n.xz, abs(t.z) * n.y).xzy * w.y;
     }
     if w.z > 0.0 {
         let u = p.xy / T_ROCK + vec2<f32>(0.63, 0.17);
         let gx = dpx.xy / T_ROCK;
         let gy = dpy.xy / T_ROCK;
-        o.alb += textureSampleGrad(alp_albedo, alp_samp, u, 3, gx, gy).rgb * w.z;
-        o.orm += textureSampleGrad(alp_ormh, alp_samp, u, 3, gx, gy) * w.z;
-        let t = textureSampleGrad(alp_normal, alp_samp, u, 3, gx, gy).xyz * 2.0 - 1.0;
+        o.alb += textureSampleGrad(alp_albedo, alp_samp, u, layer, gx, gy).rgb * w.z;
+        o.orm += textureSampleGrad(alp_ormh, alp_samp, u, layer, gx, gy) * w.z;
+        let t = textureSampleGrad(alp_normal, alp_samp, u, layer, gx, gy).xyz * 2.0 - 1.0;
         nn += vec3<f32>(t.xy * 1.3 + n.xy, abs(t.z) * n.z) * w.z;
     }
     o.n = normalize(nn);
@@ -160,6 +162,9 @@ fn alpine_apply(pbr: ptr<function, PbrInput>, p: vec3<f32>, gn_in: vec3<f32>, cl
     let muv = (p.xz - alp.region.xy) * alp.region.zw;
     let m = textureSampleLevel(alp_mask, alp_mask_samp, muv, 0.0);
     let up = gn.y;
+    // Mountain gate (B: 1 = snow massif, 0.5 = the dolomite rock range) and the rock-range share.
+    let mb = smoothstep(0.15, 0.40, m.b);
+    let dolo = mb * (1.0 - smoothstep(0.62, 0.85, m.b));
     // Nothing alpine here (most of the island): skip the breakup noise and every fetch below.
     if m.r + m.g + m.b + cliff + max(alp.on.z, 0.0) < 1e-3 {
         return 0.0;
@@ -189,17 +194,24 @@ fn alpine_apply(pbr: ptr<function, PbrInput>, p: vec3<f32>, gn_in: vec3<f32>, cl
     // on its crests and gully walls instead of olive turf or gravel under thin snow.
     // High in the snow the snow / rock line is CRISP (a few degrees wide, wandering with the
     // noise): a soft slope ramp smeared dark rock into the snow as brown smudges.
-    let steep = 1.0 - smoothstep(0.50, 0.78, up);
-    let hi = m.b * smoothstep(0.60, 0.90, m.r);
+    // (The dolomite range bares its limestone from ~28 deg — walls, ledges and the steeper screes —
+    // where the snow massif keeps turf / snow up to ~39.)
+    let steep = 1.0 - smoothstep(mix(0.50, 0.72, dolo), mix(0.78, 0.90, dolo), up + (nb - 0.5) * 0.10 * dolo);
+    let hi = mb * smoothstep(0.60, 0.90, m.r);
     // (Bare from ~37°: slopes the hero can't climb anyway read as rock, not as walkable snow.)
     let bare_hi = hi * smoothstep(0.42, 0.58, 1.0 - smoothstep(0.71, 0.89, up + (nb - 0.5) * 0.22));
     snow *= 1.0 - bare_hi;
-    var rock = clamp(max(cliff * 1.3, max(steep * m.b * (1.0 - hi), bare_hi)), 0.0, 1.0) * (1.0 - snow);
+    var rock = clamp(max(cliff * 1.3, max(steep * mb * (1.0 - hi), bare_hi)), 0.0, 1.0) * (1.0 - snow);
     // Scree: talus at the (real) wall feet in the mountains (patchy), less where the snow lies deep.
-    var scree = m.a * m.b * smoothstep(0.30, 0.62, nb + 0.18 * (1.0 - m.r)) * (1.0 - snow) * (1.0 - rock);
+    var scree = m.a * mb * smoothstep(0.30, 0.62, nb + 0.18 * (1.0 - m.r)) * (1.0 - snow) * (1.0 - rock);
+    // Dolomite range: grey talus fans under every wall (A), sparse grey-green turf only in broken
+    // patches on the gentle ground away from them, and pale gravel / scree everywhere else — never
+    // the lowland's brown earth.
+    let turf = dolo * hold * smoothstep(0.46, 0.66, nb) * (1.0 - smoothstep(0.25, 0.75, m.a));
+    scree = max(scree, dolo * max(m.a * 1.2, 1.0 - turf) * (1.0 - snow) * (1.0 - rock));
     // Meadow: whatever the alpine zone leaves uncovered (top faces only) — on the low apron and
     // the margin around the biome, not up on the mountain.
-    var mead = m.g * hold * (1.0 - snow) * (1.0 - rock) * (1.0 - scree) * (1.0 - trail) * (1.0 - smoothstep(0.55, 0.85, m.r));
+    var mead = max(m.g, turf) * hold * (1.0 - snow) * (1.0 - rock) * (1.0 - scree) * (1.0 - trail) * (1.0 - smoothstep(0.55, 0.85, m.r));
     scree *= 1.0 - trail;
     // The meadow fades in over the zone edge rather than replacing the procedural lawn wholesale.
     let cov = clamp(snow + rock + scree + mead, 0.0, 1.0) * (1.0 - skip);
@@ -344,6 +356,8 @@ fn alpine_apply(pbr: ptr<function, PbrInput>, p: vec3<f32>, gn_in: vec3<f32>, cl
         let earth = smoothstep(0.48, 0.80, a_noise(er * 0.55 + ew * 1.6 + vec2<f32>(13.0, -7.0)) * 0.55
             + a_noise(vec2<f32>(-er.y, er.x) * 1.4 + vec2<f32>(3.0, 5.0)) * 0.17 + nb * 0.28);
         ma = mix(ma, vec3<f32>(ml) * vec3<f32>(0.62, 0.50, 0.40), alp_m * earth * 0.4);
+        // Rock-range turf: thin, grey-green alpine sward on limestone, not the olive valley meadow.
+        ma = mix(ma, vec3<f32>(ml) * vec3<f32>(0.86, 0.98, 0.80), dolo * 0.55);
         alb += w.y * ma;
         nw += w.y * nm;
         // The AO / roughness tile too (AO darkens the turf's hollows in the same dashed rows).
@@ -356,12 +370,13 @@ fn alpine_apply(pbr: ptr<function, PbrInput>, p: vec3<f32>, gn_in: vec3<f32>, cl
         orm += w.z * l2.orm.rgb;
     }
     if rock > 0.004 {
-        let r = a_rock(p, gn, dpx, dpy, select(0.06, 0.25, q < 1.0));
+        // Layer 4 (pale dolomite) on the rock range, 3 (cold granite) on the snow massif / walls.
+        let r = a_rock(p, gn, dpx, dpy, select(0.06, 0.25, q < 1.0), select(3, 4, dolo > 0.5));
         // Keep a whisper of the biome hue (sandstone desert walls vs. grey granite vs. snow crags):
         // the vertex colour's chroma only, not its value.
         let base = (*pbr).material.base_color.rgb;
         let tint = clamp(base / max(dot(base, vec3<f32>(0.3333)), 1e-3), vec3<f32>(0.75), vec3<f32>(1.3));
-        var ra = r.alb * mix(vec3<f32>(1.0), tint, 0.45);
+        var ra = r.alb * mix(vec3<f32>(1.0), tint, 0.45 * (1.0 - dolo));
         // Up in the snow the crags are cold grey granite: the scan's warm cast read as dirt / mud
         // smeared on the snow from afar.
         let rl = dot(ra, vec3<f32>(0.2126, 0.7152, 0.0722));

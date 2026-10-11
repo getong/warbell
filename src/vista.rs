@@ -178,7 +178,9 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
     // The stream head is carved water (ground None); the wall rises against the flow.
     let base_y = crate::worldmap::SEA_Y + 0.05;
     let mut fall: Option<(Vec2, f32, f32, Vec2)> = None; // (wall pos, top y, base y, flow dir)
-    for d in [1.0_f32, 1.8, 2.6, 3.4] {
+    // The plunge capsule's rounded head (half 1.1 base ≈ 4.3u, frayed) is water for ~4–5u behind
+    // the anchor, so the search has to reach past it to the first dry ground of the wall.
+    for d in [1.0_f32, 1.8, 2.6, 3.4, 4.2, 5.0, 5.8, 6.6, 7.4] {
         let back = head - flow * d;
         if let Some(top_y) = ground_at_world(back.x, back.y) {
             if top_y - base_y >= 1.6 {

@@ -37,8 +37,9 @@ pub struct AlpineParams {
     pub region: Vec4,
 }
 
-/// Layer order of the alpine arrays (`alpine.wgsl` indexes them 0..3).
-const LAYERS: [&str; 4] = ["snow", "meadow", "scree", "rock"];
+/// Layer order of the alpine arrays (`alpine.wgsl` indexes them 0..4; 4 = the rock range's pale
+/// dolomite, Poly Haven marble_cliff_04).
+const LAYERS: [&str; 5] = ["snow", "meadow", "scree", "rock", "dolomite"];
 
 /// Alpine ground + snowy kit wanted? Read once (`FOREST_ALPINE=0` disables).
 pub fn enabled() -> bool {
@@ -67,7 +68,7 @@ impl Plugin for AlpinePlugin {
 pub fn layers_placeholder(images: &mut Assets<Image>) -> Handle<Image> {
     static CACHE: std::sync::Mutex<Option<Handle<Image>>> = std::sync::Mutex::new(None);
     let mut c = CACHE.lock().expect("alpine placeholder poisoned");
-    c.get_or_insert_with(|| images.add(crate::realforest::load::dummy_array(4, [128, 128, 255, 255]))).clone()
+    c.get_or_insert_with(|| images.add(crate::realforest::load::dummy_array(5, [128, 128, 255, 255]))).clone()
 }
 
 pub fn mask_placeholder(images: &mut Assets<Image>) -> Handle<Image> {
@@ -241,7 +242,13 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
             }
             // (Everywhere, not just on the snow: the drift terms below look at the neighbours.)
             hgt[k] = crate::worldmap::ground_at_world(wx, wz).unwrap_or(0.0);
-            mount[k] = matches!(b, Some(Biome::Snow | Biome::Rocky)) as u8 as f32;
+            // B: 1 = snow massif, 0.5 = the DOLOMITE rock range (the shader keys its pale limestone,
+            // talus and sparse turf off the half value).
+            mount[k] = match b {
+                Some(Biome::Snow) => 1.0,
+                Some(Biome::Rocky) => 0.5,
+                _ => 0.0,
+            };
         }
     }
     // Distance (texels) from the snow biome → the meadow band around it.
@@ -272,6 +279,24 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
         }
     }
     chamfer(&mut d_foot, w, h);
+    // Talus aprons of the rock range: its walls are continuous steep slopes (no class split), so
+    // the wall-foot pass above skips them — flag every rock-range texel steeper than ~45° and let
+    // the scree run ~6u out from them (the shader keeps rock ON the steep texels themselves).
+    let mut d_crag = vec![f32::INFINITY; w * h];
+    for j in 1..h - 1 {
+        for i in 1..w - 1 {
+            let k = j * w + i;
+            if (mount[k] - 0.5).abs() > 0.01 {
+                continue;
+            }
+            let gx = (hgt[k + 1] - hgt[k - 1]) * RES * 0.5;
+            let gz = (hgt[k + w] - hgt[k - w]) * RES * 0.5;
+            if gx.hypot(gz) > 1.0 {
+                d_crag[k] = 0.0;
+            }
+        }
+    }
+    chamfer(&mut d_crag, w, h);
     // Drifts below the snow line: snow blown into wall feet, filling hollows (ground ≥ ~0.3u below
     // its ~5u neighbourhood) and lingering on the shady north faces.
     let mean_h = blur(&blur(&blur(&blur(&hgt, w, h, 6, true), w, h, 6, false), w, h, 6, true), w, h, 6, false);
@@ -323,7 +348,8 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
     let px = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
     for k in 0..w * h {
         let meadow = if is_snow[k] { 1.0 } else { 1.0 - smoothstep(10.0 * RES, 24.0 * RES, d_snow[k]) };
-        let foot = 1.0 - smoothstep(0.0, 5.0 * RES, d_foot[k]);
+        let crag_foot = (1.0 - smoothstep(0.0, 6.0 * RES, d_crag[k])) * smoothstep(0.3, 0.45, mount[k]);
+        let foot = (1.0 - smoothstep(0.0, 5.0 * RES, d_foot[k])).max(crag_foot);
         data[k * 4] = px(snow[k]);
         data[k * 4 + 1] = px(meadow);
         data[k * 4 + 2] = px(mount[k]);

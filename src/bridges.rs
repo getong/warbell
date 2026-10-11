@@ -231,13 +231,15 @@ fn crossing_at(x: f32, z: f32) -> Option<Span> {
     if crate::rival::fort_flat_zone(x, z) {
         return None;
     }
-    let (cx_x, half_x) = water_run(x, z, true)?; // channel along X
-    let (cz_z, half_z) = water_run(x, z, false)?; // channel along Z
-    // Narrower axis = the crossing direction (the deck spans it, bank to bank).
-    let (across_x, cx, cz, half) = if half_x <= half_z {
-        (true, cx_x, z, half_x)
-    } else {
-        (false, x, cz_z, half_z)
+    // Narrower axis = the crossing direction (the deck spans it, bank to bank). An axis whose
+    // water run overruns the limit is the FLOW axis of a straight reach — not a reason to give up:
+    // requiring both runs to close rejected every road crossing on a straight N–S / E–W stretch
+    // (only bends could ever be bridged), so a road meeting the river mid-reach got no deck.
+    let (across_x, cx, cz, half) = match (water_run(x, z, true), water_run(x, z, false)) {
+        (Some((cx_x, half_x)), Some((_, half_z))) if half_x <= half_z => (true, cx_x, z, half_x),
+        (_, Some((cz_z, half_z))) => (false, x, cz_z, half_z),
+        (Some((cx_x, half_x)), None) => (true, cx_x, z, half_x),
+        (None, None) => return None,
     };
     if !(MIN_HALF..=MAX_HALF).contains(&half) {
         return None;
