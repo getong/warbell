@@ -26,10 +26,11 @@ geometry.
                                                post (x -2.3, board at y 1.45..1.9, z 2.0..2.6).
   town_tavern          6.4 x 4.6(+0.3)   6.6   "The Drowned Squire": two storeys, jettied upper
                                                floor (+0.3 over the front), eaves 4.1, ridge 6.0,
-                                               stone chimney on the east gable; sign (squire's helm
-                                               sinking in waves) on an iron bracket at x -2.2, board
-                                               y 1.95..2.85, z 2.95..4.05; benches, a trestle table,
-                                               barrels + tankards out front.
+                                               stone chimney on the east gable; bracket sign (squire's helm
+                                               sinking in waves, painted both faces) perpendicular
+                                               to the facade on an iron arm at x -2.2: board 1.68 x
+                                               1.29 at y 1.65..2.94, z 2.8..4.48; benches, a trestle
+                                               table, barrels + tankards out front.
   town_maud_house      5.2 x 3.8         3.75  Maud's house; EDICT BOARD (pinned notices, the
                                                red-sealed edict) right of the door at x 1.9, z 2.45;
                                                tax chest + bench by the door.
@@ -89,9 +90,9 @@ UP = V(0, 1, 0)
 TF = (0.5, 0.41, 0.32)          # dark oak framing
 WOOD = (0.82, 0.74, 0.62)
 BOARD = (0.7, 0.63, 0.54)       # weathered plank cladding
-PLW = (1.0, 0.98, 0.94)         # limewash
-GRIME = (0.6, 0.52, 0.42)       # splash-back mud at the wall foot
-SOOT = (0.76, 0.72, 0.67)       # smoke under the eaves
+PLW = (1.0, 1.0, 1.0)           # limewash (the s_plaster albedo is already off-white, ~#d8d1c2)
+GRIME = (0.76, 0.69, 0.6)       # a little splash-back mud at the wall foot
+SOOT = (0.86, 0.83, 0.79)       # a breath of smoke under the eaves
 THATCH = (0.9, 0.84, 0.72)
 THATCH_OLD = (0.64, 0.62, 0.5)  # mossy, rotting eave
 VOID = (0.03, 0.027, 0.025)     # dark interior seen through an opening
@@ -144,8 +145,8 @@ def lathe(g, base, axis, profile, sides, mat, col, tile=0.5, col_fn=None, cap=Tr
 
 
 def wall_col(y, y0, y1, tint=None):
-    c = mix(GRIME, PLW, smoothstep(y0, y0 + 0.85, y))
-    c = mix(c, SOOT, 0.55 * smoothstep(y1 - 0.7, y1, y))
+    c = mix(GRIME, PLW, smoothstep(y0, y0 + 0.45, y))
+    c = mix(c, SOOT, 0.3 * smoothstep(y1 - 0.5, y1, y))
     return tuple(c[i] * tint[i] for i in range(3)) if tint else c
 
 
@@ -626,7 +627,7 @@ def town_smithy(rng):
     g = G(b)
     HX, HZ = 2.3, 1.7
     Y0, YE, YR = 0.22, 2.25, 3.55
-    sooty = (0.86, 0.82, 0.76)
+    sooty = (0.92, 0.89, 0.84)
     pts = [(-HX, HZ), (HX, HZ), (HX, -HZ), (-HX, -HZ)]
     plinth(g, rng, loop(pts)[1:])
     win_r = dict(s=1.9, w=0.7, y0=1.0, y1=1.62)
@@ -809,61 +810,64 @@ def town_tavern(rng):
     for x, sx in ((HX, 1), (-HX, -1)):
         gable(g, rng, (0, 0, cz), quat_y(0.0), x, sx, D, YE, YR)
     chimney(g, rng, (HX + 0.38, -0.6), YR + 0.55, w=0.72, d=0.8)
-    # The sign: an iron bracket off the upper front at x = -2.2, the painted board hanging on rings.
+    # The sign: a bracket sign PERPENDICULAR to the facade (the board in the YZ plane, painted on both
+    # faces) so it reads down the street from either side: an iron arm with a scroll + strut off the
+    # upper front at x = -2.2, a 1.68 x 1.29 board on rings. High-contrast paint on a pale ground: a
+    # pale steel kettle helm (dark outline, red plume) going under dark blue-green waves.
+    S = 1.5
     sx_ = -2.2
     zw = HZ + J + 0.06
-    by_ = 2.98
-    tube(g, [V(sx_, by_, zw - 0.05), V(sx_, by_, zw + 1.2)], [0.025, 0.022], 6, M_IRON, IRON_D, tile=0.3)
-    tube(g, [V(sx_, by_ - 0.62, zw), V(sx_, by_ - 0.32, zw + 0.3), V(sx_, by_ - 0.02, zw + 0.75)], [0.018] * 3, 5, M_IRON,
+    by_ = 3.08
+    bw_, bh_ = 1.12 * S, 0.86 * S
+    tube(g, [V(sx_, by_, zw - 0.05), V(sx_, by_, zw + bw_ + 0.3)], [0.03, 0.026], 6, M_IRON, IRON_D, tile=0.3)
+    tube(g, [V(sx_, by_ - 0.85, zw), V(sx_, by_ - 0.45, zw + 0.42), V(sx_, by_ - 0.02, zw + 1.05)], [0.022] * 3, 5, M_IRON,
          IRON_D, tile=0.3)
-    scroll = [V(sx_, by_ + 0.02 + 0.1 * math.sin(a), zw + 1.12 + 0.1 * math.cos(a)) for a in np.linspace(-1.2, 3.6, 7)]
-    tube(g, scroll, [0.014] * 7, 4, M_IRON, IRON_D, tile=0.2, cap=False)
-    bw_, bh_ = 1.12, 0.86
-    zc, yc = zw + 0.12 + bw_ / 2, by_ - 0.12 - bh_ / 2
-    for z in (zc - 0.4, zc + 0.4):
-        tube(g, [V(sx_, by_ - 0.02, z), V(sx_, yc + bh_ / 2 + 0.02, z)], [0.012, 0.012], 4, M_IRON, IRON_D, tile=0.2)
-    lbox(g, V(sx_, yc, zc), (0.045, bh_, bw_), quat_y(0.0), M_FRUIT, (0.86, 0.72, 0.44), tile=0.8)
-    for dy, dz, sy, sz in ((bh_ / 2, 0, 0.05, bw_ + 0.06), (-bh_ / 2, 0, 0.05, bw_ + 0.06), (0, bw_ / 2, bh_, 0.05),
-                           (0, -bw_ / 2, bh_, 0.05)):
-        lbox(g, V(sx_, yc + dy, zc + dz), (0.07, sy, sz), quat_y(0.0), M_TIMBER, (0.3, 0.24, 0.19), tile=0.4)
-    hw, hh = bw_ / 2 - 0.03, bh_ / 2 - 0.03
+    scroll = [V(sx_, by_ + 0.02 + 0.12 * math.sin(a), zw + bw_ + 0.2 + 0.12 * math.cos(a)) for a in np.linspace(-1.2, 3.6, 7)]
+    tube(g, scroll, [0.016] * 7, 4, M_IRON, IRON_D, tile=0.2, cap=False)
+    zc, yc = zw + 0.14 + bw_ / 2, by_ - 0.14 - bh_ / 2
+    for z in (zc - 0.4 * S, zc + 0.4 * S):
+        tube(g, [V(sx_, by_ - 0.02, z), V(sx_, yc + bh_ / 2 + 0.02, z)], [0.014, 0.014], 4, M_IRON, IRON_D, tile=0.2)
+    lbox(g, V(sx_, yc, zc), (0.05, bh_, bw_), quat_y(0.0), M_FRUIT, (0.92, 0.87, 0.74), tile=0.8)
+    for dy, dz, sy, sz in ((bh_ / 2, 0, 0.06, bw_ + 0.08), (-bh_ / 2, 0, 0.06, bw_ + 0.08), (0, bw_ / 2, bh_, 0.06),
+                           (0, -bw_ / 2, bh_, 0.06)):
+        lbox(g, V(sx_, yc + dy, zc + dz), (0.08, sy, sz), quat_y(0.0), M_TIMBER, (0.26, 0.2, 0.16), tile=0.4)
+    hw, hh = bw_ / 2 - 0.035, bh_ / 2 - 0.035
+
+    def rot(pts, dx=0.0, dy=0.0, k=S):
+        c_, s_ = math.cos(0.3), math.sin(0.3)
+        return [((x * c_ - y * s_ + dx) * k, (x * s_ + y * c_ + dy) * k) for x, y in pts]
+
     for s in (-1, 1):
-        o = V(sx_ + s * 0.0225, yc, zc)
+        o = V(sx_ + s * 0.025, yc, zc)
         u = V(0, 0, -s)
         n_ = V(s, 0, 0)
-        # Sky stays the cream ground; the helm (a kettle-hat squire's helm, tilted) going under.
-        helm = ellipse(0.05, -0.02, 0.3, 0.29, 0.0, math.pi, 10)
-        helm = [(x * math.cos(0.3) - y * math.sin(0.3), x * math.sin(0.3) + y * math.cos(0.3)) for x, y in helm]
-        decal(g, o, u, UP, n_, helm, (0.4, 0.43, 0.48), off=0.003)
-        shine = ellipse(0.0, 0.0, 0.07, 0.17, 0.3, 2.6, 5)
-        shine = [(x * math.cos(0.3) - y * math.sin(0.3) - 0.04, x * math.sin(0.3) + y * math.cos(0.3) + 0.04) for x, y in shine]
-        decal(g, o, u, UP, n_, shine, (0.78, 0.8, 0.84), off=0.0035)
-        brim = [(-0.4, -0.06), (0.42, -0.09), (0.46, -0.02), (-0.42, 0.0)]
-        brim = [(x * math.cos(0.3) - y * math.sin(0.3) + 0.05, x * math.sin(0.3) + y * math.cos(0.3) - 0.02) for x, y in brim]
-        decal(g, o, u, UP, n_, brim, (0.2, 0.21, 0.24), off=0.004)
-        comb = [(x * math.cos(0.3) - y * math.sin(0.3) + 0.05, x * math.sin(0.3) + y * math.cos(0.3) - 0.02) for x, y in
-                [(-0.03, 0.22), (0.03, 0.22), (0.03, 0.305), (-0.03, 0.305)]]
-        decal(g, o, u, UP, n_, comb, (0.2, 0.21, 0.24), off=0.005)
-        plume = [(-0.06, 0.24), (0.0, 0.3), (-0.12, 0.38), (-0.3, 0.4), (-0.22, 0.33)]
-        plume = [(x * 1.2 + 0.08, y * 1.1 - 0.02) for x, y in plume]
-        decal(g, o, u, UP, n_, plume, (0.75, 0.12, 0.08), off=0.005)
-        # Three bands of waves over the lower half, pointed crests, dark at the bottom; foam lines.
-        for k, (base_y, amp, colw, ph) in enumerate(((-0.06, 0.07, (0.25, 0.42, 0.62), 0.0),
-                                                     (-0.2, 0.06, (0.16, 0.3, 0.5), 1.4),
-                                                     (-0.33, 0.05, (0.1, 0.2, 0.36), 0.6))):
+        dark = (0.06, 0.065, 0.075)
+        decal(g, o, u, UP, n_, rot(ellipse(0.05, -0.02, 0.335, 0.325, 0.0, math.pi, 12)), dark, off=0.002)
+        decal(g, o, u, UP, n_, rot(ellipse(0.05, -0.02, 0.3, 0.29, 0.0, math.pi, 12)), (0.74, 0.77, 0.82), off=0.003)
+        decal(g, o, u, UP, n_, rot(ellipse(0.0, 0.0, 0.06, 0.16, 0.3, 2.6, 5), -0.04, 0.04), (0.97, 0.98, 1.0), off=0.0035)
+        decal(g, o, u, UP, n_, rot([(-0.44, -0.08), (0.46, -0.11), (0.5, -0.0), (-0.46, 0.02)], 0.05, -0.02), dark, off=0.004)
+        decal(g, o, u, UP, n_, rot([(-0.035, 0.22), (0.035, 0.22), (0.035, 0.31), (-0.035, 0.31)], 0.05, -0.02), dark,
+              off=0.0045)
+        plume = [(-0.06, 0.24), (0.0, 0.3), (-0.12, 0.4), (-0.34, 0.43), (-0.24, 0.34)]
+        decal(g, o, u, UP, n_, [((x * 1.2 + 0.08) * S, (y * 1.1 - 0.02) * S) for x, y in plume], (0.8, 0.05, 0.035),
+              off=0.005)
+        # Three bands of waves over the lower half, pointed crests, darkest at the bottom; foam lines.
+        for k, (base_y, amp, colw, ph) in enumerate(((-0.06, 0.07, (0.07, 0.32, 0.34), 0.0),
+                                                     (-0.2, 0.06, (0.04, 0.23, 0.26), 1.4),
+                                                     (-0.33, 0.05, (0.02, 0.14, 0.17), 0.6))):
             m = 9
             topl = []
             for j in range(m + 1):
                 x = -hw + 2 * hw * j / m
-                cr = abs(math.sin((x * 5.6 + ph)))
-                topl.append((x, base_y + amp * (cr ** 0.6) - amp * 0.4))
+                cr = abs(math.sin((x / S * 5.6 + ph)))
+                topl.append((x, (base_y + amp * (cr ** 0.6) - amp * 0.4) * S))
             for j in range(m):
                 (x0, y0), (x1, y1) = topl[j], topl[j + 1]
                 decal(g, o, u, UP, n_, [(x0, -hh), (x1, -hh), (x1, y1), (x0, y0)], colw, off=0.006 + k * 0.001)
-                decal(g, o, u, UP, n_, [(x0, y0 - 0.012), (x1, y1 - 0.012), (x1, y1 + 0.006), (x0, y0 + 0.006)],
-                      (0.92, 0.95, 0.98), off=0.0065 + k * 0.001)
-        for bx, by, r in ((0.32, 0.18, 0.025), (0.36, 0.27, 0.018), (0.3, 0.33, 0.013)):
-            decal(g, o, u, UP, n_, ellipse(bx, by, r, r, 0, 2 * math.pi, 7)[:-1], (0.88, 0.92, 0.96), off=0.004)
+                decal(g, o, u, UP, n_, [(x0, y0 - 0.018), (x1, y1 - 0.018), (x1, y1 + 0.008), (x0, y0 + 0.008)],
+                      (0.95, 0.97, 0.98), off=0.0065 + k * 0.001)
+        for bx, by, r in ((0.32, 0.18, 0.028), (0.36, 0.27, 0.02), (0.3, 0.34, 0.015)):
+            decal(g, o, u, UP, n_, ellipse(bx * S, by * S, r * S, r * S, 0, 2 * math.pi, 7)[:-1], (0.9, 0.95, 0.98), off=0.004)
     # Outside: benches against the front, a trestle table with benches, barrels, tankards.
     bench(g, rng, V(-1.6, 0.0, HZ + 0.45), 0.0, L=1.6)
     tq = quat_y(0.08)
@@ -962,11 +966,11 @@ def town_house_b(rng):
     beam(g, [V(x0 + 1.1, 1.42, -1.55), V(x0 + 1.1, 1.42, 1.55)], 0.12, 0.12, mat=M_TIMBER, col=TF, rng=rng)
     pq = quat_z(-0.36)
     lbox(g, V(x0 + 0.62, 1.68, 0.0), (1.42, 0.07, 3.3), pq, M_PLANK, (0.5, 0.45, 0.4), tile=1.2, grain=0)
-    for r in range(3):
-        for k in range(8):
-            z = -1.2 + k * 0.33 + (0.15 if r % 2 else 0)
-            p = V(x0 + 0.55, 0.1 + r * 0.19, z)
-            pole(g, p + V(-0.35, 0, 0), p + V(0.35, 0, 0), 0.09, 0.09, rng, col=(0.7, 0.6, 0.48), sides=6, segs=1)
+    for r in range(2):
+        for k in range(7):
+            z = -1.15 + k * 0.38 + (0.17 if r % 2 else 0)
+            p = V(x0 + 0.55, 0.11 + r * 0.2, z)
+            pole(g, p + V(-0.35, 0, 0), p + V(0.35, 0, 0), 0.1, 0.1, rng, col=(0.7, 0.6, 0.48), sides=5, segs=1, wobble=0.0)
     lathe(g, (-1.9, 0.0, D / 2 + 0.55), (0, 1, 0), [(0.0, 0.32), (0.28, 0.36)], 10, M_TIMBER, (0.55, 0.46, 0.36), tile=0.5,
           cap=False)
     tube(g, [V(-1.9, 0.04, D / 2 + 0.55), V(-1.9, 0.24, D / 2 + 0.55)], [0.31, 0.34], 10, M_TIMBER, (0.25, 0.22, 0.2),
@@ -1124,9 +1128,10 @@ def town_infirmary(rng):
 def town_firepit(rng):
     b = Builder()
     g = G(b)
-    for k in range(9):
-        a = k * 2 * math.pi / 9 + rng.uniform(-0.1, 0.1)
-        stone(g, (0.72 * math.cos(a), 0.06, 0.72 * math.sin(a)), (0.21, 0.14, 0.17), rng, mat=M_STONE, detail=k % 2, cuts=1,
+    for k in range(8):
+        a = k * 2 * math.pi / 8 + rng.uniform(-0.1, 0.1)
+        stone(g, (0.72 * math.cos(a), 0.06, 0.72 * math.sin(a)), (0.23, 0.15, 0.19), rng, mat=M_STONE,
+              detail=1 if k in (0, 3, 6) else 0, cuts=1,
               col_fn=rock_col(scale(STONE_C, rng.uniform(0.55, 0.75)), dark_below=0.4), tile=0.6)
     mound(g, (0, -0.02, 0), 0.62, 0.62, 0.08, rng, mat=M_EARTH, col_fn=lambda p, n: (0.26, 0.24, 0.22), rings=3, seg=12)
     for k in range(4):
@@ -1139,9 +1144,9 @@ def town_firepit(rng):
     for k in range(3):
         a = k * 2 * math.pi / 3 + 0.4
         pole(g, V(1.0 * math.cos(a), -0.05, 1.0 * math.sin(a)), top, 0.035, 0.03, rng, col=(0.7, 0.62, 0.5), sides=5, segs=2)
-    lashing(g, top - V(0, 0.06, 0), (0, 1, 0), 0.07, rng, turns=2)
+    lashing(g, top - V(0, 0.06, 0), (0, 1, 0), 0.07, rng, turns=1)
     tube(g, [top - V(0, 0.08, 0), V(0, 0.7, 0)], [0.012, 0.012], 4, M_IRON, IRON_D, tile=0.2)
-    lathe(g, (0, 0.38, 0), (0, 1, 0), [(0.0, 0.05), (0.06, 0.2), (0.18, 0.25), (0.3, 0.24), (0.33, 0.25)], 10, M_IRON,
+    lathe(g, (0, 0.38, 0), (0, 1, 0), [(0.0, 0.05), (0.06, 0.2), (0.18, 0.25), (0.3, 0.24), (0.33, 0.25)], 8, M_IRON,
           (0.18, 0.17, 0.17), tile=0.4)
     tube(g, [V(-0.24, 0.7, 0), V(0, 0.79, 0), V(0.24, 0.7, 0)], [0.01] * 3, 4, M_IRON, IRON_D, tile=0.2, cap=False)
     # Three log benches round it (split logs on stump legs).
@@ -1154,7 +1159,6 @@ def town_firepit(rng):
                  sides=6, segs=1)
         pole(g, c - t * 0.8 + V(0, 0.36, 0), c + t * 0.8 + V(0, 0.36, 0), 0.17, 0.16, rng, mat=M_BARK, col=(0.72, 0.64, 0.54),
              sides=7, segs=1)
-        lbox(g, c + V(0, 0.48, 0), (1.5, 0.01, 0.22), yaw(t), M_TIMBER, (0.82, 0.7, 0.54), tile=0.6, grain=0)
     return b
 
 
