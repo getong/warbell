@@ -554,9 +554,34 @@ fn fragment(
             let u = fp_uv1(pw);
             let gx = wp_dx / FP_T1;
             let gy = wp_dy / FP_T1;
-            alb += w.y * textureSampleGrad(fp_albedo, fp_samp, u, 1, gx, gy).rgb;
-            nts += w.y * (textureSampleGrad(fp_normal, fp_samp, u, 1, gx, gy).rgb * 2.0 - 1.0);
-            orm += w.y * textureSampleGrad(fp_ormh, fp_samp, u, 1, gx, gy).rgb;
+            var a1 = textureSampleGrad(fp_albedo, fp_samp, u, 1, gx, gy).rgb;
+            var n1 = textureSampleGrad(fp_normal, fp_samp, u, 1, gx, gy).rgb * 2.0 - 1.0;
+            var o1 = textureSampleGrad(fp_ormh, fp_samp, u, 1, gx, gy).rgb;
+            // Open ground (the castle meadow, the village, forest glades) is one wide sheet of this
+            // layer, and its bare-soil blotches repeat every FP_T1 into a polka-dot grid. Break it:
+            // a second tap on a rotated (~37 deg), rescaled lattice, cross-faded in broad patches...
+            if glade > 0.01 {
+                let rot = mat2x2<f32>(0.80, 0.60, -0.60, 0.80);
+                let k = 1.0 / (FP_T1 * 1.37);
+                let ru = rot * pw * k + vec2<f32>(0.21, 0.47);
+                let rgx = rot * wp_dx * k;
+                let rgy = rot * wp_dy * k;
+                let t = smoothstep(0.30, 0.70, ter_noise(wp * 0.16 + vec2<f32>(7.0, 3.0))) * glade;
+                a1 = mix(a1, textureSampleGrad(fp_albedo, fp_samp, ru, 1, rgx, rgy).rgb, t);
+                n1 = mix(n1, textureSampleGrad(fp_normal, fp_samp, ru, 1, rgx, rgy).rgb * 2.0 - 1.0, t);
+                o1 = mix(o1, textureSampleGrad(fp_ormh, fp_samp, ru, 1, rgx, rgy).rgb, t);
+                // ...and past mid range, where even two lattices read as a dotted moire, fade to the
+                // layer's mean (its last mip) and the flat normal; the broad drifts below carry it.
+                let far = smoothstep(14.0, 40.0, dist) * glade * 0.7;
+                if far > 0.0 {
+                    a1 = mix(a1, textureSampleLevel(fp_albedo, fp_samp, vec2<f32>(0.5), 1, 12.0).rgb, far);
+                    n1 = mix(n1, vec3<f32>(0.0, 0.0, 1.0), far);
+                    o1 = mix(o1, textureSampleLevel(fp_ormh, fp_samp, vec2<f32>(0.5), 1, 12.0).rgb, far);
+                }
+            }
+            alb += w.y * a1;
+            nts += w.y * n1;
+            orm += w.y * o1;
         }
         if w.z > 0.01 {
             let u = fp_uv2(pw);
@@ -575,6 +600,16 @@ fn fragment(
         alb *= mix(vec3<f32>(1.0, 0.95, 0.85), vec3<f32>(0.80, 1.0, 0.76), fresh);
         // Pull the scanned floor's mustard back toward olive / earth (it read garish in low sun).
         alb = mix(vec3<f32>(dot(alb, vec3<f32>(0.3, 0.59, 0.11))), alb, 0.85);
+        // Open meadow (the castle meadow, the village, glades): the scanned grass/clover layer reads
+        // as dry straw-mustard on its own; pull it toward a living sward green (luminance kept, so it
+        // stays a photo texture, never the old flat neon lawn), lusher in broad patches.
+        let sward = glade * (1.0 - w.z);
+        if sward > 0.01 {
+            let al = dot(alb, vec3<f32>(0.2126, 0.7152, 0.0722));
+            let lushn = smoothstep(0.30, 0.75, ter_noise(wp * 0.045 + vec2<f32>(3.0, 17.0)));
+            let sw = mix(vec3<f32>(al), alb, 1.2) * mix(vec3<f32>(0.86, 1.0, 0.72), vec3<f32>(0.76, 1.0, 0.64), lushn);
+            alb = mix(alb, sw, sward * 0.85);
+        }
         // Micro self-shadow (above), contact darkening where roots / stones meet the floor (mask
         // B), and the cart-wheel ruts pressed back into the scanned path as damp, darker grooves
         // (the procedural rut tint applied earlier is overwritten by this mix).

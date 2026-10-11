@@ -1150,7 +1150,13 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
     const RES: f32 = 2.0;
     let (x0, z0) = (-GX, -GZ);
     let (w, h) = ((COLS as f32 * RES) as usize, (ROWS as f32 * RES) as usize);
+    // `forest` = where the scanned floor lies: the forest AND the open grass (castle meadow, the
+    // village lobe, the NW grassland). The grass used to keep the procedural vertex-green lawn
+    // (+ shader twigs / soil blotches) — the flat neon-green "low-poly grass" patches the player
+    // saw beside the scanned forest floor. `woods` is the forest alone: it gates the grove field
+    // (mask A), so open meadow reads as the grass / clover layer, never as leaf litter.
     let mut forest = vec![0.0f32; w * h];
+    let mut woods = vec![0.0f32; w * h];
     let mut land = vec![false; w * h];
     let mut road = vec![0u8; w * h];
     for j in 0..h {
@@ -1159,7 +1165,9 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
             let wx = x0 + (i as f32 + 0.5) / RES;
             let k = j * w + i;
             land[k] = crate::worldmap::is_land_tile_world(wx, wz);
-            forest[k] = (crate::worldmap::tile_biome_world(wx, wz) == Some(crate::biome::Biome::Forest)) as u8 as f32;
+            let is_forest = crate::worldmap::tile_biome_world(wx, wz) == Some(crate::biome::Biome::Forest);
+            woods[k] = is_forest as u8 as f32;
+            forest[k] = (is_forest || crate::worldmap::is_grass_world(wx, wz)) as u8 as f32;
             road[k] = (crate::roads::road_strength(wx, wz).clamp(0.0, 1.0) * 255.0) as u8;
         }
     }
@@ -1209,6 +1217,7 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
         out
     };
     let forest = blur(&blur(&forest, true), false);
+    let woods = blur(&blur(&woods, true), false);
     let mut occl = vec![0.0f32; w * h];
     for sp in SPLATS.lock().expect("splats poisoned").iter() {
         let (cx, cz, r) = (sp.x, sp.y, sp.z.max(0.2));
@@ -1232,7 +1241,8 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
         let wz = z0 + (j as f32 + 0.5) / RES;
         for i in 0..w {
             let wx = x0 + (i as f32 + 0.5) / RES;
-            grove[j * w + i] = (crate::biome::forest_grove(wx, wz) * 255.0).round() as u8;
+            let k = j * w + i;
+            grove[k] = (crate::biome::forest_grove(wx, wz) * woods[k] * 255.0).round() as u8;
         }
     }
     let mut data = vec![0u8; w * h * 4];
@@ -1259,6 +1269,22 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
             data[k] = data[k].max(to_u8(g.floor));
             data[k + 1] = data[k + 1].max(to_u8(g.path));
             data[k + 3] = data[k + 3].max(to_u8(g.debris));
+        }
+    }
+    // The village's field strips (`castle_ground::field_at`): scanned soil (the path layer) on
+    // the ploughed strips, a soil/grass mix on the stubble ones, no litter. Furrows ride the rut mask.
+    let (flo, fhi) = crate::castle_ground::field_bounds();
+    let (i0, i1) = (((flo.x - x0) * RES).max(0.0) as usize, (((fhi.x - x0) * RES) as usize).min(w));
+    let (j0, j1) = (((flo.y - z0) * RES).max(0.0) as usize, (((fhi.y - z0) * RES) as usize).min(h));
+    for j in j0..j1 {
+        let wz = z0 + (j as f32 + 0.5) / RES;
+        for i in i0..i1 {
+            let wx = x0 + (i as f32 + 0.5) / RES;
+            let Some((fw, _, plough)) = crate::castle_ground::field_at(wx, wz) else { continue };
+            let k = (j * w + i) * 4;
+            data[k] = data[k].max(to_u8(fw));
+            data[k + 1] = data[k + 1].max(to_u8((0.30 + 0.54 * plough) * fw));
+            data[k + 3] = (data[k + 3] as f32 * (1.0 - fw)) as u8;
         }
     }
     let mut img = Image::new(
