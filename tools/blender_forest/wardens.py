@@ -382,7 +382,7 @@ def treant_torso(rng):
 
     # Trunk: from the hip mass up through a waisted belly to broad shoulders, round at the top
     # (the head's crown sits on it and yaws - a round collar hides the joint).
-    prof = [(0.36, (0.3, 0.26), 0.0), (0.5, (0.4, 0.33), 0.0), (0.62, (0.42, 0.34), 0.0), (0.8, (0.4, 0.33), 0.01), (0.98, (0.36, 0.31), 0.02),
+    prof = [(0.2, (0.3, 0.27), 0.0), (0.32, (0.43, 0.37), 0.0), (0.5, (0.43, 0.35), 0.0), (0.62, (0.42, 0.34), 0.0), (0.8, (0.4, 0.33), 0.01), (0.98, (0.36, 0.31), 0.02),
             (1.16, (0.38, 0.33), 0.03), (1.34, (0.42, 0.36), 0.04), (1.52, (0.43, 0.36), 0.05),
             (1.66, (0.42, 0.34), 0.05), (1.78, (0.36, 0.31), 0.06), (1.9, (0.3, 0.29), 0.06)]
     pts, radii = [], []
@@ -396,6 +396,15 @@ def treant_torso(rng):
     pts.append(V(0.0, prof[-1][0], prof[-1][2]))
     radii.append(prof[-1][1])
     sculpt(g, pts, radii, M_BARK, col, sides=48, disp=trunk_disp, tile=0.8, caps=(True, True), ref=(1, 0, 0), tip=0.3)
+    # Buttress roots flaring off the trunk's foot front and back (the legs are the side roots).
+    for az in (0.25, -0.35, math.pi - 0.3, math.pi + 0.35):
+        d = V(math.sin(az), 0.0, math.cos(az))
+        # Hugging the trunk foot (sagging into the trunk/ground corner), not arching over air.
+        p0 = V(0, 0.78, 0) + d * 0.26
+        p1 = V(0, -0.06, 0) + d * rng.uniform(0.72, 0.82)
+        rp = curve(p0, p1, bend=(0, -0.09, 0), n=10, wob=0.01, rng=rng)
+        sculpt(g, rp, [0.15 * (1 - k / 10) ** 0.7 + 0.015 for k in range(11)], M_BARK, base_col, sides=12,
+               disp=gnarl(rng, amp=0.012, ridge=0.008), tile=0.6)
     # Shoulder burls the boughs grow out of.
     for sx in (-1, 1):
         lump(g, V(sx * 0.44, 1.66, -0.02), (0.2, 0.19, 0.2), rng, M_BARK, base_col, rough=0.25, cuts=0, detail=3,
@@ -452,20 +461,27 @@ def treant_leg(rng, sx):
     g = G(b)
     col = bark_col(rng, base=(0.36, 0.31, 0.26), moss_amt=0.5)
     piv = T_PIV["leg_r" if sx < 0 else "leg_l"]
-    # A short gnarled trunk-thigh that flares into roots gripping the ground.
-    pts = curve(piv + V(-sx * 0.04, 0.2, 0), V(piv.x * 1.15, 0.12, 0.02), bend=(sx * 0.03, 0, 0.03), n=10)
-    sculpt(g, pts, [0.19 - 0.04 * math.sin(math.pi * k / 10) + 0.04 * (k / 10) ** 3 for k in range(11)], M_BARK, col,
-           sides=20, disp=gnarl(rng, amp=0.02, ridge=0.012), tile=0.7, caps=(True, False))
-    foot = V(piv.x * 1.15, 0.1, 0.02)
-    for k, az in enumerate((-0.2, 0.45, 1.1, 2.6, 3.4 + sx * 0.4)):
-        a = az if sx > 0 else math.pi - az
-        d = V(math.sin(a), 0.0, math.cos(a))
-        ln = rng.uniform(0.32, 0.5) if k < 3 else rng.uniform(0.2, 0.3)
-        p0 = foot + V(0, 0.06, 0) + d * 0.05
-        p1 = foot + d * ln + V(0, -0.14, 0)
-        pts = curve(p0, p1, bend=(0, 0.06, 0), n=8, wob=0.012, rng=rng)
-        sculpt(g, pts, [0.1 * (1 - k2 / 8) ** 0.8 + 0.012 for k2 in range(9)], M_BARK, col, sides=10,
-               disp=gnarl(rng, amp=0.012, ridge=0.006), tile=0.6)
+    # Not a log beside the trunk: one thick buttress root that grows OUT of the trunk's flank
+    # (its upper end buried in the bark), arches outward and down, then splits into roots that
+    # dive into the ground.
+    ox = 1.0 if piv.x > 0 else -1.0
+    root0 = V(ox * 0.1, 0.9, -0.02)
+    split = V(ox * 0.56, 0.2, 0.03)
+    pts = curve(root0, split, bend=(ox * 0.04, 0.03, 0.0), n=12, wob=0.01, rng=rng)
+    sculpt(g, pts, [0.25 - 0.1 * (k / 12) ** 0.8 for k in range(13)], M_BARK, col, sides=22,
+           disp=gnarl(rng, amp=0.022, ridge=0.016, ridges=5), tile=0.7, caps=(True, False))
+    lump(g, split + V(0, 0.01, 0), (0.15, 0.13, 0.15), rng, M_BARK, col, rough=0.2, cuts=0, detail=2, tile=0.7)
+    for k, az in enumerate((0.05, 0.85, 1.65, 2.45, -0.75)):
+        a = az * ox  # spread around the outward side, front to back
+        d = V(math.cos(a) * ox, 0.0, math.sin(a))
+        big = k < 3
+        ln = rng.uniform(0.34, 0.48) if big else rng.uniform(0.22, 0.3)
+        p0 = split + d * 0.04 + V(0, 0.02, 0)
+        p1 = split + d * ln + V(0, -0.24, 0)
+        pts = curve(p0, p1, bend=(0, 0.08, 0), n=9, wob=0.014, rng=rng)
+        r0 = 0.12 if big else 0.075
+        sculpt(g, pts, [r0 * (1 - k2 / 9) ** 0.9 + 0.012 for k2 in range(10)], M_BARK, col, sides=12 if big else 9,
+               disp=gnarl(rng, amp=0.012, ridge=0.008), tile=0.6)
     return shift(b, piv)
 
 
@@ -546,6 +562,51 @@ def seam(g, rng, pts, r=0.018):
            M_GLOW, lambda p, n: MOLTEN, sides=6, tile=0.3)
 
 
+def cracks(g, b, rng, origin, facing, starts, r=0.013, step=0.03, branch=0.1, gap=0.07):
+    """Molten cracks running over the rock already in `b`: jagged random walks in the plane
+    across `facing`, each step ray-cast onto the outermost stone (so the glow hugs the skin and
+    dives into the joints), forking as they go. `starts` = [(2D offset, heading, length)]."""
+    from mathutils.bvhtree import BVHTree
+    tree = BVHTree.FromPolygons([Vector(v) for v in b.verts], [f[0] for f in b.faces])
+    f = Vector(facing).normalized()
+    u = V(0, 1, 0).cross(f)
+    u = u.normalized() if u.length > 1e-4 else V(1, 0, 0)
+    w = f.cross(u).normalized()
+
+    def project(q):
+        hit = tree.ray_cast(bl(q + f * 0.7), bl(-f), 1.6)
+        if hit[0] is None:
+            return None
+        loc = hit[0]
+        return Vector((loc.x, loc.z, -loc.y)) - f * 0.005
+
+    def walk(xy, head, ln, rad, depth):
+        x, y = xy
+        a = head
+        run, segs = [], []
+        nst = max(3, int(ln / step))
+        for k in range(nst + 1):
+            q = project(origin + u * x + w * y)
+            if q is None or (run and (q - run[-1][0]).length > gap):
+                segs.append(run)
+                run = []
+            if q is not None:
+                run.append((q, rad * (1 - 0.65 * k / nst) + 0.003))
+            if depth > 0 and 1 < k < nst - 1 and rng.random() < branch:
+                walk((x, y), a + rng.choice((-1, 1)) * rng.uniform(0.6, 1.1), ln * (1 - k / nst) * rng.uniform(0.5, 0.8),
+                     rad * 0.65, depth - 1)
+            a += 0.4 * (head - a) + rng.normal(0, 0.45)
+            x += step * math.cos(a)
+            y += step * math.sin(a)
+        segs.append(run)
+        for s in segs:
+            if len(s) >= 3:
+                sculpt(g, [p for p, _ in s], [rr for _, rr in s], M_GLOW, lambda p, n: MOLTEN, sides=6, tile=0.3)
+
+    for (xy, head, ln) in starts:
+        walk(xy, head, ln, r, 2)
+
+
 def golem_rock(g, rng, c, r, rot=None, mat=M_ROCK, lichen=0.6, cuts=3, rough=0.1, soot=None):
     """A fractured field boulder: many planar breaks (angular, not a ball), low-frequency roughness."""
     lump(g, c, r, rng, mat, rock_col(rng, amt=lichen, soot=soot), rough=0.06, cuts=cuts + 4, detail=3 if max(r) >= 0.22 else 2,
@@ -562,7 +623,7 @@ def golem_torso(rng):
     golem_rock(g, rng, V(0.0, 0.62, 0.0), (0.44, 0.24, 0.34), rot=quat_y(0.2))
     golem_rock(g, rng, V(0.02, 0.88, 0.04), (0.38, 0.22, 0.32), mat=M_SROCK, rot=quat_y(-0.4))
     for sx in (-1, 1):
-        golem_rock(g, rng, V(sx * 0.28, 1.24, 0.02), (0.3, 0.4, 0.36), rot=quat_y(sx * 0.3) @ quat_z(sx * 0.12),
+        golem_rock(g, rng, V(sx * 0.24, 1.24, 0.02), (0.3, 0.4, 0.36), rot=quat_y(sx * 0.3) @ quat_z(sx * 0.12),
                    soot=soot)
         golem_rock(g, rng, V(sx * 0.48, 1.56, -0.04), (0.28, 0.22, 0.28), rot=quat_y(sx * 0.6) @ quat_z(-sx * 0.3),
                    mat=M_SROCK, lichen=0.9)
@@ -571,12 +632,16 @@ def golem_torso(rng):
     # Small wedge stones jammed into the joints.
     for p in (V(-0.3, 0.76, 0.24), V(0.32, 0.8, 0.2), V(0.4, 1.0, -0.15), V(-0.42, 1.05, -0.1), V(0.0, 1.46, 0.24)):
         golem_rock(g, rng, p, (0.09, 0.07, 0.08), cuts=2, rough=0.15)
-    # The molten heart in the chest fissure and its seams out along the cracks.
-    lump(g, core + V(0, 0, -0.13), (0.09, 0.22, 0.12), rng, M_GLOW, lambda p, n: (1.0, 0.4, 0.08), rough=0.15,
+    # Two keystones half-shutting the chest gap, so the heart is only glimpsed between them.
+    golem_rock(g, rng, V(0.02, 1.36, 0.2), (0.12, 0.09, 0.1), cuts=2, rough=0.15, soot=soot)
+    golem_rock(g, rng, V(-0.03, 1.0, 0.2), (0.13, 0.1, 0.1), cuts=2, rough=0.15, soot=soot)
+    # Molten cracks branching over the stones from the heart (projected onto the rock skin).
+    cracks(g, b, rng, V(0.0, 1.18, 0.0), (0, 0, 1),
+           [((0.0, 0.05), 1.25, 0.42), ((0.0, -0.05), -1.5, 0.5), ((0.04, 0.0), 0.15, 0.5),
+            ((-0.04, 0.0), 3.0, 0.45), ((0.03, -0.03), -0.7, 0.4)], r=0.017)
+    # The heart itself: a small molten core deep in the gap.
+    lump(g, core + V(0, 0, -0.1), (0.06, 0.07, 0.05), rng, M_GLOW, lambda p, n: (1.0, 0.45, 0.1), rough=0.2,
          cuts=0, detail=2)
-    seam(g, rng, [V(-0.42, 0.98, 0.15), V(-0.3, 0.86, 0.22), V(-0.12, 0.8, 0.27), V(0.12, 0.82, 0.26),
-                  V(0.32, 0.88, 0.21)], 0.014)
-    seam(g, rng, [V(0.0, 1.42, 0.24), V(0.22, 1.5, 0.22), V(0.42, 1.44, 0.14)], 0.012)
     return b
 
 
@@ -607,10 +672,9 @@ def golem_arm(rng, sx):
     golem_rock(g, rng, piv + V(sx * 0.06, -1.0, 0.12), (0.26, 0.23, 0.26), cuts=4, lichen=0.3)  # boulder fist
     for k in range(3):
         golem_rock(g, rng, piv + V(sx * 0.06 + (k - 1) * 0.11, -0.96, 0.32), (0.07, 0.08, 0.07), cuts=2, lichen=0.1)
-    # Glow in the joints between the stones.
-    for y in (-0.44, -0.62):
-        seam(g, rng, [piv + V(sx * 0.07 + 0.14 * math.cos(a), y + 0.02 * math.sin(3 * a), 0.04 + 0.14 * math.sin(a))
-                      for a in np.linspace(-0.4, 3.3, 7)], 0.014)
+    # Glow cracks wandering over the forearm stones and down into the joints.
+    cracks(g, b, rng, piv + V(sx * 0.06, -0.55, 0.04), (sx * 0.6, 0, 1),
+           [((0.0, 0.0), 1.4, 0.3), ((0.0, 0.0), -1.7, 0.3), ((0.02, 0.2), -1.4, 0.2)], r=0.011, branch=0.12)
     return shift(b, piv)
 
 
@@ -621,8 +685,8 @@ def golem_leg(rng, sx):
     golem_rock(g, rng, piv + V(sx * 0.02, -0.16, 0.0), (0.22, 0.24, 0.22), mat=M_SROCK)
     golem_rock(g, rng, piv + V(sx * 0.03, -0.46, 0.02), (0.19, 0.22, 0.2))
     golem_rock(g, rng, V(piv.x + sx * 0.04, 0.08, 0.08), (0.25, 0.13, 0.33), cuts=3, lichen=0.3)  # boulder foot
-    seam(g, rng, [piv + V(sx * 0.03 + 0.15 * math.cos(a), -0.3, 0.02 + 0.15 * math.sin(a))
-                  for a in np.linspace(-0.3, 3.4, 7)], 0.013)
+    cracks(g, b, rng, piv + V(sx * 0.03, -0.32, 0.0), (sx * 0.4, 0, 1),
+           [((0.0, 0.0), 1.5, 0.26), ((0.0, 0.0), -1.6, 0.26)], r=0.011, branch=0.12)
     return shift(b, piv)
 
 
