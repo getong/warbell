@@ -38,9 +38,10 @@ from geo import G, bl, quat_x, quat_y, quat_z, sheet  # noqa: E402
 from meshkit import Builder  # noqa: E402
 from wayside_models import Noise, bounds, icosphere, mix, scale, smoothstep  # noqa: E402
 
-MATS = ["bark_oak", "prop_rock_a", "s_rock", "s_earth", "s_hide", "s_cloth", "s_iron", "s_plaster",
-        "undergrowth", "glow", "prop_stump"]
-M_BARK, M_ROCK, M_SROCK, M_EARTH, M_HIDE, M_CLOTH, M_IRON, M_BONE, M_CARD, M_GLOW, M_STUMP = range(len(MATS))
+# Tileable scans only (prop_rock_* are scanned models' UV atlases - islands on a flat background).
+MATS = ["bark_oak", "s_rock", "s_earth", "s_hide", "s_cloth", "s_iron", "s_plaster", "undergrowth", "glow"]
+M_BARK, M_ROCK, M_EARTH, M_HIDE, M_CLOTH, M_IRON, M_BONE, M_CARD, M_GLOW = range(len(MATS))
+M_SROCK = M_ROCK
 
 LAYOUT = json.loads((OUT / "foliage_layout.json").read_text(encoding="utf-8"))["undergrowth"]
 AW, AH = LAYOUT["size"]
@@ -291,7 +292,7 @@ def shift(b, pivot):
 
 
 # ─────────────────────────────────────────────────────────────── shared colour helpers
-def bark_col(rng, base=(0.62, 0.55, 0.47), moss=(0.36, 0.45, 0.16), moss_amt=0.7, ground=0.0):
+def bark_col(rng, base=(0.45, 0.39, 0.33), moss=(0.16, 0.22, 0.05), moss_amt=0.7, ground=0.0):
     nz = Noise(rng, 4, 2.2)
     fine = Noise(rng, 3, 9.0)
 
@@ -323,7 +324,7 @@ def rock_col(rng, base=(0.78, 0.76, 0.72), lichen=(0.62, 0.64, 0.38), amt=0.6, s
 # ─────────────────────────────────────────────────────────────── Forest: the treant
 T_PIV = {"leg_r": V(-0.26, 0.72, 0.0), "leg_l": V(0.26, 0.72, 0.0), "arm_r": V(0.6, 1.78, 0.0),
          "arm_l": V(-0.6, 1.78, 0.0), "head": V(0.0, 1.86, 0.06)}
-T_GLOW = (0.62, 0.95, 0.28)
+T_GLOW = (0.55, 1.0, 0.2)
 FERN = LAYOUT["fern"]
 GRASS = LAYOUT["grass"]
 STALKS = LAYOUT["stalks"]
@@ -381,7 +382,7 @@ def treant_torso(rng):
 
     # Trunk: from the hip mass up through a waisted belly to broad shoulders, round at the top
     # (the head's crown sits on it and yaws - a round collar hides the joint).
-    prof = [(0.5, (0.36, 0.3), 0.0), (0.62, (0.42, 0.34), 0.0), (0.8, (0.4, 0.33), 0.01), (0.98, (0.36, 0.31), 0.02),
+    prof = [(0.36, (0.3, 0.26), 0.0), (0.5, (0.4, 0.33), 0.0), (0.62, (0.42, 0.34), 0.0), (0.8, (0.4, 0.33), 0.01), (0.98, (0.36, 0.31), 0.02),
             (1.16, (0.38, 0.33), 0.03), (1.34, (0.42, 0.36), 0.04), (1.52, (0.43, 0.36), 0.05),
             (1.66, (0.42, 0.34), 0.05), (1.78, (0.36, 0.31), 0.06), (1.9, (0.3, 0.29), 0.06)]
     pts, radii = [], []
@@ -399,9 +400,19 @@ def treant_torso(rng):
     for sx in (-1, 1):
         lump(g, V(sx * 0.44, 1.66, -0.02), (0.2, 0.19, 0.2), rng, M_BARK, base_col, rough=0.25, cuts=0, detail=3,
              tile=0.8)
+    # Splintered heartwood teeth in the split of the mouth.
+    for k in range(7):
+        x = -0.15 + 0.3 * k / 6
+        my = 1.29 - 0.6 * x * x
+        for up in (1, -1):
+            if (k + (up > 0)) % 2:
+                continue
+            root = V(x, my + up * 0.04, 0.33)
+            sculpt(g, [root, V(x + rng.uniform(-0.01, 0.01), my + up * 0.005, 0.355)], [0.016, 0.003], M_BARK,
+                   lambda p, n: (0.72, 0.62, 0.46), sides=5, tile=0.15)
     # A sickly glow deep in each knot socket.
     for sx in (-1, 1):
-        glow(g, V(sx * 0.14, 1.57, 0.27), (0.03, 0.022, 0.02), T_GLOW, rng)
+        glow(g, V(sx * 0.14, 1.57, 0.27), (0.036, 0.026, 0.02), T_GLOW, rng)
     # Gnarled side roots / bark ribs climbing the trunk.
     for a0, h0, h1 in ((2.3, 0.55, 1.5), (3.6, 0.6, 1.3), (-0.6, 0.55, 1.1), (4.4, 0.7, 1.6)):
         pts = []
@@ -439,11 +450,11 @@ def fungus(g, rng, spots):
 def treant_leg(rng, sx):
     b = Builder()
     g = G(b)
-    col = bark_col(rng, moss_amt=0.5)
+    col = bark_col(rng, base=(0.36, 0.31, 0.26), moss_amt=0.5)
     piv = T_PIV["leg_r" if sx < 0 else "leg_l"]
     # A short gnarled trunk-thigh that flares into roots gripping the ground.
-    pts = curve(piv + V(0, 0.12, 0), V(piv.x * 1.15, 0.12, 0.02), bend=(sx * 0.03, 0, 0.03), n=10)
-    sculpt(g, pts, [0.17 - 0.03 * math.sin(math.pi * k / 10) + 0.04 * (k / 10) ** 3 for k in range(11)], M_BARK, col,
+    pts = curve(piv + V(-sx * 0.04, 0.2, 0), V(piv.x * 1.15, 0.12, 0.02), bend=(sx * 0.03, 0, 0.03), n=10)
+    sculpt(g, pts, [0.19 - 0.04 * math.sin(math.pi * k / 10) + 0.04 * (k / 10) ** 3 for k in range(11)], M_BARK, col,
            sides=20, disp=gnarl(rng, amp=0.02, ridge=0.012), tile=0.7, caps=(True, False))
     foot = V(piv.x * 1.15, 0.1, 0.02)
     for k, az in enumerate((-0.2, 0.45, 1.1, 2.6, 3.4 + sx * 0.4)):
@@ -461,7 +472,7 @@ def treant_leg(rng, sx):
 def treant_arm(rng, sx):
     b = Builder()
     g = G(b)
-    col = bark_col(rng, moss_amt=0.8)
+    col = bark_col(rng, base=(0.36, 0.31, 0.26), moss_amt=0.8)
     piv = T_PIV["arm_r" if sx > 0 else "arm_l"]
     sh = piv + V(-sx * 0.08, 0.04, 0.0)
     elbow = piv + V(sx * 0.14, -0.5, -0.02)
@@ -494,7 +505,7 @@ def treant_head(rng):
     """The crown: the broken top of the trunk sprouting antler boughs, ferns and moss."""
     b = Builder()
     g = G(b)
-    col = bark_col(rng, moss_amt=1.0)
+    col = bark_col(rng, base=(0.36, 0.31, 0.26), moss_amt=1.0)
     piv = T_PIV["head"]
     # A collar of bark over the trunk top (round, so the yaw never opens a seam).
     pts = [piv + V(0, -0.1 + 0.05 * k, 0) for k in range(6)]
@@ -525,7 +536,7 @@ def treant_head(rng):
 # ─────────────────────────────────────────────────────────────── Rocky: the golem
 G_PIV = {"leg_r": V(-0.3, 0.74, 0.0), "leg_l": V(0.3, 0.74, 0.0), "arm_r": V(0.66, 1.6, 0.0),
          "arm_l": V(-0.66, 1.6, 0.0), "head": V(0.0, 1.78, 0.06)}
-MOLTEN = (1.0, 0.45, 0.12)
+MOLTEN = (1.0, 0.32, 0.05)
 
 
 def seam(g, rng, pts, r=0.018):
@@ -561,7 +572,7 @@ def golem_torso(rng):
     for p in (V(-0.3, 0.76, 0.24), V(0.32, 0.8, 0.2), V(0.4, 1.0, -0.15), V(-0.42, 1.05, -0.1), V(0.0, 1.46, 0.24)):
         golem_rock(g, rng, p, (0.09, 0.07, 0.08), cuts=2, rough=0.15)
     # The molten heart in the chest fissure and its seams out along the cracks.
-    lump(g, core + V(0, 0, -0.13), (0.09, 0.22, 0.12), rng, M_GLOW, lambda p, n: (1.0, 0.5, 0.15), rough=0.15,
+    lump(g, core + V(0, 0, -0.13), (0.09, 0.22, 0.12), rng, M_GLOW, lambda p, n: (1.0, 0.4, 0.08), rough=0.15,
          cuts=0, detail=2)
     seam(g, rng, [V(-0.42, 0.98, 0.15), V(-0.3, 0.86, 0.22), V(-0.12, 0.8, 0.27), V(0.12, 0.82, 0.26),
                   V(0.32, 0.88, 0.21)], 0.014)
@@ -619,18 +630,18 @@ def golem_leg(rng, sx):
 R_PIV = {"leg_r": V(-0.18, 0.5, 0.0), "leg_l": V(0.18, 0.5, 0.0), "arm_r": V(0.5, 1.7, 0.0),
          "arm_l": V(-0.5, 1.7, 0.0), "head": V(0.0, 1.82, 0.04)}
 SPECTRE = (0.45, 0.9, 1.0)
-SURCOAT = (0.42, 0.2, 0.15)  # a faded, sun-rotted red
-BONE = (0.86, 0.8, 0.66)
+SURCOAT = (0.11, 0.035, 0.025)  # a faded, sun-rotted red (linear)
+BONE = (0.62, 0.55, 0.4)
 
 
-def rust_col(rng, base=(0.62, 0.6, 0.58), rust=(0.5, 0.27, 0.12), amt=0.65, dust=(0.78, 0.68, 0.5)):
+def rust_col(rng, base=(0.62, 0.6, 0.58), rust=(0.16, 0.07, 0.03), amt=0.65, dust=(0.36, 0.3, 0.2)):
     nz = Noise(rng, 4, 3.0)
     fine = Noise(rng, 3, 11.0)
 
     def f(p, n):
-        r = amt * smoothstep(-0.3, 0.5, nz(p) + 0.4 * fine(p))
-        c = mix(scale(base, 0.85 + 0.15 * fine(p)), rust, clamp01(r))
-        return mix(c, dust, 0.35 * smoothstep(0.4, 0.95, n.y))  # sand settled on the tops
+        r = amt * smoothstep(0.0, 0.6, nz(p) + 0.4 * fine(p))
+        c = mix(scale(base, 0.3 * (0.85 + 0.15 * fine(p))), rust, clamp01(r))
+        return mix(c, dust, 0.3 * smoothstep(0.5, 0.95, n.y))  # sand settled on the tops
     return f
 
 
@@ -640,15 +651,15 @@ def revenant_torso(rng):
     mail = rust_col(rng, base=(0.5, 0.48, 0.46), amt=0.75)
     plate = rust_col(rng, base=(0.66, 0.64, 0.62), amt=0.55)
     # The hauberk: a gaunt mail body, the skirt flaring to the knees.
-    prof = [(0.36, (0.34, 0.3)), (0.52, (0.31, 0.27)), (0.72, (0.27, 0.22)), (0.95, (0.22, 0.17)),
-            (1.12, (0.24, 0.18)), (1.34, (0.3, 0.21)), (1.52, (0.34, 0.22)), (1.64, (0.33, 0.21)),
+    prof = [(0.36, (0.32, 0.28)), (0.52, (0.29, 0.25)), (0.72, (0.25, 0.2)), (0.95, (0.2, 0.16)),
+            (1.12, (0.22, 0.17)), (1.34, (0.27, 0.2)), (1.52, (0.31, 0.21)), (1.64, (0.3, 0.2)),
             (1.74, (0.2, 0.15)), (1.82, (0.09, 0.08))]
     pts = [V(0.0, y, 0.0) for y, _ in prof]
     nz = Noise(rng, 3, 4.0)
     sculpt(g, pts, [r for _, r in prof], M_IRON, mail, sides=28, tile=0.35,
            disp=lambda p, d, t: 0.006 * nz(p) + 0.004 * math.sin(p.y * 160.0), caps=(False, True))
     # Dented breastplate and fauld, pauldrons of stacked lames, a cracked leather belt.
-    lump(g, V(0.0, 1.36, 0.05), (0.29, 0.25, 0.19), rng, M_IRON, plate, rough=0.05, cuts=2, detail=3, tile=0.5,
+    lump(g, V(0.0, 1.36, 0.05), (0.26, 0.24, 0.18), rng, M_IRON, plate, rough=0.05, cuts=2, detail=3, tile=0.5,
          rot=quat_y(0.0), cut=(0.8, 0.95))
     for sx in (-1, 1):
         for k in range(3):
@@ -678,12 +689,20 @@ def revenant_head(rng):
             c = scale(c, 1.0 - 0.85 * math.exp(-((p - e).length / 0.045) ** 2))
         c = scale(c, 1.0 - 0.7 * math.exp(-(((p.x - piv.x) / 0.025) ** 2 + ((p.y - piv.y + 0.05) / 0.03) ** 2)))
         return mix(c, (0.55, 0.45, 0.32), 0.3 * smoothstep(-0.2, -0.8, n.y))
-    lump(g, piv + V(0, 0.03, 0.01), (0.12, 0.14, 0.14), rng, M_BONE, skull_col, rough=0.04, cuts=0, detail=3,
+    lump(g, piv + V(0, 0.03, 0.01), (0.115, 0.14, 0.135), rng, M_BONE, skull_col, rough=0.04, cuts=0, detail=3,
          tile=0.3)
     lump(g, piv + V(0, -0.1, 0.055), (0.085, 0.05, 0.08), rng, M_BONE, skull_col, rough=0.05, cuts=1, detail=2,
          tile=0.3)  # the jaw, hanging slack
-    for e in eyes:
-        glow(g, e + V(0, 0, -0.02), (0.022, 0.016, 0.012), SPECTRE, rng)
+    for e in eyes:  # deep black sockets with a cold spark in each
+        lump(g, e + V(0, 0.0, 0.0), (0.042, 0.038, 0.03), rng, M_BONE, lambda p, n: (0.03, 0.03, 0.03), rough=0.1,
+             cuts=0, detail=2)
+        glow(g, e + V(0, 0, 0.022), (0.016, 0.012, 0.008), SPECTRE, rng)
+    lump(g, piv + V(0, -0.035, 0.135), (0.022, 0.03, 0.02), rng, M_BONE, lambda p, n: (0.04, 0.035, 0.03),
+         rough=0.1, cuts=0, detail=1)  # nasal cavity
+    for k in range(6):  # a row of teeth along the upper jaw
+        x = -0.05 + 0.02 * k
+        lump(g, piv + V(x, -0.075, 0.125 - 0.25 * x * x), (0.009, 0.014, 0.008), rng, M_BONE,
+             lambda p, n: (0.8, 0.74, 0.6), rough=0.05, cuts=0, detail=1)
     # An open bascinet over the cranium, and a mail collar under the jaw.
     plate = rust_col(rng, base=(0.6, 0.58, 0.56), amt=0.7)
     pts = [piv + V(0, 0.07 + 0.045 * k, -0.01 - 0.012 * k) for k in range(6)]
@@ -703,9 +722,9 @@ def revenant_arm(rng, sx):
     plate = rust_col(rng, base=(0.64, 0.62, 0.6), amt=0.6)
     elbow = piv + V(sx * 0.06, -0.46, -0.02)
     wrist = piv + V(sx * 0.04, -0.86, 0.14)
-    sculpt(g, curve(piv + V(-sx * 0.04, 0.05, 0), elbow, n=6), [0.075, 0.07, 0.066, 0.062, 0.06, 0.058, 0.056],
-           M_IRON, mail, sides=12, tile=0.3)
-    sculpt(g, curve(elbow, wrist, n=6), [0.05, 0.058, 0.06, 0.058, 0.054, 0.05, 0.045], M_IRON, plate, sides=12,
+    sculpt(g, curve(piv + V(-sx * 0.04, 0.05, 0), elbow, n=6), [0.068, 0.06, 0.054, 0.05, 0.048, 0.047, 0.046],
+           M_IRON, mail, sides=12, tile=0.3)  # a gaunt mail sleeve
+    sculpt(g, curve(elbow, wrist, n=6), [0.04, 0.048, 0.05, 0.048, 0.044, 0.04, 0.036], M_IRON, plate, sides=12,
            tile=0.35)  # vambrace
     lump(g, elbow, (0.07, 0.07, 0.07), rng, M_IRON, plate, rough=0.05, cuts=1, detail=2, tile=0.3)
     rag(g, rng, piv + V(sx * 0.05, -0.05, 0.0), (0, 0, 1), (sx * 0.2, -1, 0), 0.16, 0.45, M_CLOTH, SURCOAT, cols=4,
@@ -757,10 +776,10 @@ def revenant_leg(rng, sx):
 H_PIV = {"leg_r": V(-0.26, 0.5, 0.0), "leg_l": V(0.26, 0.5, 0.0), "arm_r": V(0.56, 1.5, 0.06),
          "arm_l": V(-0.56, 1.5, 0.06), "head": V(0.0, 1.62, 0.1)}
 HAG_EYE = (1.0, 0.78, 0.15)
-RAGS = (0.3, 0.28, 0.2)
+RAGS = (0.06, 0.058, 0.035)
 
 
-def mud_col(rng, base=(0.42, 0.35, 0.27), wet=(0.2, 0.18, 0.13), algae=(0.3, 0.36, 0.14)):
+def mud_col(rng, base=(0.13, 0.1, 0.075), wet=(0.04, 0.032, 0.024), algae=(0.06, 0.075, 0.025)):
     nz = Noise(rng, 4, 2.4)
     fine = Noise(rng, 3, 9.0)
 
@@ -773,7 +792,7 @@ def mud_col(rng, base=(0.42, 0.35, 0.27), wet=(0.2, 0.18, 0.13), algae=(0.3, 0.3
 
 def skin_col(rng):
     nz = Noise(rng, 3, 5.0)
-    return lambda p, n: scale(mix((0.5, 0.52, 0.4), (0.36, 0.32, 0.24), clamp01(0.5 + 0.7 * nz(p))), 0.95)
+    return lambda p, n: scale(mix((0.13, 0.15, 0.09), (0.06, 0.06, 0.04), clamp01(0.5 + 0.7 * nz(p))), 0.95)
 
 
 def hag_torso(rng):
@@ -785,7 +804,10 @@ def hag_torso(rng):
     spine = curve(V(0.0, 0.42, 0.0), V(0.0, 1.5, 0.08), bend=(0.0, 0.0, -0.2), n=12)
     rr = [(0.3, 0.26), (0.36, 0.31), (0.4, 0.34), (0.41, 0.35), (0.4, 0.36), (0.39, 0.37), (0.38, 0.37),
           (0.37, 0.36), (0.36, 0.33), (0.34, 0.3), (0.3, 0.26), (0.22, 0.2), (0.14, 0.13)]
-    sculpt(g, spine, rr, M_EARTH, mud, sides=32, tile=0.6, disp=lambda p, d, t: 0.05 * lumps(p), caps=(True, True))
+    sculpt(g, spine, rr, M_EARTH, mud, sides=32, tile=0.6, disp=lambda p, d, t: 0.05 * lumps(p), caps=(True, True),
+           tip=0.15)
+    for sx in (-1, 1):  # rounded shoulders out to the arm pivots
+        lump(g, V(sx * 0.44, 1.44, 0.04), (0.17, 0.14, 0.16), rng, M_EARTH, mud, rough=0.2, cuts=0, detail=3, tile=0.5)
     lump(g, V(0.0, 1.38, -0.22), (0.3, 0.26, 0.24), rng, M_EARTH, mud, rough=0.18, cuts=0, detail=3, tile=0.6)  # hump
     for p, r in ((V(-0.26, 1.0, 0.24), 0.1), (V(0.28, 0.82, 0.22), 0.09), (V(0.2, 1.26, -0.3), 0.12),
                  (V(-0.3, 1.2, -0.2), 0.11)):
@@ -807,7 +829,7 @@ def hag_torso(rng):
         top = V(math.sin(a) * 0.38, 0.86, math.cos(a) * 0.32)
         out = V(math.sin(a), 0.0, math.cos(a))
         rag(g, rng, top, V(math.cos(a), 0, -math.sin(a)), out * 0.2 + V(0, -1, 0), 0.3, rng.uniform(0.5, 0.75),
-            M_CLOTH, scale((0.26, 0.27, 0.2), rng.uniform(0.8, 1.2)), cols=5, rows=6, outward=out, ragged=0.65)
+            M_CLOTH, scale((0.05, 0.06, 0.03), rng.uniform(0.8, 1.2)), cols=5, rows=6, outward=out, ragged=0.65)
     # Reeds and sedge stuck in the mud of the hump and the hips.
     for k in range(14):
         a = rng.uniform(-3.1, 3.1)
@@ -817,7 +839,7 @@ def hag_torso(rng):
         up = V(math.sin(a) * 0.5, 1.0, (-0.6 if hump else math.cos(a) * 0.4))
         rect = STALKS[0] if k % 3 == 0 else GRASS[k % len(GRASS)]
         card(g, rect, base, up, V(math.cos(a), 0, -math.sin(a)), rng.uniform(0.35, 0.6), rng.uniform(0.18, 0.3),
-             (0.62, 0.6, 0.38), bend=0.2)
+             (0.4, 0.38, 0.2), bend=0.2)
     return b
 
 
@@ -852,7 +874,7 @@ def hag_head(rng):
         sculpt(g, [tp, tp + V(0, -0.035 - 0.01 * (k % 2), 0.005)], [0.011, 0.003], M_BONE,
                lambda p, n: (0.7, 0.62, 0.42), sides=5, tile=0.1)
     # Matted, weedy hair hanging off the crown down over the shoulders and back.
-    hair = lambda p, n: scale((0.16, 0.15, 0.11), 0.8 + 0.3 * max(0.0, n.y))  # noqa: E731
+    hair = lambda p, n: scale((0.03, 0.028, 0.02), 0.8 + 0.3 * max(0.0, n.y))  # noqa: E731
     for k in range(22):
         a = rng.uniform(0.5, 5.8)  # skip the face
         root = piv + V(math.sin(a) * 0.16, 0.16 + 0.04 * math.cos(a), math.cos(a) * 0.16 - 0.02)
@@ -860,9 +882,9 @@ def hag_head(rng):
         ln = rng.uniform(0.35, 0.7)
         pts = [root + out * (0.06 * math.sin(math.pi * min(t, 0.5))) + V(0, -ln * t, 0) + out * (0.08 * t)
                + V(*rng.normal(size=3)) * 0.01 for t in np.linspace(0, 1, 7)]
-        sculpt(g, pts, [0.035 * (1 - 0.7 * t) + 0.006 for t in np.linspace(0, 1, 7)], M_HIDE, hair, sides=7,
+        sculpt(g, pts, [0.035 * (1 - 0.7 * t) + 0.006 for t in np.linspace(0, 1, 7)], M_EARTH, hair, sides=7,
                tile=0.2)
-    lump(g, piv + V(0, 0.14, -0.03), (0.2, 0.1, 0.2), rng, M_HIDE, hair, rough=0.2, cuts=0, detail=2, tile=0.2)
+    lump(g, piv + V(0, 0.14, -0.03), (0.2, 0.1, 0.2), rng, M_EARTH, hair, rough=0.2, cuts=0, detail=2, tile=0.2)
     return shift(b, piv)
 
 
