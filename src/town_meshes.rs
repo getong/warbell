@@ -302,15 +302,13 @@ pub fn mine_parts() -> Vec<(Mesh, M)> {
 
 // ── Build plot: a marked-out construction site ───────────────────────────────────────
 
-/// An empty plot ready to build on: a cleared earth pad framed in timber foundation beams, four
-/// corner survey stakes, and a little signpost — so it reads as "a plot under construction", not a
-/// bare slab.
+/// An empty plot ready to build on: timber foundation beams, four corner survey stakes, and a
+/// little signpost — so it reads as "a plot under construction". The cleared earth inside is the
+/// GROUND (scanned soil, `castle_ground::sample` stamps every plot): the old raised soil-textured
+/// slab with its striped furrows framed by the beams read as a wooden raft lying on the meadow.
 pub fn plot_parts() -> Vec<(Mesh, M)> {
     let r = 1.55; // half-size of the cleared pad
-    let mut v: Vec<(Mesh, M)> = vec![
-        // Cleared, levelled earth pad (same soil texture as the fields).
-        (bx(r * 2.0, 0.1, r * 2.0, 0.0, 0.05, 0.0), M::Soil),
-    ];
+    let mut v: Vec<(Mesh, M)> = Vec::new();
     // Timber foundation frame — four beams ringing the pad edge.
     for sz in [-r, r] {
         v.push((bx(r * 2.0 + 0.16, 0.12, 0.16, 0.0, 0.12, sz), M::Beam));

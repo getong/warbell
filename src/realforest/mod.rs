@@ -158,7 +158,7 @@ pub struct Kit {
 }
 
 /// Material sets by the names Blender exported: (name, PBR set file stem, foliage card?).
-const MATERIALS: [(&str, &str, bool); 27] = [
+const MATERIALS: [(&str, &str, bool); 28] = [
     ("bark_oak", "bark_oak", false),
     ("bark_beech", "bark_beech", false),
     ("bark_pine", "bark_pine", false),
@@ -202,6 +202,9 @@ const MATERIALS: [(&str, &str, bool); 27] = [
     // Poly Haven white_rough_plaster scan (tools/blender_forest/plaster_set.sh); vertex colour adds
     // the splash-back grime at the wall feet and soot under the eaves.
     ("s_plaster", "s_plaster", false),
+    // Emissive beads and seams on the regional wardens (wardens.glb: the treant's knot eyes, the
+    // golem's molten seams): unlit, colour from the vertex colours x an HDR gain so they bloom.
+    ("glow", "glow", false),
 ];
 
 impl Kit {
@@ -290,6 +293,21 @@ impl Kit {
                 4 => m(&["branches_a"], 1.0),
                 _ => None,
             }
+        }
+    }
+
+    /// What the open grass frontier (castle meadow, village, NW grassland) draws for a cover roll,
+    /// in `worldmap::frontier_cover` order [grass, clover, fern, flower, mushroom]: a meadow is grass
+    /// and wildflowers — forest ferns, dead branches and mushrooms stay under the trees.
+    pub fn meadow_cover(&self, class: usize, roll: f32, roll2: f32) -> Option<(usize, f32)> {
+        const GRASS: [&str; 4] = ["grass_a", "grass_b", "grass_c", "grass_d"];
+        const FLOWERS: [&str; 6] = ["flower_daisy", "flower_yellow", "flower_daisy", "flower_yellow", "flower_lupine_a", "flower_daisy"];
+        let m = |names: &[&str], s: f32| self.pick(names, roll2).map(|i| (i, s));
+        match class {
+            0 | 1 | 2 => m(&GRASS, 0.9 + roll * 0.4),
+            3 if roll < 0.75 => m(&FLOWERS, 1.0),
+            3 => m(&["stalks_a"], 1.0),
+            _ => None,
         }
     }
 
@@ -550,6 +568,7 @@ impl Kit {
         hi: f32,
         mask: &dyn Fn(f32, f32) -> bool,
         height_fn: &dyn Fn(f32, f32) -> f32,
+        meadow: bool,
     ) {
         const LITTER: [&str; 4] = ["litter_a", "litter_b", "litter_c", "litter_d"];
         const GRASS: [&str; 4] = ["grass_a", "grass_b", "grass_c", "grass_d"];
@@ -570,7 +589,22 @@ impl Kit {
                     }
                     let road = crate::roads::road_strength(x, z);
                     let pick = |names: &[&str], s: f32| self.pick(names, d).map(|m| (m, s));
-                    let choice = if road > 0.9 {
+                    // Open meadow (`meadow`, the grass frontier): no forest floor here — no leaf
+                    // sheets, dead branches or ferns away from the trees. Grass tufts thick on the
+                    // verges and through the sward, the odd small stone.
+                    let choice = if meadow {
+                        if road > 0.55 {
+                            if road <= 0.9 && c < 0.10 { pick(&GRASS, 0.5 + d * 0.3) } else { None }
+                        } else if road > 0.12 {
+                            if c < 0.55 { pick(&GRASS, 0.8 + d * 0.5) } else if c < 0.75 { pick(&FLOWERS, 0.85 + d * 0.4) } else { None }
+                        } else if c < 0.50 {
+                            pick(&GRASS, 0.7 + d * 0.5)
+                        } else if c < 0.56 && !crate::blockers::any_within(x, z, 0.35) {
+                            pick(&PEBBLES, 0.12 + d * 0.14)
+                        } else {
+                            None
+                        }
+                    } else if road > 0.9 {
                         // The grass strip a cart track keeps between its two ruts.
                         if c < 0.14 { pick(&GRASS, 0.5 + d * 0.3) } else { None }
                     } else if road > 0.55 {
@@ -622,7 +656,7 @@ impl Kit {
                 // 2nd plant also goes into the far ring at 1.35x scale.
                 let fert = crate::biome::ground_patch(gx + 0.5, gz + 0.5).fertility;
                 // Glades (open, sunlit) grow a grass + flower sward; groves keep the drifts.
-                let glade = 1.0 - crate::biome::fg_smoothstep(0.08, 0.38, crate::biome::forest_grove(gx + 0.5, gz + 0.5));
+                let glade = if meadow { 1.0 } else { 1.0 - crate::biome::fg_smoothstep(0.08, 0.38, crate::biome::forest_grove(gx + 0.5, gz + 0.5)) };
                 let drift = crate::biome::forest_drift(gx + 0.5, gz + 0.5).max(glade * 0.85);
                 for k in 0..3u32 {
                     let (a, b) = rolls(gx + 0.13 + k as f32 * 0.71, gz + 0.29 - k as f32 * 0.43);
@@ -640,7 +674,17 @@ impl Kit {
                     }
                     // Variety over volume: grass, ferns, short dry stalks, a low shrub, a fallen-leaf
                     // sheet, the occasional flower — each patch reads as a mixed understorey.
-                    let (pick, s) = if glade > 0.5 {
+                    let (pick, s) = if meadow {
+                        // The sward: lush grass clumps, wildflowers, seed stalks — no ferns.
+                        const MEADOW_FLOWERS: [&str; 6] = ["flower_daisy", "flower_yellow", "flower_daisy", "flower_yellow", "flower_lupine_a", "flower_yellow"];
+                        if d < 0.70 {
+                            (self.pick(&LUSH, c), 0.6 + c * 0.5)
+                        } else if d < 0.90 {
+                            (self.pick(&MEADOW_FLOWERS, c), 0.8 + c * 0.3)
+                        } else {
+                            (self.pick(&["stalks_a"], c), 0.9)
+                        }
+                    } else if glade > 0.5 {
                         if d < 0.62 {
                             (self.pick(&LUSH, c), 0.6 + c * 0.5)
                         } else if d < 0.82 {
@@ -1116,6 +1160,9 @@ fn drive_forest_look(
 }
 
 fn pbr_material(images: &mut Assets<Image>, set: &str, card: bool) -> Result<StandardMaterial, String> {
+    if set == "glow" {
+        return Ok(StandardMaterial { base_color: Color::LinearRgba(LinearRgba::rgb(2.5, 2.5, 2.5)), unlit: true, ..default() });
+    }
     if set == "bronze" {
         return Ok(StandardMaterial { metallic: 1.0, perceptual_roughness: 0.5, reflectance: 0.5, ..default() });
     }
@@ -1143,9 +1190,11 @@ fn pbr_material(images: &mut Assets<Image>, set: &str, card: bool) -> Result<Sta
         });
     }
     let ormh = images.add(load::texture(&format!("forest_pbr/{set}_ormh.png"), false, None)?);
+    // `FOREST_NONORMAL=s_rubble,...`: A/B knob, drop these sets' normal maps.
+    let no_normal = std::env::var("FOREST_NONORMAL").is_ok_and(|v| v.split(',').any(|s| s.trim() == set));
     Ok(StandardMaterial {
         base_color_texture: Some(albedo),
-        normal_map_texture: Some(normal),
+        normal_map_texture: (!no_normal).then_some(normal),
         occlusion_texture: Some(ormh.clone()),
         metallic_roughness_texture: Some(ormh),
         // Both act as multipliers on the texture channels (G roughness, B metal = 0).
@@ -1190,11 +1239,11 @@ fn try_build(
     let wind = [mat_index["canopy"], mat_index["undergrowth"]];
     let mut models = Vec::new();
     let mut by_name = HashMap::new();
-    for glb in ["forest_pbr/trees.glb", "forest_pbr/undergrowth.glb", "forest_pbr/props.glb", "forest_pbr/structures.glb", "forest_pbr/wayside.glb", "forest_pbr/stories_warm.glb", "forest_pbr/creatures.glb", "forest_pbr/animals.glb", "forest_pbr/people.glb", "forest_pbr/orks.glb", "forest_pbr/stories_cold.glb", "forest_pbr/snowmen.glb", "forest_pbr/alpine_flora.glb", "forest_pbr/market.glb", "forest_pbr/castle_kit.glb", "forest_pbr/town_kit.glb"] {
+    for glb in ["forest_pbr/trees.glb", "forest_pbr/undergrowth.glb", "forest_pbr/props.glb", "forest_pbr/structures.glb", "forest_pbr/wayside.glb", "forest_pbr/stories_warm.glb", "forest_pbr/creatures.glb", "forest_pbr/animals.glb", "forest_pbr/people.glb", "forest_pbr/orks.glb", "forest_pbr/stories_cold.glb", "forest_pbr/snowmen.glb", "forest_pbr/wardens.glb", "forest_pbr/alpine_flora.glb", "forest_pbr/market.glb", "forest_pbr/castle_kit.glb", "forest_pbr/town_kit.glb"] {
         // The townsfolk parts (people.glb) and the skinned ork bodies (orks.glb) are optional:
         // without them the villagers keep their box-built bodies (`peasant_model`) and the orks
         // their per-joint creatures.glb parts; the rest of the kit still loads.
-        if (glb.ends_with("people.glb") || glb.ends_with("orks.glb") || glb.contains("/stories_") || glb.ends_with("snowmen.glb") || glb.ends_with("alpine_flora.glb") || glb.ends_with("market.glb") || glb.ends_with("castle_kit.glb") || glb.ends_with("town_kit.glb"))
+        if (glb.ends_with("people.glb") || glb.ends_with("orks.glb") || glb.contains("/stories_") || glb.ends_with("snowmen.glb") || glb.ends_with("wardens.glb") || glb.ends_with("alpine_flora.glb") || glb.ends_with("market.glb") || glb.ends_with("castle_kit.glb") || glb.ends_with("town_kit.glb"))
             && !load::asset_path(glb).exists()
         {
             warn!("realforest: {glb} missing — falling back to the older bodies");
@@ -1325,7 +1374,13 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
     const RES: f32 = 2.0;
     let (x0, z0) = (-GX, -GZ);
     let (w, h) = ((COLS as f32 * RES) as usize, (ROWS as f32 * RES) as usize);
+    // `forest` = where the scanned floor lies: the forest AND the open grass (castle meadow, the
+    // village lobe, the NW grassland). The grass used to keep the procedural vertex-green lawn
+    // (+ shader twigs / soil blotches) — the flat neon-green "low-poly grass" patches the player
+    // saw beside the scanned forest floor. `woods` is the forest alone: it gates the grove field
+    // (mask A), so open meadow reads as the grass / clover layer, never as leaf litter.
     let mut forest = vec![0.0f32; w * h];
+    let mut woods = vec![0.0f32; w * h];
     let mut land = vec![false; w * h];
     let mut road = vec![0u8; w * h];
     for j in 0..h {
@@ -1334,7 +1389,9 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
             let wx = x0 + (i as f32 + 0.5) / RES;
             let k = j * w + i;
             land[k] = crate::worldmap::is_land_tile_world(wx, wz);
-            forest[k] = (crate::worldmap::tile_biome_world(wx, wz) == Some(crate::biome::Biome::Forest)) as u8 as f32;
+            let is_forest = crate::worldmap::tile_biome_world(wx, wz) == Some(crate::biome::Biome::Forest);
+            woods[k] = is_forest as u8 as f32;
+            forest[k] = (is_forest || crate::worldmap::is_grass_world(wx, wz)) as u8 as f32;
             road[k] = (crate::roads::road_strength(wx, wz).clamp(0.0, 1.0) * 255.0) as u8;
         }
     }
@@ -1384,6 +1441,7 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
         out
     };
     let forest = blur(&blur(&forest, true), false);
+    let woods = blur(&blur(&woods, true), false);
     let mut occl = vec![0.0f32; w * h];
     for sp in SPLATS.lock().expect("splats poisoned").iter() {
         let (cx, cz, r) = (sp.x, sp.y, sp.z.max(0.2));
@@ -1407,7 +1465,8 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
         let wz = z0 + (j as f32 + 0.5) / RES;
         for i in 0..w {
             let wx = x0 + (i as f32 + 0.5) / RES;
-            grove[j * w + i] = (crate::biome::forest_grove(wx, wz) * 255.0).round() as u8;
+            let k = j * w + i;
+            grove[k] = (crate::biome::forest_grove(wx, wz) * woods[k] * 255.0).round() as u8;
         }
     }
     let mut data = vec![0u8; w * h * 4];
@@ -1434,6 +1493,22 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
             data[k] = data[k].max(to_u8(g.floor));
             data[k + 1] = data[k + 1].max(to_u8(g.path));
             data[k + 3] = data[k + 3].max(to_u8(g.debris));
+        }
+    }
+    // The field strips (`castle_ground::field_at`): scanned soil (the path layer) on
+    // the ploughed strips, a soil/grass mix on the stubble ones, no litter. Furrows ride the rut mask.
+    let (flo, fhi) = crate::castle_ground::field_bounds();
+    let (i0, i1) = (((flo.x - x0) * RES).max(0.0) as usize, (((fhi.x - x0) * RES) as usize).min(w));
+    let (j0, j1) = (((flo.y - z0) * RES).max(0.0) as usize, (((fhi.y - z0) * RES) as usize).min(h));
+    for j in j0..j1 {
+        let wz = z0 + (j as f32 + 0.5) / RES;
+        for i in i0..i1 {
+            let wx = x0 + (i as f32 + 0.5) / RES;
+            let Some((fw, plough)) = crate::castle_ground::field_at(wx, wz) else { continue };
+            let k = (j * w + i) * 4;
+            data[k] = data[k].max(to_u8(fw));
+            data[k + 1] = data[k + 1].max(to_u8((0.30 + 0.54 * plough) * fw));
+            data[k + 3] = (data[k + 3] as f32 * (1.0 - fw)) as u8;
         }
     }
     let mut img = Image::new(

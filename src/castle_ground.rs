@@ -25,8 +25,7 @@ use crate::castle::{COURTYARD, HALF_X, HALF_Z, KEEP_FRONT, MARKET_CENTRE, N_GATE
 pub struct CastleGround {
     /// Scanned-floor weight (realforest mask R): how far the procedural meadow gives way.
     pub floor: f32,
-    /// Trodden-earth strength (mask G). Kept ≤ ~0.86 off the lane centrelines: the shader turns
-    /// G > 0.88 without a rut into the grass strip a cart path keeps between its wheel tracks.
+    /// Trodden-earth strength (mask G).
     pub path: f32,
     /// Debris (mask A, the grove field): chips / straw / litter instead of moss.
     pub debris: f32,
@@ -171,6 +170,8 @@ pub fn sample(wx: f32, wz: f32) -> CastleGround {
     let wood = near(at(crate::castle::WOOD_YARD), 3.6);
     let hay = near(at(crate::castle::HAY_CORNER), 3.4);
     let market = near(MARKET_CENTRE, 6.5) * 0.8;
+    // The town's build plots: a cleared, trodden earth pad inside each plot's timber frame.
+    let plot = crate::town::PLOT_OFFSETS.iter().map(|&c| near(c, 2.6) * 0.84).fold(0.0f32, f32::max);
 
     let path = (lane * 0.84 + crown * 0.16)
         .max(plaza * 0.84)
@@ -179,6 +180,7 @@ pub fn sample(wx: f32, wz: f32) -> CastleGround {
         .max(yard)
         .max(well)
         .max(market)
+        .max(plot)
         .max(cart)
         .max(wood * 0.55)
         .max(hay * 0.45)
@@ -196,6 +198,83 @@ pub fn sample(wx: f32, wz: f32) -> CastleGround {
     CastleGround { floor, path, debris }
 }
 
+// ── The fields ─────────────────────────────────────────────────────────────────────────────────
+// Open-field strips on the castle meadow N and S of the walls (the forced-flat grass ring the town
+// farms, beside the street village; the village lobe itself is all burgage yards + forest edge).
+// They replace the old low-poly "tilled field" meshes (`poi::field`: a dark box bed with box crop
+// rows inside a post-and-rail fence — the "wooden rafts" lying on the meadow). Like the castle yard
+// they are ground, not geometry: the scanned soil layer from the realforest mask (R + G), with
+// the plough rows drawn analytically by `terrain.wgsl` (`field_sample`, its own copy of this
+// table): straight, evenly spaced ridges along the long axis with raked-light relief, a straight
+// soil edge and a grassy headland. (The 0.35u rut mask only managed soft blobs, so inside a
+// field the shader ignores the furrows `roads::bake_rut_mask` still presses in.)
+
+/// One field strip: centre, half-extents (x along the furrows, z across), yaw (radians, about
+/// +Y like `Quat::from_rotation_y`), and how freshly ploughed it is (1 = bare furrowed soil,
+/// lower = stubble / fallow: the grass layer shows between shallower furrows).
+struct Field {
+    c: Vec2,
+    half: Vec2,
+    yaw: f32,
+    plough: f32,
+}
+
+const FIELDS: [Field; 6] = [
+    // South meadow, W of the south gate road: two strips side by side, ploughed + stubble.
+    Field { c: Vec2::new(-11.0, 31.0), half: Vec2::new(6.0, 2.1), yaw: 0.04, plough: 1.0 },
+    Field { c: Vec2::new(-11.5, 35.6), half: Vec2::new(6.0, 2.1), yaw: 0.04, plough: 0.55 },
+    // South meadow, E of the road.
+    Field { c: Vec2::new(11.5, 33.5), half: Vec2::new(5.5, 2.2), yaw: -0.05, plough: 0.85 },
+    // North meadow, either side of the postern lane.
+    Field { c: Vec2::new(-9.5, -33.5), half: Vec2::new(6.0, 2.2), yaw: -0.03, plough: 0.7 },
+    Field { c: Vec2::new(16.0, -32.0), half: Vec2::new(5.0, 2.1), yaw: 0.06, plough: 1.0 },
+    // East meadow, off the solid east wall (furrows run N-S).
+    Field { c: Vec2::new(41.0, 0.0), half: Vec2::new(2.2, 6.0), yaw: 0.0, plough: 0.8 },
+];
+
+/// A field at world `(wx, wz)`: `(weight, plough)` — `None` off every field.
+/// The edge is frayed by noise (a headland, not a ruled rectangle) and the field yields to roads,
+/// yards and anything but the open grass.
+pub fn field_at(wx: f32, wz: f32) -> Option<(f32, f32)> {
+    let p = Vec2::new(wx, wz);
+    for f in &FIELDS {
+        let d = p - f.c;
+        let (s, co) = f.yaw.sin_cos();
+        // Inverse of `Quat::from_rotation_y(yaw)` on XZ.
+        let l = Vec2::new(co * d.x - s * d.y, s * d.x + co * d.y);
+        let edge = (f.half - l.abs()).min_element() + (noise(wx, wz, 0.7, 53) - 0.5) * 0.9;
+        if edge <= -0.6 {
+            continue;
+        }
+        if !crate::worldmap::is_grass_world(wx, wz)
+            || crate::roads::road_strength(wx, wz) > 0.05
+            || crate::castle::village_keep_clear(wx, wz, 0.6)
+            || crate::town::near_build_plot(wx, wz)
+        {
+            return None;
+        }
+        // (The plough rows themselves are drawn by `terrain.wgsl`'s `field_sample`.)
+        return Some((smoothstep(-0.6, 0.6, edge), f.plough));
+    }
+    None
+}
+
+/// Is `(wx, wz)` on a field (cover / clutter keep off the ploughed soil)?
+pub fn in_field(wx: f32, wz: f32) -> bool {
+    field_at(wx, wz).is_some_and(|(w, _)| w > 0.05)
+}
+
+/// The fields' world XZ bounds (min, max), for the realforest mask's field pass.
+pub fn field_bounds() -> (Vec2, Vec2) {
+    let (mut lo, mut hi) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
+    for f in &FIELDS {
+        let r = f.half.length() + 1.0;
+        lo = lo.min(f.c - r);
+        hi = hi.max(f.c + r);
+    }
+    (lo, hi)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,5 +290,19 @@ mod tests {
         for (x, z) in [(3.0, 3.0), (-4.0, 6.0), (5.5, -3.0)] {
             assert!(sample(x, z).path <= 0.88, "({x},{z}) {:?}", sample(x, z));
         }
+    }
+
+    /// `terrain.wgsl` draws the plough rows analytically from its own copy of the field table
+    /// (`FIELD_A` / `FIELD_B`); it must stay in step with `FIELDS`.
+    #[test]
+    fn field_table_matches_shader() {
+        let wgsl = include_str!("../assets/shaders/terrain.wgsl");
+        for f in &FIELDS {
+            let a = format!("vec4<f32>({:?}, {:?}, {:?}, {:?})", f.c.x, f.c.y, f.half.x, f.half.y);
+            let b = format!("vec2<f32>({:?}, {:?})", f.yaw, f.plough);
+            assert!(wgsl.contains(&a), "terrain.wgsl FIELD_A is missing {a}");
+            assert!(wgsl.contains(&b), "terrain.wgsl FIELD_B is missing {b}");
+        }
+        assert!(wgsl.contains(&format!("array<vec4<f32>, {}>", FIELDS.len())));
     }
 }

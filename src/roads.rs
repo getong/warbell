@@ -196,6 +196,7 @@ pub fn bake_rut_mask() -> (Vec<u8>, usize, usize, Vec4) {
             }
         }
     }
+    // (The fields' plough rows are drawn analytically by `terrain.wgsl`, not stamped here.)
     let data: Vec<u8> = grid.iter().map(|v| (v.clamp(0.0, 1.0) * 255.0) as u8).collect();
     let region = Vec4::new(lo.x, lo.y, 1.0 / (w as f32 * RUT_CELL), 1.0 / (h as f32 * RUT_CELL));
     (data, w, h, region)

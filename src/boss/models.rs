@@ -207,6 +207,61 @@ pub fn build(biome: Biome) -> BossSpec {
     }
 }
 
+/// The realistic Blender build of a warden, when it has one (drawn on the kit's PBR materials):
+/// `(kit model, limb kind, pivot)` per piece — `None` = the static torso (at the root). Same rig
+/// contract as [`BossSpec`]: each limb's mesh is built around its pivot, so `boss::boss_limbs`
+/// swings it in place. Bałwan comes from `tools/blender_forest/snowmen.py` → `snowmen.glb` (pivots
+/// from its `WARDEN_PIVOTS` print); the other four from `wardens.py` → `wardens.glb`, which keeps
+/// the procedural specs' pivots below. The spawn falls back to [`build`] when the kit lacks any piece.
+pub fn kit_parts(biome: Biome) -> Option<[(&'static str, Option<PartKind>, Vec3); 6]> {
+    // The `wardens.glb` set: `warden_<name>_{torso,leg_r,leg_l,arm_r,arm_l,head}` at the same
+    // pivots as the procedural build (leg_r = Leg(1.0) on −X, arm_r = Arm(1.0) on +X).
+    let set = |[torso, leg_r, leg_l, arm_r, arm_l, head]: [&'static str; 6], legs: [Vec3; 2], arms: [Vec3; 2], h: Vec3| {
+        Some([
+            (torso, None, Vec3::ZERO),
+            (leg_r, Some(PartKind::Leg(1.0)), legs[0]),
+            (leg_l, Some(PartKind::Leg(-1.0)), legs[1]),
+            (arm_r, Some(PartKind::Arm(1.0)), arms[0]),
+            (arm_l, Some(PartKind::Arm(-1.0)), arms[1]),
+            (head, Some(PartKind::Head), h),
+        ])
+    };
+    match biome {
+        Biome::Forest => set(
+            ["warden_treant_torso", "warden_treant_leg_r", "warden_treant_leg_l", "warden_treant_arm_r", "warden_treant_arm_l", "warden_treant_head"],
+            [v(-0.26, 0.72, 0.0), v(0.26, 0.72, 0.0)],
+            [v(0.6, 1.78, 0.0), v(-0.6, 1.78, 0.0)],
+            v(0.0, 1.86, 0.06),
+        ),
+        Biome::Rocky => set(
+            ["warden_golem_torso", "warden_golem_leg_r", "warden_golem_leg_l", "warden_golem_arm_r", "warden_golem_arm_l", "warden_golem_head"],
+            [v(-0.3, 0.74, 0.0), v(0.3, 0.74, 0.0)],
+            [v(0.66, 1.6, 0.0), v(-0.66, 1.6, 0.0)],
+            v(0.0, 1.78, 0.06),
+        ),
+        Biome::Desert => set(
+            ["warden_revenant_torso", "warden_revenant_leg_r", "warden_revenant_leg_l", "warden_revenant_arm_r", "warden_revenant_arm_l", "warden_revenant_head"],
+            [v(-0.18, 0.5, 0.0), v(0.18, 0.5, 0.0)],
+            [v(0.5, 1.7, 0.0), v(-0.5, 1.7, 0.0)],
+            v(0.0, 1.82, 0.04),
+        ),
+        Biome::Swamp => set(
+            ["warden_hag_torso", "warden_hag_leg_r", "warden_hag_leg_l", "warden_hag_arm_r", "warden_hag_arm_l", "warden_hag_head"],
+            [v(-0.26, 0.5, 0.0), v(0.26, 0.5, 0.0)],
+            [v(0.56, 1.5, 0.06), v(-0.56, 1.5, 0.06)],
+            v(0.0, 1.62, 0.1),
+        ),
+        Biome::Snow => Some([
+            ("warden_balwan_torso", None, Vec3::ZERO),
+            ("warden_balwan_foot", Some(PartKind::Leg(1.0)), v(-0.28, 0.14, 0.42)),
+            ("warden_balwan_foot", Some(PartKind::Leg(-1.0)), v(0.28, 0.14, 0.42)),
+            ("warden_balwan_arm_r", Some(PartKind::Arm(1.0)), v(0.45, 1.498, -0.02)),
+            ("warden_balwan_arm_l", Some(PartKind::Arm(-1.0)), v(-0.41, 1.498, -0.02)),
+            ("warden_balwan_head", Some(PartKind::Head), v(0.0, 2.096, 0.0)),
+        ]),
+    }
+}
+
 /// The spawn-time root scale for each warden (multiplies the in-mesh ~1.7u height → a towering boss).
 pub fn root_scale(biome: Biome) -> f32 {
     match biome {

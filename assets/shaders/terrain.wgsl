@@ -76,6 +76,87 @@ fn fp_heights(p: vec2<f32>, w: vec3<f32>, dx: vec2<f32>, dy: vec2<f32>) -> vec3<
     return h;
 }
 
+// Ploughed field strips — a mirror of `castle_ground::FIELDS` (kept in sync by the
+// `field_table_matches_shader` test): xy = centre, zw = half extents (x along the furrows when
+// it is the longer one), and (yaw, plough). The rows are analytic here: the 2 texel/u masks
+// could only carry soft blobs, never straight, evenly spaced ridges.
+const FIELD_A = array<vec4<f32>, 6>(
+    vec4<f32>(-11.0, 31.0, 6.0, 2.1),
+    vec4<f32>(-11.5, 35.6, 6.0, 2.1),
+    vec4<f32>(11.5, 33.5, 5.5, 2.2),
+    vec4<f32>(-9.5, -33.5, 6.0, 2.2),
+    vec4<f32>(16.0, -32.0, 5.0, 2.1),
+    vec4<f32>(41.0, 0.0, 2.2, 6.0),
+);
+const FIELD_B = array<vec2<f32>, 6>(
+    vec2<f32>(0.04, 1.0),
+    vec2<f32>(0.04, 0.55),
+    vec2<f32>(-0.05, 0.85),
+    vec2<f32>(-0.03, 0.7),
+    vec2<f32>(0.06, 1.0),
+    vec2<f32>(0.0, 0.8),
+);
+// Ridge-to-ridge spacing of the plough rows (world units).
+const FURROW_P: f32 = 0.78;
+
+struct FieldHit {
+    // 1 within ~1u of a strip (the shader's soil / rows replace the mask's soft blob there).
+    zone: f32,
+    // Ploughed-soil coverage: the strip with a near-straight edge (a grassy headland outside).
+    soil: f32,
+    // Row height 0 (furrow) .. 1 (ridge crest), already faded out on the headlands.
+    ridge: f32,
+    // World-XZ gradient of the row height (per unit), for the relief normal.
+    grad: vec2<f32>,
+    // Row strength (0 on the headland / outside, `plough` inside).
+    rows: f32,
+};
+
+fn field_sample(p: vec2<f32>) -> FieldHit {
+    var o: FieldHit;
+    o.zone = 0.0; o.soil = 0.0; o.ridge = 0.5; o.grad = vec2<f32>(0.0); o.rows = 0.0;
+    for (var i = 0u; i < 6u; i = i + 1u) {
+        let a = FIELD_A[i];
+        let b = FIELD_B[i];
+        let d = p - a.xy;
+        let sn = sin(b.x);
+        let cs = cos(b.x);
+        // Same local frame as `castle_ground::field_at`.
+        let l = vec2<f32>(cs * d.x - sn * d.y, sn * d.x + cs * d.y);
+        let e = max(abs(l.x) - a.z, abs(l.y) - a.w);
+        if e > 1.3 {
+            continue;
+        }
+        let long_x = a.z >= a.w;
+        let across = select(l.x, l.y, long_x);
+        let along = select(l.y, l.x, long_x);
+        let half_along = select(a.w, a.z, long_x);
+        let half_across = select(a.z, a.w, long_x);
+        // A slight hand-ploughed wobble on the edge, never a blob.
+        let wob = (ter_noise(p * 1.3 + vec2<f32>(7.0, 3.0)) - 0.5) * 0.18;
+        o.zone = 1.0 - smoothstep(0.8, 1.3, e);
+        o.soil = 1.0 - smoothstep(-0.12, 0.12, e + wob);
+        // Rows stop short of the ends (the headland where the team turned) and of the sides.
+        let rows = (1.0 - smoothstep(-0.95, -0.55, abs(along) - half_along + wob))
+                 * (1.0 - smoothstep(-0.30, -0.05, abs(across) - half_across + wob));
+        // A slight sideways meander so the rows are hand-drawn, not ruled.
+        let ac = across + (ter_noise(vec2<f32>(along * 0.35, f32(i) * 7.0)) - 0.5) * 0.10;
+        let ph = ac * (6.2831853 / FURROW_P);
+        let c = cos(ph);
+        // Rounded ridge, narrower furrow: lift the cosine before squaring the profile.
+        let r = 0.5 + 0.5 * c;
+        let rr = r * r * (3.0 - 2.0 * r);
+        let dr = -0.5 * sin(ph) * (6.2831853 / FURROW_P) * 6.0 * r * (1.0 - r);
+        o.rows = rows * b.y;
+        o.ridge = mix(0.5, rr, o.rows);
+        // d/d(across) in local, back to world (inverse of the frame above).
+        let gl = select(vec2<f32>(dr, 0.0), vec2<f32>(0.0, dr), long_x) * o.rows;
+        o.grad = vec2<f32>(cs * gl.x + sn * gl.y, -sn * gl.x + cs * gl.y);
+        break;
+    }
+    return o;
+}
+
 // 2D value-noise hash. The original `fract(sin(p.x*127.1 + p.y*311.7)*43758)` is effectively
 // a 1D hash of the dot product `p·(127.1,311.7)`, so cells along that fixed diagonal get
 // CORRELATED values — which the bump lighting reveals as straight parallel "ruts" across the
@@ -289,7 +370,10 @@ fn fragment(
     let rut_in = f32(forest.rut_region.z > 0.0
         && rut_uv.x > 0.0 && rut_uv.x < 1.0 && rut_uv.y > 0.0 && rut_uv.y < 1.0);
     let gmask = textureSample(rut_tex, rut_samp, rut_uv).rg * rut_in;
-    let rut = gmask.r;
+    // The fields' own analytic rows replace the rut mask's soft furrow blobs.
+    let fld = field_sample(wp);
+    let fld_on = fld.zone * f32(forest.pbr.x > 0.5) * f32(forest.rut_region.z > 0.0);
+    let rut = gmask.r * (1.0 - fld_on);
     let rut_wear = 0.65 + 0.35 * ter_noise(wp * 0.9 + vec2<f32>(31.0, 7.0));
     // 0.55: tuned by A/B shots — 0.22 and even 0.38 drowned under the ±0.17 ground mottle +
     // midday haze/bloom (verification: "ruts invisible"); a 1.0 debug pass proved the sampling
@@ -471,11 +555,18 @@ fn fragment(
         // path in tongues instead of along the mask's straight iso-line.
         let edge = (ter_noise(wp * 0.45 + vec2<f32>(17.0, 3.0)) - 0.5) * 0.45
                  + (ter_noise(wp * 1.7 + vec2<f32>(4.0, 29.0)) - 0.5) * 0.25;
-        // Narrower worn track, and the grass strip a cart path keeps between its ruts (centre of
-        // the road field, away from the grooves) goes back to the mossy layer.
-        let centre_strip = smoothstep(0.88, 0.97, fmask.g) * (1.0 - smoothstep(0.05, 0.3, rut)) * 0.85;
+        // (No "grass strip between the ruts" carved out of the road field any more: it keyed on a
+        // thin G band (0.88-0.97) that also runs just OUTSIDE every rut and along the castle lanes'
+        // centrelines, so it drew hairline grass slivers with texel-stepped edges down every road —
+        // the stray thin lines on the ground. The kit's clutter still plants tufts between ruts.)
+        // Trampled verges: the sward beside a track is worn through to soil in broken patches.
+        let verge = smoothstep(0.04, 0.30, fmask.g) * (1.0 - smoothstep(0.55, 0.85, fmask.g))
+                  * smoothstep(0.50, 0.78, ter_noise(wp * 0.33 + vec2<f32>(57.0, 11.0)) * 0.7 + ter_noise(wp * 1.1 + vec2<f32>(3.0, 91.0)) * 0.3);
         // Bank earth claims its share of the floor as path (all of it off the forest mask).
-        let path = max(smoothstep(0.36, 0.86, fmask.g + edge) * (1.0 - centre_strip), bank_fp / fp_w);
+        var path = max(max(smoothstep(0.36, 0.86, fmask.g + edge), verge * glade * 0.75), bank_fp / fp_w);
+        // Field strips: the soil is the straight-edged strip itself (the mask only knew a frayed
+        // blob); a road beside one keeps its own track (road G > any field's 0.84).
+        path = mix(path, max(fld.soil, smoothstep(0.86, 0.95, fmask.g) * path), fld_on);
         let mossn = ter_noise_rot(wp * 0.05, 0.946, 0.326) * 0.65 + ter_noise(wp * 0.19 + vec2<f32>(5.0, 9.0)) * 0.35;
         // Moss/grass is the dominant floor (it sits under the green carpet and IS the carpet past
         // its draw range); leaf litter keeps the drier hollows.
@@ -554,9 +645,34 @@ fn fragment(
             let u = fp_uv1(pw);
             let gx = wp_dx / FP_T1;
             let gy = wp_dy / FP_T1;
-            alb += w.y * textureSampleGrad(fp_albedo, fp_samp, u, 1, gx, gy).rgb;
-            nts += w.y * (textureSampleGrad(fp_normal, fp_samp, u, 1, gx, gy).rgb * 2.0 - 1.0);
-            orm += w.y * textureSampleGrad(fp_ormh, fp_samp, u, 1, gx, gy).rgb;
+            var a1 = textureSampleGrad(fp_albedo, fp_samp, u, 1, gx, gy).rgb;
+            var n1 = textureSampleGrad(fp_normal, fp_samp, u, 1, gx, gy).rgb * 2.0 - 1.0;
+            var o1 = textureSampleGrad(fp_ormh, fp_samp, u, 1, gx, gy).rgb;
+            // Open ground (the castle meadow, the village, forest glades) is one wide sheet of this
+            // layer, and its bare-soil blotches repeat every FP_T1 into a polka-dot grid. Break it:
+            // a second tap on a rotated (~37 deg), rescaled lattice, cross-faded in broad patches...
+            if glade > 0.01 {
+                let rot = mat2x2<f32>(0.80, 0.60, -0.60, 0.80);
+                let k = 1.0 / (FP_T1 * 1.37);
+                let ru = rot * pw * k + vec2<f32>(0.21, 0.47);
+                let rgx = rot * wp_dx * k;
+                let rgy = rot * wp_dy * k;
+                let t = smoothstep(0.30, 0.70, ter_noise(wp * 0.16 + vec2<f32>(7.0, 3.0))) * glade;
+                a1 = mix(a1, textureSampleGrad(fp_albedo, fp_samp, ru, 1, rgx, rgy).rgb, t);
+                n1 = mix(n1, textureSampleGrad(fp_normal, fp_samp, ru, 1, rgx, rgy).rgb * 2.0 - 1.0, t);
+                o1 = mix(o1, textureSampleGrad(fp_ormh, fp_samp, ru, 1, rgx, rgy).rgb, t);
+                // ...and past mid range, where even two lattices read as a dotted moire, fade to the
+                // layer's mean (its last mip) and the flat normal; the broad drifts below carry it.
+                let far = smoothstep(14.0, 40.0, dist) * glade * 0.7;
+                if far > 0.0 {
+                    a1 = mix(a1, textureSampleLevel(fp_albedo, fp_samp, vec2<f32>(0.5), 1, 12.0).rgb, far);
+                    n1 = mix(n1, vec3<f32>(0.0, 0.0, 1.0), far);
+                    o1 = mix(o1, textureSampleLevel(fp_ormh, fp_samp, vec2<f32>(0.5), 1, 12.0).rgb, far);
+                }
+            }
+            alb += w.y * a1;
+            nts += w.y * n1;
+            orm += w.y * o1;
         }
         if w.z > 0.01 {
             let u = fp_uv2(pw);
@@ -575,12 +691,42 @@ fn fragment(
         alb *= mix(vec3<f32>(1.0, 0.95, 0.85), vec3<f32>(0.80, 1.0, 0.76), fresh);
         // Pull the scanned floor's mustard back toward olive / earth (it read garish in low sun).
         alb = mix(vec3<f32>(dot(alb, vec3<f32>(0.3, 0.59, 0.11))), alb, 0.85);
+        // Open meadow (the castle meadow, the village, glades): the scanned grass/clover layer reads
+        // as dry straw-mustard on its own; pull it toward a living sward green (luminance kept, so it
+        // stays a photo texture, never the old flat neon lawn), lusher in broad patches.
+        let sward = glade * (1.0 - w.z);
+        if sward > 0.01 {
+            let al = dot(alb, vec3<f32>(0.2126, 0.7152, 0.0722));
+            let lushn = smoothstep(0.30, 0.75, ter_noise(wp * 0.045 + vec2<f32>(3.0, 17.0)));
+            // Late-summer meadow: mixed green with straw-gold highlights, not one mustard sheet.
+            // Damp (deep green, a touch darker): broad lush patches, low ground near water, the
+            // shade of the wood edge. Dry (straw-gold, paler): broad sun-baked swells, slopes.
+            let dryn = smoothstep(0.40, 0.80, ter_noise_rot(wp * 0.022, 0.682, 0.731) * 0.7
+                                              + ter_noise(wp * 0.085 + vec2<f32>(11.0, 2.0)) * 0.3);
+            let low = 1.0 - smoothstep(0.3, 1.8, in.world_position.y - SEA_Y);
+            let damp = clamp(lushn * 0.7 + (1.0 - glade) * 0.55 + low * 0.6 - dryn * 0.6
+                             - (1.0 - in.world_normal.y) * 2.0, 0.0, 1.0);
+            var tint = mix(vec3<f32>(0.74, 1.0, 0.50), vec3<f32>(0.62, 1.0, 0.44), damp);
+            tint = mix(tint, vec3<f32>(1.0, 0.90, 0.58), dryn * (1.0 - damp) * 0.75);
+            // Straw-gold tufts at the clump scale: seed heads and dry blades catching the sun.
+            let straw = smoothstep(0.58, 0.86, ter_noise_rot(wp * 0.75, 0.292, 0.956)) * (1.0 - damp * 0.7);
+            tint = mix(tint, vec3<f32>(1.0, 0.88, 0.58), straw * 0.45);
+            let lumw = vec3<f32>(0.2126, 0.7152, 0.0722);
+            let sw = mix(vec3<f32>(al) * tint / dot(tint, lumw), alb, 0.15)
+                   * mix(0.98, 0.80, damp) * (1.0 + 0.10 * straw);
+            alb = mix(alb, sw, sward * 0.92);
+        }
         // Micro self-shadow (above), contact darkening where roots / stones meet the floor (mask
         // B), and the cart-wheel ruts pressed back into the scanned path as damp, darker grooves
         // (the procedural rut tint applied earlier is overwritten by this mix).
         alb *= 1.0 - 0.4 * self_shadow;
         alb *= 1.0 - 0.35 * fmask.b;
+        // Plough furrows (`castle_ground::field_at`, fields carry G ~0.3-0.84, roads ~1 at their ruts):
+        // deeper, darker furrows and sun-dried pale ridges, so the strips read as ploughed rows.
         alb *= 1.0 - 0.45 * rut * rut_wear;
+        // Plough rows: damp dark furrow bottoms, sun-dried crumbly crests.
+        let frow = fld.rows * fld_on * fld.soil;
+        alb *= mix(1.0, mix(0.38, 1.25, fld.ridge), frow);
         // Wet mud + puddles on the trail: the path layer darkens toward damp earth, and water
         // pools in its LOW texels (height below a noise-varied water line, deeper in the ruts).
         // Puddles are near-black, glassy and flat, so the IBL sky and sun glint off them.
@@ -598,10 +744,26 @@ fn fragment(
         // Tangent frame of the planar XZ mapping: u runs along +X, v along +Z, and an OpenGL
         // normal map's +Y (image up = decreasing v) therefore points toward -Z.
         let gn = normalize(in.world_normal);
-        let tx = normalize(vec3<f32>(1.0, 0.0, 0.0) - gn * gn.x);
+        // +X projected off the normal — degenerate (normalize(0) = NaN) on a face whose normal IS ±X
+        // (an X-facing bank / terrace wall), which drew those wall slivers as black stair-step lines;
+        // fall back to +Z there.
+        let tx = select(normalize(vec3<f32>(1.0, 0.0, 0.0) - gn * gn.x),
+                       normalize(cross(vec3<f32>(0.0, 0.0, 1.0), gn)), abs(gn.x) > 0.98);
         let bz = cross(gn, tx);
         let n_ts = vec3<f32>(nts.xy * 1.7, max(nts.z, 0.2));
-        fp_nw = normalize(mix(tx * n_ts.x + bz * n_ts.y + gn * n_ts.z, gn, puddle));
+        var rut_tilt = vec3<f32>(0.0);
+        if rut > 0.003 {
+            let ro = 0.22 * forest.rut_region.zw;
+            let rgx = textureSampleLevel(rut_tex, rut_samp, rut_uv + vec2<f32>(ro.x, 0.0), 0.0).r
+                    - textureSampleLevel(rut_tex, rut_samp, rut_uv - vec2<f32>(ro.x, 0.0), 0.0).r;
+            let rgz = textureSampleLevel(rut_tex, rut_samp, rut_uv + vec2<f32>(0.0, ro.y), 0.0).r
+                    - textureSampleLevel(rut_tex, rut_samp, rut_uv - vec2<f32>(0.0, ro.y), 0.0).r;
+            // Height = -0.12 * rut  ->  N ~ (0.12 * drut/dx, 1, 0.12 * drut/dz); the taps are 0.44u apart.
+            rut_tilt = vec3<f32>(rgx, 0.0, rgz) * (0.12 / 0.44) * 2.2 * rut_in;
+        }
+        // Row relief: ~0.16u ridges, so the sun rakes light/dark bands along every row.
+        rut_tilt -= vec3<f32>(fld.grad.x, 0.0, fld.grad.y) * 0.16 * fld_on * fld.soil;
+        fp_nw = normalize(mix(tx * n_ts.x + bz * n_ts.y + gn * n_ts.z + rut_tilt, gn, puddle));
         fp_ao = orm.r;
         // Dry packed earth is matte: keep the trail rough so only real puddles glint.
         fp_rough = mix(max(orm.g, 0.82 * w.z) * mix(1.0, 0.85, rut * rut_wear), 0.04, puddle);
@@ -706,7 +868,10 @@ fn fragment(
     let wp3_dx = dpdx(in.world_position.xyz);
     let wp3_dy = dpdy(in.world_position.xyz);
     let alp_road = select(0.0, fmask.g, forest.pbr.x > 0.5);
-    let alp_k = alpine_apply(&pbr_input, in.world_position.xyz, in.world_normal, cliff, fp_w, alp_road, wp3_dx, wp3_dy, forest.params2.y);
+    // Open grass (and glades) under the scanned floor still take the alpine meadow where its zone
+    // reaches (the apron round the snow biome); only the wooded floor skips it, as before.
+    let alp_skip = select(fp_w, fp_w * (1.0 - glade), forest.pbr.x > 0.5);
+    let alp_k = alpine_apply(&pbr_input, in.world_position.xyz, in.world_normal, cliff, alp_skip, alp_road, wp3_dx, wp3_dy, forest.params2.y);
 
     // ── Wet ground (marsh) — the vertex-colour ALPHA carries a per-vertex wetness (0 = dry … 1 =
     //    standing bog), which `worldmap::ground_color` feathers over the biome BLEND band. Lower the
@@ -735,6 +900,14 @@ fn fragment(
     }
 
     var out: FragmentOutput;
+    // NaN backstop: a degenerate normal (normalize of a zero blend) or albedo must never reach the
+    // lighting — one bad fragment draws as a crisp black hairline. Checked on the bits, so a
+    // fast-math compiler can't fold the test away.
+    let n_bad = any((bitcast<vec3<u32>>(pbr_input.N) & vec3<u32>(0x7fffffffu)) >= vec3<u32>(0x7f800000u))
+        || dot(pbr_input.N, pbr_input.N) < 0.25;
+    let c_bad = any((bitcast<vec4<u32>>(pbr_input.material.base_color) & vec4<u32>(0x7fffffffu)) >= vec4<u32>(0x7f800000u));
+    pbr_input.N = select(pbr_input.N, normalize(in.world_normal), n_bad);
+    pbr_input.material.base_color = select(pbr_input.material.base_color, vec4<f32>(0.25, 0.22, 0.16, 0.0), c_bad);
     if (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_UNLIT_BIT) == 0u {
         out.color = apply_pbr_lighting(pbr_input);
     } else {

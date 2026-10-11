@@ -33,9 +33,19 @@ use crate::siege::{GamePhase, Siege};
 
 /// Sky / fog horizon colour — bright pale daytime blue.
 const SKY: Color = Color::srgb(0.70, 0.82, 0.93);
-/// Daytime distance-fog colour — warm cream haze (NOT the sky blue: a pale-blue fog reads as
-/// milky white-out across the whole frame, a warm haze reads as sunlit atmosphere).
-const FOG_DAY: Color = Color::srgb(0.85, 0.80, 0.66);
+/// Daytime distance-fog colour — a neutral, faintly cool aerial haze. (Was a warm cream
+/// `(0.85, 0.80, 0.66)`: with the capped fog + atmospherics haze it laid a sepia veil over every
+/// far surface at noon. Both haze layers are opacity-capped, so a cool haze no longer whites out.)
+const FOG_DAY: Color = Color::srgb(0.80, 0.84, 0.88);
+/// The noon sun's colour BEFORE the atmosphere. Bevy's `Atmosphere` filters every directional
+/// light through its transmittance LUT in PBR shading (`pbr_lighting.wgsl`, `#ifdef ATMOSPHERE`)
+/// and lights the sky with it, so the ground already receives a physically warmed sun — about
+/// (1, .91, .79) at our noon elevation, deep orange at the horizon. A faintly blue-white source
+/// comes out of that filter as a clean, barely-warm white. Linear.
+const NOON_SUN: Color = Color::linear_rgb(0.86, 0.92, 1.0);
+/// How much of the sun colour the neutral noon takes over once the sun is high (the remainder
+/// keeps a hint of each biome's authored key: desert a touch warmer, snow a touch cooler).
+const NOON_SUN_W: f32 = 0.85;
 const FOG_DENSITY: f32 = 0.009;
 /// Retain the distant surface's colour and shading, including beyond the fog ramp.
 /// A second, height-aware haze pass follows tonemapping; neither may flatten the world.
@@ -447,6 +457,13 @@ fn advance_sky(
             light.color = lerp_col(light.color, t.sun_color, bw);
             light.illuminance *= 1.0 + (t.sun_illuminance / BASE_SUN_LUX - 1.0) * bw;
         }
+        // Neutral noon. The warm-gold key above (and the warm biome sun colours) were tuned before
+        // the Atmosphere attenuated directional lights; stacked on its transmittance they turned the
+        // whole noon frame mustard (grass), peach (snow) and beige (sky — the Atmosphere is lit by
+        // this colour too). As the sun climbs, hand the key to `NOON_SUN`; a low sun keeps the
+        // authored warmth, so sunrise / golden hour / the war-dusk still glow.
+        let noon = smoothstep(0.12, 0.55, elev) * (1.0 - night);
+        light.color = lerp_col(light.color, NOON_SUN, NOON_SUN_W * noon);
     }
 
     // The MOON: night's real key light, parked at the anti-solar point (so it rises as the sun
@@ -473,7 +490,10 @@ fn advance_sky(
     if let Some(t) = tint {
         ambient.brightness *= 1.0 + (t.ambient_scale - 1.0) * day;
     }
-    ambient.color = lerp_col(Color::srgb(0.50, 0.60, 0.95), Color::srgb(1.0, 0.95, 0.86), day);
+    // Day fill = skylight, so faintly cool (was a warm (1.0, 0.95, 0.86): shade lit warm under a
+    // warm key left no cool/warm separation and tinted the whole frame sepia — shadowed snow went
+    // tan instead of blue).
+    ambient.color = lerp_col(Color::srgb(0.50, 0.60, 0.95), Color::srgb(0.92, 0.95, 1.0), day);
     // Golden hour: as the sun skims the horizon, warm the ambient fill too, so the whole
     // scene catches the sunset glow instead of just the sky band.
     ambient.color = lerp_col(ambient.color, Color::srgb(1.0, 0.80, 0.62), horizon * 0.40);
@@ -580,9 +600,9 @@ fn advance_sky(
     }
 }
 
-/// The fog's directional in-scatter (sun-toward-camera glow) — warm low, pale high.
+/// The fog's directional in-scatter (sun-toward-camera glow) — warm low, near-white high.
 fn light_glow_color(high: f32) -> Color {
-    lerp_col(Color::srgb(1.0, 0.6, 0.35), Color::srgb(1.0, 0.93, 0.78), high)
+    lerp_col(Color::srgb(1.0, 0.6, 0.35), Color::srgb(1.0, 0.96, 0.88), high)
 }
 
 /// The main camera's authored perspective projection. Shared by [`setup_camera`] and the RTS
@@ -604,7 +624,7 @@ pub fn default_projection() -> Projection {
 pub fn default_fog() -> DistanceFog {
     DistanceFog {
         color: depth_haze(SKY),
-        directional_light_color: Color::srgb(1.0, 0.93, 0.78).with_alpha(FOG_SUN_STRENGTH),
+        directional_light_color: Color::srgb(1.0, 0.96, 0.88).with_alpha(FOG_SUN_STRENGTH),
         // 7 (was 12): a wider sun-toward-camera in-scatter lobe — the haze catches the
         // light across a broad band of the frame instead of a tight sun-adjacent glow.
         directional_light_exponent: 7.0,
@@ -633,7 +653,7 @@ fn setup_camera(
     grading.global.post_saturation = 0.98; // driven live by grade.rs from LookSettings; kept in sync
     // Filmic soften (2026-07 cinematic pass): the old 1.5 midtone contrast + 1.1 saturation
     // read as harsh/oversaturated next to the reference look — muted greens, soft highlights.
-    grading.global.temperature = 0.03; // faint warm white-balance lean
+    grading.global.temperature = 0.0; // neutral white balance (driven live by grade.rs; kept in sync)
     grading.shadows.contrast = 1.02;
     grading.midtones.contrast = 1.22;
     grading.highlights.contrast = 0.98;
@@ -726,6 +746,14 @@ fn setup_camera(
     commands.spawn(Atmosphere::earth(medium));
 }
 
+/// The sun's (depth, normal) shadow bias; `FOREST_SHADOWBIAS="d,n"` overrides it for A/B shots.
+fn shadow_bias() -> (f32, f32) {
+    let v: Vec<f32> = std::env::var("FOREST_SHADOWBIAS")
+        .map(|s| s.split(',').filter_map(|p| p.trim().parse().ok()).collect())
+        .unwrap_or_default();
+    if v.len() == 2 { (v[0], v[1]) } else { (0.05, 2.8) }
+}
+
 /// Parse `FOREST_CAM="x,y,z,tx,ty,tz"` into a camera transform, if set.
 fn env_cam() -> Option<Transform> {
     let s = std::env::var("FOREST_CAM").ok()?;
@@ -816,15 +844,24 @@ fn setup_sun(mut commands: Commands) {
             // ground, filling in the small-scale detail the cascade shadow maps miss. Only renders
             // for cameras carrying `ContactShadows` (added on High/Ultra in `quality.rs`), so this
             // flag is free on Low. Needs the depth prepass (present whenever ContactShadows is).
-            contact_shadows_enabled: true,
+            // OFF for the sun (playtest: "flickering murów"). Bevy's contact-shadow march starts at
+            // the fragment with per-frame blue-noise jitter and no normal offset; on a wall face lit
+            // at a grazing angle it self-hits along the stone relief, so the ruin keep's east face
+            // carried dark streaks that changed every frame. TAA can't converge them (the stone
+            // texture's contrast clamps its history). A/B on a still camera, face region, mean
+            // |dL| / p99 / % > 8: on 0.72 / 12.9 / 2.1, off 0.26 / 2.4 / 0.0. Raising the cascade
+            // bias (0.73) or retuning steps, thickness or length (0.69-0.96) didn't help. Cascades +
+            // SSAO still ground the props.
+            // FOREST_SUN_CONTACT=1 turns it back on for A/B.
+            contact_shadows_enabled: std::env::var("FOREST_SUN_CONTACT").is_ok_and(|v| v == "1"),
             // Shadow acne fix: Bevy's default bias (depth 0.02 / normal 1.8) is too small for the
             // big flat walls (castle/fortress/hall) at a grazing low-sun angle — the surface
             // shadow-maps ITSELF into a jagged stippled "acne" pattern. Bumped depth→0.05,
             // normal→2.8 to push the comparison off the lit surface. Kept moderate so cast shadows
             // don't visibly detach from their casters (peter-panning); small-scale ground contact
             // is handled by `contact_shadows` above, not the cascade, so this can run a touch high.
-            shadow_depth_bias: 0.05,
-            shadow_normal_bias: 2.8,
+            shadow_depth_bias: shadow_bias().0,
+            shadow_normal_bias: shadow_bias().1,
             ..default()
         },
         // God rays are screen-space now (`godrays.rs`), so the sun needs no `VolumetricLight`.
@@ -859,8 +896,8 @@ fn setup_sun(mut commands: Commands) {
             shadow_maps_enabled: false,
             // Same acne fix as the sun (see there): the moon is night's key light at an even
             // shallower angle, so it needs the bias bump just as much on the fortress walls.
-            shadow_depth_bias: 0.05,
-            shadow_normal_bias: 2.8,
+            shadow_depth_bias: shadow_bias().0,
+            shadow_normal_bias: shadow_bias().1,
             ..default()
         },
         CascadeShadowConfigBuilder {

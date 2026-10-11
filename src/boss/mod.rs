@@ -293,6 +293,8 @@ fn spawn_wardens(
         let scale = models::root_scale(biome);
         let spec = models::build(biome);
         let facing = i as f32 * 1.3;
+        // For framing a warden with `FOREST_CAM` (its face looks along (sin facing, 0, cos facing)).
+        info!("warden {biome:?} at {:.1},{:.2},{:.1} facing {facing:.2}", pos.x, y, pos.y);
         let root = commands
             .spawn((
                 Transform {
@@ -325,18 +327,43 @@ fn spawn_wardens(
                 Health { hp: max_hp(1), max: max_hp(1) },
             ))
             .id();
-        commands.entity(root).with_children(|p| {
-            p.spawn((Mesh3d(meshes.add(spec.torso)), MeshMaterial3d(mat.clone()), Transform::default()));
-            for part in spec.parts {
-                p.spawn((
-                    Mesh3d(meshes.add(part.mesh)),
-                    MeshMaterial3d(mat.clone()),
-                    Transform::from_translation(part.pivot),
-                    BossPart { kind: part.kind },
-                ));
-            }
-        });
+        spawn_body(&mut commands, root, biome, spec, &mut meshes, &mat, true);
     }
+}
+
+/// Hang a warden's body under `root`: the realistic kit build ([`models::kit_parts`]) when the kit
+/// carries every piece, else the procedural `spec`. `rig` tags the limbs with [`BossPart`] so
+/// [`boss_limbs`] swings them (the standalone viewer shows the rest pose without it).
+pub(crate) fn spawn_body(
+    commands: &mut Commands,
+    root: Entity,
+    biome: Biome,
+    spec: models::BossSpec,
+    meshes: &mut Assets<Mesh>,
+    mat: &Handle<crate::creature::CreatureMaterial>,
+    rig: bool,
+) {
+    if let (Some(parts), Some(kit)) = (models::kit_parts(biome), crate::realforest::get()) {
+        if parts.iter().all(|(name, _, _)| kit.has(name)) {
+            for (name, kind, pivot) in parts {
+                let mut e = commands.spawn((Transform::from_translation(pivot), Visibility::default(), ChildOf(root)));
+                if let (Some(kind), true) = (kind, rig) {
+                    e.insert(BossPart { kind });
+                }
+                kit.attach_static(&mut e, name, Transform::IDENTITY);
+            }
+            return;
+        }
+    }
+    commands.entity(root).with_children(|p| {
+        p.spawn((Mesh3d(meshes.add(spec.torso)), MeshMaterial3d(mat.clone()), Transform::default()));
+        for part in spec.parts {
+            let mut c = p.spawn((Mesh3d(meshes.add(part.mesh)), MeshMaterial3d(mat.clone()), Transform::from_translation(part.pivot)));
+            if rig {
+                c.insert(BossPart { kind: part.kind });
+            }
+        }
+    });
 }
 
 /// New Game / Restart / Play Again (a fresh in-process run — no `GameLoaded`, so `despawn_slain_wardens`
@@ -385,6 +412,14 @@ fn despawn_slain_wardens(
 }
 
 // ── Brain: roam → aggro-on-hit → chase + melee + signature ──────────────────────────────
+
+/// Screenshot hook: `FOREST_WARDEN_HOLD=<yaw radians>` keeps passive wardens standing at home,
+/// turned to that yaw (0 = facing +Z), so a `FOREST_CAM` capture can frame a warden's face
+/// (they otherwise roam, so the pose at capture time is a lottery). Unset in play.
+fn hold_yaw() -> Option<f32> {
+    static HOLD: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+    *HOLD.get_or_init(|| std::env::var("FOREST_WARDEN_HOLD").ok().and_then(|s| s.trim().parse().ok()))
+}
 
 #[allow(clippy::too_many_arguments)]
 fn boss_brain(
@@ -537,6 +572,10 @@ fn boss_brain(
                     }
                 }
             }
+        } else if let Some(yaw) = hold_yaw() {
+            // Screenshot hook: stand at home, turned to the given yaw (see `hold_yaw`).
+            b.facing = yaw;
+            b.moving = false;
         } else {
             // Passive roam around its home region — but if it strayed far (e.g. just broke off a
             // chase), march straight home first.

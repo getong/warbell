@@ -267,7 +267,16 @@ fn alpine_apply(pbr: ptr<function, PbrInput>, p: vec3<f32>, gn_in: vec3<f32>, cl
     // reads as snow caught between grass tufts and stones rather than a soft cross-fade.
     let under = (mead * (1.0 - hm) + scree * (1.0 - hc)) / max(mead + scree, 1e-3);
     let wsnow = snow + under * 0.45 * snow * (1.0 - snow) * 4.0;
-    var w = vec3<f32>(wsnow, mead + hm * 0.35 * mead, scree + hc * 0.35 * scree);
+    // Weight ONLY the layers the combine below actually draws (same gates as its branches). The
+    // old weights kept a layer under its 0.004 gate in the normalisation, so where every layer was
+    // that faint (cov just past its 0.003 cut-off — a thin contour along the trail edges) the
+    // weights summed to 1 but nothing was added: albedo 0 and normalize(0) = NaN normal, drawn as
+    // a crisp black hairline wandering across the snow and the trails.
+    var w = vec3<f32>(
+        select(0.0, wsnow, snow_on),
+        select(0.0, mead + hm * 0.35 * mead, mead > 0.004),
+        select(0.0, scree + hc * 0.35 * scree, scree > 0.004),
+    );
     let wm = max(w.x, max(w.y, w.z));
     w = max(w - (wm - 0.30), vec3<f32>(0.0));
     let wsum = w.x + w.y + w.z;
@@ -276,7 +285,11 @@ fn alpine_apply(pbr: ptr<function, PbrInput>, p: vec3<f32>, gn_in: vec3<f32>, cl
     }
 
     // ── combine ──
-    let tx = normalize(vec3<f32>(1.0, 0.0, 0.0) - gn * gn.x);
+    // +X projected off the normal — degenerate (normalize(0) = NaN) on a face whose normal IS ±X
+    // (an X-facing bank / terrace wall), which drew those wall slivers as black stair-step lines;
+    // fall back to +Z there.
+    let tx = select(normalize(vec3<f32>(1.0, 0.0, 0.0) - gn * gn.x),
+                   normalize(cross(vec3<f32>(0.0, 0.0, 1.0), gn)), abs(gn.x) > 0.98);
     let bz = cross(gn, tx);
     var alb = vec3<f32>(0.0);
     var nw = vec3<f32>(0.0);
@@ -308,16 +321,29 @@ fn alpine_apply(pbr: ptr<function, PbrInput>, p: vec3<f32>, gn_in: vec3<f32>, cl
         }
         let mal = mix(l1.alb, mmean, far_m);
         let ml = dot(mal, vec3<f32>(0.2126, 0.7152, 0.0722));
-        var ma = mix(vec3<f32>(ml), mal, 1.35) * vec3<f32>(0.80, 1.04, 0.66);
+        var ma = mix(vec3<f32>(ml), mal, 1.35) * vec3<f32>(0.64, 1.04, 0.50);
         let lush = smoothstep(0.35, 0.75, nb);
         ma = mix(ma, ma * vec3<f32>(0.82, 1.06, 0.78), lush * 0.6);
         ma = mix(ma, vec3<f32>(ml) * vec3<f32>(1.10, 1.02, 0.80), smoothstep(0.20, 0.55, m.r) * 0.45);
         // Inside the alpine zone (G) the valley apron is a high, grazed meadow, not a lowland
         // lawn: duller and straw-brown, with dark earth showing through in broken patches.
         let alp_m = smoothstep(0.5, 1.0, m.g);
-        ma = mix(ma, vec3<f32>(ml) * vec3<f32>(1.06, 0.96, 0.70), alp_m * 0.55);
-        let earth = smoothstep(0.52, 0.72, a_noise(p.xz * 0.55 + vec2<f32>(13.0, -7.0)) * 0.7 + nb * 0.3);
-        ma = mix(ma, vec3<f32>(ml) * vec3<f32>(0.62, 0.50, 0.40), alp_m * earth * 0.6);
+        // Patchy, not a sheet: the straw cast comes and goes with a broad noise.
+        let alp_dry = smoothstep(0.35, 0.70, a_noise(p.xz * 0.05 + vec2<f32>(-21.0, 4.0)));
+        ma = mix(ma, vec3<f32>(ml) * vec3<f32>(1.06, 0.96, 0.66), alp_m * (0.12 + 0.40 * alp_dry));
+        // Damp hollows and runnels stay a deeper green; it reads from afar too (where the turf
+        // itself has faded to its mean), so the apron is never one flat olive sheet.
+        let alp_damp = smoothstep(0.45, 0.80, a_noise(p.xz * 0.11 + vec2<f32>(9.0, 31.0))) * (1.0 - alp_dry);
+        ma = mix(ma, ma * vec3<f32>(0.70, 0.92, 0.62), alp_damp * 0.7);
+        // Bare-earth patches. `a_noise` sits on an axis-aligned lattice and the old narrow
+        // threshold (0.52-0.72 of one octave) cut its ~1.8u cells into blocky 45-degree diamonds
+        // and stair-steps all over the apron; a rotated, warped lattice plus a finer second octave
+        // and a wider ramp make them ragged and organic.
+        let er = vec2<f32>(0.80 * p.x - 0.60 * p.z, 0.60 * p.x + 0.80 * p.z);
+        let ew = vec2<f32>(a_noise(er * 0.19 + vec2<f32>(2.0, 9.0)), a_noise(er * 0.19 + vec2<f32>(-7.0, 4.0))) - 0.5;
+        let earth = smoothstep(0.48, 0.80, a_noise(er * 0.55 + ew * 1.6 + vec2<f32>(13.0, -7.0)) * 0.55
+            + a_noise(vec2<f32>(-er.y, er.x) * 1.4 + vec2<f32>(3.0, 5.0)) * 0.17 + nb * 0.28);
+        ma = mix(ma, vec3<f32>(ml) * vec3<f32>(0.62, 0.50, 0.40), alp_m * earth * 0.4);
         alb += w.y * ma;
         nw += w.y * nm;
         // The AO / roughness tile too (AO darkens the turf's hollows in the same dashed rows).
@@ -360,6 +386,10 @@ fn alpine_apply(pbr: ptr<function, PbrInput>, p: vec3<f32>, gn_in: vec3<f32>, cl
     // Broad value drift so no layer reads as a printed repeat from a distance.
     alb *= 0.90 + 0.20 * nb;
 
+    // Nothing drawn (every layer under its gate): leave the ground as it is.
+    if dot(nw, nw) < 1e-8 {
+        return 0.0;
+    }
     let k = cov;
     let base = (*pbr).material.base_color;
     (*pbr).material.base_color = vec4<f32>(mix(base.rgb, alb, k), base.a);

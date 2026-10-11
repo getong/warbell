@@ -558,8 +558,19 @@ fn disable_gpu_clustering_on_weak_gpu(
     }
 }
 
+/// The camera's contact-shadow settings (`FOREST_CONTACT=steps,thickness,length` overrides).
+fn contact_shadows(env: Option<&str>) -> ContactShadows {
+    let v: Vec<f32> = env.map(|s| s.split(',').filter_map(|p| p.trim().parse().ok()).collect()).unwrap_or_default();
+    if v.len() == 3 {
+        return ContactShadows { linear_steps: v[0] as u32, thickness: v[1], length: v[2] };
+    }
+    ContactShadows::default()
+}
+
 /// A/B staging knobs on top of any preset: `FOREST_AA=off|low|high|ultra|taa`,
-/// `FOREST_SSAO=off|medium|ultra`.
+/// `FOREST_SSAO=off|medium|ultra`. (Read in `apply_quality`: `FOREST_SHADOWFILTER=gaussian|temporal|
+/// hardware`, `FOREST_CONTACT=off`; in `scene.rs`: `FOREST_SHADOWBIAS=depth,normal`; in
+/// `realforest`: `FOREST_NONORMAL=set[,set..]` drops those kit sets' normal maps.)
 fn env_overrides(settings: &mut GraphicsSettings) {
     match std::env::var("FOREST_AA").ok().as_deref() {
         Some("off") => settings.antialias = AaLevel::Off,
@@ -757,7 +768,14 @@ fn apply_quality(
 
         // Shadow filtering: with TAA the temporal filter resolves soft, stable penumbrae (leaf
         // shadows no longer crawl); otherwise the 9-tap Gaussian.
-        e.insert(if taa { ShadowFilteringMethod::Temporal } else { ShadowFilteringMethod::Gaussian });
+        e.insert(match std::env::var("FOREST_SHADOWFILTER").ok().as_deref() {
+            // A/B knob (flicker hunts): force one filter regardless of the AA level.
+            Some("gaussian") => ShadowFilteringMethod::Gaussian,
+            Some("temporal") => ShadowFilteringMethod::Temporal,
+            Some("hardware") => ShadowFilteringMethod::Hardware2x2,
+            _ if taa => ShadowFilteringMethod::Temporal,
+            _ => ShadowFilteringMethod::Gaussian,
+        });
 
         // Normal prepass: dead weight when nothing consumes it (SSAO + outline both off), so drop it.
         if normal_prepass {
@@ -807,8 +825,15 @@ fn apply_quality(
         // Depth prepass + contact shadows ride one gate: contact shadows (0.19) read the prepass
         // depth, so they must share the exact on/off as the prepass. Stripped together when nothing
         // (DoF/SSAO/outline) needs depth — that's the ~3 ms `early prepass` in the F2 profiler.
-        if needs_depth {
-            e.insert((DepthPrepass, ContactShadows::default()));
+        // `FOREST_CONTACT=off`: A/B knob, keep the depth prepass but drop the contact shadows;
+        // `FOREST_CONTACT=steps,thickness,length` overrides the settings.
+        let contact_env = std::env::var("FOREST_CONTACT").ok();
+        let contact = contact_env.as_deref() != Some("off");
+        if needs_depth && contact {
+            e.insert((DepthPrepass, contact_shadows(contact_env.as_deref())));
+        } else if needs_depth {
+            e.insert(DepthPrepass);
+            e.remove::<ContactShadows>();
         } else {
             e.remove::<DepthPrepass>();
             e.remove::<ContactShadows>();
