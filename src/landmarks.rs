@@ -549,7 +549,7 @@ fn discover(
         });
         floats.0.push(FloatReq {
             world: Vec3::new(p.x, p.y + 2.5, p.z),
-            text: lm.lore.into(),
+            text: wrap_lore(lm.lore),
             color: Color::srgb(0.85, 0.85, 0.95),
             scale: 0.9,
         });
@@ -592,6 +592,28 @@ fn discover(
             });
             cues.write(AudioCue::LevelUp);
         }
+    }
+}
+
+/// A lore line longer than [`LORE_LINE`] chars is broken onto two lines at the space nearest its
+/// middle (the story sites' journal lines run ~90 chars — too wide for one float on a small window).
+const LORE_LINE: usize = 56;
+
+fn wrap_lore(lore: &str) -> String {
+    let n = lore.chars().count();
+    if n <= LORE_LINE {
+        return lore.to_string();
+    }
+    let mid = n / 2;
+    let best = lore
+        .char_indices()
+        .enumerate()
+        .filter(|(_, (_, c))| *c == ' ')
+        .min_by_key(|(i, _)| i.abs_diff(mid))
+        .map(|(_, (b, _))| b);
+    match best {
+        Some(b) => format!("{}\n{}", &lore[..b], &lore[b + 1..]),
+        None => lore.to_string(),
     }
 }
 
