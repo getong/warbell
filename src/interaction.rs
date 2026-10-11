@@ -229,7 +229,7 @@ fn drive_interaction(
     let trial_running = landmark_io.trial.is_active();
     let mut nearest_landmark: Option<(Entity, Vec2, f32, bool)> = None; // (e, at, dist, sealed)
     for (e, lm, tf) in &landmark_io.landmarks {
-        if !lm.is_discovered() || trial_running {
+        if !lm.is_discovered() || lm.is_story() || trial_running {
             continue;
         }
         let at = Vec2::new(tf.translation.x, tf.translation.z);

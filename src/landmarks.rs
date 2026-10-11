@@ -37,6 +37,9 @@ use crate::game_state::SimAppExt;
 
 /// Walk this close to an unfound landmark → it's discovered.
 const DISCOVER_R: f32 = 6.0;
+/// Discovery radius of a minor story site ([`attach_story`]): its footprint is ~3u, so the hero
+/// finds it on walking up to the scene's edge.
+const STORY_DISCOVER_R: f32 = 7.5;
 /// Shrine cooldown (s) between prayers — just under a prep day, so ~once per cycle per shrine.
 const SHRINE_CD: f32 = 120.0;
 /// Shrine buff duration (ms) — longer than a consumable's 12s; it's a trek to earn it.
@@ -99,6 +102,10 @@ pub struct Landmark {
     gear_claimed: bool,
     /// Next `elapsed_secs` at which the shrine may be prayed at again.
     shrine_ready_at: f32,
+    /// A minor STORY site ([`attach_story`], e.g. `stories_cold`'s wrecked convoy): found for its
+    /// lore line + a little gold, but no beacon, no shrine, no sealed gear, and it stays out of the
+    /// five-landmark [`Discoveries`] tally.
+    story: bool,
 }
 
 impl Landmark {
@@ -114,6 +121,7 @@ impl Landmark {
             gear: "",
             gear_claimed,
             shrine_ready_at: 0.0,
+            story: false,
         }
     }
 }
@@ -153,6 +161,11 @@ impl Landmark {
     /// trial, an empty or already-claimed one offers the shrine.
     pub fn has_gear(&self) -> bool {
         !self.gear.is_empty()
+    }
+
+    /// A minor story site (no shrine / trial / tally) — see [`attach_story`].
+    pub fn is_story(&self) -> bool {
+        self.story
     }
 
     /// Mark the gear claimed on a loaded game (the live path is winning the trial).
@@ -272,8 +285,27 @@ pub fn attach_custom(
         gear,
         gear_claimed: false,
         shrine_ready_at: 0.0,
+        story: false,
     });
     spawn_beacon(commands, meshes, materials, name, pos, beacon);
+}
+
+/// Make `entity` (a story set-piece's root, its `Transform` at the scene centre) a minor
+/// discoverable: on first approach the hero gets "Discovered: <name>", the `lore` line, the chime
+/// and a little gold. No beacon, no shrine, no gear, not counted in the five-landmark tally; saved
+/// by name with the landmarks.
+pub fn attach_story(commands: &mut Commands, entity: Entity, name: &'static str, lore: &'static str) {
+    commands.entity(entity).try_insert(Landmark {
+        name,
+        lore,
+        buff: BuffKind::Power,
+        buff_mag: 0.0,
+        discovered: false,
+        gear: "",
+        gear_claimed: false,
+        shrine_ready_at: 0.0,
+        story: true,
+    });
 }
 
 /// Raise a column of emissive will-o'-wisp motes over a landmark. Tagged [`BiomeEntity`] so the
@@ -375,14 +407,19 @@ impl Plugin for LandmarksPlugin {
 /// they dress the shrine without blocking the rune-trial arena.
 fn clear_around_landmarks(
     mut commands: Commands,
-    landmarks: Query<&Transform, With<Landmark>>,
+    landmarks: Query<(&Transform, &Landmark)>,
     trees: Query<(Entity, &Transform), With<crate::verbs::ChopTree>>,
     mut done: Local<bool>,
 ) {
     if *done {
         return;
     }
-    let centers: Vec<Vec2> = landmarks.iter().map(|tf| Vec2::new(tf.translation.x, tf.translation.z)).collect();
+    // Story sites keep their surroundings (their own planner already holds the scatter off them).
+    let centers: Vec<Vec2> = landmarks
+        .iter()
+        .filter(|(_, lm)| !lm.story)
+        .map(|(tf, _)| Vec2::new(tf.translation.x, tf.translation.z))
+        .collect();
     if centers.is_empty() {
         return; // landmarks not planted yet — try again next frame
     }
@@ -407,11 +444,11 @@ fn reset_discoveries(mut disc: ResMut<Discoveries>) {
 
 /// Latch the landmark count into [`Discoveries::total`] once they've spawned (drives the
 /// all-found bonus). Runs until it sees a non-zero count, then idles.
-fn track_total(mut disc: ResMut<Discoveries>, q: Query<(), With<Landmark>>, mut done: Local<bool>) {
+fn track_total(mut disc: ResMut<Discoveries>, q: Query<&Landmark>, mut done: Local<bool>) {
     if *done {
         return;
     }
-    let n = q.iter().count() as u32;
+    let n = q.iter().filter(|lm| !lm.story).count() as u32;
     if n > 0 {
         disc.total = n;
         *done = true;
@@ -491,7 +528,8 @@ fn discover(
             continue;
         }
         let p = tf.translation;
-        if Vec2::new(p.x, p.z).distance(hero.pos) > DISCOVER_R {
+        let reach = if lm.story { STORY_DISCOVER_R } else { DISCOVER_R };
+        if Vec2::new(p.x, p.z).distance(hero.pos) > reach {
             continue;
         }
         lm.discovered = true;
@@ -499,7 +537,7 @@ fn discover(
         // A little pocket gold for the find — the real prize is the SEALED gear, earned by trial.
         // The purse stays deliberately small (gold belongs to the town's tithe + bounties).
         let factor = frontier_factor(p.x, p.z);
-        let gold = (10.0 + factor * 30.0).round() as i64;
+        let gold = if lm.story { (5.0 + factor * 10.0).round() as i64 } else { (10.0 + factor * 30.0).round() as i64 };
         player.0.add_gold(gold);
 
         // Announce.
@@ -534,6 +572,9 @@ fn discover(
         cues.write(AudioCue::Gold);
         // Dedicated discovery bark (was borrowing the generic "Ooh, a chest" ChestOpen line).
         speak.write(crate::audio::Speak::new(crate::audio::Concept::LandmarkFound));
+        if lm.story {
+            continue; // minor story site: no tally, no bonus
+        }
 
         // The beacon is NOT snuffed on discovery any more — `sync_beacons` keeps it lit as a
         // "boost ready" marker (sealed-gear trial / off-cooldown shrine) and only hides it while
@@ -573,7 +614,7 @@ fn shrine(
     let now = time.elapsed_secs();
     for LandmarkInteract(e) in events.read() {
         let Ok((mut lm, tf)) = q.get_mut(*e) else { continue };
-        if !lm.discovered {
+        if !lm.discovered || lm.story {
             continue;
         }
         // Sealed gear → that's the trial's job (`start_rune_trial`), not a prayer. (Vignettes carry
