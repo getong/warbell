@@ -183,9 +183,9 @@ const MATERIALS: [(&str, &str, bool); 22] = [
     ("s_rock", "s_rock", false),
     ("s_earth", "s_earth", false),
     ("s_timber", "s_timber", false),
-    // Settled snow on the cold-biome story scenes (stories_cold.glb): untextured, vertex colour is
-    // the snow's tint, matte (see `try_build`).
-    ("s_snow", "", false),
+    // Settled snow on the cold-biome story scenes (stories_cold.glb): the Poly Haven snow_02 scan
+    // (tools/blender_forest/snow_set.sh); vertex colour adds the blue in the shaded drift folds.
+    ("s_snow", "s_snow", false),
     // Creature parts (creatures.glb, animals.glb, people.glb) — never drawn with this material
     // (recoloured CPU meshes on the creature material); the entry only lets the loader accept them.
     ("creature", "", false),
@@ -960,12 +960,7 @@ fn try_build(
     let mut mat_index = HashMap::new();
     for (name, set, card) in MATERIALS {
         mat_index.insert(name.to_string(), mats.len());
-        let mut m = pbr_material(images, set, card)?;
-        if name == "s_snow" {
-            // Wind-packed snow: matte with a soft sheen, not the waxy fruit skin.
-            m.perceptual_roughness = 0.78;
-            m.reflectance = 0.3;
-        }
+        let m = pbr_material(images, set, card)?;
         // Snow-dusted twin for the snow biome (`alpine::snowkit`): same textures, crown tint kept.
         let tint = match name {
             "canopy" => 0.6,

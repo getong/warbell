@@ -77,16 +77,18 @@ const LANDMARK_KEEP: f32 = 14.0;
 /// [`MIN_GAP`] past their footprints.
 const SAME_SCENE_SPACING: f32 = 70.0;
 const MIN_GAP: f32 = 12.0;
-/// Clearance from a pass trail's centreline beyond the footprint.
+/// Rocky scenes: clearance from a pass trail's centreline beyond the footprint.
 const TRAIL_KEEP: f32 = 3.0;
-/// A snow scene wants real snow underfoot (`alpine::snow_cover`, height-driven): the snow biome's
-/// low apron is green meadow with snow patches, where a buried cabin reads as a white blob on
-/// grass. Strict cover first, then a patchier floor, and last the apron itself (snow candidates are
-/// tried snowiest-first, so even then the scene sits as high toward the snowline as flat ground
-/// allows). The massif terrain is still being reshaped: once it grows flat snowy benches the
-/// planner takes them with no code change.
+/// A snow scene stands on real snow (`alpine::snow_cover`, height-driven) — never on the snow
+/// biome's green apron, where a buried cabin reads as a white blob on grass. Up on the massif the
+/// flat ground is the pass VALLEY floors beside the trails and the col, so snow scenes skip the
+/// rocky rules that ban the whole cliffy shelf / pass corridor and only keep [`SNOW_ROAD_KEEP`] off
+/// the painted trail strip itself.
 const SNOW_COVER: f32 = 0.6;
-const SNOW_COVER_RELAXED: f32 = 0.4;
+const SNOW_ROAD_KEEP: f32 = 2.0;
+/// Last-resort flatness for snow scenes: the model is then sunk by part of the spread
+/// ([`seat_y`]) and its drift skirts swallow the uphill side.
+const FLAT_DELTA_SNOW_MAX: f32 = 1.0;
 
 #[derive(Clone, Debug, PartialEq)]
 struct Site {
@@ -126,12 +128,52 @@ fn seg_dist(p: Vec2, a: Vec2, b: Vec2) -> f32 {
     p.distance(a + ab * t)
 }
 
+/// `(centre, lowest, highest)` ground height over a footprint (the same rings [`ground_ok`] probes).
+fn footprint_heights(x: f32, z: f32, foot: f32) -> Option<(f32, f32, f32)> {
+    let y0 = crate::worldmap::ground_at_world(x, z)?;
+    let (mut lo, mut hi) = (y0, y0);
+    for (n, r) in [(16, foot), (8, foot * 0.55)] {
+        for k in 0..n {
+            let a = k as f32 * (TAU / n as f32);
+            let y = crate::worldmap::ground_at_world(x + a.cos() * r, z + a.sin() * r)?;
+            lo = lo.min(y);
+            hi = hi.max(y);
+        }
+    }
+    Some((y0, lo, hi))
+}
+
+/// Base height to seat a scene at: the centre, sunk by part of the footprint's height spread (never
+/// below its lowest point) so the downhill edge doesn't float; the contact parts / drift skirts run
+/// below y=0 and swallow the uphill side.
+fn seat_y(x: f32, z: f32, foot: f32) -> f32 {
+    match footprint_heights(x, z, foot) {
+        Some((y0, lo, hi)) => (y0 - 0.6 * (hi - lo)).max(lo) - 0.04,
+        None => crate::worldmap::ground_at_world(x, z).unwrap_or(0.0) - 0.04,
+    }
+}
+
 /// Ground + keep-out rules for a footprint of radius `foot` centred at `(x, z)`, all of it inside
 /// `biome` and no higher spread than `flat`. Shared by the plan, the spawn re-check and the test.
+/// Snow scenes additionally need [`SNOW_COVER`] and use the valley-floor road rule (see there).
 fn ground_ok(x: f32, z: f32, foot: f32, biome: Biome, flat: f32, trails: &[Vec<Vec2>]) -> bool {
     let Some(y0) = crate::worldmap::ground_at_world(x, z) else { return false };
     if crate::worldmap::tile_biome_world(x, z) != Some(biome) {
         return false;
+    }
+    let snow = biome == Biome::Snow;
+    if snow && crate::alpine::snow_cover(x, z) < SNOW_COVER {
+        return false;
+    }
+    // The painted trail strip + a margin stays clear of a snow scene's whole footprint.
+    if snow {
+        for k in 0..16 {
+            let a = k as f32 * (TAU / 16.0);
+            let r = foot + SNOW_ROAD_KEEP;
+            if crate::roads::on_road(x + a.cos() * r, z + a.sin() * r) {
+                return false;
+            }
+        }
     }
     let (mut lo, mut hi) = (y0, y0);
     for (n, r) in [(16, foot), (8, foot * 0.55)] {
@@ -146,7 +188,8 @@ fn ground_ok(x: f32, z: f32, foot: f32, biome: Biome, flat: f32, trails: &[Vec<V
                 || crate::roads::on_road(px, pz)
                 || crate::worldmap::is_river_world(px, pz)
                 || crate::worldmap::is_pool_world(px, pz)
-                || crate::worldmap::cliff_shelf_world(px, pz)
+                || (!snow && crate::worldmap::cliff_shelf_world(px, pz))
+                || (snow && crate::alpine::snow_cover(px, pz) < SNOW_COVER)
                 || crate::town::near_build_plot(px, pz)
                 || crate::castle::in_footprint(px, pz)
                 || crate::camps::in_clearing(px, pz)
@@ -158,13 +201,13 @@ fn ground_ok(x: f32, z: f32, foot: f32, biome: Biome, flat: f32, trails: &[Vec<V
         }
     }
     let q = Vec2::new(x, z);
-    !crate::worldmap::cliff_shelf_world(x, z)
+    (snow || !crate::worldmap::cliff_shelf_world(x, z))
         && !crate::bridges::near_bridge(x, z, foot + 0.5)
         && crate::ork_fortress::blight_edge_world(x, z) < -(foot + 4.0)
         && q.length() > crate::worldmap::SAFE_R * crate::worldmap::MAP_SCALE + TOWN_KEEP + foot
         && crate::camps::plan().iter().all(|c| c.centre.distance(q) > CAMP_KEEP + foot)
         && crate::ruins::landmark_sites().iter().all(|l| l.pos.distance(q) > LANDMARK_KEEP + foot)
-        && trails.iter().all(|t| t.windows(2).all(|w| seg_dist(q, w[0], w[1]) > foot + TRAIL_KEEP))
+        && (snow || trails.iter().all(|t| t.windows(2).all(|w| seg_dist(q, w[0], w[1]) > foot + TRAIL_KEEP)))
 }
 
 /// Free of every other planned piece: this plan's own sites, the roadside story pieces, wayside
@@ -223,19 +266,15 @@ fn seat(scene: usize, want: usize, planned: &mut Vec<Site>, trails: &[Vec<Vec2>]
         cands.sort_by(|a, b| cover(b).total_cmp(&cover(a)));
     }
     let mut got = 0;
-    let snowy = |cover: f32| if s.biome == Biome::Snow { cover } else { 0.0 };
     let min = MIN_PER_SCENE.min(want);
-    let passes = [(FLAT_DELTA, want, snowy(SNOW_COVER)), (FLAT_DELTA_RELAXED, min, snowy(SNOW_COVER)),
-        (FLAT_DELTA_RELAXED, min, snowy(SNOW_COVER_RELAXED)), (FLAT_DELTA, want, 0.0), (FLAT_DELTA_RELAXED, min, 0.0)];
-    for (flat, need, cover) in passes {
+    let snow_max = if s.biome == Biome::Snow { FLAT_DELTA_SNOW_MAX } else { FLAT_DELTA_RELAXED };
+    let passes = [(FLAT_DELTA, want), (FLAT_DELTA_RELAXED, min), (snow_max, min)];
+    for (flat, need) in passes {
         for q in &cands {
             if got >= need {
                 break;
             }
-            if clear_of_others(*q, scene, planned, visual)
-                && (cover <= 0.0 || crate::alpine::snow_cover(q.x, q.y) >= cover)
-                && ground_ok(q.x, q.y, s.foot, s.biome, flat, trails)
-            {
+            if clear_of_others(*q, scene, planned, visual) && ground_ok(q.x, q.y, s.foot, s.biome, flat, trails) {
                 planned.push(Site { scene, pos: *q, yaw: site_yaw(scene, *q) });
                 got += 1;
             }
@@ -272,6 +311,11 @@ pub fn plan() {
     *SITES.lock().unwrap() = planned;
 }
 
+/// The loosest flatness a scene of `biome` is ever planned on.
+fn max_flat(biome: Biome) -> f32 {
+    if biome == Biome::Snow { FLAT_DELTA_SNOW_MAX } else { FLAT_DELTA_RELAXED }
+}
+
 fn register_blockers(scene: usize, p: Vec2, yaw: f32) {
     let rot = Quat::from_rotation_y(yaw);
     for &(x, z, hw, hd, local_yaw) in SCENES[scene].solids {
@@ -284,7 +328,7 @@ fn register_blockers(scene: usize, p: Vec2, yaw: f32) {
 /// (relaxed flatness — it passed the plan) and solids placed since.
 fn still_free(site: &Site, trails: &[Vec<Vec2>]) -> bool {
     let s = &SCENES[site.scene];
-    ground_ok(site.pos.x, site.pos.y, s.foot, s.biome, FLAT_DELTA_RELAXED, trails)
+    ground_ok(site.pos.x, site.pos.y, s.foot, s.biome, max_flat(s.biome), trails)
         && !crate::blockers::any_within(site.pos.x, site.pos.y, s.foot + 0.2)
 }
 
@@ -308,7 +352,7 @@ pub fn populate(commands: &mut Commands, _meshes: &mut Assets<Mesh>, _materials:
             let n = others.len();
             let s = &SCENES[site.scene];
             info!("stories_cold: {} at {:.1},{:.1} claimed (ground ok: {}, solid within: {})", s.model, site.pos.x,
-                site.pos.y, ground_ok(site.pos.x, site.pos.y, s.foot, s.biome, FLAT_DELTA_RELAXED, &trails),
+                site.pos.y, ground_ok(site.pos.x, site.pos.y, s.foot, s.biome, max_flat(s.biome), &trails),
                 crate::blockers::any_within(site.pos.x, site.pos.y, s.foot + 0.2));
             if seat(site.scene, 1, &mut others, &trails, false) == 0 {
                 warn!("stories_cold: {} at {:.1},{:.1} was claimed and no other spot is free",
@@ -321,16 +365,15 @@ pub fn populate(commands: &mut Commands, _meshes: &mut Assets<Mesh>, _materials:
             moved
         };
         let s = &SCENES[site.scene];
-        // A hair below the centre height: the models' contact parts (drift skirts, footings) run
-        // ~0.2-0.3u below y=0, which swallows the footprint's remaining slope.
-        let y = crate::worldmap::ground_at_world(site.pos.x, site.pos.y).unwrap_or(0.0);
-        let tf = Transform::from_xyz(site.pos.x, y - 0.04, site.pos.y).with_rotation(Quat::from_rotation_y(site.yaw));
+        let y = seat_y(site.pos.x, site.pos.y, s.foot);
+        let tf = Transform::from_xyz(site.pos.x, y, site.pos.y).with_rotation(Quat::from_rotation_y(site.yaw));
         if let Some(e) = kit.spawn_static_with(commands, s.model, tf, range.clone()) {
             commands.entity(e).insert(BiomeEntity);
         }
         register_blockers(site.scene, site.pos, site.yaw);
         crate::blockers::reserve_visual(site.pos.x, site.pos.y, s.foot);
-        info!("stories_cold: {} at {:.1},{:.1},{:.1}", s.model, site.pos.x, y, site.pos.y);
+        info!("stories_cold: {} at {:.1},{:.1},{:.1} (snow cover {:.2})", s.model, site.pos.x, y, site.pos.y,
+            crate::alpine::snow_cover(site.pos.x, site.pos.y));
         placed.push(site);
     }
     let count = |b: Biome| placed.iter().filter(|p| SCENES[p.scene].biome == b).count();
@@ -365,8 +408,11 @@ mod tests {
         }
         for (i, a) in first.iter().enumerate() {
             let s = &SCENES[a.scene];
-            assert!(ground_ok(a.pos.x, a.pos.y, s.foot, s.biome, FLAT_DELTA_RELAXED, &trails),
+            assert!(ground_ok(a.pos.x, a.pos.y, s.foot, s.biome, max_flat(s.biome), &trails),
                 "{} on illegal ground at {}", s.model, a.pos);
+            if s.biome == Biome::Snow {
+                assert!(crate::alpine::snow_cover(a.pos.x, a.pos.y) >= SNOW_COVER, "{} off the snow at {}", s.model, a.pos);
+            }
 
             assert!(!crate::wayside::overlaps_planned(a.pos.x, a.pos.y, s.foot)
                 && !crate::vignettes::overlaps_planned(a.pos.x, a.pos.y, s.foot),

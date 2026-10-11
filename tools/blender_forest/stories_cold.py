@@ -51,23 +51,27 @@ ROCKY = (0.78, 0.74, 0.68)
 
 # ─────────────────────────────────────────────────────────────── helpers
 def snow_fn(nz, blue=0.04):
+    """Tint over the s_snow scan (snow_02): near-white on the sky-facing crowns, a cool blue in the
+    steep / undercut drift folds (sky light only, no sun), slightly greyed where it meets the ground."""
     def f(p, n):
-        k = 0.94 + 0.06 * nz(p * 1.7)
-        shade = 0.9 + 0.1 * smoothstep(-0.2, 0.8, n.y)
-        return (SNOW[0] * k * shade * (1 - blue), SNOW[1] * k * shade, SNOW[2] * k * shade)
+        k = 0.95 + 0.05 * nz(p * 1.7)
+        fold = 1.0 - smoothstep(0.05, 0.75, n.y)
+        c = mix((SNOW[0] * (1 - blue), SNOW[1], SNOW[2]), (0.7, 0.8, 0.98), fold * 0.8)
+        foot = 1.0 - 0.12 * (1.0 - smoothstep(-0.1, 0.12, p.y))
+        return scale(c, k * foot)
     return f
 
 
 def drift(g, centre, rx, rz, h, rng, power=0.9, skirt=0.18, rings=7, seg=22, edge=0.18):
     nz = Noise(rng, 4, 1.2)
-    mound(g, centre, rx, rz, h, rng, mat=M_SNOW, col_fn=snow_fn(nz), tile=1.5, rings=rings, seg=seg, skirt=skirt,
+    mound(g, centre, rx, rz, h, rng, mat=M_SNOW, col_fn=snow_fn(nz), tile=2.2, rings=rings, seg=seg, skirt=skirt,
           rough=0.1, edge=edge, power=power)
 
 
 def snow_cap(g, centre, rx, rz, h, rng):
     """A pillow of settled snow on a flat top (crate lid, beam, shelf)."""
     nz = Noise(rng, 3, 3.0)
-    mound(g, centre, rx, rz, h, rng, mat=M_SNOW, col_fn=snow_fn(nz), tile=1.0, rings=3, seg=12, skirt=0.0,
+    mound(g, centre, rx, rz, h, rng, mat=M_SNOW, col_fn=snow_fn(nz), tile=1.6, rings=3, seg=12, skirt=0.0,
           rough=0.08, edge=0.1, power=0.6)
 
 
