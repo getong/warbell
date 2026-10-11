@@ -1245,6 +1245,15 @@ fn cliffy_apron(x: f32, z: f32) -> f32 {
     f
 }
 
+/// 0..1 fade of the natural relief's rise toward the rivers: every river runs on a level
+/// FLOODPLAIN a few units wide. With exact continuous hills the two banks of a crossing otherwise
+/// sat at different heights and `bridges` (a flat deck must meet both banks within a step)
+/// rejected every road crossing.
+fn floodplain(x: f32, z: f32) -> f32 {
+    let t = ((river_sd(x, z) - 1.0) / 4.5).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
 thread_local! {
     /// The EXACT (unquantised) world-Y of the last `classify` call on this thread when it took a
     /// natural-relief branch (coastal ridge, hill, knoll, dune); NaN for force-flat / beach /
@@ -2000,7 +2009,7 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
     // hills in the forest, …) or grass.
     if !in_mountain(x, z) {
         if let Some(chf) = coast_hill(x, z) {
-            let ch = natural(chf);
+            let ch = natural(1.0 + (chf - 1.0) * floodplain(x, z));
             let b = match region_at(x, z) {
                 Some(ri) if active_map().regions[ri].peak == 0 => active_map().regions[ri].biome,
                 _ if ch >= 4 => TB::Rock,
@@ -2063,9 +2072,9 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
         // hard band edge — the natural relief reaches the mesh exactly, so a cut would be a step.)
         let apron = cliffy_apron(x, z);
         let hf = if reg.biome == TB::Desert { dune_h(x, z, dc) } else { inland_hills_f(x, z, dc, 4) };
-        return Some((reg.biome, natural(1.0 + (hf - 1.0) * apron)));
+        return Some((reg.biome, natural(1.0 + (hf - 1.0) * apron * floodplain(x, z))));
     }
-    let h = natural(1.0 + (inland_hills_f(x, z, dc, 5) - 1.0) * cliffy_apron(x, z));
+    let h = natural(1.0 + (inland_hills_f(x, z, dc, 5) - 1.0) * cliffy_apron(x, z) * floodplain(x, z));
     let forest_n = noise_a(x, z) * noise_b(x + 7.0, z - 3.0);
     if forest_n > 0.35 {
         return Some((TB::Forest, h));

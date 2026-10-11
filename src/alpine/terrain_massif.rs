@@ -145,7 +145,11 @@ fn footprint(x: f32, z: f32, reg: &Region) -> f32 {
     // ground to their shore level (the old mesa's flat foot apron did) instead of sinking them
     // into pits in the flank. (The waterfall's plunge stream is NOT faded — its wall is the falls.)
     let wet = smooth(1.0, 9.0, pool_sd(x, z).min(lake_sd(x, z)));
-    rim * border * coast * ring * wet
+    // ...except right behind the waterfall's head, where the range must stand as a wall for the
+    // falls to pour off (`vista` needs ≥1.6u of face within a few units of the stream head).
+    let (head, _) = waterfall_site_world();
+    let near_falls = 1.0 - smooth(3.0, 8.0, (x * MAP_SCALE - GX - head.x).hypot(z * MAP_SCALE - GZ - head.y) / MAP_SCALE);
+    rim * border * coast * ring * wet.max(near_falls)
 }
 
 /// The continuous pass-ramp floor at distance `dc` (base) from the centre — `pass_class` without
