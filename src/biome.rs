@@ -638,10 +638,10 @@ fn register_passive_blocker(x: f32, z: f32, footprint: Vec2, scale: f32, authore
 
 /// Draw a snow-biome prop from the forest kit (`alpine::snowkit::prop`) for scatter class `class`,
 /// tinted variant `vi`, into `chunks`; returns whether anything was drawn. Gameplay stays the
-/// low-poly prop's: the caller registers its blocker either way (blockers feed tree spacing and
-/// every later placer, so swapping in the kit mesh's own footprint would reshuffle the region and
-/// the vignette / decor sites with it), and the caller falls back to the low-poly prop on a SOLID
-/// spot the kit leaves bare, so no blocker is ever invisible.
+/// low-poly prop's: for a drawn prop the caller registers the low-poly blocker (not the kit
+/// mesh's own footprint, which would reshuffle tree spacing and every later placer). A spot the
+/// kit leaves bare (or a set-piece keeps clear) stays EMPTY — no low-poly stand-in, no blocker —
+/// so no blocker is ever invisible and no faceted toy prop stands among the realistic ones.
 fn snow_prop(
     k: &crate::realforest::Kit,
     chunks: &mut crate::realforest::Chunks,
@@ -1328,12 +1328,8 @@ pub fn scatter_region(
                     }
                     let rot = yaw(&mut r);
                     let snow_p = snow_kit.filter(|_| crate::alpine::snowkit::handles_prop(class_index(c)));
-                    // The snow kit keeps the low-poly prop's blocker (see `snow_prop`).
-                    if kit.is_none() {
-                        register_passive_blocker(cx, cz, c.footprints[vi], s, c.block_radius, rot);
-                    }
-                    crate::blockers::reserve_visual(cx, cz, footprint);
                     if let Some(k) = kit {
+                        crate::blockers::reserve_visual(cx, cz, footprint);
                         let (a, b) = crate::realforest::rolls(cx, cz);
                         if let Some((m, sm)) = k.passive_for(class_index(c), false, a, b) {
                             if kit_chunks.push(k, m, Vec3::new(cx, py, cz), rot, s * sm, crate::realforest::Tier::Props) {
@@ -1343,10 +1339,18 @@ pub fn scatter_region(
                     } else if let Some(k) = snow_p {
                         // Bedded into a sloping hillside rather than balanced on its centre point.
                         let at = Vec3::new(cx, py - slope * 0.3 * s, cz);
-                        if !snow_prop(k, &mut alp_chunks, class_index(c), vi, at, rot, s) && c.block_radius * s >= 0.30 {
-                            queue(false, c.variants[vi].clone(), at, rot, s);
+                        // Where the kit leaves the spot bare (`snowkit::prop` → None) or a set-piece
+                        // keeps it clear (`keep_clear`), place NOTHING: the old faceted low-poly
+                        // stand-in (an oversized toy snowman next to the realistic ones) is gone,
+                        // and so is the invisible blocker it left behind. A drawn kit prop keeps
+                        // the low-poly prop's blocker (see `snow_prop`).
+                        if snow_prop(k, &mut alp_chunks, class_index(c), vi, at, rot, s) {
+                            register_passive_blocker(cx, cz, c.footprints[vi], s, c.block_radius, rot);
+                            crate::blockers::reserve_visual(cx, cz, footprint);
                         }
                     } else {
+                        register_passive_blocker(cx, cz, c.footprints[vi], s, c.block_radius, rot);
+                        crate::blockers::reserve_visual(cx, cz, footprint);
                         queue(false, c.variants[vi].clone(), Vec3::new(cx, py, cz), rot, s);
                     }
                 }

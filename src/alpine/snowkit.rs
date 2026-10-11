@@ -199,7 +199,9 @@ pub fn cover(kit: &Kit, class: usize, x: f32, z: f32) -> Option<(usize, f32, boo
     }
     match class {
         0 => pick(&GRASS, 0.7),
-        2 if a < 0.4 => pick(&["branches_a"], 0.55),
+        // No `branches_a` here: the dry-branches scan is decimated to flat jagged ribbons, and
+        // under the snow twin their tops go white — torn sheets of cardboard on the snow.
+        2 if a < 0.4 => None,
         2 => pick(&PEBBLES, 0.28),
         _ => None,
     }
