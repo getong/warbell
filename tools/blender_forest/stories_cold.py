@@ -62,7 +62,7 @@ def snow_fn(nz, blue=0.04):
     return f
 
 
-def drift(g, centre, rx, rz, h, rng, power=0.9, skirt=0.18, rings=7, seg=22, edge=0.18):
+def drift(g, centre, rx, rz, h, rng, power=0.9, skirt=0.18, rings=5, seg=18, edge=0.18):
     nz = Noise(rng, 4, 1.2)
     mound(g, centre, rx, rz, h, rng, mat=M_SNOW, col_fn=snow_fn(nz), tile=2.2, rings=rings, seg=seg, skirt=skirt,
           rough=0.1, edge=edge, power=power)
@@ -138,7 +138,7 @@ def wheel(g, centre, axis_rot, r, rng, spokes=8, broken=0, col=WOOD):
     and opens the rim into a splintered gap."""
     c = Vector(centre)
     gap = int(rng.integers(spokes)) if broken else -1
-    n = 20
+    n = 14
     for part in range(2 if broken else 1):
         if broken:
             a0 = (gap + 0.75) / spokes * 2 * math.pi if part == 0 else 0
@@ -179,7 +179,7 @@ def crate(g, centre, size, rot, rng, col=WOOD, lid=True):
 
 def sack(g, centre, rot, s, rng, col=(0.7, 0.62, 0.48)):
     sc = Vector(centre)
-    stone(g, tuple(sc), (0.2 * s, 0.17 * s, 0.15 * s), rng, mat=M_CLOTH, detail=2, rough=0.1, cuts=1, flat_y=0.7, rot=rot,
+    stone(g, tuple(sc), (0.2 * s, 0.17 * s, 0.15 * s), rng, mat=M_CLOTH, detail=1, rough=0.1, cuts=1, flat_y=0.7, rot=rot,
           col_fn=lambda p, n: mix(scale(col, 0.7), col, smoothstep(sc.y - 0.15, sc.y + 0.1, p.y)), tile=0.35)
     neck = sc + rot @ V(0, 0.15 * s, 0)
     tube(g, [neck, neck + rot @ V(0, 0.08 * s, 0), neck + rot @ V(0.04, 0.12 * s, 0)], [0.06 * s, 0.035 * s, 0.05 * s], 8,
@@ -402,108 +402,209 @@ def wagon_bed(g, rng, centre, rot, length=2.2, width=1.1, sides=True, broken_sid
                      0.06, 0.05, up=tuple(rot @ V(0, 0, 1)), mat=M_PLANK, col=OLD_WOOD, rng=rng)
 
 
+BRONZE = (0.5, 0.32, 0.16)
+VERDIGRIS = (0.3, 0.5, 0.42)
+
+
+def bronze_fn(nz):
+    """Old bronze: a dark warm body, verdigris bloom on the sky-facing and sheltered faces."""
+    def f(p, n):
+        k = smoothstep(0.1, 0.9, n.y) * 0.55 + 0.3 * nz(p * 2.5)
+        return scale(mix(BRONZE, VERDIGRIS, min(1.0, max(0.0, k))), 0.9 + 0.1 * nz(p * 6.0))
+    return f
+
+
+def lathe(profile, seg, centre, rot):
+    """Revolve `(r, y)` profile points about the local Y axis -> (verts, tris)."""
+    c = Vector(centre)
+    verts, tris, idx = [], [], []
+    for r, y in profile:
+        idx.append((len(verts), r < 1e-4))
+        if r < 1e-4:
+            verts.append(c + rot @ V(0, y, 0))
+        else:
+            for i in range(seg):
+                a = 2 * math.pi * i / seg
+                verts.append(c + rot @ V(math.cos(a) * r, y, math.sin(a) * r))
+    for (i0, p0), (i1, p1) in zip(idx, idx[1:]):
+        for i in range(seg):
+            j = (i + 1) % seg
+            if p0:
+                tris.append((i0, i1 + i, i1 + j))
+            elif p1:
+                tris.append((i0 + i, i1, i0 + j))
+            else:
+                tris += [(i0 + i, i1 + i, i1 + j), (i0 + i, i1 + j, i0 + j)]
+    return verts, tris
+
+
+def orient(verts, tris, axis_c, axis_d, outward):
+    """Wind every triangle so its normal points away from (outward) / toward the bell's axis."""
+    out = []
+    for a, b, d in tris:
+        n = (verts[b] - verts[a]).cross(verts[d] - verts[a])
+        m = (verts[a] + verts[b] + verts[d]) / 3
+        rel = m - axis_c
+        radial = rel - axis_d * rel.dot(axis_d)
+        if radial.length < 0.05:
+            radial = axis_d * rel.dot(axis_d)
+        out.append((a, b, d) if (n.dot(radial) > 0) == outward else (a, d, b))
+    return out
+
+
+def bell(g, rng, lip_centre, rot, h=1.3, r=0.62, seg=20):
+    """A cast bronze bell, mouth at local y=0 (`lip_centre`), crown up local +Y: thick sound bow,
+    a raised band at the shoulder, the hanging loops (canons) on the crown. Smooth outer + inner shell."""
+    nz = Noise(rng, 3, 1.5)
+    c = Vector(lip_centre)
+    axis = rot @ V(0, 1, 0)
+    outer = [(r, -0.02), (r * 1.04, 0.06), (r * 0.99, 0.14), (r * 0.86, 0.3), (r * 0.76, 0.5), (r * 0.7, 0.72),
+             (r * 0.68, 0.86), (r * 0.72, 0.9), (r * 0.72, 0.95), (r * 0.66, 0.98), (r * 0.6, 1.07),
+             (r * 0.45, 1.15), (r * 0.22, 1.19), (0.0, 1.2)]
+    outer = [(rr, y * h / 1.2) for rr, y in outer]
+    v, t = lathe(outer, seg, c, rot)
+    smooth_mesh(g, v, orient(v, t, c, axis, True), M_IRON, bronze_fn(nz), 0.5)
+    inner = [(r * 0.9, -0.02), (r * 0.78, 0.25), (r * 0.62, 0.62), (r * 0.55, 0.95), (r * 0.3, 1.08), (0.0, 1.1)]
+    inner = [(rr, y * h / 1.2) for rr, y in inner]
+    v, t = lathe(inner, seg, c, rot)
+    smooth_mesh(g, v, orient(v, t, c, axis, False), M_IRON, lambda p, n: scale(BRONZE, 0.45), 0.5)
+    for i in range(seg):
+        a, b2 = 2 * math.pi * i / seg, 2 * math.pi * (i + 1) / seg
+        quad = [c + rot @ V(math.cos(a) * r, -0.02, math.sin(a) * r), c + rot @ V(math.cos(b2) * r, -0.02, math.sin(b2) * r),
+                c + rot @ V(math.cos(b2) * r * 0.9, -0.02, math.sin(b2) * r * 0.9),
+                c + rot @ V(math.cos(a) * r * 0.9, -0.02, math.sin(a) * r * 0.9)]
+        nn = -axis
+        if (quad[1] - quad[0]).cross(quad[3] - quad[0]).dot(nn) < 0:
+            quad = quad[::-1]
+        g.poly(quad, [(0, 0), (1, 0), (1, 1), (0, 1)], [nn] * 4, [scale(BRONZE, 0.8)] * 4, M_IRON)
+    # Canons: two crossed loops on the crown.
+    top = c + axis * (h * 1.19 / 1.2)
+    for ang in (0.0, math.pi / 2):
+        sdir = rot @ V(math.cos(ang), 0, math.sin(ang))
+        pts = [top + sdir * 0.13 * math.cos(u) + axis * 0.17 * math.sin(u) for u in np.linspace(0, math.pi, 7)]
+        tube(g, pts, [0.045] * 7, 6, M_IRON, scale(BRONZE, 0.9), tile=0.3, cap=False)
+
+
+def bell_crest(g, centre, normal, up, s=1.0):
+    """The Crown's arms cast in relief on the bell: a raised ring round a three-pointed crown on its
+    band, a shade brighter than the patina around them."""
+    c, n, u = Vector(centre), Vector(normal).normalized(), Vector(up).normalized()
+    r = u.cross(n).normalized()
+    u = n.cross(r).normalized()
+    gold = (0.74, 0.54, 0.25)
+    ring = [c + n * 0.012 + (r * math.cos(a) + u * math.sin(a)) * 0.17 * s for a in np.linspace(0, 2 * math.pi, 15)]
+    tube(g, ring, [0.024 * s] * 15, 4, M_IRON, gold, tile=0.2, cap=False)
+    tube(g, [c + n * 0.016 - r * 0.1 * s - u * 0.04 * s, c + n * 0.016 + r * 0.1 * s - u * 0.04 * s], [0.024 * s] * 2, 4,
+         M_IRON, gold, tile=0.2)
+    for k in (-1, 0, 1):
+        base = c + n * 0.018 - u * 0.03 * s + r * k * 0.075 * s
+        tip = base + u * (0.14 if k == 0 else 0.1) * s + r * k * 0.015 * s
+        tube(g, [base, tip], [0.026 * s, 0.006 * s], 4, M_IRON, gold, tile=0.2, cap=False)
+
+
 def story_wrecked_convoy(rng):
-    """Footprint r <= 3.6, long axis along local X (= the trail direction). Masses: the wagon on its
-    side (local -1.3, -0.3, 1.3 x 0.75), the nose-down wagon (1.5, 0.5, 1.3 x 0.7), the carcass drift
-    (0.2, 1.75). A Crown convoy caught on the pass a century ago: one wagon thrown on its side, its
-    top wheel turned to the sky; the other nose-down in a drift with a broken axle; the ox under the
-    snow; sacks and crested crates spilled, one split open on a bell clapper packed in straw."""
+    """Footprint r <= 3.6, long axis along local X (= the trail direction), the trail on local -Z.
+    The Crown was hauling a war bell up the pass: the lead wagon's front axle broke under it, its
+    timber bell-cradle snapped, and the bronze bell rolled out and lies on its side in a drift, mouth
+    to the trail, the Crown cast on its flank, snow on top, haul ropes trailing, the clapper flung
+    clear. The second wagon lies thrown on its side behind it; the ox is under the snow.
+    Masses: the bell (0.45, -1.15), the bell wagon (1.55, 0.55), the overturned wagon (-1.75, 0.35),
+    the ox's drift (-0.1, 1.95)."""
     b = Builder()
     g = G(b)
-    nz = Noise(rng, 4, 1.4)
-    drift(g, (0.0, 0.0, 0.0), 3.3, 2.0, 0.22, rng, power=0.7, rings=8, seg=26)
-    # Wagon A, on its side: bed vertical, floor facing -Z, open box facing +Z; the axles stand upright,
-    # the top pair of wheels flat in the air at ~1.2u, the bottom pair sunk in the snow.
+    drift(g, (0.0, 0.0, 0.0), 3.3, 2.0, 0.22, rng, power=0.7, rings=6, seg=20)
+    # ── the bell, tipped out on its side: axis nearly level, mouth turned toward the trail (-Z) and a
+    # little down the pass, the lip and flank sunk a hand into the snow.
+    rot_b = quat_y(0.4) @ quat_x(math.pi / 2 - 0.1)
+    axis = rot_b @ V(0, 1, 0)
+    lip = V(0.15, 0.55, -1.75) - axis * 0.0
+    bell(g, rng, lip, rot_b, h=1.32, r=0.62)
+    side = axis.cross(V(0, 1, 0)).normalized()
+    up_side = side.cross(axis).normalized()
+    if up_side.y < 0:
+        up_side = -up_side
+    # The Crown in relief on the flank turned to the trail and the sky.
+    to_trail = V(0, 0, -1) - axis * V(0, 0, -1).dot(axis)
+    cn = (to_trail.normalized() + up_side * 0.8).normalized()
+    crest_c = lip + axis * 0.62 + cn * (0.62 * 0.74)
+    bell_crest(g, crest_c, cn, axis, s=1.0)
+    # Snow lying along the bell's top and banked against its crown (the mouth and flank stay clear).
+    snow_cap(g, tuple(lip + axis * 0.95 + up_side * 0.42 - cn * 0.12), 0.24, 0.3, 0.07, rng)
+    drift(g, tuple(lip + axis * 1.8), 0.75, 0.7, 0.42, rng, power=1.0, rings=5, seg=14)
+    # ── the bell wagon: a heavy flatbed, front axle snapped so its nose sits in the snow, tilted
+    # toward the trail where the bell went over the side.
+    qw = quat_y(0.05) @ quat_x(-0.16) @ quat_z(-0.17)
+    cw = V(1.6, 0.42, 0.6)
+    wagon_bed(g, rng, cw, qw, length=2.3, width=1.2, sides=False)
+    rear = cw + qw @ V(-0.85, -0.25, 0.0)
+    beam(g, [rear + qw @ V(0, 0, -0.66), rear + qw @ V(0, 0, 0.66)], 0.1, 0.1, mat=M_PLANK, col=OLD_WOOD, rng=rng)
+    for sz in (-0.66, 0.66):
+        wheel(g, rear + qw @ V(0, 0, sz), qw @ quat_x(math.pi / 2), 0.58, rng)
+    front = cw + qw @ V(0.9, -0.28, 0.0)
+    beam(g, [front + V(0, 0, -0.62), front + V(0.06, -0.06, 0.05)], 0.1, 0.1, mat=M_PLANK, col=OLD_WOOD, rng=rng,
+         jag=(0.0, 0.14))  # the snapped front axle
+    wheel(g, V(3.0, 0.08, 1.45), quat_y(0.4) @ quat_x(0.08), 0.58, rng, broken=2)  # flung flat
+    # The cradle: two A-frame trestles on the bed with a headstock between them. The rear trestle
+    # still stands; the front one snapped at the knees and the headstock fell across toward the bell.
+    ra = cw + qw @ V(-0.7, 0.04, 0.0)
+    apex_r = ra + qw @ V(0, 1.35, 0)
+    for sz in (-0.52, 0.52):
+        beam(g, [ra + qw @ V(0, 0, sz), apex_r], 0.12, 0.12, mat=M_PLANK, col=OLD_WOOD, rng=rng)
+    beam(g, [ra + qw @ V(0, 0.55, -0.32), ra + qw @ V(0, 0.55, 0.32)], 0.08, 0.08, mat=M_PLANK, col=OLD_WOOD, rng=rng)
+    fa = cw + qw @ V(0.75, 0.04, 0.0)
+    for sz, ln in ((-0.52, 0.42), (0.52, 0.3)):
+        beam(g, [fa + qw @ V(0, 0, sz), fa + qw @ V(0, ln, sz * (1 - ln / 1.35))], 0.12, 0.12, mat=M_PLANK, col=OLD_WOOD,
+             rng=rng, jag=(0.0, 0.16))
+    head_end = V(1.25, 0.1, -1.05)
+    beam(g, [apex_r + qw @ V(0.0, 0.05, 0.0), head_end], 0.16, 0.16, mat=M_PLANK, col=OLD_WOOD, rng=rng, jag=(0.0, 0.2))
+    snow_cap(g, tuple(apex_r.lerp(head_end, 0.45) + V(0, 0.1, 0)), 0.16, 0.12, 0.04, rng)
+    # The thrown front trestle leg in the snow.
+    beam(g, [V(2.95, 0.07, -0.45), V(2.25, 0.1, -1.35)], 0.12, 0.12, mat=M_PLANK, col=OLD_WOOD, rng=rng, jag=(0.18, 0.0))
+    # Haul ropes: one still knotted round the headstock, snapped short and hanging; one trailing from
+    # the bed across the snow to the bell's crown loop; a frayed end out toward the trail.
+    rope = (0.6, 0.52, 0.38)
+    hp = apex_r.lerp(head_end, 0.35)
+    tube(g, [hp, hp + V(0.02, -0.4, -0.05), hp + V(0.08, -0.7, -0.02)], [0.03, 0.028, 0.012], 5, M_HIDE, rope, tile=0.3)
+    crown_loop = lip + axis * 1.48
+    pts = [cw + qw @ V(-1.05, 0.02, -0.45), V(1.0, 0.06, -0.3), V(0.85, 0.05, -0.5), crown_loop + V(0, -0.05, 0)]
+    tube(g, [Vector(p) for p in pts], [0.03] * 4, 5, M_HIDE, rope, tile=0.3, cap=False)
+    tube(g, [V(-0.35, 0.05, -1.25), V(-0.8, 0.04, -1.05), V(-1.15, 0.05, -1.3)], [0.03, 0.03, 0.01], 5, M_HIDE, rope,
+         tile=0.3)
+    # The iron clapper, flung clear, lying in the snow toward the trail.
+    clc = (0.4, 0.38, 0.37)
+    k0, k1 = V(-1.1, 0.09, -2.2), V(-0.4, 0.1, -2.55)
+    tube(g, [k0, k1], [0.035, 0.045], 6, M_IRON, clc, tile=0.2)
+    stone(g, tuple(k1 + (k1 - k0).normalized() * 0.1), (0.13, 0.11, 0.11), rng, mat=M_IRON, detail=1, rough=0.02, cuts=0,
+          col_fn=lambda p, n: mix(clc, (1, 1, 1), 0.5 * smoothstep(0.5, 0.95, n.y)), tile=0.2)
+    tube(g, [k0 - (k1 - k0).normalized() * 0.08, k0], [0.06, 0.06], 6, M_IRON, clc, tile=0.2)
+    # ── the second wagon, thrown on its side behind: bed vertical, floor toward the trail; the top
+    # pair of wheels in the air (the bottom pair is under the drift), its tongue jutting at the sky.
     qa = quat_y(0.12) @ quat_x(math.pi / 2)
-    ca = V(-1.3, 0.56, -0.35)
+    ca = V(-1.75, 0.56, 0.5)
     wagon_bed(g, rng, ca, qa, broken_side=True)
     for k, x in enumerate((-0.75, 0.75)):
-        beam(g, [ca + qa @ V(x, -0.2, -0.66), ca + qa @ V(x, -0.2, 0.62)], 0.08, 0.08, mat=M_PLANK, col=OLD_WOOD, rng=rng)
-        wheel(g, ca + qa @ V(x, -0.2, -0.64), quat_y(0.12), 0.55, rng, broken=1 if k == 1 else 0)  # top, in the air
-        wheel(g, ca + qa @ V(x, -0.2, 0.6), quat_y(0.12), 0.55, rng)  # bottom, in the snow
-    # Its tongue, still pinned to the front axle, jutting at the sky and snapped at the tip: the
-    # tall mark of the wreck from down the trail.
+        beam(g, [ca + qa @ V(x, -0.2, -0.66), ca + qa @ V(x, -0.2, 0.3)], 0.08, 0.08, mat=M_PLANK, col=OLD_WOOD, rng=rng)
+        wheel(g, ca + qa @ V(x, -0.2, -0.64), quat_y(0.12), 0.55, rng, broken=1 if k == 1 else 0)
+    drift(g, (ca.x, 0.0, ca.z + 0.6), 1.45, 0.6, 0.4, rng, power=0.9, rings=4, seg=14)
     t0 = ca + qa @ V(-0.75, -0.25, -0.2)
-    t1 = t0 + V(-0.95, 2.05, -0.55)
+    t1 = t0 + V(-0.75, 1.9, -0.4)
     beam(g, [t0, t1], 0.09, 0.08, mat=M_PLANK, col=OLD_WOOD, rng=rng, jag=(0.0, 0.2))
-    beam(g, [t0.lerp(t1, 0.78) + V(0.0, 0.0, -0.32), t0.lerp(t1, 0.78) + V(0.0, 0.05, 0.32)], 0.06, 0.06, mat=M_PLANK,
-         col=OLD_WOOD, rng=rng, jag=(0.08, 0.0))  # the broken whippletree crossbar
     snow_cap(g, t0.lerp(t1, 0.35) + V(0, 0.06, 0), 0.12, 0.1, 0.035, rng)
-    for z_off, rot in ((0.45, quat_y(0.6)), (0.9, quat_y(-0.4))):
-        sack(g, (ca.x + 0.4 + z_off, 0.12, ca.z + 0.9 + z_off * 0.3), rot @ quat_z(1.4), 1.0, rng)
-    # Wagon B, nose-down in the drift: front axle broken under it, the rear thrown up with its wheels
-    # and the canvas tilt's bows standing over it, one rag of canvas left on the last bow.
-    qb = quat_y(-0.08) @ quat_z(-0.6)
-    cb = V(1.5, 0.62, 0.45)
-    wagon_bed(g, rng, cb, qb)
-    rear = cb + qb @ V(-0.8, -0.25, 0.0)
-    beam(g, [rear + qb @ V(0, 0, -0.62), rear + qb @ V(0, 0, 0.62)], 0.08, 0.08, mat=M_PLANK, col=OLD_WOOD, rng=rng)
-    for sz in (-0.64, 0.64):
-        wheel(g, rear + qb @ V(0, 0, sz), quat_y(-0.08) @ quat_x(math.pi / 2), 0.55, rng)
-    for k, bx in enumerate((-0.95, -0.25, 0.45)):
-        rise = 1.15 if k == 0 else 1.05
-        pts = [cb + qb @ V(bx, 0.42 + rise * math.sin(t * math.pi), 0.57 * math.cos(t * math.pi))
-               for t in np.linspace(0, 1, 9)]
-        if k == 1:
-            pts = pts[:5]  # snapped at the crown
-        if k == 2:
-            pts = pts[:3]
-        tube(g, pts, [0.03] * len(pts), 5, M_PLANK, OLD_WOOD, tile=0.4)
-    rag = [[tuple(cb + qb @ V(-0.95 + 0.42 * v * (1 - 0.4 * u), 0.42 + 1.15 * math.sin(u * math.pi * 0.5 + 0.35) - 0.5 * v * v,
-                                0.57 * math.cos(u * math.pi * 0.5 + 0.35)))
-            for v in (0.0, 0.33, 0.66, 1.0)] for u in np.linspace(0, 1, 6)]
-    sheet(g, rag, M_CLOTH, lambda u, v: mix(CANVAS, (0.42, 0.4, 0.36), 0.6 * v), tile=0.6, double=True)
-    front = cb + qb @ V(0.85, -0.3, 0.0)
-    beam(g, [front + V(0, 0, -0.55), front + V(0.05, -0.05, 0.1)], 0.08, 0.08, mat=M_PLANK, col=OLD_WOOD, rng=rng,
-         jag=(0.0, 0.12))
-    wheel(g, front + V(0.35, 0.05, 0.85), quat_y(0.3) @ quat_x(0.15), 0.55, rng, broken=2)
-    drift(g, (cb.x + 0.95, 0.0, cb.z), 1.05, 1.05, 0.75, rng, power=1.1)
-    # Snapped drawbar + yoke lying out front.
-    beam(g, [V(2.9, 0.06, 0.2), V(3.3, 0.08, -0.6)], 0.09, 0.09, mat=M_PLANK, col=OLD_WOOD, rng=rng, jag=(0.15, 0.0))
-    beam(g, [V(2.3, 0.08, 0.95), V(2.85, 0.07, 0.3)], 0.09, 0.09, mat=M_PLANK, col=OLD_WOOD, rng=rng, jag=(0.0, 0.18))
     # The ox, under the snow: a long drift with a horn and a few ribs breaking the surface.
-    drift(g, (0.2, 0.0, 1.75), 1.15, 0.55, 0.42, rng, power=1.0)
+    drift(g, (-0.1, 0.0, 2.0), 1.15, 0.55, 0.42, rng, power=1.0, rings=4, seg=14)
     bone = (0.82, 0.78, 0.68)
-    for k in range(5):
-        x = -0.25 + k * 0.2
-        tube(g, [V(x, 0.18, 1.6), V(x + 0.03, 0.5, 1.75), V(x + 0.05, 0.42, 1.98)], [0.025, 0.022, 0.015], 5, M_ROCK, bone,
+    for k in range(4):
+        x = -0.5 + k * 0.22
+        tube(g, [V(x, 0.18, 1.85), V(x + 0.03, 0.5, 2.0), V(x + 0.05, 0.42, 2.23)], [0.025, 0.022, 0.015], 4, M_ROCK, bone,
              tile=0.3)
-    tube(g, [V(1.2, 0.3, 1.95), V(1.4, 0.48, 2.05), V(1.45, 0.65, 1.95)], [0.035, 0.025, 0.006], 6, M_ROCK, bone, tile=0.3)
-    tube(g, [V(1.18, 0.3, 1.6), V(1.38, 0.45, 1.45), V(1.48, 0.6, 1.5)], [0.035, 0.025, 0.006], 6, M_ROCK, bone, tile=0.3)
-    # Crested crates, spilled.
-    crates = [((-0.15, 0.2, -1.35), 0.4, (0.5, 0.4, 0.42)), ((0.45, 0.17, -1.15), -0.3, (0.44, 0.34, 0.4)),
-              ((-2.55, 0.2, 0.6), 0.9, (0.5, 0.4, 0.42))]
-    for (x, y, z), yaw, size in crates:
+    tube(g, [V(0.9, 0.3, 2.2), V(1.1, 0.48, 2.3), V(1.15, 0.65, 2.2)], [0.035, 0.025, 0.006], 5, M_ROCK, bone, tile=0.3)
+    # Two crested Crown crates and a sack, spilled.
+    for (x, y, z), yaw, size in (((-1.0, 0.2, -0.8), 0.5, (0.5, 0.4, 0.42)), ((2.75, 0.17, -1.15), -0.3, (0.44, 0.34, 0.4))):
         q = quat_y(yaw)
         crate(g, (x, y, z), size, q, rng, col=(0.7, 0.6, 0.48))
-        crest(g, V(x, y, z) + q @ V(0, 0.0, size[2] / 2 + 0.012), q @ V(0, 0, 1), (0, 1, 0))
+        crest(g, V(x, y, z) + q @ V(0, 0.0, -size[2] / 2 - 0.012), q @ V(0, 0, -1), (0, 1, 0))
         snow_cap(g, (x, y + size[1] / 2 + 0.02, z), size[0] * 0.45, size[2] * 0.45, 0.05, rng)
-    # The split crate: lid thrown off, a side burst, straw, and a bronze bell clapper laid in it like a relic.
-    oq = quat_y(-0.5)
-    oc = V(0.6, 0.18, -0.25)
-    for sx, sz, w, d in ((0, -0.24, 0.62, 0.035), (0, 0.24, 0.62, 0.035), (-0.3, 0, 0.035, 0.48)):
-        lbox(g, oc + oq @ V(sx, 0.0, sz), (w, 0.36, d), oq, M_PLANK, (0.68, 0.58, 0.46), tile=1.0, grain=0)
-    crest(g, oc + oq @ V(0.0, 0.0, 0.26), oq @ V(0, 0, 1), (0, 1, 0))
-    lbox(g, oc + oq @ V(0.0, -0.16, 0.0), (0.62, 0.035, 0.48), oq, M_PLANK, (0.6, 0.5, 0.4), tile=1.0, grain=0)
-    board(g, oc + oq @ V(0.55, -0.14, 0.15), oq @ V(0.3, 0.0, 1.0), oq @ V(0.2, 1, 0), 0.5, 0.3, 0.03, mat=M_PLANK,
-          col=(0.68, 0.58, 0.46), rng=rng, jag=(0.0, 0.12))
-    lbox(g, V(1.0, 0.03, 0.55), (0.62, 0.03, 0.5), quat_y(0.9) @ quat_z(0.08), M_PLANK, (0.66, 0.56, 0.45), tile=1.0, grain=0)
-    straw = (0.86, 0.72, 0.42)
-    lbox(g, oc + oq @ V(0.02, 0.03, 0.0), (0.55, 0.16, 0.42), oq, M_THATCH, straw, tile=0.6, grain=0)
-    for k in range(10):
-        a = rng.uniform(0, 6.28)
-        p = oc + oq @ V(rng.uniform(-0.45, 0.6), 0.12, rng.uniform(-0.3, 0.45))
-        tube(g, [p, p + V(math.cos(a) * 0.2, 0.02, math.sin(a) * 0.2)], [0.006, 0.004], 3, M_THATCH, straw, tile=0.2)
-    bronze = (0.72, 0.5, 0.26)
-    cl0 = oc + oq @ V(-0.22, 0.14, 0.0)
-    cl1 = oc + oq @ V(0.12, 0.14, 0.02)
-    tube(g, [cl0, cl1], [0.018, 0.022], 7, M_IRON, bronze, tile=0.2)
-    lashing(g, cl0 + (cl1 - cl0) * 0.15, tuple(cl1 - cl0), 0.024, rng, turns=1)
-    stone(g, tuple(cl1 + (cl1 - cl0).normalized() * 0.07), (0.075, 0.06, 0.06), rng, mat=M_IRON, detail=2, rough=0.02,
-          cuts=0, rot=oq, col_fn=lambda p, n: mix(bronze, (0.42, 0.55, 0.42), 0.25 * smoothstep(0.3, 0.9, n.y)), tile=0.2)
-    # Scattered sacks.
-    for x, z, a in ((-0.3, 0.75, 0.3), (2.6, -0.85, 1.9), (-2.9, -0.6, -0.8)):
-        sack(g, (x, 0.1, z), quat_y(a) @ quat_z(1.35), 1.0, rng)
+    sack(g, (2.2, 0.1, 1.55), quat_y(1.9) @ quat_z(1.35), 1.0, rng)
     return b
 
 
@@ -545,12 +646,12 @@ def course_wall(g, rng, axis, fixed, a0, a1, top, depth=0.3, double=False, lean=
                     c, size = (mid, y + h / 2, across), (s1 - s0 - 0.02, h * rng.uniform(0.9, 1.0), d)
                 else:
                     c, size = (across, y + h / 2, mid), (d, h * rng.uniform(0.9, 1.0), s1 - s0 - 0.02)
-                slab(g, c, size, rot, rng, res=(2, 1, 2), round_r=0.035, rough=0.08, cuts=int(rng.integers(1, 3)),
-                     col_fn=col, tile=0.5)
+                slab(g, c, size, rot, rng, res=(2, 1, 1) if axis == 'x' else (1, 1, 2), round_r=0.035, rough=0.08,
+                     cuts=int(rng.integers(1, 3)), col_fn=col, tile=0.5)
                 if capped:
                     rx, rz = (size[0] * 0.42, size[2] * 0.4) if axis == 'x' else (size[0] * 0.4, size[2] * 0.42)
                     mound(g, (c[0], y + h - 0.02, c[2]), rx, rz, 0.06, rng, mat=M_SNOW, col_fn=snow_fn(nz), tile=1.6,
-                          rings=2, seg=8, skirt=0.0, rough=0.08, edge=0.1, power=0.6)
+                          rings=2, seg=6, skirt=0.0, rough=0.08, edge=0.1, power=0.6)
         y += h
         ci += 1
 
@@ -705,10 +806,118 @@ def story_old_ones_ring(rng):
     return b
 
 
+def story_ruined_homestead(rng):
+    """Footprint r <= 3.4; masses: the burned log house (local -0.75, 0.2, 1.45 x 1.15), the well
+    (1.75, -1.05, r 0.6), the palisade stub (1.9, 1.75), the hand-cart (-2.35, -1.65). A first-colony
+    steading out past the chapel bell's reach: the log house burned and fell in, its charred roof
+    beams jutting from the drift; a few courses of the walls still stand at two corners; a short run
+    of sharpened palisade stakes, half of them snapped or leaning out; the stone well with its winch
+    fallen across it; a hand-cart left tipped on its nose; a barrel and a broken wheel by the door."""
+    b = Builder()
+    g = G(b)
+    char = (0.2, 0.18, 0.17)
+    log = (0.58, 0.53, 0.48)
+    drift(g, (0.0, 0.0, 0.0), 3.2, 2.6, 0.2, rng, power=0.7, rings=5, seg=20)
+    # ── the log house: two standing corners of notched logs (the rest burned down to the sill),
+    # a drift filling the inside, charred rafters and the ridge beam jutting out of it.
+    hx, hz = -0.75, 0.2
+    w, d = 2.7, 2.1
+    for k in range(5):
+        y = 0.12 + k * 0.21
+        col = mix(log, char, 0.15 + 0.15 * k)
+        # back-left corner: two walls of falling length
+        tube(g, [V(hx - w / 2 - 0.12, y, hz + d / 2), V(hx - w / 2 + 1.5 - k * 0.27, y, hz + d / 2)], [0.11, 0.1], 7,
+             M_BARK, col, tile=0.7)
+        tube(g, [V(hx - w / 2, y + 0.1, hz + d / 2 + 0.12), V(hx - w / 2, y + 0.1, hz + d / 2 - 1.2 + k * 0.2)], [0.11, 0.1],
+             7, M_BARK, col, tile=0.7)
+        if k < 3:  # front-right corner, lower
+            tube(g, [V(hx + w / 2 + 0.12, y, hz - d / 2), V(hx + w / 2 - 1.1 + k * 0.3, y, hz - d / 2)], [0.11, 0.1], 7,
+                 M_BARK, mix(col, char, 0.3), tile=0.7)
+            tube(g, [V(hx + w / 2, y + 0.1, hz - d / 2 - 0.12), V(hx + w / 2, y + 0.1, hz - d / 2 + 0.9 - k * 0.25)],
+                 [0.11, 0.1], 7, M_BARK, mix(col, char, 0.3), tile=0.7)
+    # sill logs along the burned-down walls, just showing through the snow
+    for p0, p1 in (((hx + w / 2, 0.05, hz + d / 2), (hx - w / 2 + 1.0, 0.07, hz + d / 2)),
+                   ((hx - w / 2, 0.05, hz - d / 2), (hx + w / 2 - 1.2, 0.06, hz - d / 2)),
+                   ((hx + w / 2, 0.06, hz + d / 2), (hx + w / 2, 0.05, hz - d / 2 + 0.9))):
+        tube(g, [V(*p0), V(*p1)], [0.11, 0.1], 6, M_BARK, char, tile=0.7)
+    drift(g, (hx + 0.1, 0.0, hz), 1.35, 1.05, 0.55, rng, power=0.9, rings=5, seg=16)
+    cf = charred(rng)
+    for p0, p1, r in (((hx - 0.9, 0.35, hz + 0.6), (hx + 0.7, 1.55, hz - 0.1), 0.1),  # the ridge beam, fallen in
+                      ((hx - 0.3, 0.3, hz - 0.5), (hx - 0.9, 1.25, hz - 1.35), 0.075),
+                      ((hx + 0.4, 0.3, hz - 0.4), (hx + 0.2, 1.05, hz - 1.45), 0.07),
+                      ((hx + 0.1, 0.3, hz + 0.5), (hx + 0.8, 1.15, hz + 1.3), 0.07),
+                      ((hx - 0.6, 0.25, hz + 0.1), (hx - 1.7, 0.85, hz - 0.3), 0.07)):
+        beam(g, [V(*p0), V(*p1)], r * 1.8, r * 1.6, mat=M_PLANK, mode="timber", col=cf, rng=rng, jag=(0.0, 0.22))
+    snow_cap(g, (hx - 0.6, 1.2, hz + 0.95), 0.25, 0.14, 0.05, rng)
+    # A charred door, fallen flat in front of the house.
+    lbox(g, V(hx + 0.5, 0.05, hz - d / 2 - 0.65), (0.8, 0.05, 1.2), quat_y(0.25) @ quat_z(0.06), M_PLANK,
+         mix(OLD_WOOD, char, 0.5), tile=1.0)
+    # ── the palisade stub: sharpened stakes, a few leaning out or snapped, on a buried rail.
+    for k in range(7):
+        t = k / 6
+        x, z = 1.0 + t * 1.9, 1.35 + 0.65 * math.sin(t * 2.2)
+        hgt = rng.uniform(1.3, 1.65)
+        lean = V(rng.uniform(-0.08, 0.08), 0, rng.uniform(0.05, 0.25) if k in (2, 5) else rng.uniform(-0.05, 0.05))
+        top = V(x, hgt, z) + lean * hgt
+        if k in (1, 4):  # snapped
+            top = V(x, 0.0, z).lerp(top, rng.uniform(0.35, 0.5))
+            beam(g, [V(x, -0.1, z), top], 0.15, 0.14, mat=M_PLANK, mode="timber", col=OLD_WOOD, rng=rng, jag=(0.0, 0.12))
+            continue
+        pole(g, V(x, -0.15, z), top, 0.085, 0.075, rng, col=(0.66, 0.6, 0.53), sides=6)
+        tube(g, [top, top + (top - V(x, 0, z)).normalized() * 0.22], [0.075, 0.004], 6, M_PLANK, (0.72, 0.64, 0.52),
+             tile=0.3, cap=False)
+    tube(g, [V(0.95, 0.75, 1.3), V(1.95, 0.8, 1.98)], [0.05, 0.05], 5, M_BARK, (0.6, 0.55, 0.5), tile=0.7)
+    tube(g, [V(2.3, 0.06, 2.15), V(2.75, 0.3, 2.6)], [0.07, 0.07], 6, M_BARK, (0.6, 0.55, 0.5), tile=0.7)  # a toppled stake
+    drift(g, (2.0, 0.0, 1.85), 1.25, 0.5, 0.35, rng, power=1.0, rings=4, seg=14)
+    # ── the well: two courses of dressed fieldstones in a ring, frost on top; one winch post still
+    # standing, the other down; the windlass roller lying across the mouth with its rope.
+    wx, wz = 1.75, -1.05
+    for course in range(2):
+        for k in range(10):
+            a = (k + 0.5 * course) / 10 * 2 * math.pi
+            c = V(wx + math.cos(a) * 0.5, 0.12 + course * 0.22, wz + math.sin(a) * 0.5)
+            stone_col = mix((0.62, 0.62, 0.62), (0.5, 0.48, 0.45), rng.uniform())
+            lbox(g, c, (0.24, 0.21, 0.3), quat_y(-a), M_STONE, [scale(stone_col, 0.75), None, mix(stone_col, SNOW, 0.6)],
+                 tile=0.8)
+    disc(g, (wx, 0.1, wz), quat_y(0.0), 0.38, 0.02, 10, M_STONE, (0.05, 0.05, 0.06), tile=1.0)  # the dark shaft
+    beam(g, [V(wx - 0.62, -0.1, wz), V(wx - 0.62, 1.25, wz)], 0.12, 0.12, mat=M_PLANK, mode="timber", col=OLD_WOOD, rng=rng)
+    beam(g, [V(wx + 0.75, 0.08, wz + 0.25), V(wx + 1.85, 0.12, wz + 0.75)], 0.12, 0.12, mat=M_PLANK, mode="timber",
+         col=OLD_WOOD, rng=rng, jag=(0.12, 0.0))
+    roll0, roll1 = V(wx - 0.6, 0.55, wz + 0.1), V(wx + 0.55, 0.38, wz - 0.35)
+    tube(g, [roll0, roll1], [0.08, 0.08], 7, M_BARK, (0.55, 0.5, 0.45), tile=0.6)
+    tube(g, [roll1, roll1 + V(0.0, 0.0, -0.22), roll1 + V(0.0, -0.18, -0.25)], [0.025] * 3, 4, M_IRON, IRON, tile=0.2,
+         cap=False)  # the crank
+    tube(g, [roll0.lerp(roll1, 0.5), roll0.lerp(roll1, 0.5) + V(0.1, -0.2, 0.0), V(wx + 0.25, 0.05, wz - 0.75),
+             V(wx + 0.45, 0.03, wz - 1.15)], [0.02] * 4, 4, M_HIDE, (0.6, 0.52, 0.38), tile=0.3, cap=False)
+    # its bucket, on its side in the snow
+    tube(g, [V(wx + 0.5, 0.15, wz - 1.25), V(wx + 0.75, 0.13, wz - 1.42)], [0.15, 0.17], 8, M_PLANK, OLD_WOOD, tile=0.5)
+    snow_cap(g, (wx - 0.62, 1.27, wz), 0.08, 0.08, 0.04, rng)
+    # ── the hand-cart, tipped onto its nose and left.
+    qc = quat_y(0.7) @ quat_z(0.32)
+    cc = V(-2.35, 0.42, -1.65)
+    wagon_bed(g, rng, cc, qc, length=1.2, width=0.75)
+    for sz in (-0.33, 0.33):
+        beam(g, [cc + qc @ V(-0.55, -0.05, sz), cc + qc @ V(-1.45, -0.02, sz * 0.85)], 0.06, 0.06, mat=M_PLANK,
+             col=OLD_WOOD, rng=rng)
+    wheel(g, cc + qc @ V(0.15, -0.3, 0.48), qc @ quat_x(math.pi / 2), 0.42, rng, spokes=6)
+    snow_cap(g, tuple(cc + qc @ V(0.0, 0.08, 0.0)), 0.45, 0.28, 0.07, rng)
+    # ── by the door: a staved barrel and a broken wheel against the wall.
+    bc = V(hx + 1.55, 0.0, hz - d / 2 - 0.4)
+    prof = [0.0, 0.32, 0.62, 0.72]
+    tube(g, [bc + V(0, y, 0) for y in prof], [0.23, 0.27, 0.27, 0.23], 10, M_PLANK, (0.6, 0.5, 0.4), tile=0.5)
+    for y in (0.1, 0.62):
+        tube(g, [bc + V(0.27 * math.cos(a), y, 0.27 * math.sin(a)) for a in np.linspace(0, 2 * math.pi, 11)],
+             [0.015] * 11, 3, M_IRON, IRON, tile=0.2, cap=False)
+    snow_cap(g, tuple(bc + V(0, 0.74, 0)), 0.2, 0.2, 0.05, rng)
+    wheel(g, V(hx + w / 2 + 0.25, 0.35, hz + 0.1), quat_z(1.25) @ quat_y(0.3), 0.5, rng, broken=1)
+    return b
+
+
 MODELS_EXTRA = {
     "story_wrecked_convoy": story_wrecked_convoy,
     "story_hermitage": story_hermitage,
     "story_old_ones_ring": story_old_ones_ring,
+    "story_ruined_homestead": story_ruined_homestead,
 }
 
 
@@ -717,7 +926,7 @@ def story_buried_cabin(rng):
     b = Builder()
     g = G(b)
     # The avalanche mound over the cabin.
-    drift(g, (0.1, 0.0, 0.0), 2.6, 2.0, 1.25, rng, power=0.8, rings=9, seg=28, edge=0.22)
+    drift(g, (0.1, 0.0, 0.0), 2.6, 2.0, 1.25, rng, power=0.8, rings=7, seg=22, edge=0.22)
     drift(g, (1.6, 0.0, 1.0), 1.1, 0.9, 0.45, rng)
     # Caved-in roof: two pitches of planks folded down into the mound, one still on its ridge beam.
     rq = quat_y(0.12)

@@ -8,9 +8,12 @@
 //!   camp (collapsed tent under a drift, a sled with lashed crates, a cold fire ring, skis still
 //!   planted upright, a marker pole); a colonist's avalanche-buried winter cabin (beams jutting from
 //!   the mound, the stone chimney still standing); the colony's last muster (a cairn topped with a
-//!   helmet, a tattered banner, broken shields and spears). And three one-off sites: the **Crown
-//!   Convoy** wrecked beside the pass trail (a wagon on its side, one nose-down in a drift, crested
-//!   crates, one split open on a bell's clapper packed in straw), **Anselm's Hermitage** (a dry-stone
+//!   helmet, a tattered banner, broken shields and spears); a ruined outlying homestead (a burned log
+//!   house, charred roof beams jutting from a drift, a broken palisade stub, the well with its winch
+//!   fallen, a tipped hand-cart). And three one-off sites: the **Crown Convoy** wrecked beside the
+//!   pass trail (the lead wagon broke under a bronze WAR BELL — its cradle snapped, the bell tipped
+//!   out on its side in a drift, mouth to the trail, the Crown cast on its flank, the clapper flung
+//!   clear; the second wagon thrown on its side), **Anselm's Hermitage** (a dry-stone
 //!   cell with an EMPTY bell-cote, two graves, his writing slope) and the **Old Ones' Ring** (carved
 //!   standing stones, ork offerings at the centre).
 //! - **Rocky** — an abandoned mine head (timber headframe over an open shaft, a tipped ore cart at
@@ -57,7 +60,7 @@ struct Scene {
     trail: bool,
 }
 
-const SCENES: [Scene; 9] = [
+const SCENES: [Scene; 10] = [
     // The drift + collapsed tent, the sled with its crates, the planted skis (+ the marker pole).
     Scene { model: "story_lost_camp", biome: Biome::Snow, foot: 2.6,
         solids: &[(-0.6, 0.2, 1.1, 1.0, 0.0), (1.15, -0.75, 1.0, 0.45, 0.35), (2.02, 0.35, 0.25, 0.3, 0.0)],
@@ -94,11 +97,12 @@ const SCENES: [Scene; 9] = [
         want: 3, names: &["The Half-Cut Stone", "The Masons' Quarry", "The Silent Quarry"],
         lore: "The masons dropped their tools mid-cut and never came back for the stone.",
         trail: false },
-    // Wagon on its side (+ its jutting tongue), the nose-down wagon in its drift, the ox's drift.
+    // The bell on its side, the broken bell wagon, the wagon on its side, the ox's drift.
     Scene { model: "story_wrecked_convoy", biome: Biome::Snow, foot: 3.5,
-        solids: &[(-1.3, -0.5, 1.3, 0.6, 0.12), (1.3, 0.45, 1.15, 0.7, -0.08), (0.2, 1.75, 0.9, 0.45, 0.0)],
+        solids: &[(0.45, -1.1, 0.55, 0.75, -0.4), (1.6, 0.6, 1.25, 0.7, 0.05), (-1.75, 0.5, 1.3, 0.45, 0.12),
+            (-0.1, 2.0, 0.9, 0.45, 0.0)],
         want: 1, names: &["The Crown Convoy"],
-        lore: "Crown wagons a hundred winters old; one crate held only a bell's clapper, packed like a relic.",
+        lore: "A Crown war bell, hauled up the pass for the first colony; no one ever came back to dig it out.",
         trail: true },
     // The hermitage's walls (door gap included) + the bell-cote gable, and the two graves.
     Scene { model: "story_hermitage", biome: Biome::Snow, foot: 3.4,
@@ -114,11 +118,18 @@ const SCENES: [Scene; 9] = [
         want: 1, names: &["The Old Ones' Ring"],
         lore: "Every stone is cut with rings like a bell's voice; the orks still bring tusks, as if to a law.",
         trail: false },
+    // The burned log house, the well, the palisade stub, the tipped hand-cart.
+    Scene { model: "story_ruined_homestead", biome: Biome::Snow, foot: 3.4,
+        solids: &[(-0.75, 0.2, 1.45, 1.15, 0.0), (1.75, -1.05, 0.6, 0.6, 0.0), (1.9, 1.75, 1.0, 0.35, -0.3),
+            (-2.35, -1.65, 0.6, 0.45, 0.7)],
+        want: 3, names: &["The Outlying Steading", "The Burned Homestead", "The Palisade Farm"],
+        lore: "They farmed beyond the reach of the chapel bell and raised a palisade instead; it was not enough.",
+        trail: false },
 ];
 
 /// Order the plan seats scenes in each round: the one-off discoverables first (the convoy, which
 /// needs the narrowest ground — beside a trail — leads), then the repeating scenes.
-const SEAT_ORDER: [usize; 9] = [6, 7, 8, 0, 1, 2, 3, 4, 5];
+const SEAT_ORDER: [usize; 10] = [6, 7, 8, 0, 1, 9, 2, 3, 4, 5];
 /// The one-off discoverables stand at least this far from each other, so they spread over the
 /// snow region instead of clustering on its best ground.
 const ONE_OFF_SPREAD: f32 = 45.0;
@@ -500,6 +511,30 @@ pub fn populate(commands: &mut Commands, _meshes: &mut Assets<Mesh>, _materials:
     let count = |b: Biome| placed.iter().filter(|p| SCENES[p.scene].biome == b).count();
     info!("stories_cold: {} set-pieces ({} snow, {} rocky)", placed.len(), count(Biome::Snow), count(Biome::Rocky));
     *SITES.lock().unwrap() = placed;
+}
+
+/// Screenshot cameras for every placed SNOW site (`FOREST_SHOT_STORIES`, see `capture.rs`): a
+/// near oblique from the scene's front (local -Z, the side its story faces) and a high one from the
+/// opposite quarter (over the trees), both aimed ~1u above the site centre.
+pub fn shot_cams() -> Vec<(String, Transform)> {
+    let sites = SITES.lock().unwrap().clone();
+    let mut out = Vec::new();
+    let mut seen: Vec<usize> = Vec::new();
+    for site in sites.iter().filter(|s| SCENES[s.scene].biome == Biome::Snow) {
+        let k = seen.iter().filter(|&&s| s == site.scene).count();
+        seen.push(site.scene);
+        let y = seat_y(site.pos.x, site.pos.y, SCENES[site.scene].foot);
+        let aim = Vec3::new(site.pos.x, y + 1.0, site.pos.y);
+        let front = Vec3::new(-site.yaw.sin(), 0.0, -site.yaw.cos());
+        let side = Vec3::new(front.z, 0.0, -front.x);
+        let name = SCENES[site.scene].model.trim_start_matches("story_");
+        for (tag, off) in [("near", front * 7.5 + side * 3.0 + Vec3::Y * 3.2), ("high", -front * 4.0 + side * 5.0 + Vec3::Y * 11.0)] {
+            let eye = aim + off;
+            info!("story cam {name}_{k}_{tag}: {:.1},{:.1},{:.1} -> {:.1},{:.1},{:.1}", eye.x, eye.y, eye.z, aim.x, aim.y, aim.z);
+            out.push((format!("{name}_{k}_{tag}"), Transform::from_translation(eye).looking_at(aim, Vec3::Y)));
+        }
+    }
+    out
 }
 
 #[cfg(test)]
