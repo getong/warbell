@@ -158,10 +158,7 @@ pub struct Kit {
 }
 
 /// Material sets by the names Blender exported: (name, PBR set file stem, foliage card?).
-/// Albedo multiplier of the castle masonry material (`s_masonry`): s_rock averages sRGB ~118.
-const MASONRY_LIFT: f32 = 2.1;
-
-const MATERIALS: [(&str, &str, bool); 24] = [
+const MATERIALS: [(&str, &str, bool); 26] = [
     ("bark_oak", "bark_oak", false),
     ("bark_beech", "bark_beech", false),
     ("bark_pine", "bark_pine", false),
@@ -192,10 +189,12 @@ const MATERIALS: [(&str, &str, bool); 24] = [
     // Cast bronze (the Crown convoy's war bell): untextured true metal, colour from the vertex
     // colours (aged bronze mottled with verdigris), a soft sun highlight.
     ("bronze", "bronze", false),
-    // Castle masonry (castle_kit.glb): the mossy_rock scan lifted to a pale weathered grey
-    // (`MASONRY_LIFT`) — vertex colours (stored normalized, max 1) can only darken a texture, and
-    // the plain scans read near-black on sun-side-on walls.
-    ("s_masonry", "s_rock", false),
+    // Castle kit (castle_kit.glb; tools/blender_forest/masonry_set.sh, Poly Haven CC0 scans):
+    // coursed pale limestone ashlar (our stone tier), grey rubble/fieldstone (the old colony ruins
+    // and bell tower), weathered split shingles (keep and tower roofs).
+    ("s_ashlar", "s_ashlar", false),
+    ("s_rubble", "s_rubble", false),
+    ("s_shingle", "s_shingle", false),
     // Creature parts (creatures.glb, animals.glb, people.glb) — never drawn with this material
     // (recoloured CPU meshes on the creature material); the entry only lets the loader accept them.
     ("creature", "", false),
@@ -973,10 +972,7 @@ fn try_build(
     let mut mat_index = HashMap::new();
     for (name, set, card) in MATERIALS {
         mat_index.insert(name.to_string(), mats.len());
-        let mut m = pbr_material(images, set, card)?;
-        if name == "s_masonry" {
-            m.base_color = Color::linear_rgb(MASONRY_LIFT, MASONRY_LIFT, MASONRY_LIFT);
-        }
+        let m = pbr_material(images, set, card)?;
         // Snow-dusted twin for the snow biome (`alpine::snowkit`): same textures, crown tint kept.
         let tint = match name {
             "canopy" => 0.6,
