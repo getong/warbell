@@ -30,10 +30,12 @@ use super::*;
 const VALLEY_W: f32 = 3.2;
 
 /// Authored summits: (base x, base z, extra height in world Y, radius in base units).
+/// Heights doubled from the first pass (summit 22.6 → ~35): over a ~110u footprint the old
+/// relief read as a low snowy dome only three trees tall from the meadow (player: "plamy").
 const SUMMITS: [(f32, f32, f32, f32); 3] = [
-    (17.5, 13.0, 5.5, 7.5), // main summit, NW of the col
-    (12.5, 31.5, 4.5, 6.5), // western shoulder
-    (34.5, 10.5, 4.0, 6.0), // NNE peak above the sea cliffs
+    (17.5, 13.0, 11.0, 8.0), // main summit, NW of the col
+    (12.5, 31.5, 8.5, 7.0),  // western shoulder
+    (34.5, 10.5, 8.0, 6.5),  // NNE peak above the sea cliffs
 ];
 
 fn smooth(e0: f32, e1: f32, x: f32) -> f32 {
@@ -100,7 +102,7 @@ fn mountain_y(x: f32, z: f32, reg: &Region) -> f32 {
         return 0.0;
     }
     // Broad dome: gentle foothills, steepening toward the top.
-    let dome = 9.0 * env.powf(1.5);
+    let dome = 11.0 * env.powf(1.5);
     // Domain-warped ridged octaves (rotated lattices so nothing lines up with the grid axes).
     let wx = x + (vnoise(x * 0.055 + 11.0, z * 0.055 - 4.0) - 0.5) * 10.0;
     let wz = z + (vnoise(x * 0.055 - 7.0, z * 0.055 + 13.0) - 0.5) * 10.0;
@@ -111,7 +113,9 @@ fn mountain_y(x: f32, z: f32, reg: &Region) -> f32 {
     let r3 = ridged(ax * 0.38 + 17.0, az * 0.38 + 1.0);
     // Sharp crests (squared), finer ridges riding on the big ones (spurs off the main ridges).
     let ridges = r1 * r1 * 0.62 + r2 * r1 * 0.26 + r3 * (0.4 + 0.6 * r1) * 0.12;
-    let relief = 8.5 * env.powf(1.2) * ridges;
+    // (env^0.9, not ^1.2: the lower flanks get their spurs and gullies too, instead of a
+    // smooth dome skirt under ridged summits.)
+    let relief = 12.0 * env.powf(0.9) * ridges;
     let mut peaks = 0.0f32;
     for (sx, sz, h, rad) in SUMMITS {
         let d = (x - sx).hypot(z - sz) / rad;

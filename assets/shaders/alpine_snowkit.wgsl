@@ -48,7 +48,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let amount = fw.tint.y;
     if amount > 0.0 {
         let wp = in.world_position.xyz;
-        let gn = normalize(in.world_normal);
+        // Facing-corrected: a double-sided needle card seen from below shows its UNDERSIDE, which
+        // holds no snow (the raw normal frosted both faces, so crowns read white from the side).
+        let gn = normalize(in.world_normal) * select(-1.0, 1.0, is_front);
         let n = normalize(pbr_input.N);
         // Sky-facing: the mapped normal decides the fine pattern, the geometric one the broad
         // placement (a card's bent normal alone would frost the underside of a crown).
@@ -58,9 +60,12 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         // From afar a snowy conifer reads as a DARK crown with white highlights (the needles
         // self-shadow and the snow sits on the outer tips), not a white skeleton: the far LODs'
         // cards are mostly sky-facing, so thin the frosting with distance.
-        let far = smoothstep(22.0, 70.0, distance(view.world_position.xyz, wp));
-        let s = smoothstep(0.18, 0.62, up + (br - 0.5) * 0.55 + (amount - 0.5) * 0.6) * min(amount * 1.6, 1.0)
-              * (1.0 - 0.45 * far);
+        let far = smoothstep(18.0, 60.0, distance(view.world_position.xyz, wp));
+        // Snow lies in CLUMPS on the sky-facing tops (about half of them at the canopy's amount),
+        // the rest of the needles stay dark green — the contrast that reads as a snowy spruce.
+        let face = smoothstep(0.35, 0.85, up);
+        let clump = smoothstep(0.40, 0.62, br + (amount - 0.5) * 0.6 + (up - 0.7) * 0.25);
+        let s = face * clump * min(amount * 1.6, 1.0) * (1.0 - 0.6 * far);
         // Slightly blue in the deeper (less sky-facing) snow, near-white on top.
         let snow_col = mix(vec3<f32>(0.66, 0.72, 0.82), vec3<f32>(0.86, 0.89, 0.93), clamp(up, 0.0, 1.0));
         let base = pbr_input.material.base_color;

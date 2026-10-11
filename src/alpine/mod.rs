@@ -161,12 +161,14 @@ pub fn snow_cover(x: f32, z: f32) -> f32 {
         return 0.0;
     }
     let y = crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
-    0.22 + 0.78 * smoothstep(0.6, 3.4, y)
+    // (Base 0.22 → 0.34: the low apron reads as a snowy biome with meadow showing through, not
+    // a meadow with snow patches.)
+    0.34 + 0.66 * smoothstep(0.6, 3.0, y)
 }
 
 /// Tree line on the snow massif (base height band): trees thin out from the low end and none grow
 /// past the high one, so the upper slopes and summits read as bare snow and rock, not a wooded hill.
-const TREELINE: (f32, f32) = (9.0, 13.0);
+const TREELINE: (f32, f32) = (11.0, 16.0);
 
 /// Is ground height `y` at `(x, z)` above the (per-spot jittered, so its edge is no contour) tree line?
 pub fn above_treeline(x: f32, z: f32, y: f32) -> bool {
@@ -212,6 +214,11 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
     for iz in 0..ROWS {
         for ix in 0..COLS {
             let Some(c) = crate::worldmap::tile_centre_ground(ix, iz) else { continue };
+            // The massif is one continuous surface: its steep slopes are not walls (they get
+            // slope rock in the shader), and flagging them painted talus blotches all over it.
+            if crate::worldmap::on_massif_corner(ix, iz) {
+                continue;
+            }
             let wall = [(1, 0), (-1, 0), (0, 1), (0, -1)]
                 .iter()
                 .any(|&(dx, dz)| crate::worldmap::tile_centre_ground(ix + dx, iz + dz).is_some_and(|n| n - c > 0.8));

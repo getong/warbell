@@ -175,32 +175,31 @@ fn alpine_apply(pbr: ptr<function, PbrInput>, p: vec3<f32>, gn_in: vec3<f32>, cl
     let cover = clamp(m.r * (1.0 + 0.35 * m.a) + alp.on.z, 0.0, 1.0);
     // Snow holds below ~55 degrees on open ground, but on a cliff face only on near-level ledges
     // (otherwise the fluted lip rows frost in alternating stripes — a picket fence of white).
-    let hold = smoothstep(mix(0.52, 0.80, cliff), mix(0.84, 0.97, cliff), up);
+    // (The edge is broken by the noise so the snow / rock line never traces a slope contour.)
+    let hold = smoothstep(mix(0.58, 0.80, cliff), mix(0.86, 0.97, cliff), up + (nb - 0.5) * 0.12);
     // Trodden trails: the road keeps the ground's own earth track (a muddy rut through the snow),
     // with a ragged packed-snow margin.
     let trail = smoothstep(0.30, 0.75, road + (nb - 0.5) * 0.35);
     let lim = 0.52 + (nb - 0.5) * 0.75;
     var snow = smoothstep(lim - 0.10, lim + 0.10, cover) * hold * (1.0 - trail * 0.9);
-    // Wind-scoured ground: broad patches where the snow lies thin and the talus shows through
-    // (height-blended below, so the snow still fills the gravel's hollows). Breaks the high
-    // snowfields into the mottled white / grey of real alpine slopes instead of one bright sheet.
-    // Never at the wall feet (the wind piles drifts there), only well up inside the snow.
-    // (The two noise octaves only where the mask allows any scour at all.)
-    var scour = m.b * (1.0 - m.a) * smoothstep(0.45, 0.80, m.r) * (1.0 - trail);
-    if scour > 0.0 {
-        let sc_p = vec2<f32>(0.71 * p.x + 0.70 * p.z, -0.70 * p.x + 0.71 * p.z);
-        // (Value noise sums cluster near 0.5, so the window sits just above it: ~1/5 of the field.)
-        let sc_n = a_noise(sc_p * 0.040 + 23.0) * 0.72 + a_noise(sc_p * 0.13 - 9.0) * 0.28 + (nb - 0.5) * 0.12;
-        scour *= smoothstep(0.55, 0.68, sc_n);
-    }
-    snow *= 1.0 - 0.8 * scour;
-    // Rock: cliff faces anywhere, plus steep ground inside the mountains.
+    // (No noise-driven "wind scour" any more: its ~25u talus blotches read as grey stains on
+    // the massif. Bare ground up high now comes only from the terrain itself — steep slopes.)
+    // Rock: cliff faces anywhere, steep ground inside the mountains, and — high in the snow —
+    // whatever the snow leaves bare on any real slope (> ~22 deg), so the massif shows dark ribs
+    // on its crests and gully walls instead of olive turf or gravel under thin snow.
+    // High in the snow the snow / rock line is CRISP (a few degrees wide, wandering with the
+    // noise): a soft slope ramp smeared dark rock into the snow as brown smudges.
     let steep = 1.0 - smoothstep(0.50, 0.78, up);
-    var rock = clamp(max(cliff * 1.3, steep * m.b), 0.0, 1.0) * (1.0 - snow);
-    // Scree: talus at the wall feet in the mountains (patchy), less where the snow lies deep.
-    var scree = max(m.a * m.b * smoothstep(0.30, 0.62, nb + 0.18 * (1.0 - m.r)), scour) * (1.0 - snow) * (1.0 - rock);
-    // Meadow: whatever the alpine zone leaves uncovered (top faces only).
-    var mead = m.g * hold * (1.0 - snow) * (1.0 - rock) * (1.0 - scree) * (1.0 - trail);
+    let hi = m.b * smoothstep(0.60, 0.90, m.r);
+    // (Bare from ~37°: slopes the hero can't climb anyway read as rock, not as walkable snow.)
+    let bare_hi = hi * smoothstep(0.42, 0.58, 1.0 - smoothstep(0.71, 0.89, up + (nb - 0.5) * 0.22));
+    snow *= 1.0 - bare_hi;
+    var rock = clamp(max(cliff * 1.3, max(steep * m.b * (1.0 - hi), bare_hi)), 0.0, 1.0) * (1.0 - snow);
+    // Scree: talus at the (real) wall feet in the mountains (patchy), less where the snow lies deep.
+    var scree = m.a * m.b * smoothstep(0.30, 0.62, nb + 0.18 * (1.0 - m.r)) * (1.0 - snow) * (1.0 - rock);
+    // Meadow: whatever the alpine zone leaves uncovered (top faces only) — on the low apron and
+    // the margin around the biome, not up on the mountain.
+    var mead = m.g * hold * (1.0 - snow) * (1.0 - rock) * (1.0 - scree) * (1.0 - trail) * (1.0 - smoothstep(0.55, 0.85, m.r));
     scree *= 1.0 - trail;
     // The meadow fades in over the zone edge rather than replacing the procedural lawn wholesale.
     let cov = clamp(snow + rock + scree + mead, 0.0, 1.0) * (1.0 - skip);
@@ -331,18 +330,26 @@ fn alpine_apply(pbr: ptr<function, PbrInput>, p: vec3<f32>, gn_in: vec3<f32>, cl
         let base = (*pbr).material.base_color.rgb;
         let tint = clamp(base / max(dot(base, vec3<f32>(0.3333)), 1e-3), vec3<f32>(0.75), vec3<f32>(1.3));
         var ra = r.alb * mix(vec3<f32>(1.0), tint, 0.45);
-        // Frost in the rock's cracks up in the snow (where the texture's height is low).
-        ra = mix(ra, vec3<f32>(0.80, 0.84, 0.90), m.r * 0.35 * (1.0 - r.orm.a) * smoothstep(0.2, 0.6, up + 0.3));
+        // Up in the snow the crags are cold grey granite: the scan's warm cast read as dirt / mud
+        // smeared on the snow from afar.
+        let rl = dot(ra, vec3<f32>(0.2126, 0.7152, 0.0722));
+        ra = mix(ra, vec3<f32>(rl) * vec3<f32>(0.90, 0.96, 1.06), m.r * 0.75);
+        // Snow caught on the rock up in the snow zone: it fills the texture's low texels (cracks,
+        // ledges) and the more level facets first, so a crag reads as relief — dark ribs with
+        // white in every hollow — rather than one flat grey stain.
+        let lodge = smoothstep(0.55, 0.85, (1.0 - r.orm.a) * 1.1 + up * 0.55 - 0.30 + (nb - 0.5) * 0.25);
+        ra = mix(ra, vec3<f32>(0.82, 0.86, 0.92), m.r * lodge * 0.85);
         // Snow streaks down the faces (couloirs / spindrift): a noise stretched along Y, so a
         // snow-zone crag reads as dark rock laced with white instead of one slate band from afar.
         if m.r > 0.0 {
             let along = dot(p.xz, vec2<f32>(0.707, 0.707)) * 0.85 + nb * 1.3;
             let streak = smoothstep(0.52, 0.80, a_noise(vec2<f32>(along, p.y * 0.16 + 3.0)));
-            ra = mix(ra * mix(1.0, 1.18, m.r), vec3<f32>(0.78, 0.81, 0.86), m.r * streak * 0.55 * smoothstep(-0.2, 0.4, up));
+            ra = mix(ra, vec3<f32>(0.78, 0.81, 0.86), m.r * streak * 0.4 * smoothstep(-0.2, 0.4, up));
         }
+        let lodged = m.r * lodge * 0.85;
         alb += rock * ra;
-        nw += rock * r.n;
-        orm += rock * r.orm.rgb;
+        nw += rock * normalize(mix(r.n, gn, lodged * 0.6));
+        orm += rock * vec3<f32>(mix(r.orm.r, 1.0, lodged), mix(r.orm.g, 0.62, lodged), 0.0);
     }
     // Broad value drift so no layer reads as a printed repeat from a distance.
     alb *= 0.90 + 0.20 * nb;
@@ -364,11 +371,14 @@ fn alpine_apply(pbr: ptr<function, PbrInput>, p: vec3<f32>, gn_in: vec3<f32>, cl
         if fade > 0.0 {
             let cell = floor(p.xz * 19.0);
             let h = a_hash2(cell + vec2<f32>(17.0, 3.0));
-            // ~1 cell in 4 is a crystal facet.
-            if a_hash(cell * 1.37 + vec2<f32>(5.0, 11.0)) < 0.26 {
+            // ~1 cell in 4 holds a crystal — a small round facet at a random spot in its cell, not
+            // the whole square (whole-cell facets tiled the near snow into a visible pixel mosaic,
+            // half the squares tilted away from the sun and darkened).
+            let spot = 1.0 - smoothstep(0.10, 0.20, length(fract(p.xz * 19.0) - (0.25 + 0.5 * h.yx)));
+            if a_hash(cell * 1.37 + vec2<f32>(5.0, 11.0)) < 0.26 && spot > 0.0 {
                 let tilt = (h - 0.5) * 0.62;
                 let micro = normalize(gn + tx * tilt.x + bz * tilt.y);
-                let g = sparkle * fade;
+                let g = sparkle * fade * spot;
                 (*pbr).N = normalize(mix((*pbr).N, micro, g));
                 (*pbr).material.perceptual_roughness = mix((*pbr).material.perceptual_roughness, 0.14, g);
                 (*pbr).material.reflectance = mix((*pbr).material.reflectance, vec3<f32>(0.9), g);
