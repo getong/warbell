@@ -312,9 +312,15 @@ def batter(g, x0, x1, z0, z1, y0, y1, colf, out=(0.4, 0.4, 0.4, 0.4), tile=2.0):
     sbox(g, x0 - ex[3], x1 + ex[1], y1 - 0.02, y1 + 0.12, z0 - ex[0], z1 + ex[2], colf, tile=tile)
 
 
+_STREAKS = [0]
+
+
 def streak(g, axis, fixed, sgn, u, y_top, length, colf, width=0.22, dark=0.45):
     """A rain / damp streak running down a face from y_top (dark) fading into the wall below."""
-    d = 0.006
+    # Each streak at its own depth (6.0-11.2 mm): two overlapping streaks on one face used to share
+    # the plane fixed + 6 mm and z-fight (ck_corner_tower's west face).
+    _STREAKS[0] += 1
+    d = 0.006 + 0.00065 * (_STREAKS[0] % 9)
     f0, f1 = sorted((fixed, fixed + sgn * d))
     y0 = y_top - length
     col = [colf(y0), None, scale(colf(y_top), dark)]
