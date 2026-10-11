@@ -522,6 +522,8 @@ fn ensure_hp_bars(
     // Snowmen are full HP enemies (`Health` + `Snowman`) the hero fights — give them a bar too so
     // they read as foes, not decor, while you whittle them down.
     snowmen: Query<Entity, (With<crate::snowman::Snowman>, With<Health>, Without<HasHpBar>)>,
+    // The castle gates (`gates::GateHp`): a bar over the gate while the orks hack it.
+    gates: Query<Entity, (With<crate::gates::GateHp>, Without<HasHpBar>)>,
 ) {
     // Orks + townsfolk were enlarged by WORLD_BUMP (animals were not), so lift their bars to match
     // the taller heads. The base sits at y=0 and scales about it, so head height scales by the bump.
@@ -541,6 +543,9 @@ fn ensure_hp_bars(
     for e in &snowmen {
         spawn_hp_bar(&mut commands, &assets, e, HP_BAR_Y);
     }
+    for e in &gates {
+        spawn_hp_bar(&mut commands, &assets, e, 2.4);
+    }
 }
 
 #[allow(clippy::type_complexity)]
@@ -550,13 +555,20 @@ fn drive_hp_bars(
     cam_q: Query<(&GlobalTransform, &Projection), With<Camera3d>>,
     // Vitals come from `Health` (orks/animals) OR `NpcHp` (town NPCs) — whichever the target carries.
     targets: Query<
-        (&GlobalTransform, Option<&Health>, Option<&crate::villagers::NpcHp>, Option<&crate::dying::Dying>),
+        (
+            &GlobalTransform,
+            Option<&Health>,
+            Option<&crate::villagers::NpcHp>,
+            Option<&crate::dying::Dying>,
+            Option<&crate::gates::GateHp>,
+        ),
         Or<(
             With<Ork>,
             With<crate::wildlife::Animal>,
             With<crate::villagers::NpcHp>,
             With<crate::rival::RivalSoldier>,
             With<crate::snowman::Snowman>,
+            With<crate::gates::GateHp>,
         )>,
     >,
     mut bars: Query<(Entity, &mut HpBar, &mut Transform, &mut Visibility, &mut MeshTag)>,
@@ -578,14 +590,15 @@ fn drive_hp_bars(
         _ => 0.93,
     };
     for (bar_e, mut bar, mut tf, mut vis, mut mesh_tag) in &mut bars {
-        let Ok((ork_gt, health, npc_hp, dying)) = targets.get(bar.ork) else {
+        let Ok((ork_gt, health, npc_hp, dying, gate_hp)) = targets.get(bar.ork) else {
             commands.entity(bar_e).try_despawn();
             continue;
         };
         // (hp, max) from whichever vitals component the target carries.
-        let (cur, max) = match (health, npc_hp) {
-            (Some(h), _) => (h.hp, h.max),
-            (_, Some(n)) => (n.hp, n.max),
+        let (cur, max) = match (health, npc_hp, gate_hp) {
+            (Some(h), _, _) => (h.hp, h.max),
+            (_, Some(n), _) => (n.hp, n.max),
+            (_, _, Some(g)) => (g.hp, g.max),
             _ => {
                 commands.entity(bar_e).try_despawn();
                 continue;

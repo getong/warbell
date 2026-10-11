@@ -41,6 +41,16 @@ fn tile_world_centre(ix: i32, iz: i32) -> (f32, f32) {
 /// obstacles themselves were tile-bucketed.
 pub struct ForestGrid<'a> {
     blocks: &'a crate::blockers::BlockView,
+    /// Extra world boxes `(cx, cz, hw, hd)` solid for THIS search only — the shut castle gates
+    /// for an ork's route (`gates::Gates::ork_boxes`); empty for everyone else.
+    extra: &'a [(f32, f32, f32, f32)],
+}
+
+impl ForestGrid<'_> {
+    fn blocked(&self, wx: f32, wz: f32) -> bool {
+        self.blocks.is_blocked(wx, wz)
+            || self.extra.iter().any(|&(cx, cz, hw, hd)| (wx - cx).abs() <= hw && (wz - cz).abs() <= hd)
+    }
 }
 
 impl ForestGrid<'_> {
@@ -67,12 +77,12 @@ impl Grid for ForestGrid<'_> {
     }
     fn obstacle_tile(&self, ix: i32, iz: i32) -> bool {
         let (wx, wz) = tile_world_centre(ix, iz);
-        self.blocks.is_blocked(wx, wz) // a prop / keep / wall box sits on this tile centre
+        self.blocked(wx, wz) // a prop / keep / wall box (or a shut gate, for orks) on this tile centre
     }
     fn wall_at(&self, px: f64, pz: f64) -> bool {
         // Core passes continuous coords in ITS grid space (tile+0.5); convert back to forest
         // world. This edge-midpoint test rejects steps crossing a wall while leaving gaps open.
-        self.blocks.is_blocked(px as f32 - GX, pz as f32 - GZ)
+        self.blocked(px as f32 - GX, pz as f32 - GZ)
     }
     fn can_step(&self, fx: i32, fz: i32, tx: i32, tz: i32) -> bool {
         // Effective walk height: terrain, or a bridge deck over the river. Without the deck
@@ -106,12 +116,18 @@ pub fn path_to(from: Vec2, to: Vec2) -> Vec<Vec2> {
 /// stone miner's castle→Rocky haul (~100 tiles + river detours). On an unreachable goal A*
 /// drains the open set and exits early, so a generous budget only costs when a route exists.
 pub fn path_to_budget(from: Vec2, to: Vec2, max_nodes: u32) -> Vec<Vec2> {
+    path_to_avoiding(from, to, max_nodes, &[])
+}
+
+/// [`path_to_budget`] that also treats `extra` world boxes `(cx, cz, hw, hd)` as solid — an ork's
+/// route around the shut castle gates (`gates::Gates::ork_boxes`), which the hero/townsfolk pass.
+pub fn path_to_avoiding(from: Vec2, to: Vec2, max_nodes: u32, extra: &[(f32, f32, f32, f32)]) -> Vec<Vec2> {
     // Each scheduler thread owns its scratch space; independent searches never share mutable
     // buffers or hold a global navigation mutex. Search generations still query live blockers.
     thread_local! { static WORK: RefCell<PathWorkspace> = RefCell::default(); }
     let blocks = blockers::read();
     WORK.with_borrow_mut(|work| find_path_with_workspace(
-        &ForestGrid { blocks: &blocks }, world_to_pathpoint(from.x, from.y),
+        &ForestGrid { blocks: &blocks, extra }, world_to_pathpoint(from.x, from.y),
         world_to_pathpoint(to.x, to.y), max_nodes, work,
     ))
         .into_iter()
