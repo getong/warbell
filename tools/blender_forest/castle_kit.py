@@ -6,31 +6,36 @@ The architecture tells the story without words, in three layers:
   3. CROWN colours   - another agent's set (not here).
 Realism reference: KCD2 / Witcher 3 forts. Scale: hero ~1.17u, so 1u ~ 1.5 m.
 
-PIVOT CONVENTION: ground at y=0, each piece centred on its footprint, +X runs along the wall,
-the OUTER (enemy) face looks toward -Z, the courtyard is +Z. Ground-contact parts sink below y=0.
+PIVOT CONVENTION: ground at y=0, each piece centred on its footprint (wall pieces on the wall
+line), +X runs along the wall, the OUTER (enemy) face looks toward -Z, the courtyard is +Z.
+Foundations sink to y=-0.3. Wall modules are 4u and tile at x = +-2 (palisade, timber gate,
+curtain; merlons period 1.0). The gatehouse is 6.4u on the wall line; its turrets project to -Z.
+The palisade's ditch is only implied (muddy berm at z -1.5..-2.2); cut it into the terrain at
+integration if a real ditch is wanted.
 
-MANIFEST (footprint x * z, height to the top, in u):
-  ck_bell_tower      3.6 x 3.6 (+ platform/ladder to z +2.4)  8.6   old stone, open belfry + bronze bell,
-                                                                     Pip's platform, rope, ladder
-  ck_ruin_keep       7.6 x 6.6 (+ rubble spill)               6.6   roofless shell: broken gable,
-                                                                     collapsed SE corner, charred joists
-  ck_ruin_wall_a     6.0 x 1.3                                3.6   curtain fragment with a breach
-  ck_ruin_wall_b     4.0 x 1.3                                2.4   low stump, fallen blocks
-  ck_rubble          3.2 x 2.6                                0.9   rubble pile
-  ck_palisade        4.0 x 4.4 (rampart z -2.2..+2.2)         2.9   module: logs on an earth bank,
-                                                                     muddy ditch berm (-Z), walkway (+Z)
-  ck_timber_gate     4.0 x 3.0                                4.3   double gate, 2.8w x 2.7h opening,
-                                                                     fighting platform over it
-  ck_watchtower      2.8 x 2.8                                5.6   log tower, platform 3.6, thatch cap
-  ck_curtain         4.0 x 1.6 (body 1.4 thick)               3.85  module: wall-walk 3.0, merlons
-                                                                     (period 1.0, tiles at x = +-2)
-  ck_curtain_corner  1.4 x 1.4                                3.85  outer parapets on -Z and -X
-  ck_stone_tower     4.2 x 4.2                                6.3   walk 5.4, crenellated, corbels
-  ck_gatehouse       6.4 x 4.6                                6.6   passage 2.8w x 2.7h along Z,
-                                                                     portcullis half down
-  ck_keep_t1         7.6 x 6.6                                7.6   the ruin shell re-roofed in timber
-                                                                     and thatch + scaffolding
-  ck_keep_t2         7.0 x 6.0 (+ stair turret)               9.4 (turret 10.6)  stone donjon
+MANIFEST (bounding footprint x-range * z-range, top height; all in u):
+  ck_bell_tower      x +-1.96, z -1.96..+3.98 (platform+ladder +Z)  cap 8.5, spike 8.96
+                     shaft 3.2 wide on a stepped battered plinth, open belfry 5.2-7.55 with the
+                     bronze bell on a timber frame, raised door + Pip's platform at 3.0, rope, ladder
+  ck_ruin_keep       x -3.8..5.3, z -4.3..3.3 (rubble spill to +X/-Z)   6.3   roofless shell
+                     (7.6 x 6.6, walls 0.9): broken W gable, collapsed SE corner, charred joists
+  ck_ruin_wall_a     x +-3.1, z -2.4..0.8 (spill on -Z)               3.2   curtain fragment, breach
+  ck_ruin_wall_b     x -2.0..2.6, z +-1.7                             2.3   low stump, fallen blocks
+  ck_rubble          x +-1.7, z +-1.3                                 0.6   rubble pile
+  ck_palisade        x +-2.0, z +-2.2 (rampart)                       3.0   logs (z -0.2) on a 0.45 bank,
+                     inner walkway at 1.65 (+Z), muddy ditch berm (-Z)
+  ck_timber_gate     x +-2.1, z -0.7..2.7                             4.3   2.8w x 2.7h opening, closed
+                     leaves, fighting platform at 3.2, ladder +Z
+  ck_watchtower      x +-1.65, z +-1.65                               5.5   platform 3.0, thatch cap
+  ck_curtain         x +-2.0, z -1.05..0.75 (body 1.4 thick)          3.93  walk 3.0, merlons 3.85+coping
+  ck_curtain_corner  x -0.95..0.7, z -0.95..0.7                       3.93  outer faces -Z and -X
+  ck_stone_tower     x +-2.4, z +-2.4                                 6.38  walk 5.4, corbelled parapet
+  ck_gatehouse       x +-4.0, z -3.7..2.34 (body 6.4 x 4.6)           6.98  passage along Z 2.8w x 2.7h,
+                     segmental arch, portcullis half down, turrets to 6.98, gate merlons 6.68
+  ck_keep_t1         x -4.05..4.25, z -4.4..3.9                       8.06  ruin shell + timber infill,
+                     thatched roof (ridge 7.6), scaffolding on -Z
+  ck_keep_t2         x -3.85..4.6, z -3.35..4.7 (stair turret NE)     9.48 (turret cap 11.15)  donjon
+                     7 x 6, walk 8.6, first-floor door + timber stair on +Z
 
     blender -b --factory-startup --python tools/blender_forest/castle_kit.py
 """
@@ -53,12 +58,15 @@ import stories_cold as SC  # noqa: E402  (aged-bronze bell recipe; same material
 MATS = SC.MATS  # W.MATS + s_snow + bronze — the bell's M_BRONZE index must match
 Q0 = quat_y(0.0)
 
-# Layer 1: old colony stone (grey, mossy, damp at the foot).
-OLD_TOP = (0.86, 0.86, 0.84)
-OLD_FOOT = (0.48, 0.54, 0.42)
-# Our fresh stone tier: the same ruin stone re-dressed — lighter, warmer, barely any moss.
-NEW_TOP = (1.0, 0.95, 0.87)
-NEW_FOOT = (0.74, 0.7, 0.62)
+# Masonry is the mossy_rock scan (s_rock: mid grey) with the coursing drawn as joint strips — the
+# mossy_stone_wall scan (s_stone) reads near-black brown in game.
+M_MASON = M_ROCK
+# Layer 1: old colony stone (cool grey, mossy and damp at the foot).
+OLD_TOP = (0.97, 0.99, 1.0)
+OLD_FOOT = (0.56, 0.62, 0.46)
+# Our fresh stone tier: the same ruin stone re-dressed — paler, warmer, barely any moss.
+NEW_TOP = (1.0, 0.96, 0.88)
+NEW_FOOT = (0.84, 0.8, 0.72)
 LOG = (0.92, 0.84, 0.72)        # fresh peeled bark_oak logs
 TIMBER = (0.95, 0.86, 0.72)     # fresh hewn timber
 OLD_TIMBER = (0.6, 0.58, 0.55)
@@ -76,7 +84,7 @@ def new_col(y):
     return mix(NEW_FOOT, NEW_TOP, smoothstep(-0.2, 1.4, y))
 
 
-def sbox(g, x0, x1, y0, y1, z0, z1, colf=old_col, mat=M_STONE, tile=1.6):
+def sbox(g, x0, x1, y0, y1, z0, z1, colf=old_col, mat=M_MASON, tile=1.6):
     """Masonry box between bounds (game coords): stone courses level, the colour graded by height.
     UVs are offset to world position (u0 = cx + cz, v0 = cy) so neighbouring boxes of one wall run
     share the texture's courses instead of restarting at every box."""
@@ -89,43 +97,58 @@ def flat(g, pts, mat, col, tile=1.5):
     g.flat([Vector(p) for p in pts], mat, col, tile)
 
 
-def ragged_wall(g, rng, x0, x1, z0, z1, top, colf=old_col, step=0.75, gaps=()):
-    """A ruined wall along X: columns ~`step` wide, each to its own height `top(x)` (+ jitter), so the
-    crown steps and breaks. `gaps` = [(xa, xb, ya, yb)] openings (windows / a breach) left empty."""
-    n = max(1, int(round((x1 - x0) / step)))
-    w = (x1 - x0) / n
-    for i in range(n):
-        a, b = x0 + i * w, x0 + (i + 1) * w
-        h = top((a + b) / 2) + rng.uniform(-0.18, 0.18)
-        if h < 0.15:
-            continue
-        spans = [(-0.3, h)]
-        for xa, xb, ya, yb in gaps:
-            if a < xb and b > xa:
-                spans = [(s0, min(s1, ya)) for s0, s1 in spans] + ([(yb, h)] if h > yb else [])
-        dz = rng.uniform(-0.03, 0.03)
-        for s0, s1 in spans:
-            if s1 - s0 > 0.05:
-                sbox(g, a, b, s0, s1, z0 + dz, z1 + dz, colf)
+def _ragged(g, rng, a0, a1, t0, t1, top, colf, gaps, along_x, course=0.4, cell=0.3):
+    """A ruined wall built in HORIZONTAL COURSES (never columns): the wall runs a0..a1 along its
+    length (X when `along_x`, else Z), t0..t1 thick. `top(u)` is the broken crown height along the
+    length (jittered per cell, so the masonry breaks off in stair-steps along course lines).
+    `gaps` = [(ua, ub, ya, yb)] openings (windows / a breach) left empty."""
+    n = max(1, int(round((a1 - a0) / cell)))
+    w = (a1 - a0) / n
+    tops = [top(a0 + (i + 0.5) * w) + rng.uniform(-0.22, 0.22) for i in range(n)]
+    hmax = max(tops)
+    ya = -0.3
+    first = True
+    while ya < hmax - 0.05:
+        yb = ya + (0.6 if first else course * rng.uniform(0.85, 1.15))
+        first = False
+        # cells where this course still stands (its whole height, or most of it)
+        keep = [tops[i] >= yb - course * 0.35 for i in range(n)]
+        for i in range(n):
+            u = a0 + (i + 0.5) * w
+            for ua, ub, gya, gyb in gaps:
+                if ua < u < ub and ya < gyb and yb > gya:
+                    keep[i] = False
+        i = 0
+        while i < n:
+            if not keep[i]:
+                i += 1
+                continue
+            j = i
+            while j + 1 < n and keep[j + 1]:
+                j += 1
+            ua, ub = a0 + i * w, a0 + (j + 1) * w
+            # Ragged ends: a stone sticks out or falls short where the course breaks off.
+            if i > 0:
+                ua += rng.uniform(-0.08, 0.1)
+            if j < n - 1:
+                ub += rng.uniform(-0.1, 0.08)
+            if ub - ua > 0.12:
+                if along_x:
+                    sbox(g, ua, ub, ya, yb, t0, t1, colf)
+                else:
+                    sbox(g, t0, t1, ya, yb, ua, ub, colf)
+            i = j + 1
+        ya = yb
 
 
-def ragged_wall_z(g, rng, z0, z1, x0, x1, top, colf=old_col, step=0.75, gaps=()):
+def ragged_wall(g, rng, x0, x1, z0, z1, top, colf=old_col, step=0.3, gaps=()):
+    """A ruined wall along X (z0..z1 thick), built in courses — see `_ragged`."""
+    _ragged(g, rng, x0, x1, z0, z1, top, colf, gaps, True, cell=step)
+
+
+def ragged_wall_z(g, rng, z0, z1, x0, x1, top, colf=old_col, step=0.3, gaps=()):
     """`ragged_wall` running along Z (x0..x1 = thickness)."""
-    n = max(1, int(round((z1 - z0) / step)))
-    w = (z1 - z0) / n
-    for i in range(n):
-        a, b = z0 + i * w, z0 + (i + 1) * w
-        h = top((a + b) / 2) + rng.uniform(-0.18, 0.18)
-        if h < 0.15:
-            continue
-        spans = [(-0.3, h)]
-        for za, zb, ya, yb in gaps:
-            if a < zb and b > za:
-                spans = [(s0, min(s1, ya)) for s0, s1 in spans] + ([(yb, h)] if h > yb else [])
-        dx = rng.uniform(-0.03, 0.03)
-        for s0, s1 in spans:
-            if s1 - s0 > 0.05:
-                sbox(g, x0 + dx, x1 + dx, s0, s1, a, b, colf)
+    _ragged(g, rng, z0, z1, x0, x1, top, colf, gaps, False, cell=step)
 
 
 def rubble_spill(g, rng, cx, cz, rx, rz, n, colf=old_col, big=0.32):
@@ -141,7 +164,7 @@ def rubble_spill(g, rng, cx, cz, rx, rz, n, colf=old_col, big=0.32):
         if rng.random() < 0.55:
             slab(g, (x, y + s * 0.3, z), (s * 1.6, s * 0.8, s * 1.1),
                  quat_y(rng.uniform(0, 6.28)) @ quat_x(rng.uniform(-0.3, 0.3)) @ quat_z(rng.uniform(-0.3, 0.3)), rng,
-                 mat=M_STONE, res=(2, 1, 2), round_r=0.03, rough=0.05, cuts=1,
+                 mat=M_MASON, res=(2, 1, 2), round_r=0.03, rough=0.05, cuts=1,
                  col_fn=lambda p, nn, yy=y: old_col(yy + 0.6), tile=1.6)
         else:
             stone(g, (x, y + s * 0.25, z), (s, s * 0.6, s * 0.8), rng, detail=1, cuts=1, tile=0.8,
@@ -214,6 +237,35 @@ def face_stones(g, rng, axis, fixed, sgn, a0, a1, y0, y1, colf, n, holes=0.35):
             sbox(g, f0, f1, y - h / 2, y + h / 2, u - w / 2, u + w / 2, lambda q, c=col: c, tile=1.2)
 
 
+def joints(g, rng, cx, cz, hx, hz, y0, y1, colf, faces="nsew", course=0.42, unit=(0.55, 0.95)):
+    """Mortar joints drawn on the faces of a block (cx, cz, half sizes hx, hz) between y0 and y1:
+    a dark bed-joint strip every course and staggered head joints, so a plain box reads as coursed
+    masonry. faces: n = +Z, s = -Z, e = +X, w = -X."""
+    d, t = 0.008, 0.035
+    for f in faces:
+        sgn = 1 if f in "ne" else -1
+        along_x = f in "ns"
+        fixed = (cz + sgn * hz) if along_x else (cx + sgn * hx)
+        a0, a1 = (cx - hx, cx + hx) if along_x else (cz - hz, cz + hz)
+        f0, f1 = sorted((fixed - sgn * 0.004, fixed + sgn * d))
+        y = y0 + course * rng.uniform(0.6, 1.0)
+        while y < y1 - 0.08:
+            c = scale(colf(y), 0.5)
+            if along_x:
+                sbox(g, a0, a1, y - t / 2, y + t / 2, f0, f1, lambda q, c=c: c, tile=2.0)
+            else:
+                sbox(g, f0, f1, y - t / 2, y + t / 2, a0, a1, lambda q, c=c: c, tile=2.0)
+            yn = min(y + course, y1)
+            u = a0 + rng.uniform(0.1, unit[1])
+            while u < a1 - 0.15:
+                if along_x:
+                    sbox(g, u - t / 2, u + t / 2, y, yn, f0, f1, lambda q, c=c: c, tile=2.0)
+                else:
+                    sbox(g, f0, f1, y, yn, u - t / 2, u + t / 2, lambda q, c=c: c, tile=2.0)
+                u += rng.uniform(*unit)
+            y += course
+
+
 def dark_patch(g, c, size):
     """A recessed opening / put-log hole: a near-black box sunk into the face."""
     lbox(g, c, size, Q0, M_STONE, DARK, tile=2.0)
@@ -225,7 +277,7 @@ def arch_x(g, rng, cx, cy, r, z0, z1, colf, n=7, block=0.24, t0=0.0):
     for k in range(n):
         t = t0 + (math.pi - 2 * t0) * (k + 0.5) / n
         p = (cx + math.cos(t) * (r + block / 2), cy + math.sin(t) * (r + block / 2), (z0 + z1) / 2)
-        slab(g, p, (block * 1.15, block, z1 - z0), quat_z(t + math.pi / 2), rng, mat=M_STONE, res=(2, 1, 2),
+        slab(g, p, (block * 1.15, block, z1 - z0), quat_z(t + math.pi / 2), rng, mat=M_MASON, res=(2, 1, 2),
              round_r=0.02, rough=0.03, col_fn=lambda q, nn: colf(q.y), tile=1.6)
 
 
@@ -234,7 +286,7 @@ def arch_z(g, rng, cz, cy, r, x0, x1, colf, n=7, block=0.24):
     for k in range(n):
         t = math.pi * (k + 0.5) / n
         p = ((x0 + x1) / 2, cy + math.sin(t) * (r + block / 2), cz + math.cos(t) * (r + block / 2))
-        slab(g, p, (x1 - x0, block, block * 1.15), quat_x(-(t + math.pi / 2)), rng, mat=M_STONE, res=(2, 1, 2),
+        slab(g, p, (x1 - x0, block, block * 1.15), quat_x(-(t + math.pi / 2)), rng, mat=M_MASON, res=(2, 1, 2),
              round_r=0.02, rough=0.03, col_fn=lambda q, nn: colf(q.y), tile=1.6)
 
 
@@ -276,6 +328,7 @@ def ck_bell_tower(rng):
     sbox(g, -H, H, 1.1, 5.0, -H, H)
     sbox(g, -H - 0.06, H + 0.06, 2.85, 2.98, -H - 0.06, H + 0.06, tile=1.2)       # string course
     quoins(g, rng, 0.0, 0.0, H, H, 1.1, 5.0, old_col)
+    joints(g, rng, 0.0, 0.0, H, H, 1.1, 5.0, old_col)
     for sgn in (-1, 1):
         face_stones(g, rng, "z", sgn * H, sgn, -H + 0.4, H - 0.4, 1.2, 4.9, old_col, 9)
         face_stones(g, rng, "x", sgn * H, sgn, -H + 0.4, H - 0.4, 1.2, 4.9, old_col, 9)
@@ -307,7 +360,7 @@ def ck_bell_tower(rng):
     for i in range(4):
         a, c = corners[i], corners[(i + 1) % 4]
         tri = [a, apex, c] if (apex - a).cross(c - a).y > 0 else [a, c, apex]
-        flat(g, tri, M_STONE, [scale(OLD_TOP, 0.82)] * 3, tile=1.2)
+        flat(g, tri, M_MASON, [scale(OLD_TOP, 0.82)] * 3, tile=1.2)
     pole(g, apex - V(0, 0.05, 0), apex + V(0, 0.45, 0), 0.06, 0.02, rng, mat=M_IRON, col=IRON, sides=6, segs=1)
     # Slit windows on the outer and side faces.
     for y in (2.2, 3.9):
@@ -404,7 +457,7 @@ def ck_ruin_wall_a(rng):
     b = Builder()
     g = G(b)
     ragged_wall(g, rng, -3.0, 3.0, -0.65, 0.65,
-                lambda x: 3.3 - 2.9 * math.exp(-((x - 0.4) / 0.9) ** 2) - 0.6 * smoothstep(2.0, 3.0, x), step=0.6)
+                lambda x: 3.3 - 2.9 * math.exp(-((x - 0.4) / 0.9) ** 2) - 0.6 * smoothstep(2.0, 3.0, x))
     sbox(g, -3.1, 3.1, -0.3, 0.45, -0.8, 0.8)  # footing
     rubble_spill(g, rng, 0.4, -1.4, 1.5, 0.9, 9)
     return b
@@ -414,8 +467,7 @@ def ck_ruin_wall_b(rng):
     """A low stump of old curtain (4u, ~1.2–2.4) with its blocks tumbled on both sides."""
     b = Builder()
     g = G(b)
-    ragged_wall(g, rng, -2.0, 2.0, -0.65, 0.65, lambda x: 1.9 + 0.5 * math.sin(x * 1.7) - 0.6 * smoothstep(0.8, 2.0, x),
-                step=0.55)
+    ragged_wall(g, rng, -2.0, 2.0, -0.65, 0.65, lambda x: 1.9 + 0.5 * math.sin(x * 1.7) - 0.6 * smoothstep(0.8, 2.0, x),)
     rubble_spill(g, rng, 1.6, 0.9, 1.0, 0.7, 6, big=0.28)
     rubble_spill(g, rng, -1.0, -1.1, 1.1, 0.6, 5, big=0.28)
     return b
@@ -460,7 +512,7 @@ def ck_palisade(rng):
     for k in range(n):
         x = -2.0 + (k + 0.5) * 4.0 / n
         r = rng.uniform(0.13, 0.155)
-        top = 2.75 + rng.uniform(-0.12, 0.12)
+        top = 2.6 + rng.uniform(-0.1, 0.1)
         z = -0.2 + rng.uniform(-0.02, 0.02)
         pole(g, (x, 0.0, z), (x + rng.uniform(-0.02, 0.02), top, z), r, r * 0.92, rng, mat=M_BARK,
              col_fn=lambda t: mix(scale(LOG, 0.6), LOG, smoothstep(0.05, 0.45, t)), sides=7, segs=2)
@@ -597,6 +649,7 @@ def ck_curtain(rng):
     g = G(b)
     sbox(g, -2.0, 2.0, -0.3, 0.7, -0.95, 0.75, new_col)       # batter
     sbox(g, -2.0, 2.0, 0.7, 3.0, -0.7, 0.7, new_col)
+    joints(g, rng, 0.0, 0.0, 2.0, 0.7, 0.7, 2.86, new_col, faces="ns")
     sbox(g, -2.0, 2.0, 3.0, 3.35, -0.7, -0.25, new_col)       # breastwork
     merlons_x(g, -2.0, 2.0, -0.7, -0.25, 3.35, 3.85, new_col)
     sbox(g, -2.0, 2.0, 3.0, 3.18, 0.5, 0.7, new_col)          # inner kerb
@@ -621,6 +674,8 @@ def ck_curtain_corner(rng):
     sbox(g, -0.7, -0.25, 3.0, 3.35, -0.25, 0.7, new_col)
     sbox(g, -0.7, 0.2, 3.35, 3.85, -0.7, -0.25, new_col)     # corner merlon (L-shaped)
     sbox(g, -0.7, -0.25, 3.35, 3.85, -0.25, 0.2, new_col)
+    sbox(g, -0.74, 0.24, 3.85, 3.93, -0.74, -0.21, new_col, tile=1.2)    # coping
+    sbox(g, -0.74, -0.21, 3.85, 3.93, -0.21, 0.24, new_col, tile=1.2)
     return b
 
 
@@ -634,6 +689,7 @@ def ck_stone_tower(rng):
     sbox(g, -H - 0.3, H + 0.3, -0.3, 0.9, -H - 0.3, H + 0.3, new_col)
     sbox(g, -H, H, 0.9, 5.2, -H, H, new_col)
     quoins(g, rng, 0.0, 0.0, H, H, 0.9, 5.2, new_col)
+    joints(g, rng, 0.0, 0.0, H, H, 0.9, 4.95, new_col)
     for sgn in (-1, 1):
         face_stones(g, rng, "z", sgn * H, sgn, -H + 0.4, H - 0.4, 1.0, 5.0, new_col, 6, holes=0.0)
         face_stones(g, rng, "x", sgn * H, sgn, -H + 0.4, H - 0.4, 1.0, 5.0, new_col, 6, holes=0.0)
@@ -701,6 +757,7 @@ def ck_gatehouse(rng):
         sbox(g, x0 - 0.2, x1 + 0.2, -0.3, 0.9, -Z - 1.4, -Z + 0.2, new_col)
         sbox(g, x0, x1, 0.9, 6.0, -Z - 1.2, -Z + 0.2, new_col)
         quoins(g, rng, (x0 + x1) / 2, -Z - 0.5, (x1 - x0) / 2, 0.7, 0.9, 6.0, new_col)
+        joints(g, rng, (x0 + x1) / 2, -Z - 0.5, (x1 - x0) / 2, 0.7, 0.9, 6.0, new_col, faces="swe")
         sbox(g, x0, x1, 6.0, 6.4, -Z - 1.2, -Z - 0.85, new_col)
         sbox(g, (x0 if s < 0 else x1 - 0.35), (x0 + 0.35 if s < 0 else x1), 6.0, 6.4, -Z - 0.85, -Z + 0.2, new_col)
         merlons_x(g, x0, x1, -Z - 1.2, -Z - 0.85, 6.4, 6.9, new_col, phase=0.0)
@@ -794,6 +851,7 @@ def ck_keep_t2(rng):
     sbox(g, -X - 0.35, X + 0.35, -0.3, 1.1, -Z - 0.35, Z + 0.35, new_col)
     sbox(g, -X, X, 1.1, 8.3, -Z, Z, new_col)
     quoins(g, rng, 0.0, 0.0, X, Z, 1.1, 8.05, new_col)
+    joints(g, rng, 0.0, 0.0, X, Z, 1.1, 8.05, new_col, course=0.5)
     for sgn in (-1, 1):
         face_stones(g, rng, "z", sgn * Z, sgn, -X + 0.4, X - 0.4, 1.2, 8.0, new_col, 10, holes=0.0)
         face_stones(g, rng, "x", sgn * X, sgn, -Z + 0.4, Z - 0.4, 1.2, 8.0, new_col, 8, holes=0.0)
@@ -821,7 +879,7 @@ def ck_keep_t2(rng):
     merlons_z(g, -ez + 0.4, ez - 0.4, -ex, -ex + 0.4, 8.95, 9.4, new_col, phase=0.0)
     merlons_z(g, -ez + 0.4, ez - 0.4, ex - 0.4, ex, 8.95, 9.4, new_col, phase=0.0)
     tc = (X - 0.2, Z - 0.2)
-    frustum(g, 1.25, 1.05, -0.3, 10.2, 14, M_STONE, None, tile=1.6, centre=(tc[0], 0, tc[1]),
+    frustum(g, 1.25, 1.05, -0.3, 10.2, 14, M_MASON, None, tile=1.6, centre=(tc[0], 0, tc[1]),
             col_fn=lambda t: new_col(-0.3 + 10.2 * t), segs=2)
     frustum(g, 1.3, 0.02, 9.85, 1.3, 14, M_ROCK, (0.52, 0.54, 0.58), tile=1.0, centre=(tc[0], 0, tc[1]))
     for y in (2.2, 4.6, 7.0):
