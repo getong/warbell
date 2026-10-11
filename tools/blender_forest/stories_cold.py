@@ -507,47 +507,52 @@ def story_wrecked_convoy(rng):
     return b
 
 
-FIELDSTONE = (0.97, 0.99, 1.0)  # cool light-grey dry stone (on s_rock, never the brown s_stone)
+FIELDSTONE = (0.88, 0.9, 0.93)  # light, cool, desaturated grey over s_rock
 
 
-def drystone_wall(g, rng, axis, fixed, a0, a1, T, heights, lean=0.0, base=-0.3, faces=2):
-    """An axis-aligned dry-stone wall (`axis` 'x' = runs along X at z=`fixed`, 'z' = along Z at
-    x=`fixed`) from a0 to a1: one rough block per entry of `heights` (so the top is stepped and
-    broken), fieldstones bulging out of both faces, a snow cap on every top. `lean` tips the tops
-    out along the wall's normal. Returns the block tops [(centre, height)]."""
-    n = len(heights)
-    seg = (a1 - a0) / n
-    nz = Noise(rng, 4, 1.4)
-    tops = []
-    for i, h in enumerate(heights):
-        c = a0 + seg * (i + 0.5)
-        t = T * rng.uniform(0.9, 1.06)
-        jit = rng.uniform(-0.025, 0.025)
-        col = rock_col(scale(FIELDSTONE, rng.uniform(0.9, 1.0)), ground=0.0, dark_below=0.8, noise=nz, var=0.1)
-        if axis == 'x':
-            centre, size, lt = (c, base + (h - base) / 2, fixed + jit), (abs(seg) + 0.05, h - base, t), (0.0, lean)
-        else:
-            centre, size, lt = (fixed + jit, base + (h - base) / 2, c), (t, h - base, abs(seg) + 0.05), (lean, 0.0)
-        slab(g, centre, size, quat_y(0.0), rng, res=(3, 4, 2), round_r=0.012, rough=0.05, col_fn=col, tile=0.7,
-             lean_top=lt)
-        # Fieldstones proud of the faces: the wall reads as stacked stone, not a box.
-        for side in (-1, 1)[:faces]:
-            for _ in range(2):
-                y = rng.uniform(0.15, max(0.2, h - 0.25))
-                r = rng.uniform(0.09, 0.15)
-                along = c + rng.uniform(-0.35, 0.35) * abs(seg)
+def course_wall(g, rng, axis, fixed, a0, a1, top, depth=0.3, double=False, lean=0.0):
+    """A dry-stone wall laid in HORIZONTAL COURSES of individual fieldstones (one rough slab each,
+    the way `wayside_cairn` lays its stones), along X at z=`fixed` (`axis` 'x') or along Z at
+    x=`fixed`, from a0 to a1. Joints stagger course to course; `top(t)` (t = 0..1 along the wall)
+    is the ragged crown height — stones above it are left out, a few more go missing at random, and
+    every stone with nothing laid on it gets a snow cap. `double` = two stones thick (the gable);
+    `lean` shifts each course outward with height (+ along the wall's normal)."""
+    nz = Noise(rng, 4, 3.0)
+    y, ci = -0.1, 0
+    peak = max(top(t / 20) for t in range(21))
+    while y < peak:
+        h = rng.uniform(0.18, 0.28)
+        pos = a0 - (rng.uniform(0.12, 0.26) if ci % 2 else rng.uniform(0.0, 0.06))
+        shift = lean * max(y, 0.0)
+        while pos < a1 - 0.05:
+            ln = rng.uniform(0.3, 0.55)
+            s0, s1 = max(pos, a0), min(pos + ln, a1)
+            pos += ln
+            if s1 - s0 < 0.14:
+                continue
+            mid = (s0 + s1) / 2
+            crown = top((mid - a0) / (a1 - a0))
+            if y + h * 0.5 > crown or (y > 0.5 and rng.random() < 0.05):
+                continue
+            capped = y + h + 0.1 > crown
+            for lay in ((-0.5, 0.5) if double else (0.0,)):
+                d = depth * rng.uniform(0.85, 1.05)
+                across = fixed + lay * depth + shift + rng.uniform(-0.02, 0.02)
+                tint = scale(FIELDSTONE, rng.uniform(0.9, 1.04))
+                col = rock_col(tint, moss=0.08, ground=0.0, dark_below=0.85, noise=nz, var=0.08)
+                rot = quat_y(rng.uniform(-0.07, 0.07)) @ quat_z(rng.uniform(-0.04, 0.04)) @ quat_x(rng.uniform(-0.04, 0.04))
                 if axis == 'x':
-                    p, radii = (along, y, fixed + side * (t / 2 - 0.04)), (r * 1.4, r * 0.6, r * 0.3)
+                    c, size = (mid, y + h / 2, across), (s1 - s0 - 0.02, h * rng.uniform(0.9, 1.0), d)
                 else:
-                    p, radii = (fixed + side * (t / 2 - 0.04), y, along), (r * 0.3, r * 0.6, r * 1.4)
-                stone(g, p, radii, rng, detail=1, rough=0.12, cuts=1, rot=quat_y(0.0), tile=0.5, col_fn=col)
-        top = (centre[0], h + lean * 0.5 * (1 if axis == 'z' else 0), centre[2] + (lean * 0.5 if axis == 'x' else 0))
-        if axis == 'x':
-            snow_cap(g, (top[0], h - 0.03, top[2]), abs(seg) * 0.5, t * 0.6, 0.07, rng)
-        else:
-            snow_cap(g, (top[0], h - 0.03, top[2]), t * 0.6, abs(seg) * 0.5, 0.07, rng)
-        tops.append((centre, h))
-    return tops
+                    c, size = (across, y + h / 2, mid), (d, h * rng.uniform(0.9, 1.0), s1 - s0 - 0.02)
+                slab(g, c, size, rot, rng, res=(2, 1, 2), round_r=0.035, rough=0.08, cuts=int(rng.integers(1, 3)),
+                     col_fn=col, tile=0.5)
+                if capped:
+                    rx, rz = (size[0] * 0.42, size[2] * 0.4) if axis == 'x' else (size[0] * 0.4, size[2] * 0.42)
+                    mound(g, (c[0], y + h - 0.02, c[2]), rx, rz, 0.06, rng, mat=M_SNOW, col_fn=snow_fn(nz), tile=1.6,
+                          rings=2, seg=8, skirt=0.0, rough=0.08, edge=0.1, power=0.6)
+        y += h
+        ci += 1
 
 
 def story_hermitage(rng):
@@ -560,21 +565,27 @@ def story_hermitage(rng):
     b = Builder()
     g = G(b)
     W2, D2, T = 1.4, 1.0, 0.34
-    grey = rock_col(FIELDSTONE, ground=0.0, dark_below=0.8)
+    grey = rock_col(FIELDSTONE, moss=0.08, ground=0.0, dark_below=0.85)
     # South wall (still standing), north wall (broken down to a gap, leaning out), east wall with
     # the door gap, west gable stepping up to the bell-cote.
-    drystone_wall(g, rng, 'x', -D2 + T / 2, -W2 + T, W2 - T, T, [2.05, 2.12, 1.92, 1.7, 1.78, 1.5])
-    drystone_wall(g, rng, 'x', D2 - T / 2, -W2 + T, W2 - T, T, [1.75, 1.45, 0.95, 0.7, 1.05, 1.4], lean=0.1)
-    drystone_wall(g, rng, 'z', W2 - T / 2, -D2, -0.38, T, [1.72, 1.55])
-    drystone_wall(g, rng, 'z', W2 - T / 2, 0.38, D2, T, [1.2, 1.42])
-    gx = -W2 + T / 2
-    drystone_wall(g, rng, 'z', gx, -D2, D2, T, [2.2, 2.5, 2.78, 2.8, 2.52, 2.25])
+    gx = -W2 + 0.28  # the gable is two stones thick
+    jag = lambda t, k: 0.12 * math.sin(t * 17.0 + k) * math.sin(t * 7.3 + 2 * k)  # noqa: E731
+    # South wall, still standing, stepping down eastward; north wall broken to a gap and leaning out;
+    # east wall either side of the door; the west gable rising to the bell-cote.
+    course_wall(g, rng, 'x', -D2 + 0.16, gx + 0.28, W2, lambda t: 2.05 - 0.5 * t + jag(t, 0.0), depth=0.32)
+    course_wall(g, rng, 'x', D2 - 0.16, gx + 0.28, W2,
+                lambda t: 1.75 - 1.15 * math.exp(-((t - 0.55) / 0.2) ** 2) - 0.35 * t + jag(t, 1.0), depth=0.32,
+                lean=0.045)
+    course_wall(g, rng, 'z', W2 - 0.16, -D2 + 0.32, -0.38, lambda t: 1.72 - 0.15 * t + jag(t, 2.0), depth=0.32)
+    course_wall(g, rng, 'z', W2 - 0.16, 0.38, D2 - 0.32, lambda t: 1.2 + 0.2 * t + jag(t, 3.0), depth=0.32)
+    course_wall(g, rng, 'z', gx, -D2, D2, lambda t: 2.15 + 0.75 * (1.0 - abs(2 * t - 1.0)) + 0.6 * jag(t, 4.0),
+                depth=0.28, double=True)
     # The door's lintel, fallen across the threshold.
     slab(g, (W2 + 0.25, 0.1, 0.05), (0.34, 0.2, 1.0), quat_y(0.25), rng, res=(2, 1, 4), round_r=0.04, rough=0.05,
          col_fn=grey, tile=0.6)
     # Bell-cote: two piers and an arch of voussoirs, the opening EMPTY; a little pitched cap on top.
     for z in (-0.36, 0.36):
-        slab(g, (gx, 3.12, z), (T, 0.74, 0.22), quat_y(0.0), rng, res=(2, 3, 2), round_r=0.03, rough=0.05,
+        slab(g, (gx, 2.98, z), (T, 1.02, 0.22), quat_y(0.0), rng, res=(2, 3, 2), round_r=0.03, rough=0.05,
              col_fn=grey, tile=0.6)
     ac, ar = V(gx, 3.47, 0.0), 0.36
     for k in range(7):
@@ -602,7 +613,7 @@ def story_hermitage(rng):
         x = -0.6 + k * 0.42
         board(g, V(x, 0.2 + 0.05 * k, 0.1 - 0.12 * k), V(0.3, 0.0, 1.0), V(0.0, 1.0, 0.15), 0.9, 0.3, 0.035,
               mat=M_PLANK, col=char(rng.uniform(0.1, 0.6)), rng=rng, jag=(0.0, 0.1))
-    drift(g, (0.15, 0.0, 0.3), 1.0, 0.6, 0.48, rng)
+    drift(g, (0.15, 0.0, 0.3), 1.0, 0.6, 0.48, rng, rings=5, seg=16)
     # Writing slope against the south wall + a shelf with a clay jar and a book block.
     ls = V(-0.35, 0.0, -0.5)
     beam(g, [ls + V(0, -0.1, 0), ls + V(0, 0.95, 0)], 0.08, 0.08, mat=M_PLANK, col=OLD_WOOD, rng=rng)
@@ -612,16 +623,16 @@ def story_hermitage(rng):
     frustum(g, 0.06, 0.04, 1.17, 0.18, 9, M_EARTH, (0.62, 0.42, 0.3), tile=0.3, centre=(0.35, 0, -D2 + T + 0.12))
     lbox(g, (0.7, 1.24, -D2 + T + 0.12), (0.2, 0.16, 0.14), quat_y(0.1), M_HIDE, (0.35, 0.22, 0.15), tile=0.3)
     # Rubble at the wall feet — fallen courses, half in the snow.
-    for cx, cz, n in ((0.2, 1.45, 7), (-0.5, 1.35, 4), (1.85, 0.6, 4), (1.75, -0.8, 3), (-1.85, -0.75, 3), (0.6, -1.4, 3)):
-        rubble(g, rng, n, cx, cz, 0.35, 0.1, 0.2, grey, y=-0.03)
+    for cx, cz, n in ((0.2, 1.45, 4), (-0.4, 1.35, 2), (1.85, 0.6, 2), (1.75, -0.8, 2), (-2.0, -0.75, 2)):
+        rubble(g, rng, n, cx, cz, 0.35, 0.12, 0.2, grey, y=-0.03)
     # Drifts banked against the walls.
-    drift(g, (-1.95, 0.0, -0.3), 0.5, 1.1, 0.42, rng)
-    drift(g, (0.2, 0.0, -1.45), 1.45, 0.42, 0.4, rng)
-    drift(g, (1.85, 0.0, 0.55), 0.48, 0.6, 0.3, rng)
-    drift(g, (0.0, 0.0, 1.5), 1.2, 0.45, 0.32, rng)
+    drift(g, (-1.95, 0.0, -0.3), 0.5, 1.1, 0.42, rng, rings=4, seg=14)
+    drift(g, (0.2, 0.0, -1.45), 1.45, 0.42, 0.4, rng, rings=4, seg=14)
+    drift(g, (1.85, 0.0, 0.55), 0.48, 0.6, 0.3, rng, rings=4, seg=14)
+    drift(g, (0.0, 0.0, 1.5), 1.2, 0.45, 0.32, rng, rings=4, seg=14)
     # Two graves outside the west gable: low mounds under the snow, crude lashed crosses (one leaning).
     for k, (x, z) in enumerate(((-2.35, 0.6), (-2.5, 1.75))):
-        drift(g, (x, 0.0, z), 0.4, 0.72, 0.26, rng, power=1.2)
+        drift(g, (x, 0.0, z), 0.4, 0.72, 0.26, rng, power=1.2, rings=4, seg=14)
         foot = V(x, -0.25, z - 0.68)
         lean = V(0.0, 0.0, 0.0) if k == 0 else V(0.32, 0.0, -0.18)
         top = foot + V(0.03, 1.3, 0.0) + lean
