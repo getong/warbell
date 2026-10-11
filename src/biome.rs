@@ -117,6 +117,10 @@ pub struct AtmoSample {
     /// (× `scene::AMBIENT_TINT_SCALE`; 1.0 = the island base). The snow raises it: shade on a
     /// snowfield is lit by blue sky, and the warm island fill turned shadowed snow brown.
     pub ambient_tint: f32,
+    /// Per-region white-balance offset added to the camera grade's `temperature` (0 = the island
+    /// base; negative = cooler). The base grade leans faintly warm, which under the warm-gold key
+    /// light turned a sunlit snowfield peach / sand-coloured; the snow cools it back to white.
+    pub white_balance: f32,
 }
 
 impl AtmoSample {
@@ -151,6 +155,7 @@ impl AtmoSample {
                 _ => 1.0,
             },
             ambient_tint: if c.biome == Biome::Snow { 2.0 } else { 1.0 },
+            white_balance: if c.biome == Biome::Snow { -0.03 } else { 0.0 },
         }
     }
     /// Build from the island-wide [`crate::worldmap::ATMOSPHERE`] tuple (the grass/ocean base).
@@ -174,6 +179,7 @@ impl AtmoSample {
             // Island base: neutral ambient. The Blight bumps it in `blight_ambience`.
             ambient_scale: 1.0,
             ambient_tint: 1.0,
+            white_balance: 0.0,
         }
     }
 }

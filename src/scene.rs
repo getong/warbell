@@ -245,7 +245,7 @@ fn lerp_col(a: Color, b: Color, t: f32) -> Color {
 /// The smoothed biome atmosphere the hero is currently in (eased so crossing a region edge
 /// fades the mood instead of popping). `None` until the world + `BiomeAmbiences` exist.
 #[derive(Resource, Default)]
-struct SmoothBiomeAtmo(Option<AtmoSample>);
+pub(crate) struct SmoothBiomeAtmo(pub(crate) Option<AtmoSample>);
 
 /// Ease [`SmoothBiomeAtmo`] toward the biome under the hero each frame.
 fn track_biome_atmo(
@@ -278,6 +278,7 @@ fn track_biome_atmo(
             cur.bloom_scale += (target.bloom_scale - cur.bloom_scale) * k;
             cur.ambient_scale += (target.ambient_scale - cur.ambient_scale) * k;
             cur.ambient_tint += (target.ambient_tint - cur.ambient_tint) * k;
+            cur.white_balance += (target.white_balance - cur.white_balance) * k;
         }
     }
 }

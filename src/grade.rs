@@ -90,6 +90,7 @@ fn drive_grade(
     mut last_darkness: Local<f32>,
     mut last_temp: Local<f32>,
     forest: Option<Res<crate::realforest::ForestLook>>,
+    atmo: Option<Res<crate::scene::SmoothBiomeAtmo>>,
 ) {
     let (darkness, drain) = match player.as_deref() {
         Some(p) => reactive(&p.0, time.elapsed_secs_f64()),
@@ -104,7 +105,9 @@ fn drive_grade(
     // (a faint green-neutral cast under a canopy, not a warm sepia).
     let forest_w = forest.as_ref().map_or(0.0, |f| f.0);
     let sat = look.saturation * (1.0 - 0.08 * forest_w) * (1.0 - drain).max(0.0);
-    let temperature = 0.03 - 0.035 * forest_w;
+    // Plus the region's own white-balance offset (the snow cools the warm base back to white).
+    let wb = atmo.as_ref().and_then(|a| a.0.as_ref()).map_or(0.0, |s| s.white_balance);
+    let temperature = 0.03 - 0.035 * forest_w + wb;
     if (sat - *last_sat).abs() > 1e-4 || (temperature - *last_temp).abs() > 1e-4 {
         *last_sat = sat;
         *last_temp = temperature;
