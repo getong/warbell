@@ -43,7 +43,14 @@ struct ShotClock {
     seq_idx: usize,
     seq_frame: u32,
     seq_shot: bool,
+    /// Consecutive frames [`crate::pipeline_sync::settled`] has held (the shot wants a few in a row:
+    /// a pipeline queued this frame only shows up in the waiting count next frame).
+    settled_frames: u32,
 }
+
+/// Longest the main shot waits for the render pipelines AFTER the frame / wall-clock floor (a cold
+/// driver shader cache needs ~30 s here). A pipeline that never compiles can't hang the harness.
+const PIPELINE_WAIT_SECS: f32 = 90.0;
 
 impl Plugin for CapturePlugin {
     fn build(&self, app: &mut App) {
@@ -119,7 +126,23 @@ fn drive_shot(
         .and_then(|v| v.parse::<f32>().ok())
         .unwrap_or(0.0)
         .max(10.0);
-    if !clock.shot && clock.frame >= 240 && time.elapsed_secs() >= min_secs {
+    // ...and once every render pipeline the frame needs has compiled (`pipeline_sync::settled`): on
+    // a cold shader cache the frame/clock floor above is long gone before the post stack, terrain
+    // and foliage pipelines land, and the shot would catch black / missing geometry.
+    // `FOREST_PIPEWAIT=0` skips the wait (A/B: film the warm-up itself).
+    let wait = std::env::var("FOREST_PIPEWAIT").map(|v| v != "0").unwrap_or(true);
+    clock.settled_frames = if crate::pipeline_sync::settled() || !wait { clock.settled_frames + 1 } else { 0 };
+    let settled = clock.settled_frames >= 10;
+    let capped = time.elapsed_secs() >= min_secs + PIPELINE_WAIT_SECS;
+    if !clock.shot && clock.frame >= 240 && time.elapsed_secs() >= min_secs && (settled || capped) {
+        if !settled {
+            warn!(
+                "capture: shooting with pipelines still compiling ({} waiting, {} visible meshes unready) after {:.0}s",
+                crate::pipeline_sync::waiting_pipelines(),
+                crate::pipeline_sync::unready_meshes(),
+                time.elapsed_secs()
+            );
+        }
         if let Some(parent) = std::path::Path::new(&path.0).parent().filter(|p| !p.as_os_str().is_empty()) {
             let _ = std::fs::create_dir_all(parent);
         }
@@ -190,7 +213,9 @@ fn drive_story_seq(
         }
     }
     clock.seq_frame += 1;
-    if !clock.seq_shot && clock.seq_frame >= 45 {
+    // A new view can bring new pipeline keys into frame — wait for them too (capped, ~30 s).
+    if !clock.seq_shot && clock.seq_frame >= 45
+        && (crate::pipeline_sync::settled() || clock.seq_frame >= 1800 || std::env::var("FOREST_PIPEWAIT").is_ok_and(|v| v == "0")) {
         commands.spawn(Screenshot::primary_window()).observe(save_to_disk(out.clone()));
         clock.seq_shot = true;
     }

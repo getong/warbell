@@ -40,6 +40,10 @@ const FADE_DUR: f32 = 0.45;
 /// Hard ceiling: reveal regardless after this long, so a missing/slow asset (or a stuck rebuild)
 /// can't trap the player on the veil forever.
 const MAX_WAIT: f32 = 8.0;
+/// Longest the veil holds for the render pipelines AFTER fonts + world are ready. A cold driver
+/// shader cache (first launch, new driver) needs ~25 s to compile everything; a warm one, a few
+/// frames. Until then meshes draw late (see `pipeline_sync`), so the veil covers it.
+const PIPELINE_WAIT: f32 = 30.0;
 
 /// Drives the persistent veil node. Raised opaque (`alpha = 1`) at boot and on every in-process
 /// reset; reveals (fades to 0) once fonts + the world are ready, then sits dormant until re-raised.
@@ -56,6 +60,8 @@ pub(crate) struct Veil {
     ready_at: Option<f32>,
     /// `FOREST_LOADTEST`: hold the veil up forever so a `FOREST_SHOT` can frame it.
     hold: bool,
+    /// When fonts + world first came up this raise — starts the [`PIPELINE_WAIT`] cap.
+    content_at: Option<f32>,
 }
 
 impl Veil {
@@ -65,6 +71,7 @@ impl Veil {
         self.active = true;
         self.alpha = 1.0;
         self.ready_at = None;
+        self.content_at = None;
         self.spawned = now;
     }
 }
@@ -112,6 +119,7 @@ fn spawn_loading(mut commands: Commands, time: Res<Time>, assets: Res<AssetServe
         spawned: time.elapsed_secs(),
         ready_at: None,
         hold,
+        content_at: None,
     });
 
     let a0 = if active { 1.0 } else { 0.0 };
@@ -210,7 +218,21 @@ fn drive_veil(
             let fonts_ready = [&fonts.display, &fonts.regular, &fonts.extrabold]
                 .iter()
                 .all(|f| assets.is_loaded_with_dependencies(f.id()));
-            if (fonts_ready && world_ready.0) || now - veil.spawned > MAX_WAIT {
+            // ...and once the camera's render pipelines have compiled (`pipeline_sync::settled`,
+            // capped), so a cold shader cache doesn't reveal a world still missing its terrain,
+            // foliage and post stack.
+            let content = fonts_ready && world_ready.0;
+            let since = if content { *veil.content_at.get_or_insert(now) } else { now };
+            let settled = crate::pipeline_sync::settled();
+            if (content && (settled || now - since > PIPELINE_WAIT)) || (!content && now - veil.spawned > MAX_WAIT) {
+                if content && now - since > 0.5 {
+                    info!(
+                        "loading: held {:.1}s for render pipelines ({} still waiting, {} visible meshes unready)",
+                        now - since,
+                        crate::pipeline_sync::waiting_pipelines(),
+                        crate::pipeline_sync::unready_meshes()
+                    );
+                }
                 veil.ready_at = Some(now + REVEAL_HOLD);
             }
         }
