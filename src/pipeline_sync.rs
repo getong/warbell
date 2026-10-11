@@ -141,14 +141,18 @@ fn hold_prepass_until_main_ready(
         }
 
         for (&e, &me) in visible.iter_visible() {
-            // Only meshes the prepass actually draws matter: those with a compiled prepass pipeline.
-            let Some(&(_, prepass_id, _)) = prepass_view.get(&me) else { continue };
-            let main_ok = main_view.get(&me).is_some_and(|&id| ready(&pipeline_cache, id));
-            if main_ok {
+            let main_id = main_view.get(&me);
+            if main_id.is_some_and(|&id| ready(&pipeline_cache, id)) {
                 continue;
             }
-            unready += 1;
-            if !ready(&pipeline_cache, prepass_id) {
+            let prepass_id = prepass_view.get(&me).map(|&(_, id, _)| id);
+            // Specialised for this view but can't draw its colour yet (the readiness gates count
+            // these — transparent / no-prepass meshes included).
+            if main_id.is_some() || prepass_id.is_some() {
+                unready += 1;
+            }
+            // Only meshes the prepass actually draws can punch a hole: a compiled prepass pipeline.
+            if !prepass_id.is_some_and(|id| ready(&pipeline_cache, id)) {
                 continue;
             }
             // Depth-only so far: a hole this frame unless we pull it. Pull even if already parked —
