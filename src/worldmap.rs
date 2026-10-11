@@ -3305,6 +3305,7 @@ pub fn build_step(
         crate::vignettes::reset_plan();
         crate::wayside::reset_plan();
         crate::stories_cold::reset_plan();
+        crate::realforest::reset_cover_stream();
         // Warm the per-map sampling bakes ([`tiles`] → [`water_near`] → [`tile_centre_ground`])
         // behind the loading veil: the first caller would otherwise pay the one-time bake as a
         // mid-gameplay frame hitch (e.g. the first invader A* of the run).
