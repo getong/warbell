@@ -136,9 +136,20 @@ pub fn prop(kit: &Kit, class: usize, src: usize, x: f32, z: f32) -> Option<(usiz
         (1, _) if a < 0.5 => pick(&["stump_a"], 1.0),
         (1, _) => pick(&["log_a"], 0.8),
         (2, _) => pick(&ROCKS, 1.0),
+        // Nobody builds a snowman on a steep bank (and one stood there hangs off the downhill
+        // side / drowns in the uphill one): a frost boulder takes the spot instead.
+        (3, _) if snowman_too_steep(x, z) => pick(&ROCKS, 0.8),
         (3, _) => kit.pick_named(&crate::snowman::KIT_MODELS, a).map(|m| (m, 1.0, false)),
         _ => None,
     }
+}
+
+/// More than ~14° of fall across a decor snowman's footprint.
+fn snowman_too_steep(x: f32, z: f32) -> bool {
+    let h = |dx: f32, dz: f32| crate::worldmap::ground_at_world(x + dx, z + dz);
+    let ys = [h(0.5, 0.0), h(-0.5, 0.0), h(0.0, 0.5), h(0.0, -0.5)];
+    let ys: Vec<f32> = ys.into_iter().flatten().collect();
+    ys.len() < 4 || ys.iter().copied().fold(f32::MIN, f32::max) - ys.iter().copied().fold(f32::MAX, f32::min) > 0.25
 }
 
 /// Kit ground cover for snow cover class `class` (0 = snow tufts, 1 = ice glints, 2 = winter
