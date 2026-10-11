@@ -402,14 +402,14 @@ def wagon_bed(g, rng, centre, rot, length=2.2, width=1.1, sides=True, broken_sid
                      0.06, 0.05, up=tuple(rot @ V(0, 0, 1)), mat=M_PLANK, col=OLD_WOOD, rng=rng)
 
 
-BRONZE = (0.5, 0.32, 0.16)
-VERDIGRIS = (0.3, 0.5, 0.42)
+BRONZE = (0.42, 0.27, 0.13)
+VERDIGRIS = (0.27, 0.45, 0.37)
 
 
 def bronze_fn(nz):
     """Old bronze: a dark warm body, verdigris bloom on the sky-facing and sheltered faces."""
     def f(p, n):
-        k = smoothstep(0.1, 0.9, n.y) * 0.55 + 0.3 * nz(p * 2.5)
+        k = smoothstep(0.0, 0.85, n.y) * 0.7 + 0.3 * nz(p * 2.5)
         return scale(mix(BRONZE, VERDIGRIS, min(1.0, max(0.0, k))), 0.9 + 0.1 * nz(p * 6.0))
     return f
 
@@ -508,16 +508,16 @@ def story_wrecked_convoy(rng):
     timber bell-cradle snapped, and the bronze bell rolled out and lies on its side in a drift, mouth
     to the trail, the Crown cast on its flank, snow on top, haul ropes trailing, the clapper flung
     clear. The second wagon lies thrown on its side behind it; the ox is under the snow.
-    Masses: the bell (0.45, -1.15), the bell wagon (1.55, 0.55), the overturned wagon (-1.75, 0.35),
+    Masses: the bell (0.25, -1.4), the bell wagon (1.55, 0.55), the overturned wagon (-1.75, 0.35),
     the ox's drift (-0.1, 1.95)."""
     b = Builder()
     g = G(b)
     drift(g, (0.0, 0.0, 0.0), 3.3, 2.0, 0.22, rng, power=0.7, rings=6, seg=20)
     # ── the bell, tipped out on its side: axis nearly level, mouth turned toward the trail (-Z) and a
     # little down the pass, the lip and flank sunk a hand into the snow.
-    rot_b = quat_y(0.4) @ quat_x(math.pi / 2 - 0.1)
+    rot_b = quat_y(1.1) @ quat_x(math.pi / 2 + 0.12)
     axis = rot_b @ V(0, 1, 0)
-    lip = V(0.15, 0.55, -1.75) - axis * 0.0
+    lip = V(-0.4, 0.55, -1.7)
     bell(g, rng, lip, rot_b, h=1.32, r=0.62)
     side = axis.cross(V(0, 1, 0)).normalized()
     up_side = side.cross(axis).normalized()
@@ -531,6 +531,7 @@ def story_wrecked_convoy(rng):
     # Snow lying along the bell's top and banked against its crown (the mouth and flank stay clear).
     snow_cap(g, tuple(lip + axis * 0.95 + up_side * 0.42 - cn * 0.12), 0.24, 0.3, 0.07, rng)
     drift(g, tuple(lip + axis * 1.8), 0.75, 0.7, 0.42, rng, power=1.0, rings=5, seg=14)
+    drift(g, tuple(V(lip.x, 0.0, lip.z) + axis * 0.7), 0.8, 0.6, 0.14, rng, power=0.8, rings=4, seg=14)
     # ── the bell wagon: a heavy flatbed, front axle snapped so its nose sits in the snow, tilted
     # toward the trail where the bell went over the side.
     qw = quat_y(0.05) @ quat_x(-0.16) @ quat_z(-0.17)
@@ -555,7 +556,7 @@ def story_wrecked_convoy(rng):
     for sz, ln in ((-0.52, 0.42), (0.52, 0.3)):
         beam(g, [fa + qw @ V(0, 0, sz), fa + qw @ V(0, ln, sz * (1 - ln / 1.35))], 0.12, 0.12, mat=M_PLANK, col=OLD_WOOD,
              rng=rng, jag=(0.0, 0.16))
-    head_end = V(1.25, 0.1, -1.05)
+    head_end = V(1.55, 0.12, -0.7)
     beam(g, [apex_r + qw @ V(0.0, 0.05, 0.0), head_end], 0.16, 0.16, mat=M_PLANK, col=OLD_WOOD, rng=rng, jag=(0.0, 0.2))
     snow_cap(g, tuple(apex_r.lerp(head_end, 0.45) + V(0, 0.1, 0)), 0.16, 0.12, 0.04, rng)
     # The thrown front trestle leg in the snow.
@@ -568,11 +569,11 @@ def story_wrecked_convoy(rng):
     crown_loop = lip + axis * 1.48
     pts = [cw + qw @ V(-1.05, 0.02, -0.45), V(1.0, 0.06, -0.3), V(0.85, 0.05, -0.5), crown_loop + V(0, -0.05, 0)]
     tube(g, [Vector(p) for p in pts], [0.03] * 4, 5, M_HIDE, rope, tile=0.3, cap=False)
-    tube(g, [V(-0.35, 0.05, -1.25), V(-0.8, 0.04, -1.05), V(-1.15, 0.05, -1.3)], [0.03, 0.03, 0.01], 5, M_HIDE, rope,
+    tube(g, [V(0.35, 0.05, -0.75), V(-0.2, 0.04, -0.55), V(-0.55, 0.05, -0.8)], [0.03, 0.03, 0.01], 5, M_HIDE, rope,
          tile=0.3)
     # The iron clapper, flung clear, lying in the snow toward the trail.
     clc = (0.4, 0.38, 0.37)
-    k0, k1 = V(-1.1, 0.09, -2.2), V(-0.4, 0.1, -2.55)
+    k0, k1 = V(-1.75, 0.09, -2.3), V(-1.05, 0.1, -2.75)
     tube(g, [k0, k1], [0.035, 0.045], 6, M_IRON, clc, tile=0.2)
     stone(g, tuple(k1 + (k1 - k0).normalized() * 0.1), (0.13, 0.11, 0.11), rng, mat=M_IRON, detail=1, rough=0.02, cuts=0,
           col_fn=lambda p, n: mix(clc, (1, 1, 1), 0.5 * smoothstep(0.5, 0.95, n.y)), tile=0.2)

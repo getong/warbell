@@ -99,7 +99,7 @@ const SCENES: [Scene; 10] = [
         trail: false },
     // The bell on its side, the broken bell wagon, the wagon on its side, the ox's drift.
     Scene { model: "story_wrecked_convoy", biome: Biome::Snow, foot: 3.5,
-        solids: &[(0.45, -1.1, 0.55, 0.75, -0.4), (1.6, 0.6, 1.25, 0.7, 0.05), (-1.75, 0.5, 1.3, 0.45, 0.12),
+        solids: &[(0.25, -1.4, 0.8, 0.62, -0.47), (1.6, 0.6, 1.25, 0.7, 0.05), (-1.75, 0.5, 1.3, 0.45, 0.12),
             (-0.1, 2.0, 0.9, 0.45, 0.0)],
         want: 1, names: &["The Crown Convoy"],
         lore: "A Crown war bell, hauled up the pass for the first colony; no one ever came back to dig it out.",
