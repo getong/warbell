@@ -1026,8 +1026,9 @@ pub(crate) const HOUSE_SCALE: Vec3 =
     Vec3::new(0.9 * WORLD_BUMP * 1.2, 0.74 * WORLD_BUMP * BUILDING_TALLER * 1.32, 0.9 * WORLD_BUMP * 1.2);
 /// Keep root scale (shared by the keep + both grandeur tiers so their parts stay registered). Y is
 /// ×[`BUILDING_TALLER`]; footprint unchanged.
-/// Castle v2 (spec §1): a keep that dominates the yard — ≈9.5×8u footprint, the body ≈5u, the
-/// central tower ≈8u, the roof peak ≈10u (interim primitive heights until `castle_kit.glb`).
+/// Castle v2 (spec §1): a keep that dominates the yard — ≈9.5×8u footprint, the body ≈4.4u, the
+/// central tower ≈7u, turret caps ≈9.0u and gilded spire tips ≈9.9u — all ≤10u (Y 2.0; interim
+/// primitive heights until `castle_kit.glb`).
 const KEEP_SCALE: Vec3 = Vec3::new(1.35, 2.0, 1.35);
 /// Corner-tower root scale. Y is ×[`BUILDING_TALLER`]; footprint unchanged.
 /// Castle v2: 2.7u-square towers, the shaft ([`TOWER_H`]) at full height.
