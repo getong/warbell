@@ -159,7 +159,7 @@ pub struct Kit {
 }
 
 /// Material sets by the names Blender exported: (name, PBR set file stem, foliage card?).
-const MATERIALS: [(&str, &str, bool); 28] = [
+const MATERIALS: [(&str, &str, bool); 32] = [
     ("bark_oak", "bark_oak", false),
     ("bark_beech", "bark_beech", false),
     ("bark_pine", "bark_pine", false),
@@ -206,6 +206,14 @@ const MATERIALS: [(&str, &str, bool); 28] = [
     // Emissive beads and seams on the regional wardens (wardens.glb: the treant's knot eyes, the
     // golem's molten seams): unlit, colour from the vertex colours x an HDR gain so they bloom.
     ("glow", "glow", false),
+    // The swamp's own flora (swamp_flora.glb, tools/blender_forest/swamp_flora.py): fibrous
+    // bald-cypress bark (Poly Haven metasequoia_bark), furrowed willow bark (bark_willow_02), the
+    // same willow scan bleached silver for drowned snags, and the swamp card atlas (cypress
+    // fronds, Spanish moss, willow whips, cattails, lily pads) on the foliage wind path.
+    ("bark_cypress", "bark_cypress", false),
+    ("bark_willow", "bark_willow", false),
+    ("bark_snag", "bark_snag", false),
+    ("swamp_cards", "swamp_cards", true),
 ];
 
 impl Kit {
@@ -1247,17 +1255,19 @@ fn try_build(
         mats.push(match name {
             "canopy" => KitMat::Foliage(foliage_mats.add(foliage::material(m, 0.025, 1.2, 0.6))),
             "undergrowth" => KitMat::Foliage(foliage_mats.add(foliage::material(m, 0.035, 2.5, 0.35))),
+            // Hanging moss / willow whips swing a touch more than a crown edge.
+            "swamp_cards" => KitMat::Foliage(foliage_mats.add(foliage::material(m, 0.03, 1.6, 0.4))),
             _ => KitMat::Std(materials.add(m)),
         });
     }
-    let wind = [mat_index["canopy"], mat_index["undergrowth"]];
+    let wind = [mat_index["canopy"], mat_index["undergrowth"], mat_index["swamp_cards"]];
     let mut models = Vec::new();
     let mut by_name = HashMap::new();
-    for glb in ["forest_pbr/trees.glb", "forest_pbr/undergrowth.glb", "forest_pbr/props.glb", "forest_pbr/structures.glb", "forest_pbr/wayside.glb", "forest_pbr/stories_warm.glb", "forest_pbr/creatures.glb", "forest_pbr/animals.glb", "forest_pbr/people.glb", "forest_pbr/orks.glb", "forest_pbr/stories_cold.glb", "forest_pbr/snowmen.glb", "forest_pbr/wardens.glb", "forest_pbr/alpine_flora.glb", "forest_pbr/market.glb", "forest_pbr/castle_kit.glb", "forest_pbr/town_kit.glb", "forest_pbr/biome_props.glb"] {
+    for glb in ["forest_pbr/trees.glb", "forest_pbr/undergrowth.glb", "forest_pbr/props.glb", "forest_pbr/structures.glb", "forest_pbr/wayside.glb", "forest_pbr/stories_warm.glb", "forest_pbr/creatures.glb", "forest_pbr/animals.glb", "forest_pbr/people.glb", "forest_pbr/orks.glb", "forest_pbr/stories_cold.glb", "forest_pbr/snowmen.glb", "forest_pbr/wardens.glb", "forest_pbr/alpine_flora.glb", "forest_pbr/market.glb", "forest_pbr/castle_kit.glb", "forest_pbr/town_kit.glb", "forest_pbr/biome_props.glb", "forest_pbr/swamp_flora.glb"] {
         // The townsfolk parts (people.glb) and the skinned ork bodies (orks.glb) are optional:
         // without them the villagers keep their box-built bodies (`peasant_model`) and the orks
         // their per-joint creatures.glb parts; the rest of the kit still loads.
-        if (glb.ends_with("people.glb") || glb.ends_with("orks.glb") || glb.contains("/stories_") || glb.ends_with("snowmen.glb") || glb.ends_with("wardens.glb") || glb.ends_with("alpine_flora.glb") || glb.ends_with("market.glb") || glb.ends_with("castle_kit.glb") || glb.ends_with("town_kit.glb") || glb.ends_with("biome_props.glb"))
+        if (glb.ends_with("people.glb") || glb.ends_with("orks.glb") || glb.contains("/stories_") || glb.ends_with("snowmen.glb") || glb.ends_with("wardens.glb") || glb.ends_with("alpine_flora.glb") || glb.ends_with("market.glb") || glb.ends_with("castle_kit.glb") || glb.ends_with("town_kit.glb") || glb.ends_with("biome_props.glb") || glb.ends_with("swamp_flora.glb"))
             && !load::asset_path(glb).exists()
         {
             warn!("realforest: {glb} missing — falling back to the older bodies");

@@ -1083,7 +1083,8 @@ pub fn scatter_region(
     use crate::realforest::biomekit as bkit;
     let rocky_kit = crate::realforest::get().filter(|k| cfg.biome == Biome::Rocky && bkit::rocky(k));
     let desert_kit = crate::realforest::get().filter(|k| cfg.biome == Biome::Desert && bkit::desert(k));
-    let swamp_kit = crate::realforest::get().filter(|_| cfg.biome == Biome::Swamp);
+    // Swamp: its own flora only (`swamp_flora.glb`: cypresses, willows, snags, knees, cattails).
+    let swamp_kit = crate::realforest::get().filter(|k| cfg.biome == Biome::Swamp && bkit::swamp(k));
     let mut bk_chunks = crate::realforest::Chunks::default();
 
     // ── Main per-tile scatter ──
@@ -1416,7 +1417,7 @@ pub fn scatter_region(
                             register_passive_blocker(cx, cz, c.footprints[vi], s, c.block_radius, rot);
                             crate::blockers::reserve_visual(cx, cz, footprint);
                         }
-                    } else if let Some(k) = rocky_kit.or(desert_kit) {
+                    } else if let Some(k) = rocky_kit.or(desert_kit).or(swamp_kit) {
                         // Bedded into the hillside; keeps the low-poly prop's blocker (a spot the
                         // kit leaves clear gets neither model nor blocker, like the snow kit).
                         let at = Vec3::new(cx, py - slope * 0.25 * s, cz);
@@ -1514,6 +1515,10 @@ pub fn scatter_region(
                                     if let Some((m, sm)) = bkit::rocky_cover(k, i, x, z).filter(|_| !no_grass()) {
                                         bk_chunks.push(k, m, Vec3::new(x, py, z), rot, s * sm, crate::realforest::Tier::Cover);
                                     }
+                                } else if let Some(k) = swamp_kit {
+                                    if let Some((m, sm)) = bkit::swamp_cover(k, i, x, z).filter(|_| !no_grass()) {
+                                        bk_chunks.push(k, m, Vec3::new(x, py, z), rot, s * sm, crate::realforest::Tier::Cover);
+                                    }
                                 } else {
                                     queue(true, c.variants[vi].clone(), Vec3::new(x, py, z), rot, s);
                                 }
@@ -1545,7 +1550,7 @@ pub fn scatter_region(
     if let Some(k) = snow_kit {
         alp_chunks.spawn(k, commands, meshes, scatter_cull_enabled());
     }
-    if let Some(k) = rocky_kit.or(desert_kit) {
+    if let Some(k) = rocky_kit.or(desert_kit).or(swamp_kit) {
         bk_chunks.spawn(k, commands, meshes, scatter_cull_enabled());
     }
 }
