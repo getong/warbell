@@ -1014,6 +1014,9 @@ pub fn scatter_region(
 
     let mut r = Rng(cfg.seed);
     let mut tree_pts: Vec<Vec2> = Vec::new();
+    // Alpine scrub above the snow massif's tree line (krummholz / juniper): own spacing list, no
+    // blockers and no RNG draws, so every later pick (and the vignette sites) stays put.
+    let mut flora_pts: Vec<Vec2> = Vec::new();
     let min_d2 = cfg.tree_min_dist * cfg.tree_min_dist;
 
     // Passive props accumulate here by chunk (one bucket per spatial cell), then get baked into
@@ -1132,6 +1135,29 @@ pub fn scatter_region(
                         // rocks are understorey, not empty circles that evict future trees.
                         || crate::blockers::any_within(cx, cz, tree_clear)
                     {
+                        // Above the tree line: dwarf pine / juniper scrub instead of bare snow.
+                        if let Some(k) = snow_kit.filter(|_| {
+                            slope < 0.85
+                                && !landmark_buffered
+                                && !landmark_core
+                                && !story_clearing
+                                && crate::alpine::above_treeline(cx, cz, py)
+                        }) {
+                            let over = py - crate::alpine::treeline_at(cx, cz);
+                            if let Some((m, fs, a)) = crate::alpine::snowkit::alpine_flora(k, cx, cz, over) {
+                                let p = Vec2::new(cx, cz);
+                                let gap = 1.9 * fs;
+                                if !flora_pts.iter().any(|q| q.distance_squared(p) < gap * gap)
+                                    && !crate::blockers::any_within(cx, cz, 0.6 * fs)
+                                {
+                                    let at = Vec3::new(cx, py - slope * 0.25, cz);
+                                    let rot = Quat::from_rotation_y(a);
+                                    if alp_chunks.push_snowy(k, m, at, rot, fs, crate::realforest::Tier::Props, true) {
+                                        flora_pts.push(p);
+                                    }
+                                }
+                            }
+                        }
                         // Passive non-tree prop, so it merges into the chunk's props bucket. Not on
                         // the bare upper massif / its crags (every tree spot above the tree line fell
                         // back to a stone, which strewed the summits with boulders) — bar the odd one.
