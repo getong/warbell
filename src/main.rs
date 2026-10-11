@@ -42,6 +42,7 @@ mod capture;
 mod cinematic;
 mod castle;
 mod castle_decor;
+mod castle_ground; // lived-in castle yard ground: lanes, ruts, plaza, worn grass (baked into the terrain masks)
 mod chest;
 mod combat_fx;
 mod combat_marks; // shared procedural ground-decal shader: target ring, shockwave, blood, scorch

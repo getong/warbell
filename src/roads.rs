@@ -154,7 +154,7 @@ pub fn bake_rut_mask() -> (Vec<u8>, usize, usize, Vec4) {
     let curves = network();
     let mut lo = Vec2::splat(f32::MAX);
     let mut hi = Vec2::splat(f32::MIN);
-    for (c, _) in curves {
+    for c in curves.iter().map(|(c, _)| c.as_slice()).chain(crate::castle_ground::rut_lanes()) {
         for p in c {
             lo = lo.min(*p);
             hi = hi.max(*p);
@@ -166,10 +166,11 @@ pub fn bake_rut_mask() -> (Vec<u8>, usize, usize, Vec4) {
     let w = (((hi.x - lo.x) / RUT_CELL).ceil() as usize) + 1;
     let h = (((hi.y - lo.y) / RUT_CELL).ceil() as usize) + 1;
     let mut grid = vec![0.0_f32; w * h];
-    for (c, half) in curves {
-        if *half < HALF_W - 0.01 {
-            continue; // cart arteries only — footpaths and mountain trails carry no wheel ruts
-        }
+    // The castle's own cart lanes (gate → plaza → approach, `castle_ground`) carry ruts too, so
+    // puddles stand in the yard's wheel tracks like on the island roads.
+    let castle = crate::castle_ground::rut_lanes();
+    let lanes = curves.iter().filter(|(_, half)| *half >= HALF_W - 0.01).map(|(c, _)| c.as_slice()).chain(castle);
+    for c in lanes {
         for win in c.windows(2) {
             let (p0, p1) = (win[0], win[1]);
             let steps = (p0.distance(p1) / (RUT_CELL * 0.7)).ceil().max(1.0) as usize;

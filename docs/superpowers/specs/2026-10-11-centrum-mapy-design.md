@@ -67,8 +67,10 @@ Wzór: KCD2 (Kuttenberg, Trosky) — ziemia pod zamkiem to **mozaika zużycia**,
 Technika (faza 1, zrobione): maska realforest (`bake_mask`) dostaje „zamkowy” kanał przez R/G
 (R = podłoże PBR, G = trakt) — skanowana warstwa *path* (gleba + kamyki + POM + kałuże) na
 traktach i klepisku, mech/trawa na brzegach; koleiny wozów od bram wpisane do maski kolein
-(`roads::bake_rut_mask`), więc kałuże zbierają się w koleinach. Faza 2: bruk jako warstwa PBR
-(CC0 cobblestone z ambientCG), decale słomy/wiórów z kitu.
+(`roads::bake_rut_mask`), więc kałuże zbierają się w koleinach. Kod: `src/castle_ground.rs`.
+Po murach bruk (`PAVED_RECTS`) leży już tylko na fartuchu keepu i w przejazdach bram, a nie na
+całym krzyżu dróg. Faza 2: bruk jako warstwa PBR (CC0 cobblestone z ambientCG) zamiast
+proceduralnej płyty, decale słomy/wiórów z kitu, ciemniejsze zagłębienia z wodą przy studni.
 
 ## 5. Powiększenie mapy / miasta (PLAN, nie robić teraz)
 

@@ -1209,6 +1209,25 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
         data[k * 4 + 2] = (occl[k].clamp(0.0, 1.0) * 255.0).round() as u8;
         data[k * 4 + 3] = grove[k];
     }
+    // The castle yard's worn ground (lanes, plaza, wall paths, working corners) rides the same
+    // channels: scanned floor + trail + debris — see `castle_ground`.
+    let to_u8 = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let (i0, i1) = (((-crate::castle_ground::REACH_X - x0) * RES).max(0.0) as usize, (((crate::castle_ground::REACH_X - x0) * RES) as usize).min(w));
+    let (j0, j1) = (((-crate::castle_ground::REACH_Z - z0) * RES).max(0.0) as usize, (((crate::castle_ground::REACH_Z - z0) * RES) as usize).min(h));
+    for j in j0..j1 {
+        let wz = z0 + (j as f32 + 0.5) / RES;
+        for i in i0..i1 {
+            let wx = x0 + (i as f32 + 0.5) / RES;
+            let g = crate::castle_ground::sample(wx, wz);
+            if g.floor <= 0.0 {
+                continue;
+            }
+            let k = (j * w + i) * 4;
+            data[k] = data[k].max(to_u8(g.floor));
+            data[k + 1] = data[k + 1].max(to_u8(g.path));
+            data[k + 3] = data[k + 3].max(to_u8(g.debris));
+        }
+    }
     let mut img = Image::new(
         bevy::render::render_resource::Extent3d { width: w as u32, height: h as u32, depth_or_array_layers: 1 },
         bevy::render::render_resource::TextureDimension::D2,
