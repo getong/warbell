@@ -151,6 +151,59 @@ impl MaterialExtension for WaterExt {
     // (see the module doc for why the water is no longer blended).
 }
 
+// ── Open-sea horizon ring ───────────────────────────────────────────────────────
+
+/// Outer radius of [`sea_horizon_ring`], world units. A flat plane's far edge sits
+/// `atan(h / R)` below eye level, while the Atmosphere's planet horizon dips `sqrt(2h / r_earth)`;
+/// the ring must reach past the latter or the gap shows the Atmosphere's "ground" (the old flat
+/// tan band). 80 km keeps the sea edge above the planet horizon for any camera under ~2 000 u.
+pub const SEA_RING_OUTER: f32 = 80_000.0;
+/// Rings / angular segments of [`sea_horizon_ring`]. The water shader works purely from
+/// `world_position`, so tessellation only has to keep triangles a sane size near the inner edge.
+const SEA_RING_RINGS: usize = 28;
+const SEA_RING_SEGMENTS: usize = 128;
+
+/// The open sea beyond the shore-baked sea quad, out past the true horizon: an annulus whose inner
+/// edge traces the square `±inner` (pass a little LESS than the quad's half-extent so the two
+/// overlap; spawn it a hair below the quad so the quad wins there) and whose outer edge is a
+/// circle of [`SEA_RING_OUTER`]. Ring radii grow geometrically, so the near rows stay small.
+/// Drawn with the same [`WaterMaterial`] (outside the baked field it shades as open ocean), so the
+/// seam is invisible and the far sea fades into the Atmosphere's own aerial perspective.
+pub fn sea_horizon_ring(inner: f32) -> Mesh {
+    use bevy::mesh::{Indices, PrimitiveTopology};
+    let (n, m) = (SEA_RING_RINGS, SEA_RING_SEGMENTS);
+    let mut pos = Vec::with_capacity((n + 1) * m);
+    for i in 0..=n {
+        let f = i as f32 / n as f32;
+        for j in 0..m {
+            // `m` is a multiple of 8, so the square's corners land exactly on a spoke.
+            let a = j as f32 / m as f32 * std::f32::consts::TAU;
+            let (sa, ca) = a.sin_cos();
+            // Distance from the centre to the square ±inner along this spoke.
+            let r0 = inner / ca.abs().max(sa.abs());
+            let r = r0 * (SEA_RING_OUTER / r0).powf(f);
+            pos.push([ca * r, 0.0, sa * r]);
+        }
+    }
+    let mut idx: Vec<u32> = Vec::with_capacity(n * m * 6);
+    for i in 0..n {
+        for j in 0..m {
+            let a = (i * m + j) as u32;
+            let b = (i * m + (j + 1) % m) as u32;
+            let c = a + m as u32;
+            let d = b + m as u32;
+            // Wound so the face normal points +Y (counter-clockwise seen from above).
+            idx.extend_from_slice(&[a, b, c, b, d, c]);
+        }
+    }
+    let count = pos.len();
+    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0f32, 1.0, 0.0]; count])
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0f32, 0.0]; count])
+        .with_inserted_indices(Indices::U32(idx))
+}
+
 // ── Procedural ripple map ───────────────────────────────────────────────────────
 
 /// Side of the procedural ripple map, texels. 256² with its full mip chain is ~350 KB and bakes in

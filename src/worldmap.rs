@@ -3579,9 +3579,19 @@ fn bs_sea_and_boats(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: 
     // of every shadow cascade (it still RECEIVES shadows — trees darken the water as they should).
     commands.spawn((
         Mesh3d(sea_mesh),
-        MeshMaterial3d(sea),
+        MeshMaterial3d(sea.clone()),
         Transform::from_xyz(0.0, SEA_Y, 0.0),
         bevy::light::NotShadowCaster,
+        crate::biome::BiomeEntity,
+    ));
+    // The open sea out past the true horizon (fixes the tan band above — see `water::sea_horizon_ring`):
+    // same material, overlapping the quad's rim by 10u and 5cm under it so the quad wins the overlap.
+    commands.spawn((
+        Mesh3d(meshes.add(crate::water::sea_horizon_ring(440.0))),
+        MeshMaterial3d(sea),
+        Transform::from_xyz(0.0, SEA_Y - 0.05, 0.0),
+        bevy::light::NotShadowCaster,
+        bevy::light::NotShadowReceiver,
         crate::biome::BiomeEntity,
     ));
 

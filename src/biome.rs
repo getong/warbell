@@ -155,7 +155,9 @@ impl AtmoSample {
                 _ => 1.0,
             },
             ambient_tint: if c.biome == Biome::Snow { 2.0 } else { 1.0 },
-            white_balance: if c.biome == Biome::Snow { -0.03 } else { 0.0 },
+            // 0 (was -0.03 for snow, which cancelled the old +0.03 warm base grade). The base is
+            // neutral now, so snow keeps it too — a further cool shift turned noon snow teal.
+            white_balance: 0.0,
         }
     }
     /// Build from the island-wide [`crate::worldmap::ATMOSPHERE`] tuple (the grass/ocean base).
