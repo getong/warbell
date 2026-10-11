@@ -92,7 +92,10 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         let shade = mix(1.0 - settings.cloud_strength,
                         1.0 + 0.4 * settings.cloud_strength,
                         smoothstep(0.30, 0.78, cn));
-        lit = scene.rgb * mix(1.0, shade, settings.fade);
+        // Fade out by ~1.5 km: past that a pixel spans several 55u blobs (the open-sea horizon
+        // ring reaches 80 km), so the patches would alias into per-pixel speckle on the far sea.
+        let near_w = 1.0 - smoothstep(600.0, 1500.0, dist);
+        lit = scene.rgb * mix(1.0, shade, settings.fade * near_w);
     }
 
     // ── Height fog + sun in-scatter ──
