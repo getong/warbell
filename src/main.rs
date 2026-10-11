@@ -93,6 +93,7 @@ mod outline;
 mod palette;
 mod particles;
 mod perftest;
+mod pipeline_sync; // prepass waits for the main-pass pipeline (no sky-coloured foliage holes)
 mod previs_knight;
 mod peasant_model;
 mod player;
@@ -327,6 +328,9 @@ fn main() {
             compass::CompassPlugin, // top-centre strip compass: heading + keep/Gnashfang landmark pips
             perftest::PerftestPlugin, // FOREST_PERFTEST=<secs>: headless leak instrumentation (off otherwise)
         ))
+        // Keep each mesh out of the depth prepass until its main-pass pipeline has compiled too
+        // (cold shader cache: depth-only leaves = sky-coloured holes). See `pipeline_sync`.
+        .add_plugins(pipeline_sync::PipelineSyncPlugin)
         // Screen-space god-rays post pass (light scattering toward the sun). Toggled per-preset via
         // quality.rs (`god_rays`); same custom-post-pass family as dof/outline. Standalone call
         // because the tuples above are at the `Plugins` arity-15 cap.
