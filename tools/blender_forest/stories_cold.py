@@ -301,7 +301,7 @@ def story_lost_camp(rng):
          M_HIDE, (0.55, 0.42, 0.32), tile=0.4)
     # Tow rope trailing into the snow.
     rp = sc + sq @ V(1.05, 0.42, 0.0)
-    tube(g, [rp, rp + V(0.25, -0.35, 0.1), rp + V(0.55, -0.42, 0.3), rp + V(0.8, -0.4, 0.25)], [0.012] * 4, 4, M_CLOTH,
+    tube(g, [rp, rp + V(0.08, -0.3, -0.12), rp + V(-0.05, -0.42, -0.35), rp + V(-0.25, -0.4, -0.5)], [0.012] * 4, 4, M_CLOTH,
          W.ROPE, tile=0.3)
     drift(g, (sc.x - 0.3, 0.0, sc.z - 0.35), 0.8, 0.35, 0.16, rng)
     # Pickaxe leaning on the sled.

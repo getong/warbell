@@ -3234,6 +3234,7 @@ pub fn build_step(
         crate::poi::reset_plan();
         crate::vignettes::reset_plan();
         crate::wayside::reset_plan();
+        crate::stories_cold::reset_plan();
         // Warm the per-map sampling bakes ([`tiles`] → [`water_near`] → [`tile_centre_ground`])
         // behind the loading veil: the first caller would otherwise pay the one-time bake as a
         // mid-gameplay frame hitch (e.g. the first invader A* of the run).
@@ -3321,7 +3322,11 @@ pub fn build_step(
         31 => crate::bog::populate(commands, meshes, std_mats),
         // Micro-POIs + flags (pass 4): story set-pieces along the arteries, the gallows on the
         // Gnashfang approach, smoke + crows over the Hold, farmland around the castle.
-        32 => crate::poi::populate(commands, meshes, std_mats),
+        32 => {
+            crate::poi::populate(commands, meshes, std_mats);
+            // Cold-biome story set-pieces (snow / rocky), planned at phase 4 with the POIs.
+            crate::stories_cold::populate(commands, meshes, std_mats);
+        }
         // Vista pass (pass 5): the lake waterfall off the mesa wall + three framed overlooks.
         33 => crate::vista::populate(commands, meshes, std_mats),
         _ => {}
@@ -3531,6 +3536,8 @@ fn bs_sea_and_boats(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: 
     // the forest vignette and every wayside piece (`realforest::keep_clear`).
     crate::vignettes::plan();
     crate::wayside::plan();
+    // After every other planned piece, before the scatter: the snow / rocky story scenes.
+    crate::stories_cold::plan();
 }
 
 /// Scatter one biome's props on its tiles (height-aware), and capture its atmosphere/weather into
