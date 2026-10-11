@@ -752,7 +752,17 @@ pub fn build(
     //    attaches its spatial campfire loop + war-drum sink here (the drums that carry
     //    across the strait at dusk ARE the fortress's voice). ──
     let fire = at(BONFIRE_AT);
-    spawn_solid(commands, meshes, &mat, bonfire_base_mesh(), fire, Quat::IDENTITY);
+    // The camps' scanned Blender gear (`structures.glb`) where the kit is loaded, scaled to the
+    // fortress footprint; the procedural mesh is still built so the RNG stream stays the same.
+    let kit = crate::realforest::get().filter(|k| k.has("ork_tent"));
+    let kit_solid = |commands: &mut Commands, name: &str, tf: Transform| {
+        let Some(e) = kit.and_then(|k| k.spawn_static(commands, name, tf)) else { return false };
+        commands.entity(e).insert(BiomeEntity);
+        true
+    };
+    if !kit_solid(commands, "ork_firepit", Transform::from_translation(fire).with_scale(Vec3::splat(3.2))) {
+        spawn_solid(commands, meshes, &mat, bonfire_base_mesh(), fire, Quat::IDENTITY);
+    }
     // Box, not circle: radius 1.1 > the ≤1.0 circle bound the neighbour-only scan assumes.
     crate::blockers::add_box(BONFIRE_AT.x, BONFIRE_AT.y, 1.1, 1.1);
     commands.spawn((
@@ -796,7 +806,10 @@ pub fn build(
     // ── Hide tents (the warband's sprawl — each its own size, yaw and patchwork) ──
     for (p, s) in TENTS {
         let yaw = rng_range(&mut rng, 0.0, TAU);
-        spawn_solid(commands, meshes, &hide_mat, tent_mesh(s, &mut rng), at(p), ry(yaw));
+        let m = tent_mesh(s, &mut rng);
+        if !kit_solid(commands, "ork_tent", Transform { translation: at(p), rotation: ry(yaw), scale: Vec3::splat(s) }) {
+            spawn_solid(commands, meshes, &hide_mat, m, at(p), ry(yaw));
+        }
         crate::blockers::add_obb(p.x, p.y, 2.0 * s, 1.7 * s, yaw);
     }
 
@@ -919,7 +932,11 @@ pub fn build(
         Vec2::new(9.5, 75.5 + BLIGHT_DZ),
         Vec2::new(15.0, 75.8 + BLIGHT_DZ),
     ] {
-        spawn_solid(commands, meshes, &mat, spikes_mesh(&mut rng), at(sp), ry(rng_range(&mut rng, 0.0, TAU)));
+        let m = spikes_mesh(&mut rng);
+        let r = ry(rng_range(&mut rng, 0.0, TAU));
+        if !kit_solid(commands, "ork_spikes", Transform { translation: at(sp), rotation: r, scale: Vec3::ONE }) {
+            spawn_solid(commands, meshes, &mat, m, at(sp), r);
+        }
     }
 
     // ── Trampled-ground dressing: bones, stumps, mud pools inside the walls ──

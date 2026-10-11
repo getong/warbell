@@ -1223,8 +1223,8 @@ pub fn scatter_region(
                                     if !snow_prop(k, &mut alp_chunks, class_index(fb), fi, at, rot, fs) && fb.block_radius * fs >= 0.30 {
                                         queue(false, fb.variants[fi].clone(), at, rot, fs);
                                     }
-                                } else if let Some(k) = rocky_kit {
-                                    if let Some((m, sm)) = bkit::rocky_prop(k, class_index(fb), fi / PROP_TINTS.len(), cx, cz) {
+                                } else if let Some(k) = rocky_kit.or(desert_kit) {
+                                    if let Some((m, sm)) = bkit::passive_prop(k, cfg.biome, class_index(fb), fi / PROP_TINTS.len(), cx, cz) {
                                         bk_chunks.push(k, m, Vec3::new(cx, py, cz), rot, fs * sm, crate::realforest::Tier::Props);
                                     }
                                 } else {
@@ -1416,11 +1416,11 @@ pub fn scatter_region(
                             register_passive_blocker(cx, cz, c.footprints[vi], s, c.block_radius, rot);
                             crate::blockers::reserve_visual(cx, cz, footprint);
                         }
-                    } else if let Some(k) = rocky_kit {
+                    } else if let Some(k) = rocky_kit.or(desert_kit) {
                         // Bedded into the hillside; keeps the low-poly prop's blocker (a spot the
                         // kit leaves clear gets neither model nor blocker, like the snow kit).
                         let at = Vec3::new(cx, py - slope * 0.25 * s, cz);
-                        if let Some((m, sm)) = bkit::rocky_prop(k, class_index(c), vi / PROP_TINTS.len(), cx, cz) {
+                        if let Some((m, sm)) = bkit::passive_prop(k, cfg.biome, class_index(c), vi / PROP_TINTS.len(), cx, cz) {
                             if bk_chunks.push(k, m, at, rot, s * sm, crate::realforest::Tier::Props) {
                                 register_passive_blocker(cx, cz, c.footprints[vi], s, c.block_radius, rot);
                                 crate::blockers::reserve_visual(cx, cz, footprint);
