@@ -558,6 +558,15 @@ fn disable_gpu_clustering_on_weak_gpu(
     }
 }
 
+/// The camera's contact-shadow settings (`FOREST_CONTACT=steps,thickness,length` overrides).
+fn contact_shadows(env: Option<&str>) -> ContactShadows {
+    let v: Vec<f32> = env.map(|s| s.split(',').filter_map(|p| p.trim().parse().ok()).collect()).unwrap_or_default();
+    if v.len() == 3 {
+        return ContactShadows { linear_steps: v[0] as u32, thickness: v[1], length: v[2] };
+    }
+    ContactShadows::default()
+}
+
 /// A/B staging knobs on top of any preset: `FOREST_AA=off|low|high|ultra|taa`,
 /// `FOREST_SSAO=off|medium|ultra`. (Read in `apply_quality`: `FOREST_SHADOWFILTER=gaussian|temporal|
 /// hardware`, `FOREST_CONTACT=off`; in `scene.rs`: `FOREST_SHADOWBIAS=depth,normal`; in
@@ -816,10 +825,12 @@ fn apply_quality(
         // Depth prepass + contact shadows ride one gate: contact shadows (0.19) read the prepass
         // depth, so they must share the exact on/off as the prepass. Stripped together when nothing
         // (DoF/SSAO/outline) needs depth — that's the ~3 ms `early prepass` in the F2 profiler.
-        // `FOREST_CONTACT=off`: A/B knob, keep the depth prepass but drop the contact shadows.
-        let contact = std::env::var("FOREST_CONTACT").map_or(true, |v| v != "off");
+        // `FOREST_CONTACT=off`: A/B knob, keep the depth prepass but drop the contact shadows;
+        // `FOREST_CONTACT=steps,thickness,length` overrides the settings.
+        let contact_env = std::env::var("FOREST_CONTACT").ok();
+        let contact = contact_env.as_deref() != Some("off");
         if needs_depth && contact {
-            e.insert((DepthPrepass, ContactShadows::default()));
+            e.insert((DepthPrepass, contact_shadows(contact_env.as_deref())));
         } else if needs_depth {
             e.insert(DepthPrepass);
             e.remove::<ContactShadows>();

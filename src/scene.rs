@@ -824,7 +824,16 @@ fn setup_sun(mut commands: Commands) {
             // ground, filling in the small-scale detail the cascade shadow maps miss. Only renders
             // for cameras carrying `ContactShadows` (added on High/Ultra in `quality.rs`), so this
             // flag is free on Low. Needs the depth prepass (present whenever ContactShadows is).
-            contact_shadows_enabled: true,
+            // OFF for the sun (playtest: "flickering murów"). Bevy's contact-shadow march starts at
+            // the fragment with per-frame blue-noise jitter and no normal offset; on a wall face lit
+            // at a grazing angle it self-hits along the stone relief, so the ruin keep's east face
+            // carried dark streaks that changed every frame. TAA can't converge them (the stone
+            // texture's contrast clamps its history). A/B on a still camera, face region, mean
+            // |dL| / p99 / % > 8: on 0.72 / 12.9 / 2.1, off 0.26 / 2.4 / 0.0. Raising the cascade
+            // bias (0.73) or retuning steps, thickness or length (0.69-0.96) didn't help. Cascades +
+            // SSAO still ground the props.
+            // FOREST_SUN_CONTACT=1 turns it back on for A/B.
+            contact_shadows_enabled: std::env::var("FOREST_SUN_CONTACT").is_ok_and(|v| v == "1"),
             // Shadow acne fix: Bevy's default bias (depth 0.02 / normal 1.8) is too small for the
             // big flat walls (castle/fortress/hall) at a grazing low-sun angle — the surface
             // shadow-maps ITSELF into a jagged stippled "acne" pattern. Bumped depth→0.05,
