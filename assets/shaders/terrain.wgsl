@@ -884,27 +884,29 @@ fn fragment(
     //    side — no seam. A no-op (wet≈0) on all dry ground, so grass/sand/snow are unaffected.
     //    The swamp also gets its OWN floor here (not the forest's litter): dark peaty mud mottled
     //    with wet moss, and shallow standing water in the low hollows — near-black, glassy, flat —
-    //    so only the water glints; the mud / moss stay a damp semi-matte (a uniform 0.40 sheen
-    //    over the micro-relief threw white specular speckles across the whole bog).
+    //    so only the water glints; the mud / moss stay matte (a 0.40 sheen mirrored the bright
+    //    foggy sky off the dark peat at grazing angles - the whole bog read pale sage-grey).
     let wet = clamp(pbr_input.material.base_color.a, 0.0, 1.0) * (1.0 - alp_k) * (1.0 - fp_w);
     if wet > 0.001 {
         let sp = in.world_position.xz;
         let mott = ter_noise_rot(sp * 0.13, 0.81, 0.59) * 0.6 + ter_noise_rot(sp * 0.41, 0.29, 0.957) * 0.4;
         let grain = ter_noise_rot(sp * 2.1, 0.60, 0.80);
-        let mud = vec3<f32>(0.060, 0.047, 0.034);
-        let wmoss = vec3<f32>(0.046, 0.066, 0.026);
+        // Blackwater peat: darker than the forest's leaf litter (it reads pale under the swamp's
+        // thick fog + lifted fill otherwise).
+        let mud = vec3<f32>(0.036, 0.028, 0.020);
+        let wmoss = vec3<f32>(0.030, 0.044, 0.017);
         let mossk = smoothstep(0.45, 0.66, mott);
         let floor_c = mix(mud, wmoss, mossk) * (0.78 + 0.44 * grain);
         let src = pbr_input.material.base_color.rgb;
         // Keep a little of the vertex colour's own variation (and the bank / shore tints).
-        var swamp_rgb = mix(src, mix(floor_c, src * 0.5, 0.2), wet * 0.9);
-        let pool_n = ter_noise_rot(sp * 0.23, 0.95, 0.31) * 0.7 + ter_noise_rot(sp * 0.9, 0.47, 0.88) * 0.3;
-        let standing = (1.0 - smoothstep(0.24, 0.31, pool_n)) * smoothstep(0.55, 0.9, wet)
+        var swamp_rgb = mix(src, mix(floor_c, src * 0.3, 0.15), smoothstep(0.0, 0.6, wet));
+        let pool_n = ter_noise_rot(sp * 0.31, 0.95, 0.31) * 0.65 + ter_noise_rot(sp * 1.1, 0.47, 0.88) * 0.35;
+        let standing = (1.0 - smoothstep(0.30, 0.36, pool_n)) * smoothstep(0.55, 0.9, wet)
             * smoothstep(0.90, 0.98, in.world_normal.y) * (1.0 - cliff);
         swamp_rgb = mix(swamp_rgb, swamp_rgb * 0.22 + vec3<f32>(0.004, 0.006, 0.004), standing);
         pbr_input.material.base_color = vec4<f32>(swamp_rgb, pbr_input.material.base_color.a);
         let rw = pbr_input.material.perceptual_roughness;
-        pbr_input.material.perceptual_roughness = mix(mix(rw, 0.66, wet), 0.05, standing);
+        pbr_input.material.perceptual_roughness = mix(mix(rw, 0.88, wet), 0.05, standing);
         pbr_input.N = normalize(mix(pbr_input.N, normalize(in.world_normal), standing));
     }
 

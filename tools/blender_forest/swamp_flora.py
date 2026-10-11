@@ -358,10 +358,15 @@ def hang_moss(b, rng, p, length, crown_c, crown_r, lod, n_cross):
     """A Spanish-moss festoon: the card's base (image bottom) at the limb, hanging straight down."""
     down = Vector((rng.normal() * 0.08, rng.normal() * 0.08, -1)).normalized()
     a0 = rng.uniform(0, math.pi)
+    # The crown's self-occlusion darkening (inner + lower cards) would turn the pale beards into
+    # dark drapes under the canopy: shade them as outer, sky-lit foliage instead (a virtual crown
+    # centre far below the festoon -> full brightness, normals bent toward the sky).
+    sky_c = p + Vector((0, 0, -50.0))
+    sky_r = Vector((1.0, 1.0, 1.0))
     for k in range(n_cross):
         a = a0 + k * math.pi / n_cross
         nrm = Vector((math.cos(a), math.sin(a), 0))
-        card(b, p + Vector((0, 0, 0.03)), down, nrm, length, UV_MOSS, CARDS, crown_c, crown_r, MOSS_TINT, rng,
+        card(b, p + Vector((0, 0, 0.03)), down, nrm, length, UV_MOSS, CARDS, sky_c, sky_r, MOSS_TINT, rng,
              fold=0.12, bend_w=0.25)
 
 
