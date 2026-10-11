@@ -1323,7 +1323,7 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
         let wz = z0 + (j as f32 + 0.5) / RES;
         for i in i0..i1 {
             let wx = x0 + (i as f32 + 0.5) / RES;
-            let Some((fw, _, plough)) = crate::castle_ground::field_at(wx, wz) else { continue };
+            let Some((fw, plough)) = crate::castle_ground::field_at(wx, wz) else { continue };
             let k = (j * w + i) * 4;
             data[k] = data[k].max(to_u8(fw));
             data[k + 1] = data[k + 1].max(to_u8((0.30 + 0.54 * plough) * fw));

@@ -285,7 +285,11 @@ fn alpine_apply(pbr: ptr<function, PbrInput>, p: vec3<f32>, gn_in: vec3<f32>, cl
     }
 
     // ── combine ──
-    let tx = normalize(vec3<f32>(1.0, 0.0, 0.0) - gn * gn.x);
+    // +X projected off the normal — degenerate (normalize(0) = NaN) on a face whose normal IS ±X
+    // (an X-facing bank / terrace wall), which drew those wall slivers as black stair-step lines;
+    // fall back to +Z there.
+    let tx = select(normalize(vec3<f32>(1.0, 0.0, 0.0) - gn * gn.x),
+                   normalize(cross(vec3<f32>(0.0, 0.0, 1.0), gn)), abs(gn.x) > 0.98);
     let bz = cross(gn, tx);
     var alb = vec3<f32>(0.0);
     var nw = vec3<f32>(0.0);
@@ -331,7 +335,14 @@ fn alpine_apply(pbr: ptr<function, PbrInput>, p: vec3<f32>, gn_in: vec3<f32>, cl
         // itself has faded to its mean), so the apron is never one flat olive sheet.
         let alp_damp = smoothstep(0.45, 0.80, a_noise(p.xz * 0.11 + vec2<f32>(9.0, 31.0))) * (1.0 - alp_dry);
         ma = mix(ma, ma * vec3<f32>(0.70, 0.92, 0.62), alp_damp * 0.7);
-        let earth = smoothstep(0.52, 0.72, a_noise(p.xz * 0.55 + vec2<f32>(13.0, -7.0)) * 0.7 + nb * 0.3);
+        // Bare-earth patches. `a_noise` sits on an axis-aligned lattice and the old narrow
+        // threshold (0.52-0.72 of one octave) cut its ~1.8u cells into blocky 45-degree diamonds
+        // and stair-steps all over the apron; a rotated, warped lattice plus a finer second octave
+        // and a wider ramp make them ragged and organic.
+        let er = vec2<f32>(0.80 * p.x - 0.60 * p.z, 0.60 * p.x + 0.80 * p.z);
+        let ew = vec2<f32>(a_noise(er * 0.19 + vec2<f32>(2.0, 9.0)), a_noise(er * 0.19 + vec2<f32>(-7.0, 4.0))) - 0.5;
+        let earth = smoothstep(0.48, 0.80, a_noise(er * 0.55 + ew * 1.6 + vec2<f32>(13.0, -7.0)) * 0.55
+            + a_noise(vec2<f32>(-er.y, er.x) * 1.4 + vec2<f32>(3.0, 5.0)) * 0.17 + nb * 0.28);
         ma = mix(ma, vec3<f32>(ml) * vec3<f32>(0.62, 0.50, 0.40), alp_m * earth * 0.4);
         alb += w.y * ma;
         nw += w.y * nm;
