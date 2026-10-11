@@ -129,6 +129,26 @@ pub fn build(
         ));
     };
 
+    // Realistic kit (props.glb / trees.glb / structures.glb): the meadow's boulders, bushes, the
+    // rest-fire ring and its sit-stumps draw the scanned models, sized to the low-poly prop's
+    // footprint (`half` = target XZ half-extent); same spots, same blockers.
+    let kit = crate::realforest::get();
+    let kit_prop = |commands: &mut Commands, name: &str, half: f32, x: f32, z: f32, yaw: f32, solid: Vec2| -> bool {
+        let Some(k) = kit else { return false };
+        // Bushes are LOD pairs in the kit (`bush_a_lod0`); rocks / stumps / the firepit are single.
+        let lod0 = format!("{name}_lod0");
+        let name = if k.has(name) { name } else { lod0.as_str() };
+        let Some((ext, _)) = k.extents(name) else { return false };
+        let s = half / ext.max_element().max(0.05);
+        let tf = Transform::from_xyz(x, ground(x, z), z).with_rotation(Quat::from_rotation_y(yaw)).with_scale(Vec3::splat(s));
+        let Some(e) = k.spawn_static(commands, name, tf) else { return false };
+        commands.entity(e).insert(BiomeEntity);
+        if solid.x > 0.0 {
+            crate::blockers::add_obb(x, z, solid.x, solid.y, yaw);
+        }
+        true
+    };
+
     // ── Village life ─────────────────────────────────────────────────────────────
     // Hay-making corner, NE quarter (clear of plots (10,-15.5)/(18,-17) by ≥5).
     prop(commands, meshes, hay_cart_mesh(), 13.0 + DX, -20.5 - DZ, 0.55, Vec2::new(1.1, 0.7));
@@ -148,11 +168,15 @@ pub fn build(
 
     // ── The rest campfire, forest side (next to the hero spawn) ────────────────────
     let fy = ground(FIRE_POS.x, FIRE_POS.y);
-    prop(commands, meshes, fire_base_mesh(), FIRE_POS.x, FIRE_POS.y, 0.0, Vec2::new(0.45, 0.45));
+    if !kit_prop(commands, "ork_firepit", 0.55, FIRE_POS.x, FIRE_POS.y, 0.0, Vec2::new(0.45, 0.45)) {
+        prop(commands, meshes, fire_base_mesh(), FIRE_POS.x, FIRE_POS.y, 0.0, Vec2::new(0.45, 0.45));
+    }
     for i in 0..3 {
         let a = 0.6 + i as f32 / 3.0 * TAU * 0.6;
         let (sx, sz) = (FIRE_POS.x + a.cos() * 1.15, FIRE_POS.y + a.sin() * 1.15);
-        prop(commands, meshes, sit_stump_mesh(i * 37 + 5), sx, sz, a, Vec2::ZERO);
+        if !kit_prop(commands, "stump_a", 0.3, sx, sz, a, Vec2::ZERO) {
+            prop(commands, meshes, sit_stump_mesh(i * 37 + 5), sx, sz, a, Vec2::ZERO);
+        }
     }
     // Emissive flame + pooled flicker light + the audio anchor (`camps::Flicker` carries the
     // spatial campfire-crackle loop) + the rest marker.
@@ -178,6 +202,21 @@ pub fn build(
         if r > 0.15 {
             crate::blockers::add_box(x, z, r, r);
         }
+        // Kit tree of the same kind (its two LODs hung under the entity, like the forest's).
+        let kit_name = match kind {
+            crate::trees::TreeKind::Birch => "beech_a_lod0",
+            crate::trees::TreeKind::Pine => "pine_a_lod0",
+            crate::trees::TreeKind::Autumn => "oak_c_lod0",
+            _ => "oak_a_lod0",
+        };
+        if let Some((k, lod0)) = kit.and_then(|k| k.pick_named(&[kit_name], 0.0).map(|m| (k, m))) {
+            let mut e = commands.spawn((
+                Transform::from_xyz(x, ground(x, z), z).with_rotation(Quat::from_rotation_y(yaw)).with_scale(Vec3::splat(s)),
+                BiomeEntity,
+            ));
+            k.attach_tree(&mut e, lod0, crate::biome::scatter_cull_enabled());
+            return;
+        }
         commands.spawn((
             Mesh3d(meshes.add(m)),
             MeshMaterial3d(mat.clone()),
@@ -191,22 +230,38 @@ pub fn build(
     // NE corner clump.
     tree(commands, meshes, TK::Broadleaf, 24.0 + DX, -24.0 - DZ, 1.15, 0.4);
     tree(commands, meshes, TK::Birch, 26.5 + DX, -21.5 - DZ, 1.0, 2.1);
-    prop(commands, meshes, boulder_mesh(11), 22.3 + DX, -21.9 - DZ, 0.9, Vec2::new(0.55, 0.5));
+    if !kit_prop(commands, "rock_01_d", 0.6, 22.3 + DX, -21.9 - DZ, 0.9, Vec2::new(0.55, 0.5)) {
+        prop(commands, meshes, boulder_mesh(11), 22.3 + DX, -21.9 - DZ, 0.9, Vec2::new(0.55, 0.5));
+    }
     // NW pine corner.
     tree(commands, meshes, TK::Pine, -26.0 - DX, -18.0 - DZ, 1.1, 1.2);
-    prop(commands, meshes, boulder_mesh(23), -24.0 - DX, -20.3 - DZ, 2.3, Vec2::new(0.5, 0.45));
+    if !kit_prop(commands, "rock_01_d", 0.6, -24.0 - DX, -20.3 - DZ, 2.3, Vec2::new(0.5, 0.45)) {
+        prop(commands, meshes, boulder_mesh(23), -24.0 - DX, -20.3 - DZ, 2.3, Vec2::new(0.5, 0.45));
+    }
     // SE autumn accent.
     tree(commands, meshes, TK::Autumn, 26.0 + DX, 18.0 + DZ, 1.1, 3.6);
-    prop(commands, meshes, bush_mesh(7), 23.4 + DX, 20.2 + DZ, 0.0, Vec2::ZERO);
+    if !kit_prop(commands, "bush_b", 0.5, 23.4 + DX, 20.2 + DZ, 0.0, Vec2::ZERO) {
+        prop(commands, meshes, bush_mesh(7), 23.4 + DX, 20.2 + DZ, 0.0, Vec2::ZERO);
+    }
     // Forest-side birches framing the spawn walk-in.
     tree(commands, meshes, TK::Birch, -29.0 - DX, 21.5 + DZ, 1.05, 0.9);
     tree(commands, meshes, TK::Broadleaf, -26.0 - DX, 25.5 + DZ, 1.1, 4.2);
-    prop(commands, meshes, bush_mesh(19), -24.6 - DX, 18.4 + DZ, 0.6, Vec2::ZERO);
+    if !kit_prop(commands, "bush_b", 0.5, -24.6 - DX, 18.4 + DZ, 0.6, Vec2::ZERO) {
+        prop(commands, meshes, bush_mesh(19), -24.6 - DX, 18.4 + DZ, 0.6, Vec2::ZERO);
+    }
     // Loose boulders + bushes breaking the remaining sightlines (all off-lane, off-plot).
-    prop(commands, meshes, boulder_mesh(41), 8.0 + DX, 21.0 + DZ, 1.4, Vec2::new(0.5, 0.45));
-    prop(commands, meshes, bush_mesh(31), 6.8 + DX, 22.6 + DZ, 0.0, Vec2::ZERO);
-    prop(commands, meshes, boulder_mesh(57), -7.0 - DX, -23.0 - DZ, 0.4, Vec2::new(0.45, 0.4));
-    prop(commands, meshes, bush_mesh(43), -9.0 - DX, -21.4 - DZ, 1.8, Vec2::ZERO);
+    if !kit_prop(commands, "rock_02_a", 0.6, 8.0 + DX, 21.0 + DZ, 1.4, Vec2::new(0.5, 0.45)) {
+        prop(commands, meshes, boulder_mesh(41), 8.0 + DX, 21.0 + DZ, 1.4, Vec2::new(0.5, 0.45));
+    }
+    if !kit_prop(commands, "bush_b", 0.5, 6.8 + DX, 22.6 + DZ, 0.0, Vec2::ZERO) {
+        prop(commands, meshes, bush_mesh(31), 6.8 + DX, 22.6 + DZ, 0.0, Vec2::ZERO);
+    }
+    if !kit_prop(commands, "rock_02_a", 0.6, -7.0 - DX, -23.0 - DZ, 0.4, Vec2::new(0.45, 0.4)) {
+        prop(commands, meshes, boulder_mesh(57), -7.0 - DX, -23.0 - DZ, 0.4, Vec2::new(0.45, 0.4));
+    }
+    if !kit_prop(commands, "bush_b", 0.5, -9.0 - DX, -21.4 - DZ, 1.8, Vec2::ZERO) {
+        prop(commands, meshes, bush_mesh(43), -9.0 - DX, -21.4 - DZ, 1.8, Vec2::ZERO);
+    }
 }
 
 /// A short two-rail paddock fence between `a` and `b` (posts every ~1.5). Decorative-only —

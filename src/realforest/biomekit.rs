@@ -100,3 +100,24 @@ pub fn swamp_tree(kit: &Kit, src: usize, x: f32, z: f32) -> Option<KitTree> {
     };
     kit.pick_named(&[name], 0.0).map(KitTree::Tree)
 }
+
+/// Kit prop for a passive scatter class of the rocky or desert biome (see [`rocky_prop`]; desert:
+/// 0 = dead bush, 2 = barrel cactus, 3 = prickly pear, 4 = bleached rocks + skull): (model, scale ×).
+pub fn passive_prop(kit: &Kit, biome: crate::biome::Biome, class: usize, src: usize, x: f32, z: f32) -> Option<(usize, f32)> {
+    if biome != crate::biome::Biome::Desert {
+        return rocky_prop(kit, class, src, x, z);
+    }
+    let name = match (class, src) {
+        (0, 0) => "ds_deadbush_a",
+        (0, _) => "ds_deadbush_b",
+        (2, 0) => "ds_barrel_a",
+        (2, _) => "ds_barrel_b",
+        (3, 0) => "ds_pear_a",
+        (3, _) => "ds_pear_b",
+        (4, 0) => "ds_rock_a",
+        (4, 1) => "ds_rock_b",
+        (4, _) => "ds_bones",
+        _ => return None,
+    };
+    kit.pick_named(&[name], 0.0).map(|m| (m, 1.0))
+}

@@ -633,7 +633,10 @@ pub fn populate_ore(
     // node, not a stray pebble. Rock is plain grey; the crystal core glows (one gem hue per ore
     // variant) so the eye is drawn to it.
     let rock_mesh = meshes.add(ore_rock_mesh());
-    let crystal_mesh = meshes.add(ore_crystal_mesh());
+    // Realistic kit (`biome_props.glb`): a fractured outcrop on the rock scan, and faceted
+    // hexagonal prisms for the core (still drawn with the ore's own glowing gem material).
+    let kit = crate::realforest::get().filter(|k| k.has("rk_ore_rock"));
+    let crystal_mesh = meshes.add(kit.and_then(|k| k.raw_part("rk_ore_crystals")).unwrap_or_else(ore_crystal_mesh));
     let rock_mat = materials.add(StandardMaterial {
         base_color: Color::WHITE, // grey shades live in the rock mesh's vertex colours
         perceptual_roughness: 0.95,
@@ -710,7 +713,12 @@ pub fn populate_ore(
                 crate::biome::BiomeEntity,
             ))
             .with_children(|p| {
-                p.spawn((Mesh3d(rock_mesh.clone()), MeshMaterial3d(rock_mat.clone()), Transform::default()));
+                if let Some(k) = kit {
+                    let mut rock = p.spawn(Transform::default());
+                    k.attach_static(&mut rock, "rk_ore_rock", Transform::IDENTITY);
+                } else {
+                    p.spawn((Mesh3d(rock_mesh.clone()), MeshMaterial3d(rock_mat.clone()), Transform::default()));
+                }
                 p.spawn((Mesh3d(crystal_mesh.clone()), MeshMaterial3d(crystal_mat), Transform::default()));
                 // Strong coloured glow from the gem core, pulsing slowly (`ore_glow_pulse`) so
                 // the node breathes like a live thing — no shadows (cheap; ~18 on the map).

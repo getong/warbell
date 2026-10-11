@@ -17,7 +17,7 @@ Widoczność: **W** = wysoka (blisko zamku / głównych dróg albo duże na tle 
 
 | Asset | Plik:linia | Ile na mapie | Widoczność | Status |
 |---|---|---|---|---|
-| Skały: grań z płyt / rozłupana grań / rumowisko (crag 0–2) | `biome_rocky.rs:189` (klasa :706) | ~300–450 | W | **zamienione** → `rk_crag_a/b/c` |
+| Skały: grań z płyt / rozłupana grań / rumowisko (crag 0–2) | `biome_rocky.rs:189` (klasa :706) | ~300–450 | W | **zamienione** → `rk_crag_a/b/c`; runda 2: bloki z prawdziwymi płaszczyznami spękań i warstwowaniem; `rk_crag_b` i iglice `rk_spire_a/b` to teraz JEDNA ciągła kolumna warstw (półki, nacięcia erozyjne), nie stos brył |
 | Skały: kopczyk (cairn, crag 3) | `biome_rocky.rs:274` | ~30–50 | W | **zamienione** → `rk_cairn` |
 | Skały: suche krzaki (fasetowane kępy) | `biome_rocky.rs:515` (klasa :694) | ~300 | W | **zamienione** → jałowiec / kosodrzewina / kępa trawy z `alpine_flora.glb` |
 | Skały: hoodoo (pasiaste iglice) | `biome_rocky.rs:303` (klasa tree :725) | ~60 | W | **zamienione** → `rk_spire_a/b` (piaskowiec na `s_rock`) |
@@ -25,10 +25,10 @@ Widoczność: **W** = wysoka (blisko zamku / głównych dróg albo duże na tle 
 | Skały: piargi (scree) | `biome_rocky.rs:555` (klasa :740) | ~200 | Ś | **zamienione** → `rk_scree_a/b` |
 | Skały: pokrycie (kamyczki, suche kępki, porosty + kwiatki) | `biome_rocky.rs:597/642/654` | tysiące (scalone chunki) | Ś | **zamienione** → `rk_pebbles`, `tussock_*`, `grass_*`, kwiaty z kitu |
 | Pustynia: saguaro (klasa tree) | `biome_desert.rs:137` (klasa :583) | ~400–600 | W (2–2.5 u) | **zamienione** → `ds_saguaro_a/b/c` |
-| Pustynia: suchy krzak / tumbleweed (też fallback drzew) | `biome_desert.rs:292` (:575) | ~500 | Ś | zostaje |
-| Pustynia: kaktus beczkowy | `biome_desert.rs:238` (:595) | ~350 | Ś | zostaje |
-| Pustynia: opuncja | `biome_desert.rs:322` (:603) | ~200 | Ś | zostaje |
-| Pustynia: wybielone skały + kości / czaszka | `biome_desert.rs:368` (:611) | ~400 | Ś | zostaje |
+| Pustynia: suchy krzak / tumbleweed (też fallback drzew) | `biome_desert.rs:292` (:575) | ~500 | Ś | **zamienione (runda 2)** → `ds_deadbush_a/b` (kora, wybielona) |
+| Pustynia: kaktus beczkowy | `biome_desert.rs:238` (:595) | ~350 | Ś | **zamienione (runda 2)** → `ds_barrel_a/b` (14 żeber, cienkie igły kolców, pąki; stonowana sino-zieleń) |
+| Pustynia: opuncja | `biome_desert.rs:322` (:603) | ~200 | Ś | **zamienione (runda 2)** → `ds_pear_a/b` (płaskie człony z areolami, owoce) |
+| Pustynia: wybielone skały + kości / czaszka | `biome_desert.rs:368` (:611) | ~400 | Ś | **zamienione (runda 2)** → `ds_rock_a/b` (warstwowy piaskowiec), `ds_bones` |
 | Pustynia: pokrycie (kamyczki, sucha trawa, sukulenty) | `biome_desert.rs:422/440/469/482` | tysiące | N | zostaje |
 | Bagno: namorzyn („grzybkowe” drzewa) | `biome_swamp.rs:195` (klasa :908) | ~500–650 | W | **zamienione** → `oak_*` / `beech_*` / `dead_a` z kitu |
 | Bagno: pień cyprysu z kolanami | `biome_swamp.rs:338` | ~200–250 | Ś | **zamienione** → `stump_a` (skan) |
@@ -41,10 +41,10 @@ Widoczność: **W** = wysoka (blisko zamku / głównych dróg albo duże na tle 
 
 | Asset | Plik:linia | Ile | Widoczność | Status |
 |---|---|---|---|---|
-| Drzewa łąki przy zamku (`trees::build_tree_mesh`) | `meadow.rs:175–203` | 7 | W | zostaje — **pierwszy kandydat** (kit ma te same gatunki) |
+| Drzewa łąki przy zamku (`trees::build_tree_mesh`) | `meadow.rs:175–203` | 7 | W | **zamienione (runda 2)** → `oak_*` / `beech_a` / `pine_a` z kitu |
 | Rekwizyty wioski: wóz z sianem, bele, strach na wróble, ule, stos drewna, skrzynie, płot | `meadow.rs:256–367` | ~10 | W | zostaje |
-| Ognisko odpoczynku + 3 pieńki | `meadow.rs:419/440` | 4 | W (spawn bohatera) | zostaje (kit ma `stump_a`) |
-| Głazy i krzaki łąki | `meadow.rs:384/399` | 4 + 4 | W | zostaje (kit ma `rock_*`, `bush_*`) |
+| Ognisko odpoczynku + 3 pieńki | `meadow.rs:419/440` | 4 | W (spawn bohatera) | **zamienione (runda 2)** → `ork_firepit`, `stump_a` |
+| Głazy i krzaki łąki | `meadow.rs:384/399` | 4 + 4 | W | **zamienione (runda 2)** → `rock_*`, `bush_*` |
 | Dekor dziedzińca (tablica, koryto, ławka, latarnie, ogródek, pranie, zbrojownia, kapliczka…) | `castle_decor.rs:327–684` | ~8 + ~15 z ulepszeniami | W | zostaje (generowane tekstury) |
 | Sklep kupca za bramą | `villagers.rs` `shop_parts` (:2569) | 1 | W | zostaje |
 | Budynki produkcyjne miasta (farma / drwal / kopalnia), gruz, place | `town_meshes.rs`, `town.rs:644/1658/1696` | do 12 | W | zostaje |
@@ -61,12 +61,12 @@ Widoczność: **W** = wysoka (blisko zamku / głównych dróg albo duże na tle 
 | Zamarznięta iglica (śnieg) | `landmark_models.rs:483`, `ruins.rs:615` | 1 | W | zostaje |
 | Menhiry (skały) | `landmark_models.rs:802`, `ruins.rs:617` | 1 | W | zostaje |
 | Twierdza orków: palisada, brama, wieże, wielka hala, iglica | `ork_fortress.rs:1490–1706` | 13 + 3 + 7 + 2 | W (duże) | zostaje |
-| Twierdza orków: namioty, kolce, palenisko | `ork_fortress.rs:1760/2434/2486` | 6 + 4 + 1 | W | zostaje — **tanie**: GLB `ork_tent` / `ork_spikes` / `ork_firepit` już są, obozy ich używają |
+| Twierdza orków: namioty, kolce, palenisko | `ork_fortress.rs:1760/2434/2486` | 6 + 4 + 1 | W | **zamienione (runda 2)** → `ork_tent` / `ork_spikes` / `ork_firepit` (×3.2) |
 | Twierdza orków: chaty, kuźnia, zagroda, bębny, rożen, totemy, drogowskazy, śmieci | `ork_fortress.rs:1814–2477` | ~60 | Ś | zostaje |
 | Plaga: martwe drzewa, szpony, kikuty + śmieci (grzyby, złom, smoła, klatki, kukły) | `ork_fortress.rs:1059–1120`, `:2020–2240` | ~150–250 + ~400 | Ś | zostaje |
 | Twierdza rywala: keep, mury, brama, wieże | `rival.rs:189/257/211/230` | 1 komplet | W (sylweta) | zostaje (generowane tekstury) |
 | Domy i budynki rywala | `rival.rs:245`, `:424–435` | 5 + 7 | Ś–W | zostaje |
-| Złoża rudy (bryła z prostopadłościanów + świecące stożki kryształów) | `verbs.rs:1277/1294` | 64 (`ORE_COUNT`) | W (gameplay) | zostaje — **ważne w biomie skał**, teraz najbardziej odstaje |
+| Złoża rudy (bryła z prostopadłościanów + świecące stożki kryształów) | `verbs.rs:1277/1294` | 64 (`ORE_COUNT`) | W (gameplay) | **zamienione (runda 2)** — `rk_ore_rock` (spękane bloki) + `rk_ore_crystals` (sześciokątne pryzmaty, emisja per ruda bez zmian) |
 | Skrzynie (drewniana + relikwiarz) | `chest.rs:552–616` | ~30 | Ś | zostaje |
 | Bagno: utopione drzewa, wieża, chata na palach, świecące grzyby | `bog.rs:81/122/183–281` | ≤28 + 1 + 1 + ≤20 | Ś | zostaje (dzieli meshe z namorzynem) |
 | Winiety: Zagubiona Karawana, Wrak, Zamarznięty Obóz, Wieża Strażnicza | `vignettes.rs:111/202/180/152` | 4 | Ś | zostaje |
@@ -100,7 +100,7 @@ z ciemniejszą, mokrą korą.
 
 1. Bagno: utopione drzewa w `bog.rs` (te same meshe namorzynu, ≤28) + pałki i muchomory;
    własna wierzba / olcha w `trees.py` zamiast lasowych dębów.
-2. Złoża rudy w skałach (64 sztuki, gameplay) → kamień `rk_crag_b` + kryształy z Blendera.
+2. ~~Złoża rudy w skałach (64 sztuki, gameplay)~~ — zrobione w rundzie 2 (`rk_ore_rock` + `rk_ore_crystals`).
 3. Łąka przy zamku (7 drzew, 4 głazy, 4 krzaki, ognisko) → gotowe modele z kitu.
 4. Twierdza orków: namioty / kolce / palenisko → istniejące GLB z obozów (jedna linia na spawn).
 5. Pozostały scatter pustyni (beczki, opuncje, krzaki, kości) i bagna (pałki, muchomory).
