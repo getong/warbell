@@ -509,10 +509,16 @@ pub fn boom_shot_seq(
     let (started, idx, frame, shot) = &mut *st;
     if !*started {
         hold.0 = true;
+        if *frame == 0 {
+            // A stale main PNG from an earlier run would start the sequence before the real shot.
+            let _ = std::fs::remove_file(&main.0);
+            *frame = 1;
+        }
         if !std::path::Path::new(&main.0).exists() {
             return;
         }
         *started = true;
+        *frame = 0;
     }
     let Some((path, [x, z, az, pitch, dist], noboom)) = entries.get(*idx) else {
         SHOT_NOBOOM.store(false, std::sync::atomic::Ordering::Relaxed);
