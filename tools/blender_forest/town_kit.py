@@ -281,8 +281,10 @@ def wall(g, rng, a, b, y0, y1, ops=(), stud=1.0, rail=None, T=0.15, infill="plas
             continue
         o = op_at((s0 + s1) / 2)
         ys = [(y0, y1)] if o is None else [(y0, o["y0"]), (o["y1"], y1)]
-        e0 = -0.065 if s0 == 0.0 else 0.0
-        e1 = 0.065 if s1 == L else 0.0
+        # Run past the corner INTO the neighbour wall's infill (its outer face is at +0.065), not
+        # flush with it: a flush end cap is coplanar with that face and z-fights at every corner.
+        e0 = -0.055 if s0 == 0.0 else 0.0
+        e1 = 0.055 if s1 == L else 0.0
         sm = (s0 + e0 + s1 + e1) / 2
         for ya, yb in ys:
             if yb - ya < 0.02:
@@ -290,6 +292,9 @@ def wall(g, rng, a, b, y0, y1, ops=(), stud=1.0, rail=None, T=0.15, infill="plas
             if infill == "plaster":
                 cuts = [ya, rail, yb] if ya < rail < yb else [ya, yb]
                 for lo, hi in zip(cuts, cuts[1:]):
+                    # Tuck the panel's top / bottom 1 cm inside the plates (their faces are at y0 / y1).
+                    lo = lo + 0.01 if lo == y0 else lo
+                    hi = hi - 0.01 if hi == y1 else hi
                     lbox(g, P(sm, (lo + hi) / 2, -0.01), (s1 + e1 - s0 - e0, hi - lo, T), q, M_PLASTER,
                          [wall_col(lo, y0, y1, tint), None, wall_col(hi, y0, y1, tint)], tile=1.7, grain=1,
                          u0=sm + u_off, v0=(lo + hi) / 2)
@@ -347,10 +352,13 @@ def wall(g, rng, a, b, y0, y1, ops=(), stud=1.0, rail=None, T=0.15, infill="plas
                    P(corner + sg * 0.1, min(y0 + 0.2 + span * 1.2, y1 - 0.25), o_t + 0.005), 0.12, 0.14)
     for o in ops:
         s0, s1 = o["s"] - o["w"] / 2, o["s"] + o["w"] / 2
+        # Head + sill timbers overlap the opening by 2 cm, so neither face lies in the plane of the
+        # infill's reveal (y = o.y1 / o.y0): the old sill's top WAS that plane and z-fought through
+        # the window.
         if o["y1"] < y1 - 0.2:
-            tb(P(s0 - 0.13, o["y1"] + 0.07, o_t + 0.005), P(s1 + 0.13, o["y1"] + 0.07, o_t + 0.005), 0.15, 0.18)
+            tb(P(s0 - 0.13, o["y1"] + 0.055, o_t + 0.005), P(s1 + 0.13, o["y1"] + 0.055, o_t + 0.005), 0.15, 0.18)
         if o["y0"] > y0 + 0.2:
-            tb(P(s0 - 0.13, o["y0"] - 0.06, o_t + 0.01), P(s1 + 0.13, o["y0"] - 0.06, o_t + 0.01), 0.12, 0.2)
+            tb(P(s0 - 0.13, o["y0"] - 0.04, o_t + 0.01), P(s1 + 0.13, o["y0"] - 0.04, o_t + 0.01), 0.12, 0.2)
         kind = o.get("kind", "window")
         if o.get("void", True):
             depth = -0.9 if kind == "door" else -0.1
@@ -363,19 +371,23 @@ def wall(g, rng, a, b, y0, y1, ops=(), stud=1.0, rail=None, T=0.15, infill="plas
         elif kind == "window":
             if o.get("shutters", True):
                 shutters(g, rng, P, t, n, o, o_t)
-            tb(P(o["s"], o["y0"], -0.02), P(o["s"], o["y1"], -0.02), 0.06, 0.07)
+            tb(P(o["s"], o["y0"] + 0.01, -0.02), P(o["s"], o["y1"] - 0.01, -0.02), 0.06, 0.07)
     return P, t, n, q, L
 
 
 def plinth(g, rng, segs, h=0.25, T=0.3):
     """Fieldstone footing under the sill beams, damp-dark at the foot."""
-    for a, b in segs:
+    # Every other run owns the corners (L + T); the runs between stop 1 cm inside them (L - T + 0.02).
+    # When every run reached past both corners, each end cap lay in the plane of the neighbour's
+    # outer face and the two overlapping tops shared y = h: both z-fought at every corner.
+    for i, (a, b) in enumerate(segs):
         a = V(a[0], 0, a[1])
         b = V(b[0], 0, b[1])
         d = b - a
         L = d.length
         t = d / L
-        lbox(g, (a + b) / 2 + UP * (h / 2 - 0.1), (L + T, h + 0.2, T), yaw(t), M_STONE,
+        run = L + T if i % 2 == 0 else L - T + 0.02
+        lbox(g, (a + b) / 2 + UP * (h / 2 - 0.1), (run, h + 0.2, T), yaw(t), M_STONE,
              [scale(STONE_C, 0.5), None, scale(STONE_C, 0.82)], tile=1.2, grain=1, u0=a.x + a.z, v0=0.0)
 
 
@@ -823,6 +835,17 @@ def town_tavern(rng):
     ]
     for i, (a, b_) in enumerate(loop(pts)):
         wall(g, rng, a, b_, Y0, Y1, ground_ops[i])
+    # Floor frame between the storeys: a rim beam on every wall line from inside the ground floor's
+    # wall plate (Y1) up into the upper sill (Y2), set 3 cm behind the plates' faces. Without it the
+    # 0.15 band between the plate and the upper sill was open all round: from the back and the
+    # gables the upper storey floated over a slot of sky. On the front it blocks between the joists.
+    for a, b_ in loop(pts):
+        A, B = V(a[0], 0, a[1]), V(b_[0], 0, b_[1])
+        t_ = (B - A).normalized()
+        n_ = t_.cross(UP)
+        yc = (Y1 + Y2) / 2 + 0.005
+        beam(g, [A - t_ * 0.06 + UP * yc + n_ * 0.01, B + t_ * 0.06 + UP * yc + n_ * 0.01], Y2 - Y1 + 0.05, 0.15,
+             up=tuple(n_), mat=M_TIMBER, col=scale(TF, 0.9), chamfer=0.0, rng=rng)
     # Jetty: joist ends + soffit, then the upper storey (front +J).
     for x in np.linspace(-HX + 0.1, HX - 0.1, 11):
         beam(g, [V(x, Y1 + 0.075, HZ - 0.3), V(x, Y1 + 0.075, HZ + J + 0.06)], 0.13, 0.15, mat=M_TIMBER, col=scale(TF, 0.85),
