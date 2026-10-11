@@ -162,6 +162,160 @@ impl Undergrowth {
     }
 }
 
+/// **Render distance** — how far the world draws before it is culled / fogged out. `Normal` is the
+/// tuned gameplay budget (byte-for-byte the pre-setting behaviour); `Far` / `Extreme` are
+/// screenshot modes that multiply every distance cut by [`ViewDistance::scale`]: scatter/tree/prop
+/// `VisibilityRange` culls (and the terrain far-LOD hand-off), the camera far plane, the distance
+/// fog + atmospherics haze, and the realforest cover streaming radius ([`ViewDistance::cover_scale`],
+/// kept lower — cover is the memory-heavy layer). Applies live (no world rebuild).
+/// `FOREST_VIEWDIST=normal|far|extreme` overrides it at startup (capture harness).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, Default)]
+pub enum ViewDistance {
+    #[default]
+    Normal,
+    Far,
+    Extreme,
+}
+
+impl ViewDistance {
+    /// Multiplier on every view-cutting distance (culls, fog, far plane).
+    pub fn scale(self) -> f32 {
+        match self {
+            ViewDistance::Normal => 1.0,
+            ViewDistance::Far => 1.8,
+            ViewDistance::Extreme => 3.0,
+        }
+    }
+
+    /// Multiplier on the realforest cover/props STREAMING radius (merged chunk meshes resident on
+    /// the GPU — area grows with its square, so it is kept below [`Self::scale`]).
+    pub fn cover_scale(self) -> f32 {
+        match self {
+            ViewDistance::Normal => 1.0,
+            ViewDistance::Far => 1.5,
+            ViewDistance::Extreme => 2.2,
+        }
+    }
+
+    fn from_env() -> Option<Self> {
+        match std::env::var("FOREST_VIEWDIST").ok()?.trim().to_ascii_lowercase().as_str() {
+            "normal" => Some(ViewDistance::Normal),
+            "far" => Some(ViewDistance::Far),
+            "extreme" => Some(ViewDistance::Extreme),
+            _ => None,
+        }
+    }
+}
+
+/// Live [`ViewDistance::scale`] / [`ViewDistance::cover_scale`] as f32 bits, readable from non-system
+/// code (cover streaming, fog drivers). Seeded at plugin build, then mirrored by [`sync_view_distance`].
+static VIEW_SCALE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3f80_0000); // 1.0
+static COVER_SCALE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3f80_0000); // 1.0
+
+/// The live render-distance multiplier (1.0 at `Normal`).
+pub fn view_scale() -> f32 {
+    f32::from_bits(VIEW_SCALE.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// The live cover-streaming radius multiplier (1.0 at `Normal`).
+pub fn cover_view_scale() -> f32 {
+    f32::from_bits(COVER_SCALE.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+fn store_view_distance(v: ViewDistance) {
+    use std::sync::atomic::Ordering::Relaxed;
+    VIEW_SCALE.store(v.scale().to_bits(), Relaxed);
+    COVER_SCALE.store(v.cover_scale().to_bits(), Relaxed);
+}
+
+/// Mirror the settings' render distance into the atomics on any settings change.
+fn sync_view_distance(settings: Res<GraphicsSettings>) {
+    if view_scale() != settings.view_distance.scale() {
+        info!("render distance -> {:?} (x{})", settings.view_distance, settings.view_distance.scale());
+    }
+    store_view_distance(settings.view_distance);
+}
+
+/// Margins below this (base units) are LOD hand-offs (tree LOD0->LOD1 at 30, lush near/far at 22)
+/// or tiny-clutter culls (34) — kept as-is so a farther view doesn't also drag every LOD0 out.
+const VIS_SCALE_MIN: f32 = 40.0;
+/// Margins at/above this are "never cull" sentinels (1e6 / 1e30) — left alone.
+const VIS_SCALE_MAX: f32 = 1.0e5;
+
+/// Rescale one range from the multiplier currently baked in (`from`) to `to`. Every margin is
+/// classified on its BASE value (`v / from`), so pairs that share a boundary (terrain fine-end /
+/// coarse-start at 150) always move together and never open a gap.
+fn rescale_range(r: &mut bevy::camera::visibility::VisibilityRange, from: f32, to: f32) {
+    let f = |v: &mut f32| {
+        let base = *v / from;
+        if (VIS_SCALE_MIN..VIS_SCALE_MAX).contains(&base) {
+            *v = base * to;
+        }
+    };
+    f(&mut r.start_margin.start);
+    f(&mut r.start_margin.end);
+    f(&mut r.end_margin.start);
+    f(&mut r.end_margin.end);
+}
+
+/// Scale every `VisibilityRange` in the world by the render distance — trees, kit cover/props,
+/// legacy scatter, POIs / stories / town kit / vistas, the terrain far-LOD hand-off — without
+/// touching any spawner. On a level change every live range is rescaled once; while the level is
+/// above Normal, newly spawned ranges (streamed cover chunks, rebuilt worlds) are scaled as they
+/// appear. At Normal with nothing baked in this returns before touching a single entity.
+fn scale_visibility_ranges(
+    mut applied: Local<Option<f32>>,
+    mut ranges: Query<&mut bevy::camera::visibility::VisibilityRange>,
+) {
+    let k = view_scale();
+    let from = applied.unwrap_or(1.0);
+    if k == 1.0 && from == 1.0 {
+        *applied = Some(1.0);
+        return;
+    }
+    if from != k {
+        for mut r in &mut ranges {
+            // A range added since our last run was spawned at base scale (1.0), not `from`.
+            let base_from = if r.is_added() { 1.0 } else { from };
+            rescale_range(&mut r, base_from, k);
+        }
+        *applied = Some(k);
+        return;
+    }
+    for mut r in &mut ranges {
+        if r.is_added() {
+            rescale_range(&mut r, 1.0, k);
+        }
+    }
+}
+
+/// The authored main-camera far plane (`scene::default_projection`).
+const BASE_FAR: f32 = 230.0;
+
+/// Push the main camera's far plane out with the render distance (Bevy's projection is
+/// infinite-reverse-Z, so `far` only bounds frustum culling — no depth-precision cost). Only a
+/// camera still on the authored far (or on the one we set) is touched; per-frame so an RTS restore
+/// that re-inserts `default_projection` is caught. Idle at Normal once restored.
+fn apply_view_far(mut applied: Local<Option<f32>>, mut cams: Query<&mut Projection, With<Camera3d>>) {
+    let k = view_scale();
+    let from = applied.unwrap_or(1.0);
+    if k == 1.0 && from == 1.0 {
+        *applied = Some(1.0);
+        return;
+    }
+    let want = BASE_FAR * k;
+    for mut proj in &mut cams {
+        let Projection::Perspective(p) = proj.as_ref() else { continue };
+        let ours = (p.far - BASE_FAR).abs() < 0.01 || (p.far - BASE_FAR * from).abs() < 0.01;
+        if ours && p.far != want {
+            if let Projection::Perspective(p) = proj.as_mut() {
+                p.far = want;
+            }
+        }
+    }
+    *applied = Some(k);
+}
+
 impl ShadowLevel {
     /// `(atlas_size, cascade_far)` for the on path; `None` when shadows are off.
     ///
@@ -244,6 +398,10 @@ pub struct GraphicsSettings {
     /// (deep forest shade <-> open glade) without flattening night into day.
     #[serde(default = "default_true")]
     pub eye_adaptation: bool,
+    /// Render distance (see [`ViewDistance`]). Not part of any preset — a preset fill keeps it.
+    /// `#[serde(default)]` = Normal for configs saved before it existed.
+    #[serde(default)]
+    pub view_distance: ViewDistance,
 }
 
 fn default_true() -> bool {
@@ -280,6 +438,7 @@ pub fn preset_settings(quality: GraphicsQuality) -> GraphicsSettings {
             render_scale: 1.0,
             undergrowth: Undergrowth::Medium,
             eye_adaptation: true,
+            view_distance: ViewDistance::Normal,
         },
         GraphicsQuality::Ultra => GraphicsSettings {
             shadows: ShadowLevel::High, // 4096 / 4 cascades / 190 reach
@@ -295,6 +454,7 @@ pub fn preset_settings(quality: GraphicsQuality) -> GraphicsSettings {
             render_scale: 1.0,
             undergrowth: Undergrowth::High,
             eye_adaptation: true,
+            view_distance: ViewDistance::Normal,
         },
         // Low: tuned for integrated GPUs — SSAO/bloom/DoF/outline off (each strips a whole pass),
         // 2 small shadow cascades, the cheap terrain lane, and a 0.6 render-scale (the big
@@ -312,6 +472,7 @@ pub fn preset_settings(quality: GraphicsQuality) -> GraphicsSettings {
             render_scale: 0.6,
             undergrowth: Undergrowth::Low,
             eye_adaptation: false,
+            view_distance: ViewDistance::Normal,
         },
         GraphicsQuality::Custom => preset_settings(GraphicsQuality::High),
     }
@@ -380,6 +541,7 @@ impl Plugin for QualityPlugin {
         };
         let mut settings = settings;
         env_overrides(&mut settings);
+        store_view_distance(settings.view_distance);
         let mut window = cfg.as_ref().map(|c| c.window.clone()).unwrap_or_default();
         // FOREST_NOVSYNC (uncapped perf testing, set in main.rs) must win — else `apply_window_settings`
         // would re-vsync the window on frame 1.
@@ -411,6 +573,18 @@ impl Plugin for QualityPlugin {
                         .run_if(resource_changed::<GraphicsSettings>)
                         .after(fill_settings_from_preset),
                 ),
+            )
+            // Render distance: mirror into the atomics, then scale ranges / far plane. Both scalers
+            // return immediately at Normal (nothing baked in), so the default costs nothing.
+            .add_systems(
+                Update,
+                (
+                    sync_view_distance.run_if(resource_changed::<GraphicsSettings>),
+                    scale_visibility_ranges,
+                    apply_view_far,
+                )
+                    .chain()
+                    .after(fill_settings_from_preset),
             )
             // Render-scale follows the settings AND the window size; self-gates internally, so it
             // stays ungated (it must catch window resizes, not just setting toggles).
@@ -586,6 +760,9 @@ fn env_overrides(settings: &mut GraphicsSettings) {
         Some("ultra") => settings.ssao = AoLevel::Ultra,
         _ => {}
     }
+    if let Some(v) = ViewDistance::from_env() {
+        settings.view_distance = v;
+    }
 }
 
 /// When the active **named** preset changes (chip click / F10 / hardware default / config load),
@@ -598,6 +775,7 @@ fn fill_settings_from_preset(quality: Res<GraphicsQuality>, mut settings: ResMut
     }
     let mut want = preset_settings(*quality);
     env_overrides(&mut want);
+    want.view_distance = settings.view_distance; // render distance isn't part of a preset
     if *settings != want {
         *settings = want;
     }

@@ -25,7 +25,7 @@ use bevy::ui_widgets::{
 use crate::player::FirstPerson;
 use crate::quality::{
     save_graphics_config, AaLevel, AoLevel, AudioPrefs, GraphicsQuality, GraphicsSettings,
-    ShadowLevel, TerrainDetail, Undergrowth, WindowSettings,
+    ShadowLevel, TerrainDetail, Undergrowth, ViewDistance, WindowSettings,
 };
 
 use super::fonts::{label, UiFonts};
@@ -139,6 +139,7 @@ enum Seg {
     Ao(AoLevel),
     Terrain(TerrainDetail),
     Undergrowth(Undergrowth),
+    ViewDist(ViewDistance),
     Resolution(Option<[u32; 2]>),
     Fullscreen(bool),
     /// Camera mode — `true` = first person.
@@ -369,6 +370,13 @@ fn graphics_pane(p: &mut Pane<'_>, fonts: &UiFonts, quality: GraphicsQuality, s:
         ("Medium", Seg::Undergrowth(Undergrowth::Medium)),
         ("High", Seg::Undergrowth(Undergrowth::High)),
     ], Seg::Undergrowth(s.undergrowth));
+    // Screenshot mode: Far/Extreme push every cull, the fog and the far plane out (applies live;
+    // Extreme is heavy). Not part of the presets, so it never flips the chip to Custom.
+    seg_row(p, fonts, "Render distance (live)", &[
+        ("Normal", Seg::ViewDist(ViewDistance::Normal)),
+        ("Far", Seg::ViewDist(ViewDistance::Far)),
+        ("Extreme", Seg::ViewDist(ViewDistance::Extreme)),
+    ], Seg::ViewDist(s.view_distance));
     check_row(p, fonts, "Bloom", ToggleId::Bloom, s.bloom);
     check_row(p, fonts, "Depth of field", ToggleId::Dof, s.depth_of_field);
     check_row(p, fonts, "Outline", ToggleId::Outline, s.outline);
@@ -624,6 +632,7 @@ fn menu_buttons(
             Seg::Ao(l) => set_custom(&mut quality, || settings.ssao = l),
             Seg::Terrain(l) => set_custom(&mut quality, || settings.terrain = l),
             Seg::Undergrowth(l) => set_custom(&mut quality, || settings.undergrowth = l),
+            Seg::ViewDist(v) => settings.view_distance = v,
             Seg::Resolution(r) => window.resolution = r,
             Seg::Fullscreen(fs) => window.fullscreen = fs,
             Seg::Camera(active) => first_person.active = active,
@@ -724,6 +733,7 @@ fn sync_segments(
             Seg::Ao(l) => settings.ssao == l,
             Seg::Terrain(l) => settings.terrain == l,
             Seg::Undergrowth(l) => settings.undergrowth == l,
+            Seg::ViewDist(v) => settings.view_distance == v,
             Seg::Resolution(r) => window.resolution == r,
             Seg::Fullscreen(fs) => window.fullscreen == fs,
             Seg::Camera(active) => first_person.active == active,
