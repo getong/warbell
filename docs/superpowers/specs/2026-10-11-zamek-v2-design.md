@@ -9,8 +9,8 @@ Zamek mówi bez słów: na starcie **obóz rozbitków w ruinach starego fortu**,
 
 ## 1. Skala (przeliczona na bohatera, nie na metry)
 
-Bohater ma w grze **~1.17 u** (`HERO_SCALE 0.6345 × 1.85`; do potwierdzenia screenem), czyli
-**1 u ≈ 1.5 m**. Dzisiejszy mur (1.35 u ≈ 2 m) jest tylko trochę wyższy od bohatera, keep (~1.5 u
+Bohater ma w grze **1.49 u** (rig 2.35 × `HERO_SCALE 0.6345`, potwierdzone screenem), czyli
+**1 u ≈ 1.3 m**. Dzisiejszy mur (1.35 u ≈ 2 m) jest tylko trochę wyższy od bohatera, keep (~1.5 u
 × skala) jak szopa. Cele:
 
 | Element | Dziś | Cel (u) | ≈ m |
