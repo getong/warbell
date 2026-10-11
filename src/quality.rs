@@ -559,7 +559,9 @@ fn disable_gpu_clustering_on_weak_gpu(
 }
 
 /// A/B staging knobs on top of any preset: `FOREST_AA=off|low|high|ultra|taa`,
-/// `FOREST_SSAO=off|medium|ultra`.
+/// `FOREST_SSAO=off|medium|ultra`. (Read in `apply_quality`: `FOREST_SHADOWFILTER=gaussian|temporal|
+/// hardware`, `FOREST_CONTACT=off`; in `scene.rs`: `FOREST_SHADOWBIAS=depth,normal`; in
+/// `realforest`: `FOREST_NONORMAL=set[,set..]` drops those kit sets' normal maps.)
 fn env_overrides(settings: &mut GraphicsSettings) {
     match std::env::var("FOREST_AA").ok().as_deref() {
         Some("off") => settings.antialias = AaLevel::Off,
@@ -757,7 +759,14 @@ fn apply_quality(
 
         // Shadow filtering: with TAA the temporal filter resolves soft, stable penumbrae (leaf
         // shadows no longer crawl); otherwise the 9-tap Gaussian.
-        e.insert(if taa { ShadowFilteringMethod::Temporal } else { ShadowFilteringMethod::Gaussian });
+        e.insert(match std::env::var("FOREST_SHADOWFILTER").ok().as_deref() {
+            // A/B knob (flicker hunts): force one filter regardless of the AA level.
+            Some("gaussian") => ShadowFilteringMethod::Gaussian,
+            Some("temporal") => ShadowFilteringMethod::Temporal,
+            Some("hardware") => ShadowFilteringMethod::Hardware2x2,
+            _ if taa => ShadowFilteringMethod::Temporal,
+            _ => ShadowFilteringMethod::Gaussian,
+        });
 
         // Normal prepass: dead weight when nothing consumes it (SSAO + outline both off), so drop it.
         if normal_prepass {
@@ -807,8 +816,13 @@ fn apply_quality(
         // Depth prepass + contact shadows ride one gate: contact shadows (0.19) read the prepass
         // depth, so they must share the exact on/off as the prepass. Stripped together when nothing
         // (DoF/SSAO/outline) needs depth — that's the ~3 ms `early prepass` in the F2 profiler.
-        if needs_depth {
+        // `FOREST_CONTACT=off`: A/B knob, keep the depth prepass but drop the contact shadows.
+        let contact = std::env::var("FOREST_CONTACT").map_or(true, |v| v != "off");
+        if needs_depth && contact {
             e.insert((DepthPrepass, ContactShadows::default()));
+        } else if needs_depth {
+            e.insert(DepthPrepass);
+            e.remove::<ContactShadows>();
         } else {
             e.remove::<DepthPrepass>();
             e.remove::<ContactShadows>();
