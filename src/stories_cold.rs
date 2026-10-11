@@ -58,60 +58,65 @@ struct Scene {
     names: &'static [&'static str],
     lore: &'static str,
     trail: bool,
+    /// Least `alpine::snow_cover` under the whole footprint (snow scenes; 0 for rocky ones). Snow
+    /// grows with altitude, so this sets how high a scene sits: the avalanche-buried cabin in deep
+    /// snow, the camps and cairns in patchy snow, the steading and the pass-trail convoy lower,
+    /// where the snow line starts.
+    snow: f32,
 }
 
 const SCENES: [Scene; 10] = [
     // The drift + collapsed tent, the sled with its crates, the planted skis (+ the marker pole).
-    Scene { model: "story_lost_camp", biome: Biome::Snow, foot: 2.6,
+    Scene { model: "story_lost_camp", biome: Biome::Snow, snow: 0.45, foot: 2.6,
         solids: &[(-0.6, 0.2, 1.1, 1.0, 0.0), (1.15, -0.75, 1.0, 0.45, 0.35), (2.02, 0.35, 0.25, 0.3, 0.0)],
         want: 3, names: &["The Timber Party's Camp", "The Iron Party's Camp", "The Woodcutters' Last Camp"],
         lore: "Anselm's timber party camped here; the colony rang for them nine dusks, and none came down.",
         trail: false },
     // The avalanche mound over the cabin + the standing chimney.
-    Scene { model: "story_buried_cabin", biome: Biome::Snow, foot: 3.0,
+    Scene { model: "story_buried_cabin", biome: Biome::Snow, snow: 0.4, foot: 3.0,
         solids: &[(0.1, 0.0, 1.9, 1.4, 0.0), (-1.9, -0.6, 0.45, 0.45, 0.0)],
         want: 3, names: &["A Colonist's Winter Cabin", "The Snowbound Cabin", "The Chimney in the Snow"],
         lore: "A colonist built far from the chapel bell; the snow took his cabin, but nothing else came.",
         trail: false },
     // The cairn and the banner pole's foot.
-    Scene { model: "story_frozen_memorial", biome: Biome::Snow, foot: 2.3,
+    Scene { model: "story_frozen_memorial", biome: Biome::Snow, snow: 0.45, foot: 2.3,
         solids: &[(0.0, 0.0, 0.6, 0.6, 0.0), (0.6, -0.4, 0.08, 0.08, 0.0)],
         want: 3, names: &["The Last Muster", "The Muster Cairn", "The Colony's Cairn"],
         lore: "The first colony's last muster; that night, as every night, they rang the bell at dusk.",
         trail: false },
     // Headframe legs over the shaft (the shaft itself is inside the legs), the tipped cart, the spoil heap.
-    Scene { model: "story_mine_head", biome: Biome::Rocky, foot: 3.1,
+    Scene { model: "story_mine_head", biome: Biome::Rocky, snow: 0.0, foot: 3.1,
         solids: &[(0.0, 0.0, 1.15, 1.0, 0.0), (2.15, 0.85, 0.55, 0.45, 0.2), (-1.9, 1.2, 0.75, 0.6, 0.0)],
         want: 3, names: &["The Colony Mine", "The Iron Shaft", "The Old Headframe"],
         lore: "The first colony's iron came out of this shaft; the headframe outlived every man who worked it.",
         trail: false },
     // The crushed wagon under its boulders + the third boulder.
-    Scene { model: "story_rockfall_wagon", biome: Biome::Rocky, foot: 2.9,
+    Scene { model: "story_rockfall_wagon", biome: Biome::Rocky, snow: 0.0, foot: 2.9,
         solids: &[(0.0, 0.0, 1.45, 0.8, 0.0), (1.55, -0.95, 0.55, 0.5, 0.0), (-1.8, -0.85, 0.4, 0.35, 0.0)],
         want: 3, names: &["The Crushed Wagon", "The Rockfall", "The Buried Wagon"],
         lore: "The mountain came down on this wagon, and no one ever came back to dig it out.",
         trail: false },
     // The bedrock shelf with the half-cut block, and the monolith blank on its rollers.
-    Scene { model: "story_quarry", biome: Biome::Rocky, foot: 2.8,
+    Scene { model: "story_quarry", biome: Biome::Rocky, snow: 0.0, foot: 2.8,
         solids: &[(-0.6, -0.4, 1.35, 0.95, 0.08), (1.25, 0.9, 1.2, 0.45, -0.6)],
         want: 3, names: &["The Half-Cut Stone", "The Masons' Quarry", "The Silent Quarry"],
         lore: "The masons dropped their tools mid-cut and never came back for the stone.",
         trail: false },
     // The bell on its side, the broken bell wagon, the wagon on its side, the ox's drift.
-    Scene { model: "story_wrecked_convoy", biome: Biome::Snow, foot: 3.5,
+    Scene { model: "story_wrecked_convoy", biome: Biome::Snow, snow: 0.2, foot: 3.5,
         solids: &[(0.0, -1.45, 0.75, 0.7, 0.0), (1.95, 0.75, 1.25, 0.7, 0.05), (-2.05, 0.7, 1.3, 0.45, 0.12),
             (-0.1, 2.0, 0.9, 0.45, 0.0)],
         want: 1, names: &["The Crown Convoy"],
         lore: "A Crown war bell, hauled up the pass for the first colony; no one ever came back to dig it out.",
         trail: true },
     // The hermitage's walls (door gap included) + the bell-cote gable, and the two graves.
-    Scene { model: "story_hermitage", biome: Biome::Snow, foot: 3.4,
+    Scene { model: "story_hermitage", biome: Biome::Snow, snow: 0.5, foot: 3.4,
         solids: &[(0.0, 0.0, 1.35, 1.05, 0.0), (-2.25, 1.45, 0.4, 1.0, 0.0)],
         want: 1, names: &["Anselm's Hermitage"],
         lore: "Cut into the writing slope: the charter bids us ring at dusk, and none of us can say why.",
         trail: false },
     // Six stones on a 2.8u ring + the totem and offering stone at the centre.
-    Scene { model: "story_old_ones_ring", biome: Biome::Snow, foot: 3.6,
+    Scene { model: "story_old_ones_ring", biome: Biome::Snow, snow: 0.5, foot: 3.6,
         solids: &[(2.74, 0.56, 0.35, 0.35, 0.0), (0.89, 2.66, 0.33, 0.33, 0.0), (-1.86, 2.1, 0.33, 0.33, 0.0),
             (-2.74, -0.56, 0.33, 0.33, 0.0), (-0.89, -2.66, 0.33, 0.33, 0.0), (1.86, -2.1, 0.33, 0.33, 0.0),
             (0.0, 0.0, 0.55, 0.55, 0.3)],
@@ -119,7 +124,7 @@ const SCENES: [Scene; 10] = [
         lore: "Every stone is cut with rings like a bell's voice; the orks still bring tusks, as if to a law.",
         trail: false },
     // The burned log house, the well, the palisade stub, the tipped hand-cart.
-    Scene { model: "story_ruined_homestead", biome: Biome::Snow, foot: 3.0,
+    Scene { model: "story_ruined_homestead", biome: Biome::Snow, snow: 0.3, foot: 3.0,
         solids: &[(-0.6, 0.2, 1.3, 1.05, 0.0), (1.55, -0.95, 0.6, 0.6, 0.0), (1.7, 1.5, 0.9, 0.35, -0.3),
             (-2.0, -1.35, 0.55, 0.45, 0.7)],
         want: 3, names: &["The Outlying Steading", "The Burned Homestead", "The Palisade Farm"],
@@ -132,7 +137,7 @@ const SCENES: [Scene; 10] = [
 const SEAT_ORDER: [usize; 10] = [6, 7, 8, 0, 1, 9, 2, 3, 4, 5];
 /// The one-off discoverables stand at least this far from each other, so they spread over the
 /// snow region instead of clustering on its best ground.
-const ONE_OFF_SPREAD: f32 = 45.0;
+const ONE_OFF_SPREAD: f32 = 35.0;
 /// A trail-hugging scene's centre sits this far (beyond its footprint) off the trail's centreline:
 /// alongside the painted strip, never on it ([`ground_ok`] still enforces [`SNOW_ROAD_KEEP`]).
 const TRAIL_HUG: [f32; 6] = [2.5, 3.25, 4.0, 4.75, 5.5, 6.5];
@@ -158,16 +163,19 @@ const SAME_SCENE_SPACING_SNOW: f32 = 48.0;
 const MIN_GAP: f32 = 12.0;
 /// Rocky scenes: clearance from a pass trail's centreline beyond the footprint.
 const TRAIL_KEEP: f32 = 3.0;
-/// A snow scene stands on real snow (`alpine::snow_cover`, height-driven) — never on the snow
-/// biome's green apron, where a buried cabin reads as a white blob on grass. Up on the massif the
+/// A snow scene stands on real snow (`alpine::snow_cover`, height-driven, at least its own
+/// [`Scene::snow`]) — never on the snow biome's bare valley meadow, where a buried cabin reads as a
+/// white blob on grass. Up on the massif the
 /// flat ground is the pass VALLEY floors beside the trails and the col, so snow scenes skip the
 /// rocky rules that ban the whole cliffy shelf / pass corridor and only keep [`SNOW_ROAD_KEEP`] off
 /// the painted trail strip itself.
-const SNOW_COVER: f32 = 0.6;
 const SNOW_ROAD_KEEP: f32 = 2.0;
 /// Last-resort flatness for snow scenes: the model is then sunk by part of the spread
 /// ([`seat_y`]) and its drift skirts swallow the uphill side.
-const FLAT_DELTA_SNOW_MAX: f32 = 1.0;
+const FLAT_DELTA_SNOW_MAX: f32 = 1.3;
+/// A trail scene (the convoy) may stand on the pass CLIMB, tilted onto the slope ([`seat_tilted`]):
+/// the snow lies up on the climb, while the flat valley floor where the trail starts is bare meadow.
+const FLAT_DELTA_TRAIL: f32 = 1.6;
 /// Spawn-time last resort: a claimed site with no free alternative is still spawned in place when
 /// nothing solid stands inside this fraction of its footprint (only the drift rim is intruded on).
 const RIM_GRACE: f32 = 0.8;
@@ -228,6 +236,29 @@ fn footprint_heights(x: f32, z: f32, foot: f32) -> Option<(f32, f32, f32)> {
 /// Base height to seat a scene at: the centre, sunk by part of the footprint's height spread (never
 /// below its lowest point) so the downhill edge doesn't float; the contact parts / drift skirts run
 /// below y=0 and swallow the uphill side.
+/// Height + tilt for a trail scene on a slope: the model is laid onto the footprint's best-fit plane
+/// (wagons slid off a climbing trail), then sunk like [`seat_y`] by part of what the plane leaves.
+fn seat_tilted(x: f32, z: f32, foot: f32) -> (f32, Quat) {
+    let h = |dx: f32, dz: f32| crate::worldmap::ground_at_world(x + dx, z + dz);
+    let r = foot * 0.7;
+    let (Some(y0), Some(xp), Some(xn), Some(zp), Some(zn)) = (h(0.0, 0.0), h(r, 0.0), h(-r, 0.0), h(0.0, r), h(0.0, -r)) else {
+        return (seat_y(x, z, foot), Quat::IDENTITY);
+    };
+    let (gx, gz) = ((xp - xn) / (2.0 * r), (zp - zn) / (2.0 * r));
+    let (mut lo, mut hi) = (0.0f32, 0.0f32);
+    for k in 0..16 {
+        let a = k as f32 * (TAU / 16.0);
+        let (dx, dz) = (a.cos() * foot, a.sin() * foot);
+        if let Some(y) = h(dx, dz) {
+            let d = y - (y0 + gx * dx + gz * dz);
+            lo = lo.min(d);
+            hi = hi.max(d);
+        }
+    }
+    let tilt = Quat::from_rotation_arc(Vec3::Y, Vec3::new(-gx, 1.0, -gz).normalize());
+    (y0 + (-0.6 * (hi - lo)).max(lo) - 0.04, tilt)
+}
+
 fn seat_y(x: f32, z: f32, foot: f32) -> f32 {
     match footprint_heights(x, z, foot) {
         Some((y0, lo, hi)) => (y0 - 0.6 * (hi - lo)).max(lo) - 0.04,
@@ -237,14 +268,15 @@ fn seat_y(x: f32, z: f32, foot: f32) -> f32 {
 
 /// Ground + keep-out rules for a footprint of radius `foot` centred at `(x, z)`, all of it inside
 /// `biome` and no higher spread than `flat`. Shared by the plan, the spawn re-check and the test.
-/// Snow scenes additionally need [`SNOW_COVER`] and use the valley-floor road rule (see there).
-fn ground_ok(x: f32, z: f32, foot: f32, biome: Biome, flat: f32, trails: &[Vec<Vec2>]) -> bool {
+/// Snow scenes additionally need `need` snow cover ([`Scene::snow`]) and use the valley-floor road
+/// rule (see [`SNOW_ROAD_KEEP`]).
+fn ground_ok(x: f32, z: f32, foot: f32, biome: Biome, need: f32, flat: f32, trails: &[Vec<Vec2>]) -> bool {
     let Some(y0) = crate::worldmap::ground_at_world(x, z) else { return false };
     if crate::worldmap::tile_biome_world(x, z) != Some(biome) {
         return false;
     }
     let snow = biome == Biome::Snow;
-    if snow && crate::alpine::snow_cover(x, z) < SNOW_COVER {
+    if snow && crate::alpine::snow_cover(x, z) < need {
         return false;
     }
     // The painted trail strip + a margin stays clear of a snow scene's whole footprint.
@@ -271,7 +303,7 @@ fn ground_ok(x: f32, z: f32, foot: f32, biome: Biome, flat: f32, trails: &[Vec<V
                 || crate::worldmap::is_river_world(px, pz)
                 || crate::worldmap::is_pool_world(px, pz)
                 || (!snow && crate::worldmap::cliff_shelf_world(px, pz))
-                || (snow && crate::alpine::snow_cover(px, pz) < SNOW_COVER)
+                || (snow && crate::alpine::snow_cover(px, pz) < need)
                 || crate::town::near_build_plot(px, pz)
                 || crate::castle::in_footprint(px, pz)
                 || crate::camps::in_clearing(px, pz)
@@ -397,14 +429,13 @@ fn seat(scene: usize, want: usize, planned: &mut Vec<Site>, trails: &[Vec<Vec2>]
     let cands = candidates(scene, trails);
     let mut got = 0;
     let min = MIN_PER_SCENE.min(want);
-    let snow_max = if s.biome == Biome::Snow { FLAT_DELTA_SNOW_MAX } else { FLAT_DELTA_RELAXED };
-    let passes = [(FLAT_DELTA, want), (FLAT_DELTA_RELAXED, min), (snow_max, min)];
+    let passes = [(FLAT_DELTA, want), (FLAT_DELTA_RELAXED, min), (max_flat(s), min)];
     for (flat, need) in passes {
         for &(q, yaw) in &cands {
             if got >= need {
                 break;
             }
-            if clear_of_others(q, scene, planned, visual) && ground_ok(q.x, q.y, s.foot, s.biome, flat, trails) {
+            if clear_of_others(q, scene, planned, visual) && ground_ok(q.x, q.y, s.foot, s.biome, s.snow, flat, trails) {
                 planned.push(Site { scene, pos: q, yaw });
                 got += 1;
             }
@@ -442,8 +473,14 @@ pub fn plan() {
 }
 
 /// The loosest flatness a scene of `biome` is ever planned on.
-fn max_flat(biome: Biome) -> f32 {
-    if biome == Biome::Snow { FLAT_DELTA_SNOW_MAX } else { FLAT_DELTA_RELAXED }
+fn max_flat(s: &Scene) -> f32 {
+    if s.trail {
+        FLAT_DELTA_TRAIL
+    } else if s.biome == Biome::Snow {
+        FLAT_DELTA_SNOW_MAX
+    } else {
+        FLAT_DELTA_RELAXED
+    }
 }
 
 fn register_blockers(scene: usize, p: Vec2, yaw: f32) {
@@ -458,7 +495,7 @@ fn register_blockers(scene: usize, p: Vec2, yaw: f32) {
 /// (relaxed flatness — it passed the plan) and solids placed since.
 fn still_free(site: &Site, trails: &[Vec<Vec2>]) -> bool {
     let s = &SCENES[site.scene];
-    ground_ok(site.pos.x, site.pos.y, s.foot, s.biome, max_flat(s.biome), trails)
+    ground_ok(site.pos.x, site.pos.y, s.foot, s.biome, s.snow, max_flat(s), trails)
         && !crate::blockers::any_within(site.pos.x, site.pos.y, s.foot + 0.2)
 }
 
@@ -482,7 +519,7 @@ pub fn populate(commands: &mut Commands, _meshes: &mut Assets<Mesh>, _materials:
             let n = others.len();
             let s = &SCENES[site.scene];
             info!("stories_cold: {} at {:.1},{:.1} claimed (ground ok: {}, solid within: {})", s.model, site.pos.x,
-                site.pos.y, ground_ok(site.pos.x, site.pos.y, s.foot, s.biome, max_flat(s.biome), &trails),
+                site.pos.y, ground_ok(site.pos.x, site.pos.y, s.foot, s.biome, s.snow, max_flat(s), &trails),
                 crate::blockers::any_within(site.pos.x, site.pos.y, s.foot + 0.2));
             // What claimed it: the blocked probe points over the footprint (debug aid for the log).
             let mut hits: Vec<String> = Vec::new();
@@ -497,7 +534,7 @@ pub fn populate(commands: &mut Commands, _meshes: &mut Assets<Mesh>, _materials:
             if seat(site.scene, 1, &mut others, &trails, false) == 0 {
                 // Last resort: keep the planned spot when the intruder only grazes the outer rim
                 // (a trunk or rock at the drift's edge) — a missing discoverable is worse.
-                if ground_ok(site.pos.x, site.pos.y, s.foot, s.biome, max_flat(s.biome), &trails)
+                if ground_ok(site.pos.x, site.pos.y, s.foot, s.biome, s.snow, max_flat(s), &trails)
                     && !crate::blockers::any_within(site.pos.x, site.pos.y, s.foot * RIM_GRACE)
                 {
                     warn!("stories_cold: {} at {:.1},{:.1} kept: only its rim is claimed", s.model, site.pos.x, site.pos.y);
@@ -515,8 +552,9 @@ pub fn populate(commands: &mut Commands, _meshes: &mut Assets<Mesh>, _materials:
             }
         };
         let s = &SCENES[site.scene];
-        let y = seat_y(site.pos.x, site.pos.y, s.foot);
-        let tf = Transform::from_xyz(site.pos.x, y, site.pos.y).with_rotation(Quat::from_rotation_y(site.yaw));
+        let (y, tilt) =
+            if s.trail { seat_tilted(site.pos.x, site.pos.y, s.foot) } else { (seat_y(site.pos.x, site.pos.y, s.foot), Quat::IDENTITY) };
+        let tf = Transform::from_xyz(site.pos.x, y, site.pos.y).with_rotation(tilt * Quat::from_rotation_y(site.yaw));
         if let Some(e) = kit.spawn_static_with(commands, s.model, tf, range.clone()) {
             commands.entity(e).insert(BiomeEntity);
             // Instance k of a scene (in plan order) always gets its k-th name: saves match by name.
@@ -604,10 +642,10 @@ mod tests {
         }
         for (i, a) in first.iter().enumerate() {
             let s = &SCENES[a.scene];
-            assert!(ground_ok(a.pos.x, a.pos.y, s.foot, s.biome, max_flat(s.biome), &trails),
+            assert!(ground_ok(a.pos.x, a.pos.y, s.foot, s.biome, s.snow, max_flat(s), &trails),
                 "{} on illegal ground at {}", s.model, a.pos);
             if s.biome == Biome::Snow {
-                assert!(crate::alpine::snow_cover(a.pos.x, a.pos.y) >= SNOW_COVER, "{} off the snow at {}", s.model, a.pos);
+                assert!(crate::alpine::snow_cover(a.pos.x, a.pos.y) >= s.snow, "{} off the snow at {}", s.model, a.pos);
             }
 
             assert!(!crate::wayside::overlaps_planned(a.pos.x, a.pos.y, s.foot)
@@ -653,7 +691,7 @@ mod tests {
                 assert!(mine.len() >= MIN_PER_SCENE, "{} placed only {} times", s.model, mine.len());
             }
             for site in &mine {
-                assert!(crate::alpine::snow_cover(site.pos.x, site.pos.y) >= SNOW_COVER, "{} off the snow", s.model);
+                assert!(crate::alpine::snow_cover(site.pos.x, site.pos.y) >= s.snow, "{} off the snow", s.model);
                 if s.trail {
                     let d = trails
                         .iter()
