@@ -3,7 +3,8 @@
 //!
 //! Footing uses `steer::can_stand` (the same rule the orks/wildlife walk by: on land, within
 //! one terrace class) + `blockers::is_blocked` for solid props — so the hero slides along
-//! walls, can't walk into water, and can't climb 2-class cliff faces.
+//! walls, can't walk into water, and can't climb 2-class cliff faces — plus a slope limit
+//! (`MAX_WALK_SLOPE_DEG`) on the continuous ground, so he can't walk up the massif's rock faces.
 
 use bevy::prelude::*;
 
@@ -75,6 +76,23 @@ const OBSTACLE_ASSIST_OUTWARD: f32 = 0.06;
 /// to ground for drops within one class; real cliffs/jumps (gap > this, or a jump's `vel_y > 0`)
 /// still go airborne and take fall damage.
 const STEP_SNAP: f32 = 0.55;
+
+// ── Slope limit ── The ground is one continuous height field (the snow massif's ridges and
+// couloirs, terrace ramps, banks), so the per-step `steer::MAX_STEP` cap alone never bit: a
+// frame's step is a few centimetres, which rises far under 0.6 on any slope — the hero walked
+// straight up rock faces. Uphill moves now also need the ground they land on to be walkable.
+/// Steepest ground (deg) the hero walks UP. Above the navgrid's ~31 deg tile limit (the hero is
+/// nimbler than an ork column) and well above every authored route (pass ramps rise ≤0.09 per
+/// tile, terrace ramps ≈27 deg, mesa relief ≤0.34/u on top of those).
+pub(super) const MAX_WALK_SLOPE_DEG: f32 = 48.0;
+/// `tan(MAX_WALK_SLOPE_DEG)` — the rise-per-run bound the rule actually compares.
+const MAX_WALK_TAN: f32 = 1.1106;
+/// Half-span (world u) of the slope probe — about the boot-to-boot footprint, so the slope is
+/// that of the ground under the body, not of a sub-tile crease.
+const SLOPE_PROBE: f32 = 0.3;
+/// Rise (world u) a move may gain on too-steep ground: float slack only — sliding along a face
+/// never climbs it.
+const SLOPE_RISE_EPS: f32 = 1e-3;
 
 /// Seconds the Sand-Dash slide takes to travel its whole blink (`arts::DASH_DIST`). Short + ease-out
 /// → an explosive launch that glides to a stop, so the dash *moves* the body instead of teleporting.
@@ -227,7 +245,7 @@ pub fn player_roll(
     let mut ref_y = hero.y;
     for k in 1..=8 {
         let cand = from + dir * (ROLL_DIST * k as f32 / 8.0);
-        let footing_ok = hero_can_stand(cand.x, cand.y, PLAYER_R, ref_y);
+        let footing_ok = hero_can_stand(cand.x, cand.y, PLAYER_R, ref_y) && slope_ok(cand.x, cand.y, ref_y);
         if !footing_ok || blockers::any_within(cand.x, cand.y, PLAYER_R) {
             break;
         }
@@ -339,6 +357,195 @@ mod slide_tests {
     }
 }
 
+#[cfg(test)]
+mod slope_tests {
+    use super::*;
+
+    /// A plane rising along +X at `deg`.
+    fn ramp(deg: f32) -> impl Fn(f32, f32) -> Option<f32> + Copy {
+        let k = deg.to_radians().tan();
+        move |x: f32, _z: f32| Some(x * k)
+    }
+
+    /// Hold `input` for `frames` steps at walking pace through the real locomotion step (contour
+    /// deflection + `slide_step` with the slope rule); returns the end position.
+    fn walk(ground: impl Fn(f32, f32) -> Option<f32> + Copy, input: Vec2, frames: usize) -> Vec2 {
+        let dt = 1.0 / 60.0;
+        let (mut pos, mut vel, mut side) = (Vec2::ZERO, Vec2::ZERO, 1.0);
+        for _ in 0..frames {
+            vel = vel + (input * SPEED * SPRINT_MULT - vel) * (dt * ACCEL).min(1.0);
+            let y = ground(pos.x, pos.y).unwrap();
+            let free = |p: Vec2| slope_ok_with(ground, p.x, p.y, ground(p.x, p.y).unwrap(), y);
+            let v = slope_deflect_with(ground, pos, vel, dt, y);
+            (pos, vel, side) = slide_step(pos, v * dt, v, side, free);
+        }
+        pos
+    }
+
+    #[test]
+    fn walkable_slopes_climb_steep_ones_block() {
+        for deg in [0.0, 20.0, 35.0, 45.0] {
+            let g = ramp(deg);
+            assert!(slope_ok_with(g, 0.1, 0.0, g(0.1, 0.0).unwrap(), 0.0), "{deg} deg should be walkable");
+        }
+        for deg in [52.0, 60.0, 75.0, 85.0] {
+            let g = ramp(deg);
+            assert!(!slope_ok_with(g, 0.01, 0.0, g(0.01, 0.0).unwrap(), 0.0), "{deg} deg must block an uphill step");
+            // …but stepping DOWN it, or along its contour, is always fine.
+            assert!(slope_ok_with(g, -0.01, 0.0, g(-0.01, 0.0).unwrap(), 0.0), "{deg} deg: walking down");
+            assert!(slope_ok_with(g, 0.0, 0.05, g(0.0, 0.05).unwrap(), 0.0), "{deg} deg: along the contour");
+        }
+    }
+
+    #[test]
+    fn sprinting_straight_at_a_rock_face_gains_no_height() {
+        let g = ramp(62.0);
+        let end = walk(g, Vec2::X, 240);
+        assert!(g(end.x, end.y).unwrap() < 0.01, "climbed the face to {end:?}");
+    }
+
+    #[test]
+    fn a_glancing_run_glides_along_the_face() {
+        // 45 deg into a 62 deg face: no climbing, but the hero keeps moving along its foot.
+        let g = ramp(62.0);
+        let end = walk(g, Vec2::new(1.0, 1.0).normalize(), 240);
+        assert!(g(end.x, end.y).unwrap() < 0.01, "climbed the face to {end:?}");
+        assert!(end.y > 6.0, "stalled against the face instead of sliding along it: {end:?}");
+    }
+
+    #[test]
+    fn a_walkable_ramp_is_climbed_at_speed() {
+        let g = ramp(35.0);
+        let end = walk(g, Vec2::X, 120);
+        assert!(end.x > 5.0, "a 35 deg ramp must stay walkable: {end:?}");
+    }
+
+    #[test]
+    fn steep_gully_floor_and_mesa_lip_stay_walkable() {
+        // A V-gully with 56 deg walls whose floor rises gently (0.2/u) along +Z: walking up the
+        // floor, a little off its crease, must not snag on the walls.
+        let gully = |x: f32, z: f32| Some(x.abs() * 1.5 + 0.2 * z);
+        let end = walk(gully, Vec2::Y, 180);
+        assert!(end.y > 6.0, "stuck in the gully: {end:?}");
+        // A mesa wall (a 1.0 discontinuity, `MAX_STEP`'s job) reads as flat shelf on either side,
+        // so walking along its foot / lip is unaffected by the slope rule.
+        let mesa = |x: f32, _z: f32| Some(if x >= 0.0 { 1.0 } else { 0.0 });
+        assert!(terrain_slope_with(mesa, -0.1, 0.0).unwrap() < 1e-3);
+        assert!(terrain_slope_with(mesa, 0.1, 0.0).unwrap() < 1e-3);
+    }
+
+    /// The real map: every artery road (the mountain-pass trails, castle approaches, canyon road
+    /// …) and the hero's spawn must stay walkable under the slope limit.
+    #[test]
+    fn roads_and_spawn_are_walkable() {
+        let g = crate::worldmap::ground_at_world;
+        let (spawn, _) = super::super::spawn_point();
+        assert!(terrain_slope_with(g, spawn.x, spawn.y).is_none_or(|s| s <= MAX_WALK_TAN), "spawn on a cliff");
+        let mut worst = (0.0f32, Vec2::ZERO);
+        let mut n = 0;
+        for line in crate::roads::artery_polylines() {
+            for w in line.windows(2) {
+                let steps = (w[0].distance(w[1]) / 0.25).ceil().max(1.0) as usize;
+                for k in 0..=steps {
+                    let p = w[0].lerp(w[1], k as f32 / steps as f32);
+                    if let Some(s) = terrain_slope_with(g, p.x, p.y) {
+                        n += 1;
+                        if s > worst.0 {
+                            worst = (s, p);
+                        }
+                    }
+                }
+            }
+        }
+        println!("{n} road samples, steepest {:.1} deg at {:?}", worst.0.atan().to_degrees(), worst.1);
+        assert!(n > 1000, "no roads sampled");
+        assert!(worst.0 <= MAX_WALK_TAN, "a road climbs {:.1} deg at {:?}", worst.0.atan().to_degrees(), worst.1);
+    }
+
+    /// Survey (run by hand: `cargo test --release reach_survey -- --ignored --nocapture`): flood the
+    /// island from the hero's spawn on a 0.25u lattice under the old rule (any rise ≤ `MAX_STEP`
+    /// per step) and the new one (+ the slope limit), and report what the slope limit cut off —
+    /// overall land area and the authored overlook anchors.
+    #[test]
+    #[ignore]
+    fn reach_survey() {
+        use crate::worldmap::{COLS, GX, GZ, ROWS};
+        let s = 0.25f32;
+        let (w, h) = ((COLS as f32 / s) as i32, (ROWS as f32 / s) as i32);
+        let at = |i: i32, j: i32| Vec2::new(i as f32 * s - GX, j as f32 * s - GZ);
+        let g = crate::worldmap::ground_at_world;
+        let n = (w * h) as usize;
+        let mut ys = vec![f32::NAN; n];
+        let mut slope = vec![0.0f32; n];
+        for j in 0..h {
+            for i in 0..w {
+                let p = at(i, j);
+                if let Some(y) = g(p.x, p.y) {
+                    ys[(j * w + i) as usize] = y;
+                    slope[(j * w + i) as usize] = terrain_slope_with(g, p.x, p.y).unwrap_or(0.0);
+                }
+            }
+        }
+        let (spawn, _) = super::super::spawn_point();
+        let si = (((spawn.x + GX) / s).round() as i32, ((spawn.y + GZ) / s).round() as i32);
+        let flood = |max_tan: f32| {
+            let mut seen = vec![false; n];
+            let mut q = std::collections::VecDeque::from([si]);
+            seen[(si.1 * w + si.0) as usize] = true;
+            while let Some((i, j)) = q.pop_front() {
+                let fy = ys[(j * w + i) as usize];
+                for (di, dj) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                    let (ni, nj) = (i + di, j + dj);
+                    if ni < 0 || nj < 0 || ni >= w || nj >= h {
+                        continue;
+                    }
+                    let k = (nj * w + ni) as usize;
+                    let ty = ys[k];
+                    if seen[k] || ty.is_nan() || ty > fy + steer::MAX_STEP {
+                        continue;
+                    }
+                    if ty > fy + SLOPE_RISE_EPS && slope[k] > max_tan {
+                        continue;
+                    }
+                    seen[k] = true;
+                    q.push_back((ni, nj));
+                }
+            }
+            seen
+        };
+        let (old, new) = (flood(f32::INFINITY), flood(MAX_WALK_TAN));
+        for deg in [38.0f32, 40.0, 42.0, 45.0] {
+            let f = flood(deg.to_radians().tan());
+            let c = f.iter().filter(|b| **b).count();
+            let top = (0..n).filter(|k| f[*k]).map(|k| ys[k]).fold(f32::MIN, f32::max);
+            println!("  at {deg} deg: {c} cells, top {top:.1}");
+        }
+        for deg in [30.0f32, 35.0, 38.0, 40.0, 45.0, 48.0, 55.0] {
+            let t = deg.to_radians().tan();
+            println!("  land steeper than {deg}: {}", slope.iter().zip(&ys).filter(|(s, y)| !y.is_nan() && **s > t).count());
+        }
+        let (no, nn) = (old.iter().filter(|b| **b).count(), new.iter().filter(|b| **b).count());
+        println!("reachable land cells: old {no}, with slope limit {nn} ({:.1}% lost)", 100.0 * (no - nn) as f32 / no as f32);
+        let near = |set: &[bool], c: Vec2, r: f32| {
+            let (ci, cj) = (((c.x + GX) / s) as i32, ((c.y + GZ) / s) as i32);
+            let rr = (r / s) as i32;
+            (-rr..=rr).any(|dj| (-rr..=rr).any(|di| {
+                let (i, j) = (ci + di, cj + dj);
+                i >= 0 && j >= 0 && i < w && j < h && set[(j * w + i) as usize]
+            }))
+        };
+        for (c, label) in [
+            (Vec2::new(96.8, 6.6), "rock summit overlook"),
+            (Vec2::new(-101.2, -66.0), "snow summit overlook"),
+        ] {
+            println!("{label}: old {} new {}", near(&old, c, 5.0), near(&new, c, 5.0));
+        }
+        // The highest cell each rule reaches (the snow summit's crown).
+        let top = |set: &[bool]| (0..n).filter(|k| set[*k]).map(|k| ys[k]).fold(f32::MIN, f32::max);
+        println!("highest reachable ground: old {:.1}, new {:.1}", top(&old), top(&new));
+    }
+}
+
 pub(super) fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
     a + steer::wrap_pi(b - a) * t
 }
@@ -382,6 +589,80 @@ pub(super) fn hero_can_step(x: f32, z: f32, r: f32, ref_y: f32) -> bool {
     })
 }
 
+/// One axis of the slope probe: the gentler of the two one-sided differences, 0 when they
+/// disagree in sign (the "minmod" limiter). On a smooth slope both sides agree, so this is the
+/// plain gradient; across a mesa WALL (a discontinuity `MAX_STEP` already handles) or a crease
+/// (gully floor, ridge crest) it reads the walkable side instead of the jump.
+fn minmod(back: f32, fwd: f32) -> f32 {
+    if back * fwd <= 0.0 {
+        0.0
+    } else if back.abs() < fwd.abs() {
+        back
+    } else {
+        fwd
+    }
+}
+
+/// Terrain slope (rise per run, ≥ 0) under the body at `(x, z)`, sampled across the footprint
+/// with [`minmod`]. `None` off the terrain (water / bridge deck / off the island): no slope there.
+pub(super) fn terrain_slope_with(ground: impl Fn(f32, f32) -> Option<f32>, x: f32, z: f32) -> Option<f32> {
+    let h = SLOPE_PROBE;
+    let c = ground(x, z)?;
+    let (xm, xp) = (ground(x - h, z)?, ground(x + h, z)?);
+    let (zm, zp) = (ground(x, z - h)?, ground(x, z + h)?);
+    let gx = minmod((c - xm) / h, (xp - c) / h);
+    let gz = minmod((c - zm) / h, (zp - c) / h);
+    Some(gx.hypot(gz))
+}
+
+/// The slope rule on a ground sampler (unit-testable): may feet at body height `ref_y` move onto
+/// `(x, z)`, whose footing is `to_y`? Level and DOWNHILL moves always may (walk down a slope,
+/// slide along a face, drop off a ledge); a move that GAINS height needs the ground it lands on to
+/// be no steeper than [`MAX_WALK_SLOPE_DEG`].
+pub(super) fn slope_ok_with(ground: impl Fn(f32, f32) -> Option<f32>, x: f32, z: f32, to_y: f32, ref_y: f32) -> bool {
+    to_y <= ref_y + SLOPE_RISE_EPS || terrain_slope_with(ground, x, z).is_none_or(|g| g <= MAX_WALK_TAN)
+}
+
+pub(super) fn slope_ok(x: f32, z: f32, ref_y: f32) -> bool {
+    match footing(x, z) {
+        Some(to_y) => slope_ok_with(worldmap::ground_at_world, x, z, to_y, ref_y),
+        None => true, // no footing at all is `hero_can_step`'s call
+    }
+}
+
+/// Is the ground under `(x, z)` too steep to stand on and push off (no jumping up a rock face)?
+fn too_steep(x: f32, z: f32) -> bool {
+    terrain_slope_with(worldmap::ground_at_world, x, z).is_some_and(|g| g > MAX_WALK_TAN)
+}
+
+/// Velocity redirected along the CONTOUR when it would carry the body uphill onto too-steep
+/// ground: the uphill component is removed (plus a hair of downhill lean so the next step lands
+/// level-or-lower and is accepted), so walking into a rock face at an angle glides along its foot
+/// instead of stopping dead or chattering against it. Unchanged where the step is walkable.
+fn slope_deflect_with(ground: impl Fn(f32, f32) -> Option<f32> + Copy, pos: Vec2, vel: Vec2, dt: f32, ref_y: f32) -> Vec2 {
+    let p = pos + vel * dt;
+    if vel.length_squared() < 1e-8 {
+        return vel;
+    }
+    match ground(p.x, p.y) {
+        Some(to_y) if !slope_ok_with(ground, p.x, p.y, to_y, ref_y) => {}
+        _ => return vel,
+    }
+    // Uphill direction at the candidate (plain central difference — the face's own fall line).
+    let h = SLOPE_PROBE;
+    let (Some(xm), Some(xp), Some(zm), Some(zp)) =
+        (ground(p.x - h, p.y), ground(p.x + h, p.y), ground(p.x, p.y - h), ground(p.x, p.y + h))
+    else {
+        return vel;
+    };
+    let up = Vec2::new(xp - xm, zp - zm).normalize_or_zero();
+    let into = vel.dot(up);
+    if into <= 0.0 {
+        return vel;
+    }
+    vel - up * (into + 0.05 * vel.length())
+}
+
 /// Shove the hero out of a creature's body cylinder (centre `c`, radius `body_r`) so he can't
 /// clip through it — a one-way push (the creature holds its ground), sliding along the same
 /// standable/blocker rule as locomotion. Shared by the ork + animal collision passes.
@@ -395,10 +676,13 @@ fn shove_out_of(hero: &mut Hero, c: Vec2, body_r: f32, cur_y: f32) {
     let push = to / d * (min_d - d);
     let nx = hero.pos.x + push.x;
     let nz = hero.pos.y + push.y;
-    if hero_can_stand(nx, hero.pos.y, PLAYER_R, cur_y) && !blockers::any_within(nx, hero.pos.y, PLAYER_R) {
+    let ok = |x: f32, z: f32| {
+        hero_can_stand(x, z, PLAYER_R, cur_y) && slope_ok(x, z, cur_y) && !blockers::any_within(x, z, PLAYER_R)
+    };
+    if ok(nx, hero.pos.y) {
         hero.pos.x = nx;
     }
-    if hero_can_stand(hero.pos.x, nz, PLAYER_R, cur_y) && !blockers::any_within(hero.pos.x, nz, PLAYER_R) {
+    if ok(hero.pos.x, nz) {
         hero.pos.y = nz;
     }
 }
@@ -664,9 +948,20 @@ pub fn player_move(
         // rests overlapping one, so it stays false except when a solid materialised around him).
         let escaping = blockers::any_within(hero.pos.x, hero.pos.y, PLAYER_R);
         let hy = hero.y;
-        let free = |p: Vec2| hero_can_step(p.x, p.y, PLAYER_R, hy) && (escaping || !blockers::any_within(p.x, p.y, PLAYER_R));
+        let free = |p: Vec2| {
+            hero_can_step(p.x, p.y, PLAYER_R, hy)
+                && slope_ok(p.x, p.y, hy)
+                && (escaping || !blockers::any_within(p.x, p.y, PLAYER_R))
+        };
+        // Too-steep ground ahead: glide along its contour rather than up it (see `slope_deflect_with`).
+        let vel_in = if crate::bridges::deck_y_at(nx, nz).is_some() {
+            hero.vel // on/onto a bridge deck: the planks are footing, not a slope
+        } else {
+            slope_deflect_with(worldmap::ground_at_world, hero.pos, hero.vel, dt, hy)
+        };
+        let (nx, nz) = if vel_in == hero.vel { (nx, nz) } else { (hero.pos.x + vel_in.x * dt, hero.pos.y + vel_in.y * dt) };
         let side = SLIDE_SIDE.load(std::sync::atomic::Ordering::Relaxed) as f32;
-        let (pos, vel, new_side) = slide_step(hero.pos, Vec2::new(nx, nz) - hero.pos, hero.vel, side, free);
+        let (pos, vel, new_side) = slide_step(hero.pos, Vec2::new(nx, nz) - hero.pos, vel_in, side, free);
         hero.pos = pos;
         hero.vel = vel;
         SLIDE_SIDE.store(new_side as i32, std::sync::atomic::Ordering::Relaxed);
@@ -730,7 +1025,8 @@ pub fn player_move(
     // ── Vertical: jump + gravity + ground snap ──
     let ground_y = footing(hero.pos.x, hero.pos.y).unwrap_or(0.0);
     let was_on_ground = hero.on_ground;
-    if keys.just_pressed(KeyCode::Space) && hero.on_ground {
+    // No pushing off a too-steep face: a hop per landing would otherwise climb any rock wall.
+    if keys.just_pressed(KeyCode::Space) && hero.on_ground && !too_steep(hero.pos.x, hero.pos.y) {
         hero.vel_y = JUMP_SPEED;
         hero.on_ground = false;
         cues.write(AudioCue::HeroJump); // voice decides (~40% + canGrunt); no other jump sfx
