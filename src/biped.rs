@@ -363,7 +363,7 @@ pub fn spawn_biped(
     let ps = |t: Vec3, s: f32| Transform { translation: t, scale: Vec3::splat(s), ..default() };
     // Spawn a tagged joint (transform-only) under `parent`, with an optional mesh-leaf child.
     let joint = |commands: &mut Commands, parent: Entity, j: Option<Joint>, xf: Transform, leaf: Option<Handle<Mesh>>| -> Entity {
-        let mut ec = commands.spawn((xf, Visibility::Visible));
+        let mut ec = commands.spawn((xf, Visibility::Inherited));
         if let Some(j) = j {
             ec.insert(BipedPart { joint: j, root });
         }
@@ -377,7 +377,7 @@ pub fn spawn_biped(
     };
     use Joint::*;
 
-    let rig = commands.spawn((Transform::from_xyz(0.0, rig_offset_y, 0.0), Visibility::Visible, BipedRig)).id();
+    let rig = commands.spawn((Transform::from_xyz(0.0, rig_offset_y, 0.0), Visibility::Inherited, BipedRig)).id();
     commands.entity(root).add_child(rig);
 
     // Spine.
@@ -421,7 +421,7 @@ pub fn spawn_biped(
     if let Some((mesh, aabb)) = h.skin {
         let joints = vec![hips, torso, neck, head_e, sh_l, el_l, sh_r, el_r, hip_l, knee_l, foot_l, hip_r, knee_r, foot_r];
         let inverse: Vec<Mat4> = rest_joint_matrices(head_scale, foot_scale, hip_dx, shoulder_dx).iter().map(|m| m.inverse()).collect();
-        let body = commands.spawn((Transform::default(), Visibility::Visible, aabb, bevy::camera::visibility::NoAutoAabb)).id();
+        let body = commands.spawn((Transform::default(), Visibility::Inherited, aabb, bevy::camera::visibility::NoAutoAabb)).id();
         commands.entity(rig).add_child(body);
         let mat = mat.clone();
         // The bind-pose asset needs the asset store: add it (and the mesh, so the body never draws
