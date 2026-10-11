@@ -185,9 +185,10 @@ fn seed_snowmen(
         let ang = frand(&mut rng) * std::f32::consts::TAU;
         let rad = SCATTER_R * frand(&mut rng).sqrt();
         let p = snow_centre() + Vec2::new(ang.cos(), ang.sin()) * rad;
-        // Must be walkable snow, off any build plot, and spaced from its siblings.
+        // Must be walkable snow, off any build plot and story site, and spaced from its siblings.
         if footing(p.x, p.y).is_none()
             || too_steep(p)
+            || crate::stories_cold::overlaps_planned(p.x, p.y, 4.0)
             || crate::worldmap::biome_at_world(p.x, p.y) != Some(crate::biome::Biome::Snow)
             || crate::town::near_build_plot(p.x, p.y)
             || accepted.iter().any(|q| q.distance(p) < MIN_SEP)
