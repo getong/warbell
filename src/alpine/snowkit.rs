@@ -64,10 +64,16 @@ pub fn twin(base: &StandardMaterial, tint: f32, snow: f32) -> SnowKitMaterial {
 const FROST_AT: f32 = 0.42;
 
 /// Kit tree for a snow-biome tree class source variant (0..2 snow-laden conifers, 3 bare birch)
-/// at `(x, z)`: (lod0 model, frosted?). Conifers low on the green apron stay green.
+/// at `(x, z)`: (lod0 model, frosted?). Conifers low on the green apron stay green; in the top
+/// ~2.5u under the (per-spot) tree line the forest breaks up into stunted, wind-flagged spruces.
 pub fn tree(kit: &Kit, src: usize, x: f32, z: f32) -> Option<(usize, bool)> {
     let (a, _) = crate::realforest::rolls(x, z);
+    let (c, _) = flora_rolls(x, z);
+    let y = crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
+    let below_line = super::treeline_at(x, z) - y;
     let name = match src {
+        // (Only on walkable ground: no stunted spruce hanging on a rock face.)
+        _ if below_line < 2.5 && c < 0.75 - below_line * 0.2 && super::slope_at(x, z) < 0.6 => "spruce_flag_lod0",
         0 => "pine_a_lod0",
         1 => "pine_b_lod0",
         2 => "pine_c_lod0",
@@ -77,9 +83,36 @@ pub fn tree(kit: &Kit, src: usize, x: f32, z: f32) -> Option<(usize, bool)> {
         _ if a < 0.3 => "dead_a_lod0",
         _ => ["pine_a_lod0", "pine_b_lod0", "pine_c_lod0"][(a * 7.0) as usize % 3],
     };
-    kit.pick_named(&[name], 0.0).map(|m| (m, super::snow_cover(x, z) >= FROST_AT))
+    // (Falls back to a kit pine without alpine_flora.glb.)
+    let m = kit.pick_named(&[name], 0.0).or_else(|| kit.pick_named(&["pine_c_lod0"], 0.0))?;
+    Some((m, super::snow_cover(x, z) >= FROST_AT))
 }
 
+/// A second, independent pair of position hashes for the alpine flora picks ([`crate::realforest::rolls`]'
+/// first value is the tree-line jitter itself, so reusing it would tie the flora to that line).
+fn flora_rolls(x: f32, z: f32) -> (f32, f32) {
+    crate::realforest::rolls(x * 1.37 + 11.3, z * 0.73 - 7.9)
+}
+
+/// Above the tree line the massif is not bare: dwarf mountain pine mats (krummholz), creeping
+/// juniper and, in the first couple of units past the line, the odd stunted flagged spruce —
+/// thinning out toward the summits. `over` = ground height above the spot's tree line. Returns
+/// (model, scale, yaw) or `None` for a bare spot. Drawn static (no chop / sway: knee-high scrub).
+pub fn alpine_flora(kit: &Kit, x: f32, z: f32, over: f32) -> Option<(usize, f32, f32)> {
+    let (c, d) = flora_rolls(x, z);
+    let (_, b) = crate::realforest::rolls(x, z);
+    // Dense at the line, sparse scrub high up.
+    let keep = 0.85 - 0.5 * (over / 9.0).clamp(0.0, 1.0);
+    if d > keep {
+        return None;
+    }
+    let (name, s) = match c {
+        _ if over < 2.5 && c < 0.12 => ("spruce_flag_lod0", 0.75 + 0.3 * b),
+        _ if c < 0.70 => (if b < 0.5 { "krummholz_a" } else { "krummholz_b" }, 0.8 + 0.5 * b),
+        _ => ("juniper_a", 0.9 + 0.5 * b),
+    };
+    kit.pick_named(&[name], 0.0).map(|m| (m, s, d * 97.0))
+}
 /// Does the kit take over snow scatter class `class` (props)? The snowman stays the hand-built one.
 pub fn handles_prop(class: usize) -> bool {
     matches!(class, 1 | 2 | 3)
@@ -126,6 +159,26 @@ pub fn cover(kit: &Kit, class: usize, x: f32, z: f32) -> Option<(usize, f32, boo
             0 => pick(&["stalks_a"], 0.9),
             2 if a < 0.5 => pick(&PEBBLES, 0.3),
             2 => pick(&["fern_a", "fern_b", "fern_c"], 0.75),
+            _ => None,
+        };
+    }
+    // Nothing grows on the steep / rock faces (the shader paints them bare rock past ~37°) —
+    // bar the very odd tuft in a crevice.
+    let slope = super::slope_at(x, z);
+    if slope > 0.7 && a > 0.03 {
+        return None;
+    }
+    // Past the tree line: tough alpine grass tussocks poke through where the snow is thin (sun-
+    // facing ribs, wind-scoured crests), in clusters — never peppered over the deep snow; plus
+    // the odd stone. Pale straw, unfrosted, so they catch the light instead of reading as dirt.
+    let y = crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
+    if y > super::treeline_at(x, z) - 1.0 {
+        let cluster = crate::realforest::rolls((x / 5.0).floor() * 5.0 + 0.5, (z / 5.0).floor() * 5.0 + 0.5).1 < 0.3;
+        return match class {
+            0 if a < 0.5 && slope < 0.6 && cluster && super::thin_snow_spot(x, z) => {
+                kit.pick_named(&["tussock_a", "tussock_b"], b).map(|m| (m, 1.0, false))
+            }
+            2 if a < 0.2 && slope < 0.6 => pick(&PEBBLES, 0.32),
             _ => None,
         };
     }

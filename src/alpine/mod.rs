@@ -152,19 +152,25 @@ fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
 }
 
 /// Target snow cover 0..1 at world `(x, z)` before the shader's patchy breakup: zero off the snow
-/// biome; on it a quarter (snow patches in the meadow) on the low apron, rising with altitude to
-/// full cover from the second tier up. Height-driven (not class-driven) so the eroded shelf relief
-/// carries more snow on its crowns than in its hollows. The kit scatter reads the same function to
-/// pick frosted vs. green plants, so ground and props agree.
+/// biome; on it an altitude zonation like a real massif — a snow-free valley floor (alpine meadow;
+/// its only snow is the drifts [`bake_mask`] adds in wall feet, hollows and shady north faces),
+/// patchy snow from ~y 3, mostly covered by ~y 6.5 and full cover from ~y 9 up (the spruce belt
+/// and everything above it). Height-driven (not class-driven) so the eroded shelf relief carries
+/// more snow on its crowns than in its hollows. The kit scatter reads the same function to pick
+/// frosted vs. green plants, so ground and props agree.
 pub fn snow_cover(x: f32, z: f32) -> f32 {
     if crate::worldmap::tile_biome_world(x, z) != Some(crate::biome::Biome::Snow) {
         return 0.0;
     }
     let y = crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
-    // (Base 0.22 → 0.34: the low apron reads as a snowy biome with meadow showing through, not
-    // a meadow with snow patches.)
-    0.34 + 0.66 * smoothstep(0.6, 3.0, y)
+    // (Was 0.34 + 0.66·smoothstep(0.6, 3.0): snowy right down to the valley floor.)
+    SNOW_FLOOR + (1.0 - SNOW_FLOOR) * smoothstep(SNOW_LINE.0, SNOW_LINE.1, y)
 }
+
+/// Snow cover left on the valley floor (a dusting the shader's breakup never turns into snow).
+const SNOW_FLOOR: f32 = 0.03;
+/// Altitude band of the snow line (ground y): bare below the low end, full cover past the high one.
+const SNOW_LINE: (f32, f32) = (2.0, 8.0);
 
 /// Tree line on the snow massif (base height band): trees thin out from the low end and none grow
 /// past the high one, so the upper slopes and summits read as bare snow and rock, not a wooded hill.
@@ -172,12 +178,42 @@ const TREELINE: (f32, f32) = (11.0, 16.0);
 
 /// Is ground height `y` at `(x, z)` above the (per-spot jittered, so its edge is no contour) tree line?
 pub fn above_treeline(x: f32, z: f32, y: f32) -> bool {
-    let (a, _) = crate::realforest::rolls(x, z);
-    y > TREELINE.0 + (TREELINE.1 - TREELINE.0) * a
+    y > treeline_at(x, z)
 }
 
+/// The (per-spot jittered) tree-line height at `(x, z)`.
+pub fn treeline_at(x: f32, z: f32) -> f32 {
+    let (a, _) = crate::realforest::rolls(x, z);
+    TREELINE.0 + (TREELINE.1 - TREELINE.0) * a
+}
+
+/// Real ground slope (rise / run, relief included) at `(x, z)`. The alpine scrub only grows on
+/// walkable ground: the shader turns slopes past ~37° (≈0.75) into bare rock.
+pub fn slope_at(x: f32, z: f32) -> f32 {
+    let g = |x: f32, z: f32| crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
+    let d = 0.7;
+    let gx = (g(x + d, z) - g(x - d, z)) / (2.0 * d);
+    let gz = (g(x, z + d) - g(x, z - d)) / (2.0 * d);
+    (gx * gx + gz * gz).sqrt()
+}
+
+/// Is `(x, z)` a sun-facing (+z) or convex spot where the wind / sun keeps the snow thin — where
+/// alpine grass tussocks poke through? (Crest: ≥0.15u above its 2u ring.)
+pub fn thin_snow_spot(x: f32, z: f32) -> bool {
+    let g = |x: f32, z: f32| crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
+    let h = g(x, z);
+    let ring = (g(x + 2.0, z) + g(x - 2.0, z) + g(x, z + 2.0) + g(x, z - 2.0)) * 0.25;
+    let sunny = g(x, z + 0.7) - g(x, z - 0.7) < -0.25;
+    sunny || h - ring > 0.15
+}
+
+/// Ground height of the TOP of the tree-line band (no tree of any kind past it).
+pub const TREELINE_TOP: f32 = TREELINE.1;
+
 /// RGBA8 alpine mask over the whole tile grid at 2 texels / unit:
-/// - R = snow cover target ([`snow_cover`]), feathered ~2u past the snow edge (frost);
+/// - R = snow cover target ([`snow_cover`]) plus drifts — wall feet, hollows and shady (north-
+///   facing, the sun always sits to the south / +z) slopes keep snow below the snow line —
+///   feathered ~2u past the snow edge (frost);
 /// - G = alpine meadow: the snow biome itself (under its patchy snow) and the grass / forest
 ///   margin within ~24u of it, fading out;
 /// - B = mountain: the snow + rock biomes (gates talus scree and steep-slope rock);
@@ -192,6 +228,7 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
     let mut snow = vec![0.0f32; w * h];
     let mut is_snow = vec![false; w * h];
     let mut mount = vec![0.0f32; w * h];
+    let mut hgt = vec![0.0f32; w * h];
     for j in 0..h {
         let wz = z0 + (j as f32 + 0.5) / RES;
         for i in 0..w {
@@ -202,6 +239,8 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
                 is_snow[k] = true;
                 snow[k] = snow_cover(wx, wz);
             }
+            // (Everywhere, not just on the snow: the drift terms below look at the neighbours.)
+            hgt[k] = crate::worldmap::ground_at_world(wx, wz).unwrap_or(0.0);
             mount[k] = matches!(b, Some(Biome::Snow | Biome::Rocky)) as u8 as f32;
         }
     }
@@ -233,6 +272,29 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
         }
     }
     chamfer(&mut d_foot, w, h);
+    // Drifts below the snow line: snow blown into wall feet, filling hollows (ground ≥ ~0.3u below
+    // its ~5u neighbourhood) and lingering on the shady north faces.
+    let mean_h = blur(&blur(&blur(&blur(&hgt, w, h, 6, true), w, h, 6, false), w, h, 6, true), w, h, 6, false);
+    for j in 0..h {
+        for i in 0..w {
+            let k = j * w + i;
+            if !is_snow[k] {
+                continue;
+            }
+            let foot = 1.0 - smoothstep(0.0, 3.0 * RES, d_foot[k]);
+            let hollow = smoothstep(0.3, 1.1, mean_h[k] - hgt[k]);
+            // d(height)/dz > 0: the slope faces −z, away from the sun.
+            let (jn, jp) = (j.saturating_sub(1), (j + 1).min(h - 1));
+            let dhdz = (hgt[jp * w + i] - hgt[jn * w + i]) * RES / (jp - jn).max(1) as f32;
+            let shade = smoothstep(0.25, 0.8, dhdz);
+            // Lingering patches (old avalanche / cornice snow in the shade of the stands): a coarse
+            // value noise, so a few white islands lie out on the valley meadow too.
+            let (wx, wz) = (x0 + (i as f32 + 0.5) / RES, z0 + (j as f32 + 0.5) / RES);
+            let patch = smoothstep(0.66, 0.8, value_noise(wx * 0.07, wz * 0.07));
+            let drift = foot.max(hollow * 0.95).max(shade * 0.8).max(patch * 0.9);
+            snow[k] += (1.0 - snow[k]) * drift;
+        }
+    }
     let snow = blur(&blur(&snow, w, h, 3, true), w, h, 3, false);
     let mount = blur(&blur(&mount, w, h, 4, true), w, h, 4, false);
     let mut data = vec![0u8; w * h * 4];
@@ -258,6 +320,17 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
         ..default()
     });
     (images.add(img), Vec4::new(x0, z0, 1.0 / COLS as f32, 1.0 / ROWS as f32))
+}
+
+/// Smooth value noise 0..1 on the integer lattice (hash = [`crate::realforest::rolls`]).
+fn value_noise(x: f32, z: f32) -> f32 {
+    let (xi, zi) = (x.floor(), z.floor());
+    let (fx, fz) = (x - xi, z - zi);
+    let (sx, sz) = (fx * fx * (3.0 - 2.0 * fx), fz * fz * (3.0 - 2.0 * fz));
+    let h = |a: f32, b: f32| crate::realforest::rolls(a * 0.37 + 101.0, b * 0.37 - 57.0).0;
+    let top = h(xi, zi) + (h(xi + 1.0, zi) - h(xi, zi)) * sx;
+    let bot = h(xi, zi + 1.0) + (h(xi + 1.0, zi + 1.0) - h(xi, zi + 1.0)) * sx;
+    top + (bot - top) * sz
 }
 
 /// Separable box blur, radius `r` texels.
