@@ -136,10 +136,16 @@ fn footprint(x: f32, z: f32, reg: &Region) -> f32 {
             margin = margin.min(oe - own);
         }
     }
-    let border = if margin.is_finite() { smooth(0.0, 6.0, margin) } else { 1.0 };
+    // (12, not 6: a neighbour's `edge_fray` scallops its boundary every few units, and a short
+    // fade printed those scallops into the flank as a row of bumps.)
+    let border = if margin.is_finite() { smooth(0.0, 12.0, margin) } else { 1.0 };
     let coast = 0.25 + 0.75 * smooth(0.0, 9.0, sea_field(x, z));
     let ring = smooth(SAFE_PAD + SAFE_FRAY, SAFE_PAD + SAFE_FRAY + 10.0, castle_ring_dist(x, z));
-    rim * border * coast * ring
+    // The E-marsh bog pools and the deliberate lake lie on the rock range's SW apron: settle the
+    // ground to their shore level (the old mesa's flat foot apron did) instead of sinking them
+    // into pits in the flank. (The waterfall's plunge stream is NOT faded — its wall is the falls.)
+    let wet = smooth(1.0, 9.0, pool_sd(x, z).min(lake_sd(x, z)));
+    rim * border * coast * ring * wet
 }
 
 /// The continuous pass-ramp floor at distance `dc` (base) from the centre — `pass_class` without
