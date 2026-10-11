@@ -128,12 +128,20 @@ pub fn player_arts(
         // Find the furthest standable point along the heading.
         let from = hero.pos;
         let mut to = from;
+        // Same footing rules as walking: land under every sample, no rising more than a step
+        // over a cliff lip, no running up a too-steep face (`movement::slope_ok`).
+        let mut ref_y = hero.y;
         for k in 1..=6 {
             let cand = from + fwd * (DASH_DIST * k as f32 / 6.0);
-            if crate::worldmap::ground_at_world(cand.x, cand.y).is_some() {
-                to = cand;
-            } else {
-                break;
+            match crate::worldmap::ground_at_world(cand.x, cand.y) {
+                Some(y)
+                    if super::movement::hero_can_step(cand.x, cand.y, 0.0, ref_y)
+                        && super::movement::slope_ok(cand.x, cand.y, ref_y) =>
+                {
+                    to = cand;
+                    ref_y = y;
+                }
+                _ => break,
             }
         }
         // Don't teleport — arm a swift slide. `movement::player_move` skates the body `from → to`

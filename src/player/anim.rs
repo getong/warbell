@@ -2093,6 +2093,34 @@ impl Sheath {
     }
 }
 
+/// Sword shoulder on its way from `from` (w = 0) to the slung hilt over the right shoulder
+/// (w = 1), always up the front: a De Casteljau curve through an arm-raised-forward waypoint.
+fn sword_reach_arc(from: Quat, w: f32) -> Quat {
+    let (mid, hilt) = (e3(-1.7, -0.2, 0.3), e3(-3.1, -0.4, 0.3));
+    from.slerp(mid, w).slerp(mid.slerp(hilt, w), w)
+}
+
+/// The draw/sheathe reach folded over `pose` at weight `w` (0 = the clip, 1 = hands at the slung
+/// hilt and the shield rim).
+fn reach_overlay(pose: Pose, w: f32) -> Pose {
+    let mut p = pose;
+    // Fist at the slung grip just under the crossguard (tuned against the viewer). That hilt pose
+    // is a ~179 deg turn of the shoulder from a hanging arm, so a straight slerp to it is a coin
+    // toss between raising the arm up the FRONT and wrenching it BACK and up behind the body:
+    // the sign of a near-zero quaternion dot picked the route, flipped by whichever way the gait
+    // had the arm swinging (and could flip mid-reach as the stride went on) — the playtest's
+    // "sometimes he twists the arm backward when sheathing". Route it through an arm-raised-
+    // forward waypoint instead (a quadratic slerp curve: every leg of it is well under 180 deg,
+    // so each is unambiguous), so the hand always travels up the front and over the shoulder.
+    p.sh_r.r = sword_reach_arc(p.sh_r.r, w);
+    p.el_r = p.el_r.lerp(Jp::r(rx(-2.0)), w);
+    p.sh_l = p.sh_l.lerp(Jp::r(shield_reach_sh()), w);
+    p.el_l = p.el_l.lerp(Jp::r(rx(SHIELD_REACH_EL)), w);
+    p.head = Jp::r(p.head.r * e3(0.0, -0.25 * w, 0.0)); // a glance at the hand
+    p.torso = Jp::r(p.torso.r * e3(-0.05 * w, -0.1 * w, 0.0));
+    p
+}
+
 /// The slung shield's pose (torso frame) part-way through its hand-off, `s` = 0 at the back `slot`
 /// … 1 on the arm (`hand`). It swings round the LEFT flank on a cylinder about the spine — bearing
 /// and radius interpolated, with a little bulge — instead of cutting straight through the body.
@@ -2359,17 +2387,7 @@ pub fn hero_anim(
     // to the board's rim at the left flank — a natural reach behind the hip, not a wrench over the
     // head. The board itself travels between back and arm (`shield_handoff`, below).
     let pose = match sheath.reach() {
-        Some(w) => {
-            let mut p = pose;
-            // Fist at the slung grip just under the crossguard (tuned against the viewer).
-            p.sh_r = p.sh_r.lerp(Jp::r(e3(-3.1, -0.4, 0.3)), w);
-            p.el_r = p.el_r.lerp(Jp::r(rx(-2.0)), w);
-            p.sh_l = p.sh_l.lerp(Jp::r(shield_reach_sh()), w);
-            p.el_l = p.el_l.lerp(Jp::r(rx(SHIELD_REACH_EL)), w);
-            p.head = Jp::r(p.head.r * e3(0.0, -0.25 * w, 0.0)); // a glance at the hand
-            p.torso = Jp::r(p.torso.r * e3(-0.05 * w, -0.1 * w, 0.0));
-            p
-        }
+        Some(w) => reach_overlay(pose, w),
         None => pose,
     };
 
@@ -2797,5 +2815,59 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Regression (playtest: "sometimes when he sheathes the sword he twists the arm backward"):
+    /// the draw/sheathe reach must carry the sword arm UP THE FRONT to the slung hilt from every
+    /// pose it can start from — whatever gait phase, speed, carry or backpedal. The hilt target is
+    /// ~180 deg of shoulder pitch away from a hanging arm, so a plain shortest-arc slerp picked the
+    /// front or the BACK route depending on which way the gait had the arm swinging that frame.
+    #[test]
+    fn sheathe_reach_raises_the_sword_arm_up_the_front() {
+        let bind = super::super::footman::arm_bind()[0];
+        // Sagittal pitch of the right upper arm in the torso frame: 0 = hanging, +90 = forward,
+        // ±180 = overhead, −90 = swung back behind the body.
+        let pitch = |p: &Pose| {
+            let up = p.hips.r * p.torso.r * p.sh_r.r * bind.0;
+            up.z.atan2(-up.y).to_degrees()
+        };
+        let mut starts = Vec::new();
+        for i in 0..24 {
+            let wp = TAU * i as f32 / 24.0;
+            for (m, speed) in [(0.0, 0.0), (0.5, 0.8), (1.0, 1.4), (1.0, 5.0)] {
+                for armed in [0.0, 1.0] {
+                    for back in [0.0, 1.0] {
+                        starts.push(stance_loco_pose(i as f32 * 0.37, wp, m, speed, back, 0.0, armed, 1.0 - armed));
+                    }
+                }
+            }
+        }
+        for vy in [-6.0, -2.0, 0.0, 3.0, 6.5] {
+            starts.push(jump_pose(vy));
+        }
+        let mut worst = f32::INFINITY;
+        for (k, start) in starts.iter().enumerate() {
+            let mut prev = pitch(start);
+            let mut unwrapped = prev;
+            let mut lowest = prev;
+            for s in 1..=60 {
+                let a = pitch(&reach_overlay(*start, s as f32 / 60.0));
+                let mut d = a - prev;
+                if d > 180.0 {
+                    d -= 360.0;
+                } else if d < -180.0 {
+                    d += 360.0;
+                }
+                unwrapped += d;
+                prev = a;
+                lowest = lowest.min(unwrapped);
+            }
+            worst = worst.min(lowest);
+            assert!(
+                unwrapped > 120.0 && lowest > -60.0,
+                "start #{k}: the sword arm went the back way (ended at {unwrapped:.0} deg, lowest {lowest:.0})"
+            );
+        }
+        println!("lowest arm pitch over every reach: {worst:.0} deg");
     }
 }
