@@ -4,7 +4,7 @@
 //! - SNOW: the procedural Tatra-like massif described below.
 //! - ROCK: the same machinery (footprint fade, pass valleys, corner bake) but its SHAPE comes
 //!   from a REAL heightmap — the Dolomites around Passo Sella (Sella group + Sassolungo, the heads
-//!   of Val Gardena / Val di Fassa; `assets/terrain/dolomites_sella_160.r16`, AWS Terrain Tiles,
+//!   of Val Gardena / Val di Fassa; `assets/terrain/dolomites_sella_320.r16`, AWS Terrain Tiles,
 //!   see ATTRIBUTION.txt) laid over the footprint at roughly true proportions — the tallest,
 //!   most rugged summits on the island: walled limestone blocks and towers over valley heads.
 //!
@@ -57,15 +57,16 @@ const SUMMITS: [(f32, f32, f32, f32); 4] = [
     (49.5, 28.0, 6.0, 6.0),  // E outlier on the grown flank, in the wedge between the two passes
 ];
 
-/// The real heightmap the rock range is shaped from: 160×160 little-endian u16, 0 = 1280 m
-/// (valley floors), 65535 = 3124 m (Piz Boè / Sassolungo), ≈84 m per sample, north up.
-static ROCK_DEM: &[u8] = include_bytes!("../../assets/terrain/dolomites_sella_160.r16");
-const DEM_N: i32 = 160;
+/// The real heightmap the rock range is shaped from: 320×320 little-endian u16 (≈42 m per sample,
+/// local relief sharpened — `tools/terrain/bake_dem.py`), 0 = valley floors, 65535 = the summits
+/// (Piz Boè / Sassolungo), north up.
+static ROCK_DEM: &[u8] = include_bytes!("../../assets/terrain/dolomites_sella_320.r16");
+const DEM_N: i32 = 320;
 /// Half-extent (base units) of the DEM laid over the rock region — 13.5 km onto 2·44 base
 /// (≈343 world units): with [`DEM_RISE`] that keeps the real relief's proportions within ~10%.
 const DEM_HALF: f32 = 44.0;
 /// World Y the DEM's full 1844 m range maps to.
-const DEM_RISE: f32 = 40.0;
+const DEM_RISE: f32 = 46.0;
 
 fn dem_px(ix: i32, iz: i32) -> f32 {
     let i = (iz.clamp(0, DEM_N - 1) * DEM_N + ix.clamp(0, DEM_N - 1)) as usize * 2;
@@ -248,9 +249,27 @@ fn rock_y(x: f32, z: f32, t: f32, reg: &Region) -> f32 {
     let u = (0.5 + (x - reg.x) / (2.0 * DEM_HALF)) * DEM_N as f32;
     let v = (0.5 + (z - reg.z) / (2.0 * DEM_HALF)) * DEM_N as f32;
     let d = dem(u, v);
+    // The DEM's own steepness (world rise per world unit): the walls of the Sella block and the
+    // Sassolungo towers, as opposed to the screes and alpine pastures below them.
+    let gx = dem(u + 1.0, v) - dem(u - 1.0, v);
+    let gz = dem(u, v + 1.0) - dem(u, v - 1.0);
+    let spacing = 2.0 * DEM_HALF * MAP_SCALE / DEM_N as f32;
+    let grad = gx.hypot(gz) * 0.5 * DEM_RISE / spacing;
+    let steep = smooth(0.35, 0.95, grad) * env;
     let (_, r2, r3) = ridges3(x * 1.3 + 40.0, z * 1.3 - 25.0);
-    let crag = (r3 * 1.6 + r2 * 0.9) * (0.35 + d) * env;
-    6.0 * env.powf(1.4) + DEM_RISE * d.powf(1.15) * env.powf(0.6) + crag
+    // Crags: sharp ridged spikes (towers / pinnacles) where the DEM is already steep and high,
+    // a gentle roughness on the pastures.
+    let crag = (r3 * r3 * r3 * (1.2 + 3.4 * steep) + r2 * 0.9) * (0.35 + d) * env;
+    let y = 6.0 * env.powf(1.4) + DEM_RISE * d.powf(1.3) * env.powf(0.6) + crag;
+    // CLIFF BANDS: on the steep ground the rise is gathered into near-vertical walls between
+    // narrow ledges (the stratified dolomite of the Sella / Sassolungo faces) — a ledge-and-wall
+    // profile every BAND units of height, blended in only where the DEM is steep, so pastures,
+    // screes and the pass valleys keep their natural slopes.
+    const BAND: f32 = 3.2;
+    let s = y / BAND + 0.37 * vnoise(x * 0.3 + 7.0, z * 0.3 - 2.0);
+    let f = s - s.floor();
+    let stair = (s.floor() + smooth(0.58, 0.97, f) - 0.37 * vnoise(x * 0.3 + 7.0, z * 0.3 - 2.0)) * BAND;
+    y + (stair - y) * steep * 0.75
 }
 
 /// The massif surface (world Y) at base `(x, z)` inside a massif region: the mountain with the

@@ -25,7 +25,7 @@ const STRUCT: [&str; 3] = ["wood", "stone", "cloth"];
 /// Creature surface detail layers, in `creature::Surf` code order.
 const CREATURE: [&str; 7] = ["skin", "fur", "leather", "wood", "metal", "cloth", "bone"];
 /// Alpine terrain splat layers, in `alpine.wgsl` layer order (`tools/blender_forest/alpine.py`).
-const ALPINE: [&str; 4] = ["snow", "meadow", "scree", "rock"];
+const ALPINE: [&str; 5] = ["snow", "meadow", "scree", "rock", "dolomite"];
 const MAPS: [&str; 3] = ["albedo", "normal", "ormh"];
 
 fn srgb_to_lin(c: f32) -> f32 {

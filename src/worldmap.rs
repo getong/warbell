@@ -1119,6 +1119,30 @@ fn dune_h(x: f32, z: f32, dc: f32) -> f32 {
     1.0 + 5.4 * amp * prof * ease * ease * (3.0 - 2.0 * ease)
 }
 
+/// FOREST uplands (mountains feedback round 2: "mountains in every biome"): the forest's OUTER
+/// half (away from the castle — its road end and the castle side stay gentle) rises into rolling,
+/// rounded, forested ridges and low mountains in the Beskid manner — broad smooth swells with a
+/// soft ridge line along their crests, up to ~10u, well below the snow massif and every slope
+/// walkable (rounded value-noise gradients ≲0.5 class per tile). Fractional class.
+fn forest_h(x: f32, z: f32, dc: f32) -> f32 {
+    let base = inland_hills_f(x, z, dc, 4);
+    let t = ((dc - 40.0) / 18.0).clamp(0.0, 1.0);
+    // ...and easing down again toward the shore, so the uplands meet the beach / coastal band on
+    // a slope instead of a sheer straight-edged wall.
+    let c = ((sea_field(x, z) - 7.0) / 9.0).clamp(0.0, 1.0);
+    let w = t * t * (3.0 - 2.0 * t) * c * c * (3.0 - 2.0 * c);
+    if w <= 0.0 {
+        return base;
+    }
+    // Two rotated broad swells (ridge systems ~15–25 base units apart) + a soft crest line.
+    let v1 = vnoise(0.8 * x * 0.06 - 0.6 * z * 0.06 + 4.0, 0.6 * x * 0.06 + 0.8 * z * 0.06 - 11.0);
+    let v2 = vnoise(x * 0.11 + 21.0, z * 0.11 - 3.0);
+    let swell = { let s = ((v1 - 0.22) / 0.6).clamp(0.0, 1.0); s * s * (3.0 - 2.0 * s) };
+    let (r1, _, _) = alpine_massif::ridges3(x * 0.7 - 30.0, z * 0.7 + 12.0);
+    let rise = 19.0 * swell * (0.62 + 0.38 * v2) + 5.0 * r1 * swell;
+    base + w * rise
+}
+
 /// Natural rounded hill on each authored plateau site (fractional class, `None` outside): a bell
 /// with ridged spurs — the old floor()-tiered cone read as a stepped wedding cake.
 fn plateau_h(x: f32, z: f32) -> Option<f32> {
@@ -2106,7 +2130,11 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
         // (The apron now EASES in over a few units instead of cutting the hills to class 1 at a
         // hard band edge — the natural relief reaches the mesh exactly, so a cut would be a step.)
         let apron = cliffy_apron(x, z);
-        let hf = if reg.biome == TB::Desert { dune_h(x, z, dc) } else { inland_hills_f(x, z, dc, 4) };
+        let hf = match reg.biome {
+            TB::Desert => dune_h(x, z, dc),
+            TB::Forest => forest_h(x, z, dc),
+            _ => inland_hills_f(x, z, dc, 4),
+        };
         return Some((reg.biome, natural(1.0 + (hf - 1.0) * apron * floodplain(x, z))));
     }
     let h = natural(1.0 + (inland_hills_f(x, z, dc, 5) - 1.0) * cliffy_apron(x, z) * floodplain(x, z));
