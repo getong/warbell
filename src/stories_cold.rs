@@ -556,12 +556,16 @@ pub fn shot_cams() -> Vec<(String, Transform)> {
             let rot = Quat::from_rotation_y(site.yaw);
             let b = rot * Vec3::new(0.0, 0.0, -1.45);
             let bell = Vec3::new(site.pos.x + b.x, y + 0.75, site.pos.y + b.z);
-            for d in [8.0f32, 20.0] {
-                let e = Vec2::new(bell.x + front.x * d, bell.z + front.z * d);
+            // 8u straight in from the trail side; 20u from ON the trail (its strip is clear of
+            // trunks), up and down the pass.
+            let along = Vec3::new(site.yaw.cos(), 0.0, -site.yaw.sin());
+            for (tag, off) in [("eye8", front * 8.0), ("eye20a", front * 7.0 + along * 18.7),
+                ("eye20b", front * 7.0 - along * 18.7)] {
+                let e = Vec2::new(bell.x + off.x, bell.z + off.z);
                 let gy = crate::worldmap::ground_at_world(e.x, e.y).unwrap_or(y);
                 let eye = Vec3::new(e.x, gy + 1.7, e.y);
-                info!("story cam {name}_eye{d}: {:.1},{:.1},{:.1} -> {:.1},{:.1},{:.1}", eye.x, eye.y, eye.z, bell.x, bell.y, bell.z);
-                out.push((format!("{name}_eye{d}"), Transform::from_translation(eye).looking_at(bell, Vec3::Y)));
+                info!("story cam {name}_{tag}: {:.1},{:.1},{:.1} -> {:.1},{:.1},{:.1}", eye.x, eye.y, eye.z, bell.x, bell.y, bell.z);
+                out.push((format!("{name}_{tag}"), Transform::from_translation(eye).looking_at(bell, Vec3::Y)));
             }
         }
         for (tag, off) in [("near", front * 7.5 + side * 3.0 + Vec3::Y * 3.2), ("high", -front * 4.0 + side * 5.0 + Vec3::Y * 11.0)] {

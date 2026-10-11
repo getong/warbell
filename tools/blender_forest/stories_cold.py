@@ -403,22 +403,24 @@ def wagon_bed(g, rng, centre, rot, length=2.2, width=1.1, sides=True, broken_sid
                      0.06, 0.05, up=tuple(rot @ V(0, 0, 1)), mat=M_PLANK, col=OLD_WOOD, rng=rng)
 
 
-BRONZE = (0.86, 0.6, 0.3)       # metallic tint (F0): warm, saturated bronze-gold
-VERDIGRIS = (0.36, 0.62, 0.52)
+BRONZE = (0.24, 0.12, 0.034)     # metallic tint, linear: aged bronze ~ sRGB (135, 98, 52)
+VERDIGRIS = (0.15, 0.23, 0.17)   # grey-green patina ~ sRGB (108, 132, 115)
 
 
 def bronze_fn(nz, c, axis, top):
-    """Polished-by-weather bronze: verdigris only in the recesses (under the shoulder band, the
-    crown's edge) and in streaks run down from the crown, fading toward the lip."""
+    """A century-weathered bronze: mid-dark warm body; grey-green verdigris mottled over the
+    upper half and the up-facing side (~30%), in runs down from the crown and in the recesses."""
     def f(p, n):
         rel = p - c
         h = rel.dot(axis) / top                      # 0 at the lip .. 1 at the crown
         radial = (rel - axis * rel.dot(axis))
         ang = math.atan2(radial.dot(axis.orthogonal()), radial.dot(axis.cross(axis.orthogonal())))
-        streak = max(0.0, math.sin(ang * 5.0 + 2.0 * nz(p * 1.3))) ** 6 * smoothstep(0.2, 0.9, h)
-        recess = smoothstep(0.5, 0.15, abs(h - 0.72) * 6.0) * 0.6 + smoothstep(0.93, 1.0, h) * 0.5
-        k = min(1.0, streak * 0.85 + recess)
-        return scale(mix(BRONZE, VERDIGRIS, k), 0.92 + 0.08 * nz(p * 5.0))
+        up = smoothstep(-0.2, 0.6, n.y)
+        streak = max(0.0, math.sin(ang * 7.0 + 2.5 * nz(p * 1.3))) ** 5 * smoothstep(0.15, 0.85, h)
+        blotch = smoothstep(0.1, 0.32, nz(p * 3.2) + 0.25 * nz(p * 9.0)) * smoothstep(0.35, 0.7, h) * up
+        recess = smoothstep(0.5, 0.15, abs(h - 0.78) * 6.0) * 0.5 + smoothstep(0.93, 1.0, h) * 0.45
+        k = min(1.0, streak * 0.8 + blotch * 0.85 + recess)
+        return scale(mix(BRONZE, VERDIGRIS, k), 0.85 + 0.2 * nz(p * 5.0))
     return f
 
 
@@ -460,19 +462,21 @@ def orient(verts, tris, axis_c, axis_d, outward):
     return out
 
 
-def bell(g, rng, lip_centre, rot, h=1.3, r=0.62, seg=20):
+def bell(g, rng, lip_centre, rot, h=1.3, r=0.62, seg=30):
     """A cast bronze bell, mouth at local y=0 (`lip_centre`), crown up local +Y: thick sound bow,
     a raised band at the shoulder, the hanging loops (canons) on the crown. Smooth outer + inner shell."""
     nz = Noise(rng, 3, 1.5)
     c = Vector(lip_centre)
     axis = rot @ V(0, 1, 0)
-    outer = [(r, -0.02), (r * 1.04, 0.06), (r * 0.99, 0.14), (r * 0.86, 0.3), (r * 0.76, 0.5), (r * 0.7, 0.72),
-             (r * 0.68, 0.86), (r * 0.72, 0.9), (r * 0.72, 0.95), (r * 0.66, 0.98), (r * 0.6, 1.07),
-             (r * 0.45, 1.15), (r * 0.22, 1.19), (0.0, 1.2)]
+    # Strong flare: a thick sound-bow at the lip, the waist ~0.6x the mouth, a shoulder band.
+    outer = [(r, -0.02), (r * 1.05, 0.03), (r * 1.04, 0.08), (r * 0.95, 0.14), (r * 0.82, 0.24), (r * 0.72, 0.36),
+             (r * 0.655, 0.5), (r * 0.615, 0.65), (r * 0.6, 0.8), (r * 0.615, 0.89), (r * 0.66, 0.92),
+             (r * 0.66, 0.97), (r * 0.62, 1.0), (r * 0.56, 1.08), (r * 0.42, 1.15), (r * 0.2, 1.19), (0.0, 1.2)]
     outer = [(rr, y * h / 1.2) for rr, y in outer]
     v, t = lathe(outer, seg, c, rot)
     smooth_mesh(g, v, orient(v, t, c, axis, True), M_BRONZE, bronze_fn(nz, c, axis, h), 0.5)
-    inner = [(r * 0.9, -0.02), (r * 0.78, 0.25), (r * 0.62, 0.62), (r * 0.55, 0.95), (r * 0.3, 1.08), (0.0, 1.1)]
+    inner = [(r * 0.9, -0.02), (r * 0.8, 0.12), (r * 0.62, 0.35), (r * 0.52, 0.6), (r * 0.48, 0.9), (r * 0.28, 1.07),
+             (0.0, 1.1)]
     inner = [(rr, y * h / 1.2) for rr, y in inner]
     v, t = lathe(inner, seg, c, rot)
     smooth_mesh(g, v, orient(v, t, c, axis, False), M_BRONZE, lambda p, n: scale(BRONZE, 0.35), 0.5)
@@ -499,7 +503,7 @@ def bell_crest(g, centre, normal, up, s=1.0):
     c, n, u = Vector(centre), Vector(normal).normalized(), Vector(up).normalized()
     r = u.cross(n).normalized()
     u = n.cross(r).normalized()
-    gold = (1.0, 0.78, 0.42)
+    gold = (0.42, 0.27, 0.09)
     ring = [c + n * 0.012 + (r * math.cos(a) + u * math.sin(a)) * 0.17 * s for a in np.linspace(0, 2 * math.pi, 15)]
     tube(g, ring, [0.024 * s] * 15, 4, M_BRONZE, gold, tile=0.2, cap=False)
     tube(g, [c + n * 0.016 - r * 0.1 * s - u * 0.04 * s, c + n * 0.016 + r * 0.1 * s - u * 0.04 * s], [0.024 * s] * 2, 4,
@@ -526,18 +530,18 @@ def story_wrecked_convoy(rng):
     # in profile from every side. Nothing of the wreck stands behind it from the trail.
     rot_b = quat_y(0.3) @ quat_z(-0.35)
     axis = rot_b @ V(0, 1, 0)
-    lip = V(-0.15, -0.1, -1.45)
+    lip = V(-0.15, 0.0, -1.45)
     BH, BR = 1.42, 0.66
     bell(g, rng, lip, rot_b, h=BH, r=BR)
     side = axis.cross(V(0, 0, 1)).normalized()
     to_trail = V(0, 0, -1) - axis * V(0, 0, -1).dot(axis)
     cn = to_trail.normalized()
-    crest_c = lip + axis * (BH * 0.6) + cn * (BR * 0.71)
+    crest_c = lip + axis * (BH * 0.6) + cn * (BR * 0.635)
     bell_crest(g, crest_c, cn, axis, s=1.05)
     # A thin cap of snow on the crown and the up-tilted shoulder; the drift round its foot.
     snow_cap(g, tuple(lip + axis * (BH * 1.0) + V(0, 0.01, 0)), 0.3, 0.3, 0.05, rng)
-    snow_cap(g, tuple(lip + axis * (BH * 0.86) + side * (-0.32) + V(0, 0.02, 0)), 0.16, 0.24, 0.035, rng)
-    drift(g, (lip.x + 0.05, 0.0, lip.z + 0.1), 1.1, 0.95, 0.2, rng, power=0.9, rings=4, seg=16)
+    snow_cap(g, tuple(lip + axis * (BH * 0.86) + side * (-0.28) + V(0, 0.02, 0)), 0.15, 0.22, 0.035, rng)
+    drift(g, (lip.x + 0.05, 0.0, lip.z + 0.1), 1.15, 1.0, 0.17, rng, power=0.9, rings=4, seg=16)
     # ── the bell wagon: a heavy flatbed, front axle snapped so its nose sits in the snow, tilted
     # toward the trail where the bell went over the side.
     qw = quat_y(0.05) @ quat_x(-0.16) @ quat_z(-0.17)

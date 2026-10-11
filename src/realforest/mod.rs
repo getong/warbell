@@ -187,7 +187,7 @@ const MATERIALS: [(&str, &str, bool); 23] = [
     // (tools/blender_forest/snow_set.sh); vertex colour adds the blue in the shaded drift folds.
     ("s_snow", "s_snow", false),
     // Cast bronze (the Crown convoy's war bell): untextured true metal, colour from the vertex
-    // colours (warm bronze, verdigris in the recesses), smooth enough to catch a sun highlight.
+    // colours (aged bronze mottled with verdigris), a soft sun highlight.
     ("bronze", "bronze", false),
     // Creature parts (creatures.glb, animals.glb, people.glb) — never drawn with this material
     // (recoloured CPU meshes on the creature material); the entry only lets the loader accept them.
@@ -915,7 +915,7 @@ fn drive_forest_look(
 
 fn pbr_material(images: &mut Assets<Image>, set: &str, card: bool) -> Result<StandardMaterial, String> {
     if set == "bronze" {
-        return Ok(StandardMaterial { metallic: 1.0, perceptual_roughness: 0.4, reflectance: 0.5, ..default() });
+        return Ok(StandardMaterial { metallic: 1.0, perceptual_roughness: 0.5, reflectance: 0.5, ..default() });
     }
     if set.is_empty() {
         // Waxy fruit skin: base colour comes from the vertex colours.
