@@ -19,7 +19,7 @@ use intel_tex_2::{bc7, RgbaSurface};
 
 const DIR: &str = "assets/forest_pbr";
 const CARD_CUTOFF: f32 = 0.42;
-const CARD_SETS: [&str; 2] = ["canopy", "undergrowth"];
+const CARD_SETS: [&str; 3] = ["canopy", "undergrowth", "swamp_cards"];
 const GROUND: [&str; 3] = ["litter", "moss", "path"];
 const STRUCT: [&str; 3] = ["wood", "stone", "cloth"];
 /// Creature surface detail layers, in `creature::Surf` code order.

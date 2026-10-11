@@ -185,6 +185,7 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
         (0..3).map(|v| meshes.add(crate::biome_swamp::build_mangrove_mesh(v))).collect();
     let stumps: Vec<Handle<Mesh>> =
         (0..2).map(|v| meshes.add(crate::biome_swamp::build_cypress_stump_mesh(v))).collect();
+    let swamp_kit = crate::realforest::get().filter(|k| crate::realforest::biomekit::swamp(k));
     let mush_stems = meshes.add(crate::biome_swamp::build_glowmush_stems_mesh());
     let mush_caps = meshes.add(crate::biome_swamp::build_glowmush_caps_mesh());
 
@@ -218,19 +219,47 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
                 continue;
             }
             let deep = rng_next(&mut rng);
-            let (handle, scale, sink) = if deep < 0.30 {
-                (&dead_tree, 0.9 + rng_next(&mut rng) * 0.5, 0.55)
+            // (kind 0 dead tree / 1 mangrove / 2 stump, variant, scale, sink) — same RNG draws
+            // with or without the swamp kit, so the rest of the layer doesn't move.
+            let (kind, var, scale, sink) = if deep < 0.30 {
+                (0, 0, 0.9 + rng_next(&mut rng) * 0.5, 0.55)
             } else if deep < 0.72 {
-                (&mangroves[(rng_next(&mut rng) * 3.0) as usize % 3], 1.15 + rng_next(&mut rng) * 0.6, 0.5)
+                (1, (rng_next(&mut rng) * 3.0) as usize % 3, 1.15 + rng_next(&mut rng) * 0.6, 0.5)
             } else {
-                (&stumps[(rng_next(&mut rng) * 2.0) as usize % 2], 1.3 + rng_next(&mut rng) * 0.8, 0.35)
+                (2, (rng_next(&mut rng) * 2.0) as usize % 2, 1.3 + rng_next(&mut rng) * 0.8, 0.35)
+            };
+            let rot = Quat::from_rotation_y(rng_next(&mut rng) * TAU);
+            // Realistic swamp flora (`swamp_flora.glb`): drowned bleached snags, moss-hung
+            // cypresses and knee clusters rising out of the pool instead of the low-poly set.
+            if let Some(k) = swamp_kit {
+                let at = Transform::from_xyz(x, WATER_Y - sink * 0.6, z).with_rotation(rot);
+                let tree = match kind {
+                    0 => k.pick_named(&[["snag_a_lod0", "snag_b_lod0"][(scale * 10.0) as usize % 2]], 0.0),
+                    1 => k.pick_named(&[["cypress_a_lod0", "cypress_b_lod0", "cypress_a_lod0"][var]], 0.0),
+                    _ => None,
+                };
+                if let Some(lod0) = tree {
+                    let mut e = commands.spawn((at.with_scale(Vec3::splat(scale * 1.25)), BiomeEntity));
+                    k.attach_tree(&mut e, lod0, true);
+                } else {
+                    let name = ["knees_a", "knees_b"][var];
+                    if let Some(e) = k.spawn_static_with(commands, name, at.with_scale(Vec3::splat(scale * 0.9)), range.clone()) {
+                        commands.entity(e).insert(BiomeEntity);
+                    }
+                }
+                placed_trees += 1;
+                trees += 1;
+                continue;
+            }
+            let handle = match kind {
+                0 => &dead_tree,
+                1 => &mangroves[var],
+                _ => &stumps[var],
             };
             commands.spawn((
                 Mesh3d(handle.clone()),
                 MeshMaterial3d(mat.clone()),
-                Transform::from_xyz(x, WATER_Y - sink, z)
-                    .with_rotation(Quat::from_rotation_y(rng_next(&mut rng) * TAU))
-                    .with_scale(Vec3::splat(scale)),
+                Transform::from_xyz(x, WATER_Y - sink, z).with_rotation(rot).with_scale(Vec3::splat(scale)),
                 BiomeEntity,
                 range.clone(),
             ));

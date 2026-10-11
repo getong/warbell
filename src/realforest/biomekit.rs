@@ -86,24 +86,64 @@ pub fn saguaro(src: usize) -> KitTree {
     KitTree::Static(["ds_saguaro_b", "ds_saguaro_a", "ds_saguaro_c"][src.min(2)], true)
 }
 
-/// Kit tree for swamp tree-class source variant `src` (0..2 the old mushroom-crowned mangroves,
-/// 3..4 cypress-knee stumps): gnarled oaks and alder-like beeches with drowned snags among them,
-/// and the scanned stump for the stumps.
+/// Does the kit take over the swamp? Needs `swamp_flora.glb` — the swamp draws ONLY its own
+/// species (never the forest's oaks / beeches / snag / stump); without the file the low-poly
+/// mangroves stay.
+pub fn swamp(kit: &Kit) -> bool {
+    kit.has("cypress_a_lod0")
+}
+
+/// Kit tree for swamp tree-class source variant `src` (0..2 the old mangroves, 3..4 the old
+/// cypress-knee stumps): moss-hung bald cypresses on buttressed bases, drooping willows and
+/// drowned, bleached snags; cypress knees (round a rotten stump or alone) for the stump slots.
 pub fn swamp_tree(kit: &Kit, src: usize, x: f32, z: f32) -> Option<KitTree> {
     let (a, _) = super::rolls(x, z);
     let name = match src {
-        _ if src >= 3 => return Some(KitTree::Static("stump_a", false)),
-        _ if a < 0.3 => "dead_a_lod0",
-        0 => ["oak_c_lod0", "oak_a_lod0"][(a * 7.0) as usize % 2],
-        1 => "beech_b_lod0",
-        _ => ["oak_b_lod0", "beech_a_lod0"][(a * 7.0) as usize % 2],
+        3 => return Some(KitTree::Static("knees_a", false)),
+        _ if src >= 4 => return Some(KitTree::Static("knees_b", false)),
+        _ if a < 0.22 => ["snag_a_lod0", "snag_b_lod0"][(a * 31.0) as usize % 2],
+        0 => "cypress_a_lod0",
+        1 => ["cypress_b_lod0", "willow_a_lod0"][(a * 7.0) as usize % 2],
+        _ => ["cypress_a_lod0", "cypress_b_lod0"][(a * 7.0) as usize % 2],
     };
     kit.pick_named(&[name], 0.0).map(KitTree::Tree)
+}
+
+/// Kit prop for swamp passive class `class` (1 = cattail clump, 2 = small accents), source
+/// variant `src`: (model, scale ×). `None` = leave the spot bare (no forest rock / toadstool).
+pub fn swamp_prop(kit: &Kit, class: usize, src: usize, x: f32, z: f32) -> Option<(usize, f32)> {
+    let (a, b) = super::rolls(x, z);
+    let pick = |names: &[&str], s: f32| kit.pick_named(names, b).map(|m| (m, s));
+    match (class, src) {
+        (1, 0) => pick(&["sw_cattail_a"], 1.0),
+        (1, _) => pick(&["sw_cattail_b", "sw_cattail_a"], 1.0),
+        // Toadstool / mossy rock / trio / sunken log accents → a knot of knees, or a sedge tuft.
+        (2, _) if a < 0.45 => pick(&["knees_b"], 0.7),
+        (2, _) => pick(&["sw_sedge_a"], 1.3),
+        _ => None,
+    }
+}
+
+/// Kit ground cover for swamp cover class `class` (0 = moss patch, 1 = reed sprig, 2 = mushroom,
+/// 3 = bog cotton / marsh flowers): sedge tufts and the odd cattail; the bare spots are muck.
+pub fn swamp_cover(kit: &Kit, class: usize, x: f32, z: f32) -> Option<(usize, f32)> {
+    let (a, b) = super::rolls(x, z);
+    let pick = |names: &[&str], s: f32| kit.pick_named(names, b).map(|m| (m, s));
+    match class {
+        0 if a < 0.5 => pick(&["sw_sedge_a"], 0.8),
+        1 => pick(&["sw_sedge_a"], 1.0),
+        3 if a < 0.6 => pick(&["sw_sedge_a"], 0.9),
+        3 => pick(&["sw_cattail_b"], 0.7),
+        _ => None,
+    }
 }
 
 /// Kit prop for a passive scatter class of the rocky or desert biome (see [`rocky_prop`]; desert:
 /// 0 = dead bush, 2 = barrel cactus, 3 = prickly pear, 4 = bleached rocks + skull): (model, scale ×).
 pub fn passive_prop(kit: &Kit, biome: crate::biome::Biome, class: usize, src: usize, x: f32, z: f32) -> Option<(usize, f32)> {
+    if biome == crate::biome::Biome::Swamp {
+        return swamp_prop(kit, class, src, x, z);
+    }
     if biome != crate::biome::Biome::Desert {
         return rocky_prop(kit, class, src, x, z);
     }
