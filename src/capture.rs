@@ -32,6 +32,12 @@ struct ShotClock {
     /// boot, or a long `FOREST_SHOT_WARMUP` (request at frame ≫ cap) exits the app the same frame
     /// as the request and the async readback lands on a despawned window ("Unknown window", no PNG).
     shot_at: u32,
+    /// `FOREST_SHOT_STORIES=1`: after the main shot, one extra shot per snow story site (cameras
+    /// from `stories_cold::shot_cams`), each saved next to the main PNG as `<name>.png`.
+    seq: Option<Vec<(String, Transform)>>,
+    seq_idx: usize,
+    seq_frame: u32,
+    seq_shot: bool,
 }
 
 impl Plugin for CapturePlugin {
@@ -86,6 +92,7 @@ fn drive_shot(
     path: Res<ShotPath>,
     mut commands: Commands,
     mut exit: MessageWriter<AppExit>,
+    mut cams: Query<(&mut Transform, Option<&mut crate::controls::FlyCam>), With<Camera3d>>,
 ) {
     clock.frame += 1;
     // Take the shot once the scene has actually WARMED: ≥240 rendered frames AND ≥10 s wall-clock
@@ -120,8 +127,51 @@ fn drive_shot(
     // from the REQUEST frame — see `shot_at`), THEN exit — a fixed-frame exit would race the
     // readback and write no PNG.
     if clock.shot && (std::path::Path::new(&path.0).exists() || clock.frame > clock.shot_at + 1800) {
+        if std::env::var("FOREST_SHOT_STORIES").is_ok() && drive_story_seq(&mut clock, &path.0, &mut commands, &mut cams) {
+            return;
+        }
         exit.write(AppExit::Success);
     }
+}
+
+/// One extra shot per story site after the main shot: park the camera (and the fly-cam's eased
+/// yaw/pitch, so it doesn't swing back), let ~45 frames settle, grab, wait for the PNG, next.
+/// Returns `true` while the sequence still runs.
+fn drive_story_seq(
+    clock: &mut ShotClock,
+    main: &str,
+    commands: &mut Commands,
+    cams: &mut Query<(&mut Transform, Option<&mut crate::controls::FlyCam>), With<Camera3d>>,
+) -> bool {
+    if clock.seq.is_none() {
+        clock.seq = Some(crate::stories_cold::shot_cams());
+    }
+    let dir = std::path::Path::new(main).parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let list = clock.seq.clone().unwrap_or_default();
+    let Some((name, tf)) = list.get(clock.seq_idx) else { return false };
+    let out = dir.join(format!("{name}.png"));
+    if clock.seq_frame == 0 {
+        let _ = std::fs::remove_file(&out);
+        for (mut t, fly) in cams.iter_mut() {
+            *t = *tf;
+            if let Some(mut f) = fly {
+                let (yaw, pitch, _) = tf.rotation.to_euler(EulerRot::YXZ);
+                (f.yaw, f.pitch, f.target_yaw, f.target_pitch, f.vel) = (yaw, pitch, yaw, pitch, Vec3::ZERO);
+            }
+        }
+    }
+    clock.seq_frame += 1;
+    if !clock.seq_shot && clock.seq_frame >= 45 {
+        commands.spawn(Screenshot::primary_window()).observe(save_to_disk(out.clone()));
+        clock.seq_shot = true;
+    }
+    if clock.seq_shot && (out.exists() || clock.seq_frame > 900) {
+        info!("story shot {name} saved: {}", out.display());
+        clock.seq_idx += 1;
+        clock.seq_frame = 0;
+        clock.seq_shot = false;
+    }
+    true
 }
 
 // ── clip mode ──────────────────────────────────────────────────────────────────────
