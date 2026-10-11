@@ -53,6 +53,9 @@ impl Plugin for PerftestPlugin {
         if std::env::var("FOREST_SPIKEWATCH").is_ok() {
             app.add_systems(Update, perf_spike_watch);
         }
+        if std::env::var("FOREST_MEMREPORT").is_ok() || std::env::var("FOREST_PERFTEST").is_ok() {
+            app.init_resource::<MemReportState>().add_systems(Update, mem_report);
+        }
         let Ok(raw) = std::env::var("FOREST_PERFTEST") else { return };
         let duration = raw.trim().parse::<f32>().unwrap_or(600.0).max(20.0);
         let speed = std::env::var("FOREST_PERFSPEED")
@@ -372,4 +375,162 @@ fn perf_tick(world: &mut World) {
 fn short(full: &str) -> String {
     let base = full.rsplit("::").next().unwrap_or(full);
     base.split('<').next().unwrap_or(base).trim().to_string()
+}
+
+/// `FOREST_MEMREPORT=1` (or any `FOREST_PERFTEST` run): ONE detailed memory breakdown, ~12 s after
+/// the world is up — where the resident CPU-side asset bytes live. Meshes/images whose data was
+/// handed to the GPU (`RENDER_WORLD`-only) report as "extracted" (0 CPU bytes); everything else is
+/// a CPU copy kept alive in `Assets<T>`. Retained mesh bytes are attributed to the game components
+/// of the first entity that renders them, so the owning system names itself.
+pub(crate) fn mem_report(world: &mut World) {
+    use std::collections::HashMap;
+    let ready = world.resource::<crate::biome::WorldReady>().0;
+    let now = world.resource::<Time<Real>>().elapsed_secs();
+    let state = {
+        let mut s = world.resource_mut::<MemReportState>();
+        if !ready {
+            s.ready_at = None;
+            return;
+        }
+        let at = *s.ready_at.get_or_insert(now);
+        if s.done || now - at < 12.0 {
+            return;
+        }
+        s.done = true;
+        at
+    };
+    let _ = state;
+    // mesh id → (entity count, first entity)
+    let mut users: HashMap<AssetId<Mesh>, (u32, Entity)> = HashMap::new();
+    let mut q = world.query::<(Entity, &Mesh3d)>();
+    for (e, m) in q.iter(world) {
+        let u = users.entry(m.0.id()).or_insert((0, e));
+        u.0 += 1;
+    }
+    let mut mat_users: HashMap<AssetId<StandardMaterial>, u32> = HashMap::new();
+    let mut mq = world.query::<&MeshMaterial3d<StandardMaterial>>();
+    let mut std_ents = 0u32;
+    for m in mq.iter(world) {
+        *mat_users.entry(m.0.id()).or_default() += 1;
+        std_ents += 1;
+    }
+    let sig_of = |world: &World, e: Entity| -> String {
+        let Ok(er) = world.get_entity(e) else { return "?".into() };
+        let comps = world.components();
+        let mut v: Vec<String> = er
+            .archetype()
+            .components()
+            .iter()
+            .filter_map(|id| comps.get_name(*id).map(|n| n.to_string()))
+            .filter(|n| n.contains("tileworld"))
+            .map(|n| short(&n))
+            .collect();
+        // Fall back to the parent's markers (glTF/kit children carry none of their own).
+        if v.is_empty() {
+            if let Some(p) = er.get::<ChildOf>() {
+                if let Ok(pr) = world.get_entity(p.parent()) {
+                    v = pr
+                        .archetype()
+                        .components()
+                        .iter()
+                        .filter_map(|id| comps.get_name(*id).map(|n| n.to_string()))
+                        .filter(|n| n.contains("tileworld"))
+                        .map(|n| format!("^{}", short(&n)))
+                        .collect();
+                }
+            }
+        }
+        if v.is_empty() { "[engine]".into() } else { v.join(" ") }
+    };
+    let meshes = world.resource::<Assets<Mesh>>();
+    let (mut n_ret, mut n_ext, mut b_ret, mut v_ret) = (0usize, 0usize, 0usize, 0usize);
+    let mut rows: Vec<(usize, usize, AssetId<Mesh>)> = Vec::new();
+    let mut by_owner: HashMap<String, (usize, usize, usize)> = HashMap::new(); // bytes, meshes, verts
+    let mut orphan = (0usize, 0usize);
+    for (id, m) in meshes.iter() {
+        let Ok(attrs) = m.try_attributes() else {
+            n_ext += 1;
+            continue;
+        };
+        let mut bytes = 0usize;
+        let mut verts = 0usize;
+        for (a, vals) in attrs {
+            bytes += vals.len() * a.format.size() as usize;
+            verts = verts.max(vals.len());
+        }
+        if let Ok(Some(ix)) = m.try_indices_option() {
+            bytes += match ix {
+                bevy::mesh::Indices::U16(v) => v.len() * 2,
+                bevy::mesh::Indices::U32(v) => v.len() * 4,
+            };
+        }
+        n_ret += 1;
+        b_ret += bytes;
+        v_ret += verts;
+        rows.push((bytes, verts, id));
+        match users.get(&id) {
+            Some(&(_, e)) => {
+                let o = by_owner.entry(sig_of(world, e)).or_default();
+                o.0 += bytes;
+                o.1 += 1;
+                o.2 += verts;
+            }
+            None => {
+                orphan.0 += bytes;
+                orphan.1 += 1;
+            }
+        }
+    }
+    let mib = |b: usize| b as f64 / (1024.0 * 1024.0);
+    info!(
+        "MEM meshes: total={} cpu_retained={} ({:.1} MiB, {} verts) extracted(gpu-only)={} orphan_retained={} ({:.1} MiB) entities_with_mesh={}",
+        n_ret + n_ext, n_ret, mib(b_ret), v_ret, n_ext, orphan.1, mib(orphan.0), users.values().map(|u| u.0).sum::<u32>()
+    );
+    let mut owners: Vec<_> = by_owner.into_iter().collect();
+    owners.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+    for (sig, (b, n, v)) in owners.iter().take(20) {
+        info!("MEM   mesh-owner {:>8.1} MiB  {n:>5} meshes {v:>8} verts  {}", mib(*b), sig.chars().take(140).collect::<String>());
+    }
+    rows.sort_by(|a, b| b.0.cmp(&a.0));
+    for (b, v, id) in rows.iter().take(12) {
+        let (n, owner) = users.get(id).map_or((0, "<no entity>".to_string()), |&(n, e)| (n, sig_of(world, e)));
+        info!("MEM   mesh {:>7.2} MiB {v:>7} verts x{n:<4} {}", mib(*b), owner.chars().take(120).collect::<String>());
+    }
+    let images = world.resource::<Assets<Image>>();
+    let (mut ni, mut ni_ret, mut bi) = (0usize, 0usize, 0usize);
+    let mut irows: Vec<(usize, String)> = Vec::new();
+    for (_id, im) in images.iter() {
+        ni += 1;
+        let Some(d) = im.data.as_ref() else { continue };
+        if d.is_empty() {
+            continue;
+        }
+        ni_ret += 1;
+        bi += d.len();
+        let td = &im.texture_descriptor;
+        irows.push((
+            d.len(),
+            format!(
+                "{}x{}x{} {:?} mips={} usage={:?}",
+                td.size.width, td.size.height, td.size.depth_or_array_layers, td.format, td.mip_level_count, im.asset_usage
+            ),
+        ));
+    }
+    info!("MEM images: total={ni} cpu_retained={ni_ret} ({:.1} MiB)", mib(bi));
+    irows.sort_by(|a, b| b.0.cmp(&a.0));
+    for (b, d) in irows.iter().take(15) {
+        info!("MEM   image {:>7.2} MiB {d}", mib(*b));
+    }
+    let n_mats = world.resource::<Assets<StandardMaterial>>().len();
+    info!(
+        "MEM std_materials: assets={n_mats} used_distinct={} entities={std_ents} (singletons={})",
+        mat_users.len(),
+        mat_users.values().filter(|n| **n == 1).count()
+    );
+}
+
+#[derive(Resource, Default)]
+pub(crate) struct MemReportState {
+    ready_at: Option<f32>,
+    done: bool,
 }

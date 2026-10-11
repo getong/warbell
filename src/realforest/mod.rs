@@ -870,6 +870,10 @@ impl Chunks {
                     warn!("realforest: chunk merge failed (attribute mismatch) — part skipped");
                 }
             }
+            // GPU-only: the merged chunk is never read back on the CPU (the reskin pass inspects it in
+            // PostUpdate of its spawn frame, before extraction), so drop the main-world copy once
+            // it's uploaded. These merges were ~3 GiB of resident RAM at MAP_SCALE 3.9.
+            base.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
             let (near, far) = match tier {
                 Tier::Props => (0.0, PROPS_FAR),
                 Tier::Cover => (0.0, COVER_FAR),

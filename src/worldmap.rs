@@ -3306,7 +3306,13 @@ pub fn build_step(
         // Warm the per-map sampling bakes ([`tiles`] → [`water_near`] → [`tile_centre_ground`])
         // behind the loading veil: the first caller would otherwise pay the one-time bake as a
         // mid-gameplay frame hitch (e.g. the first invader A* of the run).
+        let t0 = std::time::Instant::now();
+        let _ = tiles();
+        let t1 = t0.elapsed().as_secs_f64() * 1000.0;
+        let _ = water_near();
+        let t2 = t0.elapsed().as_secs_f64() * 1000.0;
         let _ = tile_centre_ground(0, 0);
+        info!("BUILD_BAKE tiles={t1:.0}ms water_near={:.0}ms centre_h={:.0}ms", t2 - t1, t0.elapsed().as_secs_f64() * 1000.0 - t2);
     }
     // The RTS arena runs a small, dedicated subset of the build: grass terrain, the sea, the
     // decorative fringe trees, ambiences and ground cover. EVERY campaign placement — castle, town
@@ -3950,8 +3956,10 @@ fn spawn_terrain_sheet(
                     center: (Vec3::from(b.center) - centre).into(),
                     half_extents: b.half_extents,
                 });
+                // GPU-only: terrain chunk geometry is never read back (ground queries use the
+                // tile caches), so don't keep a main-world copy of every chunk after upload.
                 let mut e = commands.spawn((
-                    Mesh3d(meshes.add(mesh)),
+                    Mesh3d(meshes.add(crate::biome::gpu_only(mesh))),
                     MeshMaterial3d(mat.clone()),
                     Transform::from_translation(centre),
                     crate::biome::BiomeEntity,
@@ -3969,7 +3977,7 @@ fn spawn_terrain_sheet(
                         use_aabb: true,
                     });
                     let mut ce = commands.spawn((
-                        Mesh3d(meshes.add(coarse)),
+                        Mesh3d(meshes.add(crate::biome::gpu_only(coarse))),
                         MeshMaterial3d(mat.clone()),
                         Transform::from_translation(centre),
                         crate::biome::BiomeEntity,
