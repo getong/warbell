@@ -75,6 +75,108 @@ pub fn spawn_piece(commands: &mut Commands, name: &str, tf: Transform) -> Option
     CastleKit::get()?.spawn_piece(commands, name, tf)
 }
 
+// ── Pieces edited for the live castle ──────────────────────────────────────────────────────────
+
+/// How the castle (`castle.rs`) edits a piece's mesh before spawning it: the live gate leaves
+/// (`gates.rs`) and the live swinging bell (`castle::spawn_bell_swing`) replace the kit's baked
+/// ones. Done by triangle filtering at spawn time, so a re-exported glb (same piece names, same
+/// opening) keeps working without touching the Blender script.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Edit {
+    None,
+    /// `ck_timber_gate` without its closed leaves (the opening x ±1.38, y 0..2.7 on the wall line).
+    NoLeaves,
+    /// `ck_gatehouse` with the portcullis drawn up out of sight and no baked inner doors.
+    OpenGatehouse,
+    /// `ck_bell_tower` without its bronze bell.
+    NoBell,
+}
+
+/// World-axis boxes `(min, max)` in the piece's local frame: a triangle with ALL three corners
+/// inside one of them is dropped.
+fn cut_boxes(edit: Edit) -> &'static [(Vec3, Vec3)] {
+    const LEAVES: [(Vec3, Vec3); 1] = [(Vec3::new(-1.39, -0.05, -0.2), Vec3::new(1.39, 2.705, 0.16))];
+    // Portcullis in its slot behind the outer arch (z −1.68) + the inner door leaves on the passage
+    // walls (x ±1.32, z 0.92..1.88).
+    const GATEHOUSE: [(Vec3, Vec3); 3] = [
+        (Vec3::new(-1.36, 1.0, -1.76), Vec3::new(1.36, 2.85, -1.56)),
+        (Vec3::new(1.15, -0.1, 0.55), Vec3::new(1.45, 2.6, 2.0)),
+        (Vec3::new(-1.45, -0.1, 0.55), Vec3::new(-1.15, 2.6, 2.0)),
+    ];
+    match edit {
+        Edit::NoLeaves => &LEAVES,
+        Edit::OpenGatehouse => &GATEHOUSE,
+        Edit::None | Edit::NoBell => &[],
+    }
+}
+
+fn cut_mesh(mesh: &Mesh, boxes: &[(Vec3, Vec3)]) -> Mesh {
+    use bevy::mesh::{Indices, VertexAttributeValues};
+    let mut out = mesh.clone();
+    let Some(VertexAttributeValues::Float32x3(pos)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else { return out };
+    let idx: Vec<u32> = match mesh.indices() {
+        Some(Indices::U16(v)) => v.iter().map(|&i| i as u32).collect(),
+        Some(Indices::U32(v)) => v.clone(),
+        None => (0..pos.len() as u32).collect(),
+    };
+    let inside = |i: u32| {
+        let p = Vec3::from(pos[i as usize]);
+        boxes.iter().any(|(lo, hi)| p.cmpge(*lo).all() && p.cmple(*hi).all())
+    };
+    let kept: Vec<u32> = idx
+        .chunks_exact(3)
+        .filter(|t| !(inside(t[0]) && inside(t[1]) && inside(t[2])))
+        .flatten()
+        .copied()
+        .collect();
+    out.insert_indices(Indices::U32(kept));
+    out
+}
+
+/// Edited part meshes per (piece, edit), built once and shared by every placement.
+static EDITED: Mutex<Vec<(String, Edit, Vec<(Handle<Mesh>, usize)>)>> = Mutex::new(Vec::new());
+
+/// Spawn castle piece `name` at `tf` with `edit` applied (see [`Edit`]); `extra` goes on the root.
+/// `None` when the kit or the piece is missing.
+pub fn spawn_piece_edited<B: Bundle>(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    name: &str,
+    tf: Transform,
+    edit: Edit,
+    extra: B,
+) -> Option<Entity> {
+    let kit = CastleKit::get()?.kit;
+    let parts = kit.parts_of(name)?;
+    let mut cache = EDITED.lock().unwrap();
+    // Handles from an earlier world build stay valid (the mesh assets live as long as the handle).
+    let built = match cache.iter().position(|(n, e, _)| n == name && *e == edit) {
+        Some(i) => cache[i].2.clone(),
+        None => {
+            let boxes = cut_boxes(edit);
+            let v: Vec<(Handle<Mesh>, usize)> = parts
+                .iter()
+                .filter(|p| !(edit == Edit::NoBell && kit.mat_is(p.mat, "bronze")))
+                .map(|p| {
+                    let h = if boxes.is_empty() { p.handle.clone() } else { meshes.add(cut_mesh(&p.mesh, boxes)) };
+                    (h, p.mat)
+                })
+                .collect();
+            cache.push((name.to_string(), edit, v.clone()));
+            v
+        }
+    };
+    drop(cache);
+    let mut e = commands.spawn((tf, Visibility::default(), extra));
+    e.with_children(|c| {
+        for (h, mat) in built {
+            let mut part = c.spawn((Mesh3d(h), Transform::IDENTITY));
+            kit.insert_mat(mat, &mut part);
+        }
+    });
+    Some(e.id())
+}
+
 // ── Showcase ─────────────────────────────────────────────────────────────────────────────────
 
 /// (x lo, x hi, z lo, z hi) footprint of the corner pieces (the +X / +Z sides are where curtains
