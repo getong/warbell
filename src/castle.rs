@@ -1571,6 +1571,21 @@ pub(crate) fn outer_plots() -> &'static [TownPlot] {
     &PLOTS
 }
 
+impl TownPlot {
+    /// A lean-to built against the wall (barracks, stable, store, cart shed): it needs the wall at
+    /// its back, so it rises with the walls — in the ruins tier its open back would face the field.
+    fn is_lean_to(&self) -> bool {
+        self.piece.is_some_and(|p| p.starts_with("castle_"))
+    }
+
+    /// The solid footprint's centre (world XZ), if the plot has one.
+    fn solid_centre(&self) -> Option<(Vec2, Vec2)> {
+        let (off, half) = self.solid?;
+        let c = Quat::from_rotation_y(self.yaw) * Vec3::new(off, 0.0, 0.0);
+        Some((Vec2::new(self.pos.x + c.x, self.pos.y + c.z), half))
+    }
+}
+
 /// A reserved plot by name (inside or outside the walls).
 pub(crate) fn town_plot(name: &str) -> Option<TownPlot> {
     town_plots().iter().chain(outer_plots().iter()).find(|p| p.name == name).copied()
@@ -1941,7 +1956,8 @@ pub fn build(
     for tp in town_plots().iter().chain(outer_plots().iter()) {
         if let Some(piece) = tp.piece {
             let solid = !matches!(tp.name, "fire_pit" | "empty_grave" | "gallows");
-            spawn_kit(commands, meshes, piece, tp.pos, tp.yaw, CastleKind::Always, crate::castle_kit::Edit::None, solid);
+            let kind = if tp.is_lean_to() { CastleKind::Walls } else { CastleKind::Always };
+            spawn_kit(commands, meshes, piece, tp.pos, tp.yaw, kind, crate::castle_kit::Edit::None, solid);
         }
     }
     // The street village: each house with its burgage yard behind it, revealed one by one.
@@ -2100,13 +2116,13 @@ pub(crate) fn plot_clear(x: f32, z: f32, margin: f32) -> bool {
 }
 
 /// Every reserved plot is solid from the start (at its building's footprint; open plots — the
-/// herb garden, the grave — only at their fixtures).
+/// herb garden, the grave — only at their fixtures). The lean-tos rise with the walls instead
+/// ([`register_walls_blockers`]).
 fn register_plot_blockers() {
     let p = COLLISION_PAD;
-    for tp in town_plots().iter().chain(outer_plots().iter()) {
-        let Some((off, half)) = tp.solid else { continue };
-        let c = Quat::from_rotation_y(tp.yaw) * Vec3::new(off, 0.0, 0.0);
-        crate::blockers::add_obb(tp.pos.x + c.x, tp.pos.y + c.z, half.x + p, half.y + p, tp.yaw);
+    for tp in town_plots().iter().chain(outer_plots().iter()).filter(|tp| !tp.is_lean_to()) {
+        let Some((c, half)) = tp.solid_centre() else { continue };
+        crate::blockers::add_obb(c.x, c.y, half.x + p, half.y + p, tp.yaw);
     }
     // The bell tower stands from the start (old-colony stone): the shaft on the wall line + Pip's
     // platform and ladder on the yard side.
@@ -2176,6 +2192,11 @@ pub(crate) fn register_walls_blockers() {
     for v in ENCEINTE {
         crate::blockers::add_box(v.x, v.y, 1.0 + p, 1.0 + p);
     }
+    // The lean-tos built against the new wall.
+    for tp in town_plots().iter().filter(|tp| tp.is_lean_to()) {
+        let Some((c, half)) = tp.solid_centre() else { continue };
+        crate::blockers::add_obb(c.x, c.y, half.x + p, half.y + p, tp.yaw);
+    }
 }
 
 /// The stone tier's extra bulk (registered with the Reinforced upgrade): the corner towers and
@@ -2229,6 +2250,11 @@ fn clear_castle_blockers() {
     }
     for h in houses() {
         crate::blockers::remove_box_near(h.pos.x, h.pos.y, 0.3);
+    }
+    for tp in town_plots().iter().filter(|tp| tp.is_lean_to()) {
+        if let Some((c, _)) = tp.solid_centre() {
+            crate::blockers::remove_box_near(c.x, c.y, 0.3);
+        }
     }
 }
 

@@ -34,7 +34,7 @@ pub struct CastleGround {
 
 /// World bounds the castle ground can touch (beyond it [`sample`] is all zero): the walls plus
 /// the ~16u lawn feather outside them.
-pub const REACH_X: f32 = HALF_X + 16.0;
+pub const REACH_X: f32 = 31.0 + 16.0; // the enceinte's E corner is at x 31
 pub const REACH_Z: f32 = HALF_Z + 16.0;
 
 /// Cart lanes, gate by gate (castle v2: W main, S under the bell, N postern; the east wall is
@@ -57,10 +57,10 @@ const LANES: [[Vec2; 4]; 3] = [
         Vec2::new(S_GATE_X, HALF_Z),
         Vec2::new(S_GATE_X, HALF_Z + 5.0),
     ],
-    // West main gate → through the market → the courtyard's west rim.
+    // West main gate (the market square lies outside it now) → the courtyard's west rim.
     [
         Vec2::new(-COURTYARD.2 + 2.0, W_GATE_Z + 0.6),
-        Vec2::new(MARKET_CENTRE.x - 3.0, W_GATE_Z - 0.35),
+        Vec2::new(-20.0, W_GATE_Z - 0.35),
         Vec2::new(-HALF_X, W_GATE_Z),
         Vec2::new(-HALF_X - 5.0, W_GATE_Z),
     ],
@@ -115,7 +115,6 @@ pub fn sample(wx: f32, wz: f32) -> CastleGround {
         return CastleGround::default();
     }
     let p = Vec2::new(wx, wz);
-    let (hx, hz) = crate::castle::courtyard_half();
     let n_lo = noise(wx, wz, 0.16, 11); // ~6u patches
     let n_mid = noise(wx, wz, 0.45, 23); // ~2u tongues
     let n_hi = noise(wx, wz, 1.3, 37); // fine fray
@@ -143,7 +142,7 @@ pub fn sample(wx: f32, wz: f32) -> CastleGround {
 
     // Inside the walls: the guards' path worn a stride in from the wall foot, grass surviving in
     // tufts hard against the stones. Outside: a fainter siege-trodden strip along the foot.
-    let d_in = (hx - wx.abs()).min(hz - wz.abs()); // >0 inside the wall line
+    let d_in = crate::castle::wall_inset(wx, wz); // >0 inside the wall line
     let ring_in = if d_in > 0.0 {
         let band = smoothstep(0.9, 1.5, d_in) * (1.0 - smoothstep(2.4, 3.4, d_in));
         // Broken into scuffs, not a ring: a continuous band read as a drawn rectangle.
@@ -151,7 +150,7 @@ pub fn sample(wx: f32, wz: f32) -> CastleGround {
     } else {
         0.0
     };
-    let d_out = (wx.abs() - hx).max(wz.abs() - hz); // >0 outside the wall line
+    let d_out = crate::castle::outside_dist(wx, wz); // >0 outside the wall line
     let ring_out = if d_out > 0.0 {
         let band = smoothstep(0.7, 1.3, d_out) * (1.0 - smoothstep(2.6, 4.0, d_out));
         band * smoothstep(0.6, 0.85, n_mid) * smoothstep(0.4, 0.65, n_lo) * 0.32

@@ -447,7 +447,9 @@ fn shrine_heal(
 /// night, not only during a siege). The bodies are real bipeds now — the shared idle clip keeps
 /// them alive, so no manual bob; this only gates visibility.
 fn sync_keep_archers(defenses: Res<Defenses>, mut q: Query<&mut Visibility, With<KeepArcher>>) {
-    let want = if defenses.keep_archers { Visibility::Inherited } else { Visibility::Hidden };
+    // They man the stone donjon's parapet (`castle::KEEP_ROOF_Y`); the ruin shell and the
+    // thatched timber keep of the earlier tiers have no fighting top to stand on yet.
+    let want = if defenses.keep_archers && defenses.reinforced { Visibility::Inherited } else { Visibility::Hidden };
     for mut vis in &mut q {
         if *vis != want {
             *vis = want;
