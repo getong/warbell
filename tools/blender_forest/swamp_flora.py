@@ -119,7 +119,7 @@ def cypress_frond(w=512, h=1024):
     cv = Canvas(w, h)
     main = walk((w * 0.5, h * 0.99), 0.0, h * 0.93, 24, 0.05, crng)
     twigs = [(main, 1.0)]
-    for i, k in enumerate(np.linspace(4, len(main) - 3, 11).astype(int)):
+    for i, k in enumerate(np.linspace(3, len(main) - 3, 15).astype(int)):
         side = -1 if i % 2 else 1
         L = w * crng.uniform(0.34, 0.46) * (1.1 - 0.4 * k / len(main))
         twigs.append((walk(main[k], side * crng.uniform(0.75, 1.1), L, 14, 0.06, crng), 0.7))
@@ -132,16 +132,16 @@ def cypress_frond(w=512, h=1024):
             d = b - a
             seg = float(np.linalg.norm(d))
             dir_ang = math.atan2(d[0], -d[1])
-            for j in range(int(seg / 4.0)):
-                p = a + d * (j + 0.5) / int(seg / 4.0)
+            for j in range(int(seg / 3.2)):
+                p = a + d * (j + 0.5) / int(seg / 3.2)
                 for side in (-1, 1):
-                    needles.append((p, dir_ang + side * crng.uniform(1.05, 1.35), crng.uniform(34, 48) * sc))
+                    needles.append((p, dir_ang + side * crng.uniform(1.05, 1.35), crng.uniform(40, 56) * sc))
     crng.shuffle(needles)
     for idx, (p, ang, L) in enumerate(needles):
         g = crng.uniform(0, 1)
         lit = 0.62 + 0.45 * idx / len(needles)
         col = np.array([0.24 + 0.10 * g, 0.36 + 0.08 * g, 0.10 + 0.03 * g]) * lit
-        leaf(cv, tuple(p), ang, L, 5.0, col)
+        leaf(cv, tuple(p), ang, L, 6.0, col)
     rgba, nrm = cv.finish()
     rgba[..., :3] = grade(rgba[..., :3], sat=1.1, gain=1.05)
     return rgba, nrm
@@ -151,7 +151,7 @@ def spanish_moss(w=512, h=1024):
     """Spanish moss festoon: hundreds of thin, kinked, curly grey-green strands hanging from the
     limb (the card's base = the image bottom), thinning out toward ragged tips."""
     cv = Canvas(w, h)
-    for i in range(260):
+    for i in range(340):
         x = w * (0.5 + crng.normal() * 0.16)
         L = h * crng.uniform(0.25, 0.95) * (1.0 - abs(x / w - 0.5) * 1.1)
         ang = crng.normal() * 0.12 + (x / w - 0.5) * 0.25
@@ -161,7 +161,7 @@ def spanish_moss(w=512, h=1024):
         n = len(pts)
         for k, (a, b) in enumerate(zip(pts[:-1], pts[1:])):
             f = k / n
-            stroke(cv, a, b, 3.0 - 1.6 * f, 2.8 - 1.6 * f, base * (0.85 + 0.25 * f), 0.8)
+            stroke(cv, a, b, 3.6 - 1.8 * f, 3.4 - 1.8 * f, base * (0.85 + 0.25 * f), 0.8)
             if k % 3 == 1 and crng.random() < 0.5:  # little curly side wisps
                 tw = walk(b, crng.normal() * 1.2, crng.uniform(12, 30), 5, 0.6, crng)
                 for c, e in zip(tw[:-1], tw[1:]):
@@ -400,8 +400,8 @@ def cypress(seed, lod, height, trunk_r, crown_w, tint, leaf_tint, mossy=1.0):
         for t in np.linspace(0.3, 1.0, 5):
             k = min(int(t * (len(lm.pts) - 1)), len(lm.pts) - 2)
             tips.append((lm.pts[k].lerp(lm.pts[k + 1], t * (len(lm.pts) - 1) - k), (lm.pts[k + 1] - lm.pts[k]).normalized()))
-    n_cards = 80 if lod == 0 else 30
-    size = crown_w * (0.30 if lod == 0 else 0.46)
+    n_cards = 120 if lod == 0 else 40
+    size = crown_w * (0.38 if lod == 0 else 0.55)
     for _ in range(n_cards):
         p, d = tips[rng.integers(len(tips))]
         p = p + Vector((rng.normal() * size * 0.3, rng.normal() * size * 0.3, rng.normal() * size * 0.08))
@@ -416,7 +416,7 @@ def cypress(seed, lod, height, trunk_r, crown_w, tint, leaf_tint, mossy=1.0):
         p.z = min(p.z, height - s * max(up.z, 0) - 0.05)
         card(b, p - up * s * 0.2, up, nrm, s, UV_FROND, CARDS, crown_c, crown_r, leaf_tint, rng, fold=0.12, bend_w=0.55)
     # Spanish moss off the limbs (more on the lower, older ones).
-    n_moss = int((22 if lod == 0 else 9) * mossy)
+    n_moss = int((32 if lod == 0 else 11) * mossy)
     for _ in range(n_moss):
         lm = limbs[rng.integers(min(len(limbs), n_limbs))]
         t = rng.uniform(0.2, 0.85)
@@ -452,7 +452,7 @@ def willow(seed, lod, height, trunk_r, crown_w, tint, leaf_tint):
     crown_r = Vector((crown_w * 0.5, crown_w * 0.5, height * 0.4))
     # Curtains of pendulous whips: hung from the arching limbs, longer toward the tips so the
     # outline is a dome draping almost to the ground.
-    n_hang = 64 if lod == 0 else 22
+    n_hang = 80 if lod == 0 else 26
     for _ in range(n_hang):
         lm = limbs[rng.integers(len(limbs))]
         t = rng.uniform(0.35, 1.0)
@@ -566,7 +566,7 @@ MODELS = {}
 for lod in (0, 1):
     MODELS[f"cypress_a_lod{lod}"] = lambda lod=lod: cypress(301, lod, 6.6, 0.24, 4.6, CYP_BARK, (0.95, 1.0, 0.85))
     MODELS[f"cypress_b_lod{lod}"] = lambda lod=lod: cypress(313, lod, 5.6, 0.21, 4.0, (0.52, 0.47, 0.42), (0.85, 0.92, 0.80), mossy=1.4)
-    MODELS[f"willow_a_lod{lod}"] = lambda lod=lod: willow(331, lod, 4.6, 0.20, 5.0, (0.66, 0.62, 0.56), (1.0, 1.02, 0.85))
+    MODELS[f"willow_a_lod{lod}"] = lambda lod=lod: willow(331, lod, 4.8, 0.22, 5.0, (0.66, 0.62, 0.56), (0.74, 0.80, 0.58))
     MODELS[f"snag_a_lod{lod}"] = lambda lod=lod: snag(347, lod, 4.6, 0.18, (0.85, 0.84, 0.82), 4)
     MODELS[f"snag_b_lod{lod}"] = lambda lod=lod: snag(353, lod, 2.8, 0.22, (0.80, 0.80, 0.78), 3)
 MODELS["knees_a"] = lambda: knees(371, True)
