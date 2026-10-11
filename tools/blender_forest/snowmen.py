@@ -71,7 +71,7 @@ def snow_col(centre, nz, base=PACKED, litter=0.0, axis=None, joints=(), ground=0
 
 
 def snowball(g, centre, r, rng, squash=0.92, lo=0.8, hi=1.5, lumps=0.045, tilt=(0.0, 0.0), litter=0.0,
-             joints=(), base=PACKED, detail=3, pats=4):
+             joints=(), base=PACKED, detail=3, pats=4, col=None, scour=0.0):
     """A rolled snowball: oblate (`squash` on Y), flattened at unit height -`lo` (the base, where it
     was pressed into the ground; `hi` likewise on top, off by default), low packing lumps and a few
     shallow flats where a gloved hand patted it firm."""
@@ -84,8 +84,11 @@ def snowball(g, centre, r, rng, squash=0.92, lo=0.8, hi=1.5, lumps=0.045, tilt=(
         d = Vector((rng.normal(), rng.uniform(-0.3, 0.5), rng.normal())).normalized()
         flats.append((d, rng.uniform(0.95, 0.98)))
     out = []
+    wind = Vector((-1.0, 0.0, 0.25)).normalized()
     for v in verts:
         k = 1.0 + lumps * nz(v) + 0.01 * fine(v)
+        if scour > 0.0:  # wind-scoured ribs on the windward side
+            k += scour * max(0.0, v.dot(wind)) * math.sin(v.y * 26.0 + 3.0 * fine(v))
         p = Vector((v.x * k, v.y * k, v.z * k))
         for d, c in flats:
             e = p.dot(d) - c
@@ -97,7 +100,7 @@ def snowball(g, centre, r, rng, squash=0.92, lo=0.8, hi=1.5, lumps=0.045, tilt=(
             p.y = hi + (p.y - hi) * 0.12
         out.append(Vector(centre) + rot @ Vector((p.x * r, p.y * r * squash, p.z * r)))
     axis = Vector(rng.normal(size=3)).normalized()
-    col = snow_col(centre, Noise(rng, 4, 2.0), base=base, litter=litter, axis=axis, joints=joints)
+    col = col or snow_col(centre, Noise(rng, 4, 2.0), base=base, litter=litter, axis=axis, joints=joints)
     wrapped_mesh(g, out, faces, M_SNOW, col, Vector(centre), r, 0.9)
 
 
@@ -488,7 +491,200 @@ def snowman_c(rng):
     return b
 
 
-MODELS = {"snowman_a": snowman_a, "snowman_b": snowman_b, "snowman_c": snowman_c}
+# ─────────────────────────────────────────────────────────────── the snow warden (boss)
+# "Balwan, the Frostgiant" (src/boss): the same rolled-snow build as the snowmen above, grown huge
+# and old - wind-scoured ribs, glazed ice, a frozen crust, stones and roots it rolled up frozen
+# into its flanks, icicles everywhere, a deep-set coal glare under an ice brow, a grin of ice
+# shards, tree-limb arms. Split into the boss rig's parts (boss::models PartKind): a static torso
+# in root space, and a head / arm / foot each built around its own pivot (the boss code yaws the
+# head and swings arms + feet about X). `warden_pivots` prints the pivots for src/boss/models.rs.
+ICE = (0.66, 0.82, 0.98)
+GLAZE = (0.8, 0.88, 0.98)
+CRUST = (0.9, 0.92, 0.96)
+BARK = (0.42, 0.34, 0.27)
+W_BALLS = stack((0.66, 0.5, 0.34), (0.9, 0.92, 0.95), sink=(0.05, 0.22, 0.2),
+                offsets=((0, 0), (0.02, -0.02), (0.0, 0.0)))
+
+
+def frost_col(centre, nz, joints=(), glaze=0.5):
+    """Old snow: crusted, streaked with glazed ice (cool and smoother-toned), darker in creases."""
+    base = snow_col(centre, nz, base=CRUST, joints=joints)
+
+    def f(p, n):
+        c = base(p, n)
+        ice = smoothstep(0.15, 0.55, nz(p * 3.1 + Vector((4.0, 0.0, 1.0))))
+        streak = 0.5 + 0.5 * math.sin(p.y * 9.0 + 2.5 * nz(p * 1.7))
+        return mix(c, scale(GLAZE, 0.92), glaze * ice * (0.5 + 0.5 * streak))
+    return f
+
+
+def icicle(g, rng, top, length, r, d=(0.0, -1.0, 0.0)):
+    d = Vector(d).normalized()
+    side = Vector((rng.normal(), 0.0, rng.normal())) * 0.012
+    n = 5
+    pts = [Vector(top) + d * (length * k / n) + side * (k / n) ** 2 for k in range(n + 1)]
+    radii = [r * (1 - k / n) ** 1.2 + 0.002 for k in range(n + 1)]
+    tube(g, pts, radii, 6, M_SNOW, ICE, tile=0.3, col_fn=lambda t: scale(ICE, 0.85 + 0.25 * t))
+
+
+def frozen_stone(g, rng, p, s):
+    stone(g, tuple(p), (s, s * 0.8, s * 0.9), rng, mat=M_ROCK,
+          col_fn=lambda q, n: mix((0.5, 0.5, 0.52), (0.85, 0.9, 0.97), 0.45 * smoothstep(0.3, 0.9, n.y)),
+          detail=1, rough=0.22, cuts=2, tile=0.5)
+
+
+def warden_torso(rng):
+    b = Builder()
+    g = G(b)
+    balls, joints = W_BALLS
+    bot, mid, _ = balls
+    creases = [j[0] for j in joints]
+    for ball, lumps, sc in ((bot, 0.08, 0.035), (mid, 0.07, 0.03)):
+        nz = Noise(rng, 4, 2.0)
+        snowball(g, ball["c"], ball["r"], rng, squash=ball["sq"], lo=ball["lo"], lumps=lumps, scour=sc, detail=4,
+                 pats=6, col=frost_col(ball["c"], nz, creases))
+    # Packed-snow fillets in both creases (the neck one rings the head's yaw pivot).
+    nzf = Noise(rng, 3, 3.0)
+    for i, (cy, rr, c) in enumerate(joints):
+        tr = 0.05 if i == 0 else 0.035
+        pts, radii = [], []
+        for k in range(29):
+            a = 2 * math.pi * k / 28
+            pts.append(V(c.x + math.cos(a) * rr * 0.97, cy, c.z + math.sin(a) * rr * 0.97))
+            radii.append(tr * (0.4 + 0.6 * smoothstep(-0.5, 0.6, nzf(Vector((math.cos(a), i, math.sin(a)))))))
+        pts[-1], radii[-1] = pts[0], radii[0]
+        tube(g, pts, radii, 6, M_SNOW, scale(CRUST, 0.9), tile=0.9, cap=False)
+    skirt(g, rng, bot, h=0.08, grow=1.35)
+    # Stones it rolled up, frozen into its flanks (about half buried).
+    for ball, dirs in ((bot, ((0.8, 0.1, 0.6), (-0.7, -0.2, 0.5), (0.2, -0.3, -0.95), (-0.9, 0.3, -0.3))),
+                       (mid, ((0.6, 0.0, -0.7), (-0.75, 0.25, 0.45)))):
+        for d in dirs:
+            s = rng.uniform(0.07, 0.12) * ball["r"] / 0.5
+            frozen_stone(g, rng, on_ball(ball, d, s * 0.45), s)
+    # Roots torn up with the snow, frozen round the base, ends buried in it.
+    for a0, rise in ((-0.2, 0.42), (2.4, 0.3), (4.2, 0.48)):
+        n = 14
+        pts, radii = [], []
+        for k in range(n + 1):
+            t = k / n
+            y = 0.03 + rise * t + 0.03 * math.sin(t * 9.0)
+            a = a0 + 1.7 * t
+            rr = rho(bot, y) - 0.004 - 0.05 * (t ** 3)
+            pts.append(V(math.cos(a) * rr, y, math.sin(a) * rr))
+            radii.append(0.026 * (1 - 0.6 * t) + 0.006)
+        tube(g, pts, radii, 6, M_BARK, scale(BARK, 0.75), tile=0.35)
+    # Icicles under the overhangs: the middle ball's underside and the base's bulge.
+    for ball, n, dy, ln in ((mid, 16, -0.5, (0.12, 0.3)), (bot, 20, -0.28, (0.08, 0.2))):
+        for k in range(n):
+            a = 2 * math.pi * (k + rng.uniform(-0.3, 0.3)) / n
+            if rng.uniform() < 0.25:
+                continue
+            top = on_ball(ball, (math.cos(a), dy, math.sin(a)), 0.01)
+            icicle(g, rng, top, rng.uniform(*ln), rng.uniform(0.018, 0.03))
+    # Two big coal lumps down the front.
+    for y in (0.5, 0.15):
+        coal(g, on_ball(mid, (0.0, y, 1.0), 0.03), 0.07, rng)
+    return b
+
+
+def warden_head(rng):
+    """Built around its pivot (the head ball's centre)."""
+    b = Builder()
+    g = G(b)
+    h0 = W_BALLS[0][2]
+    head = dict(h0, c=V(0.0, 0.0, 0.0))
+    nz = Noise(rng, 4, 2.0)
+    snowball(g, head["c"], head["r"], rng, squash=head["sq"], lo=1.5, lumps=0.07, scour=0.03, detail=4, pats=5,
+             col=frost_col(head["c"], nz, glaze=0.6))
+
+    def at(x, y, inset):
+        return on_ball(head, (x, y, 1.0), inset)
+    # A heavy brow of crusted ice, slanted down to the middle - the scowl.
+    for side in (1, -1):
+        p = at(side * 0.3, 0.32, 0.0)
+        stone(g, tuple(p), (0.13, 0.04, 0.07), rng, mat=M_SNOW, rot=quat_y(side * 0.15) @ quat_z(side * 0.35),
+              col_fn=lambda q, n: scale(GLAZE, 0.95 + 0.05 * n.y), detail=2, rough=0.25, cuts=1, tile=0.4)
+    # Deep-set coal eyes with a cold glint of ice in each.
+    for side in (1, -1):
+        e = at(side * 0.3, 0.16, 0.035)
+        coal(g, e, 0.065, rng)
+        stone(g, tuple(e + Vector((0.0, 0.01, 0.045))), (0.018, 0.018, 0.012), rng, mat=M_SNOW,
+              col_fn=lambda q, n: (0.75, 0.9, 1.0), detail=1, rough=0.1, cuts=0, tile=0.2)
+    # A crooked root for a nose.
+    base = at(0.0, -0.02, 0.06)
+    pts = [base + Vector((0.02 * math.sin(k * 1.3), -0.045 * k * k / 25, 0.075 * k)) for k in range(6)]
+    tube(g, pts, [0.045 * (1 - k / 6) ** 0.7 + 0.006 for k in range(6)], 7, M_BARK, scale(BARK, 0.8), tile=0.3)
+    # The grin: a dark gash of coal with ice-shard teeth.
+    for k in range(9):
+        t = k / 8 * 2 - 1
+        coal(g, at(t * 0.36, -0.3 - 0.07 * (1 - t * t), 0.02), 0.038 + 0.01 * rng.uniform(), rng)
+    for k in range(6):
+        t = (k + 0.5) / 6 * 2 - 1
+        top = at(t * 0.32, -0.27 - 0.07 * (1 - t * t), -0.01)
+        icicle(g, rng, top, rng.uniform(0.06, 0.1), 0.016, d=(0.0, -1.0, 0.25))
+    # Icicles from the jaw, and a crown of ice shards jutting from the crown.
+    for k in range(9):
+        a = math.radians(-60 + 120 * k / 8)
+        top = on_ball(head, (math.sin(a), -0.75, math.cos(a)), 0.01)
+        icicle(g, rng, top, rng.uniform(0.07, 0.16), rng.uniform(0.014, 0.022))
+    for x, z, ln in ((0.0, 0.0, 0.3), (-0.4, 0.2, 0.22), (0.4, 0.15, 0.24), (-0.2, -0.45, 0.2), (0.3, -0.4, 0.18)):
+        d = Vector((x, 1.0, z)).normalized()
+        icicle(g, rng, on_ball(head, d, 0.03), ln, 0.05, d=d)
+    return b
+
+
+def warden_arm(rng, side):
+    """A frozen tree limb rammed into the shoulder, hanging down and out (the boss swings it about
+    X), crusted with snow along its top, icicles beneath, a claw of splintered twigs."""
+    b = Builder()
+    g = G(b)
+    s = side
+    root = V(-s * 0.16, 0.06, 0.0)
+    elbow = V(s * 0.3, -0.42, 0.05)
+    wrist = V(s * 0.46, -0.92, 0.14)
+    pole(g, root, elbow, 0.085, 0.065, rng, col=BARK, sides=8, segs=4, wobble=0.02, tile=0.4)
+    pole(g, elbow - (elbow - root).normalized() * 0.02, wrist, 0.066, 0.04, rng, col=BARK, sides=8, segs=4,
+         wobble=0.02, tile=0.4)
+    fork = elbow + Vector((s * 0.22, 0.06, -0.05))
+    pole(g, elbow, fork, 0.035, 0.02, rng, col=BARK, sides=6, segs=2, wobble=0.01, tile=0.3)
+    for k in range(4):
+        a = (k - 1.5) * 0.4
+        d = (quat_z(s * a) @ quat_x(rng.uniform(-0.3, 0.3)) @ (wrist - elbow).normalized()).normalized()
+        pole(g, wrist - d * 0.02, wrist + d * rng.uniform(0.18, 0.28), 0.022, 0.006, rng, col=BARK, sides=5, segs=2,
+             wobble=0.01, tile=0.3)
+    for p0, p1, r0 in ((root, elbow, 0.085), (elbow, wrist, 0.065)):
+        n = 6
+        pts = [p0.lerp(p1, k / n) + Vector((0.0, r0 * 0.75, 0.0)) for k in range(n + 1)]
+        tube(g, pts, [r0 * 0.55 * (0.6 + 0.4 * math.sin(math.pi * k / n)) for k in range(n + 1)], 6, M_SNOW, CRUST,
+             tile=0.6)
+        for k in range(1, n):
+            if rng.uniform() < 0.45:
+                icicle(g, rng, p0.lerp(p1, k / n) - Vector((0.0, r0 * 0.8, 0.0)), rng.uniform(0.05, 0.14), 0.016)
+    return b
+
+
+def warden_foot(rng):
+    """A clod of packed snow and ice under the base (the boss shuffles it about X)."""
+    b = Builder()
+    g = G(b)
+    c = V(0.0, -0.17, 0.03)  # mostly sunk into the ground and the base: just the toe of a clod shows
+    nz = Noise(rng, 4, 2.0)
+    snowball(g, c, 0.22, rng, squash=0.55, lo=0.75, lumps=0.1, detail=3, col=frost_col(c, nz, glaze=0.7))
+    return b
+
+
+def warden_pivots():
+    _, mid, head = W_BALLS[0]
+    arm = [on_ball(mid, (s, 0.28, 0.0), 0.05) for s in (1, -1)]
+    return {"head": tuple(round(x, 3) for x in head["c"]), "arm_r": tuple(round(x, 3) for x in arm[0]),
+            "arm_l": tuple(round(x, 3) for x in arm[1])}
+
+
+MODELS = {"snowman_a": snowman_a, "snowman_b": snowman_b, "snowman_c": snowman_c,
+          "warden_balwan_torso": warden_torso, "warden_balwan_head": warden_head,
+          "warden_balwan_arm_r": lambda rng: warden_arm(rng, 1.0),
+          "warden_balwan_arm_l": lambda rng: warden_arm(rng, -1.0),
+          "warden_balwan_foot": warden_foot}
 
 if __name__ == "__main__":
     clear_scene()
@@ -501,4 +697,5 @@ if __name__ == "__main__":
     export_glb(OUT / "snowmen.glb", objs)
     for k, v in report.items():
         print(f"{k}: {v}")
+    print("WARDEN_PIVOTS", warden_pivots())
     print("SNOWMEN_DONE")
