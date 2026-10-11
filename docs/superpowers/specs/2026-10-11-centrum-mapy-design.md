@@ -110,6 +110,8 @@ przegląd testów i jedna sesja screenshotów. Przystań Crane’a (Rozdz. 7) ja
 
 ## 7. Fazy
 
+> **Zastąpione:** fazy 3–5 oraz §2/§3/§5 prowadzi teraz `docs/superpowers/specs/2026-10-11-zamek-v2-design.md` (źródło prawdy; faza 3a — obwód 28×21, trzy bramy W/S/N, wieża dzwonu, `SAFE_R` 20.25 — zrobiona).
+
 1. **Faza 1 (ta sesja):** ten dokument; zróżnicowane podłoże pod zamkiem (maska PBR, koleiny,
    kałuże, wydeptana trawa); jeśli starczy czasu — pierwszy stragan z handlarzem.
 2. **Faza 2 (zrobione):** rynek przy zachodnim trakcie (`src/market.rs`, `tools/blender_forest/market.py`
