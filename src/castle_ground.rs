@@ -34,14 +34,16 @@ pub struct CastleGround {
 pub const REACH_X: f32 = 34.0;
 pub const REACH_Z: f32 = 30.0;
 
-/// Cart lanes, gate by gate: from the plaza rim, through the gate gap, out onto the approach.
-/// Gently bent — carts never run a ruler line. World XZ, castle at the origin; the gates sit at
-/// (0, ±12) and (±17, 0) (`castle::gate_centers`).
-const LANES: [[Vec2; 5]; 4] = [
-    [Vec2::new(0.2, -4.6), Vec2::new(0.45, -8.2), Vec2::new(0.0, -12.0), Vec2::new(-0.7, -17.0), Vec2::new(-1.8, -25.0)],
-    [Vec2::new(0.6, 8.6), Vec2::new(0.2, 10.4), Vec2::new(0.0, 12.0), Vec2::new(0.8, 17.0), Vec2::new(2.2, 25.0)],
-    [Vec2::new(-6.6, 0.6), Vec2::new(-12.0, -0.35), Vec2::new(-17.0, 0.0), Vec2::new(-22.5, 0.8), Vec2::new(-31.0, 2.0)],
-    [Vec2::new(6.6, 0.2), Vec2::new(12.0, 0.4), Vec2::new(17.0, 0.0), Vec2::new(22.5, -0.7), Vec2::new(31.0, -1.6)],
+/// Cart lanes, gate by gate: from the plaza rim, through the gate gap, a short leg out onto the
+/// approach (where the island's own road trunk, which starts at the gate centre, takes over —
+/// running the lane further drew a second, offset verge beside the road). Gently bent inside —
+/// carts never run a ruler line. World XZ, castle at the origin; the gates sit at (0, ±12) and
+/// (±17, 0) (`castle::gate_centers`), always the third point.
+const LANES: [[Vec2; 4]; 4] = [
+    [Vec2::new(0.2, -4.6), Vec2::new(0.45, -8.2), Vec2::new(0.0, -12.0), Vec2::new(0.0, -17.0)],
+    [Vec2::new(0.6, 8.6), Vec2::new(0.2, 10.4), Vec2::new(0.0, 12.0), Vec2::new(0.0, 17.0)],
+    [Vec2::new(-6.6, 0.6), Vec2::new(-12.0, -0.35), Vec2::new(-17.0, 0.0), Vec2::new(-22.0, 0.0)],
+    [Vec2::new(6.6, 0.2), Vec2::new(12.0, 0.4), Vec2::new(17.0, 0.0), Vec2::new(22.0, 0.0)],
 ];
 
 /// The cart lanes as polylines, for the wheel-rut bake.
@@ -104,7 +106,10 @@ pub fn sample(wx: f32, wz: f32) -> CastleGround {
     let mut crown = 0.0f32;
     for l in &LANES {
         let d = poly_dist(p, l);
-        let fade = 1.0 - smoothstep(19.0, 30.0, p.length());
+        // Feather out over the first few units past the gate, under the road trunk.
+        let gate = l[2];
+        let beyond = (p - gate).dot(gate.normalize());
+        let fade = 1.0 - smoothstep(0.5, 4.5, beyond);
         let core = 1.55 + (n_mid - 0.5) * 0.8 + (n_hi - 0.5) * 0.3;
         lane = lane.max((1.0 - smoothstep(core, core + 1.3, d)) * fade);
         crown = crown.max((1.0 - smoothstep(0.12, 0.45, d)) * fade);
@@ -160,7 +165,10 @@ pub fn sample(wx: f32, wz: f32) -> CastleGround {
     // the procedural meadow. A light courtyard-wide share blends the two inside the walls.
     // The share feathers out over ~7u past the wall line, so the bright procedural meadow fades
     // into the trodden yard instead of stopping at a hard patch edge.
-    let lawn = (0.38 + 0.2 * n_lo) * (1.0 - smoothstep(1.0, 8.0, d_out));
+    // Past that a faint share carries on across the castle meadow (to ~16u out, inside the reach),
+    // knocking the procedural lawn's neon green toward a trodden, natural green.
+    let lawn = ((0.38 + 0.2 * n_lo) * (1.0 - smoothstep(1.0, 8.0, d_out)))
+        .max((0.24 + 0.12 * n_mid) * (1.0 - smoothstep(9.0, 16.0, d_out)));
     let floor = smoothstep(0.0, 0.55, path.max(debris)).max(lawn);
     CastleGround { floor, path, debris }
 }

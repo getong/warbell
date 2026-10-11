@@ -499,6 +499,25 @@ fn tex_packed(hex: u32) -> Image {
 }
 
 // ── Material table ───────────────────────────────────────────────────────────────
+/// The scanned cobble paving material (`assets/forest_pbr/s_cobble_*`, packed DDS or PNG).
+fn cobble_pbr(images: &mut Assets<Image>) -> Result<StandardMaterial, String> {
+    use crate::realforest::load::texture;
+    let albedo = images.add(texture("forest_pbr/s_cobble_albedo.png", true, None)?);
+    let normal = images.add(texture("forest_pbr/s_cobble_normal.png", false, None)?);
+    let ormh = images.add(texture("forest_pbr/s_cobble_ormh.png", false, None)?);
+    Ok(StandardMaterial {
+        base_color_texture: Some(albedo),
+        normal_map_texture: Some(normal),
+        occlusion_texture: Some(ormh.clone()),
+        metallic_roughness_texture: Some(ormh),
+        perceptual_roughness: 1.0,
+        metallic: 1.0,
+        reflectance: 0.35,
+        cull_mode: None,
+        ..default()
+    })
+}
+
 pub(crate) fn build_mats(images: &mut Assets<Image>, std_mats: &mut Assets<StandardMaterial>) -> Mats {
     let mut h = std::collections::HashMap::new();
     // Double-sided: our custom gable/slab/taper meshes don't all wind CCW-outward, and
@@ -545,6 +564,16 @@ pub(crate) fn build_mats(images: &mut Assets<Image>, std_mats: &mut Assets<Stand
     };
     ground_tex(tex_cobble(COBBLE), 0.95, M::Cobble);
     ground_tex(tex_packed(PACKED), 1.0, M::Packed);
+    // Map-centre rework phase 2: the paving is the scanned `s_cobble` set (Poly Haven cobblestone_05,
+    // `tools/blender_forest/cobble_set.sh`) — dark setts with earth in the joints, so the keep apron
+    // and the gate passages sit in the trodden-mud yard instead of reading as a pale flat sheet.
+    // Falls back to the procedural Voronoi flagstones above when the set isn't shipped.
+    match cobble_pbr(images) {
+        Ok(m) => {
+            h.insert(M::Cobble as u8, std_mats.add(m));
+        }
+        Err(e) => warn!("castle: s_cobble set missing, keeping the procedural paving — {e}"),
+    }
 
     let mut solid = |hex: u32, rough: f32, metal: f32, m: M| {
         h.insert(m as u8, std_mats.add(StandardMaterial {
@@ -747,6 +776,13 @@ fn worn_slab(w: f32, d: f32, y: f32, fray: f32, noise_amp: f32, mottle: f32) -> 
     m.insert_attribute(Mesh::ATTRIBUTE_UV_0, uv);
     m.insert_attribute(Mesh::ATTRIBUTE_COLOR, col);
     m.insert_indices(Indices::U32(idx));
+    m
+}
+
+/// MikkTSpace tangents for a normal-mapped mesh (the scanned cobble); a mesh that can't take them
+/// is returned as-is (its normal map then simply doesn't perturb).
+fn with_tangents(mut m: Mesh) -> Mesh {
+    let _ = m.generate_tangents();
     m
 }
 
@@ -1630,7 +1666,7 @@ pub fn build(
     for (i, (px, pz, w, d)) in PAVED_RECTS.into_iter().enumerate() {
         let y = if i == 0 { 0.02 } else { 0.035 };
         spawn(
-            vec![(worn_slab(w, d, y + 0.005, 0.7, 0.12, 0.04), M::Cobble)],
+            vec![(with_tangents(worn_slab(w, d, y + 0.005, 0.7, 0.12, 0.04)), M::Cobble)],
             Vec3::new(px, 0.0, pz),
             0.0,
             Vec3::ONE,
