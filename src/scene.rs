@@ -587,7 +587,9 @@ fn advance_sky(
     for mut fog in &mut fog_q {
         fog.color = depth_haze(fog_col);
         if let Some((start, end)) = region_fog {
-            fog.falloff = bevy::pbr::FogFalloff::Linear { start, end };
+            // Render distance (Settings → Far/Extreme) pushes the whole fog ramp out; x1 at Normal.
+            let k = crate::quality::view_scale();
+            fog.falloff = bevy::pbr::FogFalloff::Linear { start: start * k, end: end * k };
         }
         // Sun-toward-camera in-scatter glow — warm by day, but faded out into the plain fog
         // colour after dark (else the below-horizon "sun" paints a warm-orange dusk band on

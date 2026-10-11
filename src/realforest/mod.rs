@@ -988,8 +988,8 @@ fn spawn_group(
 // The kit undergrowth / clutter / props (every `Chunks` group) used to be merged and spawned for
 // the WHOLE island at boot — ~39M vertices at MAP_SCALE 3.9 — although each tier is culled past
 // <= PROPS_FAR (75u). Now `Chunks::spawn` parks compact recipes (model, part, transform) per 16u
-// chunk, and [`stream_cover`] merges + spawns only the chunks within [`STREAM_IN`] of the camera,
-// despawning those past [`STREAM_OUT`] (hysteresis). Placement is still decided once at build
+// chunk, and [`stream_cover`] merges + spawns only the chunks within the [`stream_radii`] spawn radius of the camera,
+// despawning those past its despawn radius (hysteresis). Placement is still decided once at build
 // time, so a chunk respawns identically. `FOREST_NOCULL=1` / `FOREST_NOSTREAM=1` restore the
 // spawn-everything path.
 
@@ -1019,11 +1019,15 @@ struct CoverStream {
 static STREAM: std::sync::LazyLock<std::sync::Mutex<CoverStream>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(CoverStream::default()));
 
-/// Spawn radius (camera XZ -> chunk centre). The farthest tier culls at PROPS_FAR measured to the
-/// chunk AABB, so the centre test gets a chunk half-diagonal (~11.3u) plus slack.
-const STREAM_IN: f32 = PROPS_FAR + 20.0;
-/// Despawn radius — past `STREAM_IN` by enough that pacing along the boundary doesn't thrash.
-const STREAM_OUT: f32 = STREAM_IN + 24.0;
+/// (spawn, despawn) radii, camera XZ -> chunk centre. Spawn: the farthest tier culls at PROPS_FAR
+/// measured to the chunk AABB, so the centre test gets a chunk half-diagonal (~11.3u) plus slack
+/// (95u at Normal). Despawn: past spawn by enough that pacing along the boundary doesn't thrash.
+/// The Settings render distance widens the spawn radius (`quality::cover_view_scale`, x1 at
+/// Normal); the per-frame budgets below are unchanged, so a wider ring just fills over more frames.
+fn stream_radii() -> (f32, f32) {
+    let stream_in = PROPS_FAR * crate::quality::cover_view_scale() + 20.0;
+    (stream_in, stream_in + 24.0)
+}
 /// Most chunk KEYS whose async merge is launched per frame (nearest first); the rest follow next
 /// frame. The boot radius (~110 keys) is queued within ~4 frames.
 const STREAM_BUDGET: usize = 32;
@@ -1052,6 +1056,7 @@ fn stream_cover(
     cams: Query<&GlobalTransform, With<Camera3d>>,
     ready: Res<crate::biome::WorldReady>,
     mut last: Local<Option<Vec2>>,
+    mut last_in: Local<f32>,
 ) {
     // Idle while a world (re)build is in flight: an in-process rebuild clears `WorldReady` before
     // it wipes the `BiomeEntity`s, so a chunk streamed in from the OLD recipes can never slip past
@@ -1096,12 +1101,15 @@ fn stream_cover(
             }
         }
     }
-    if !*dirty && pending.is_empty() && last.is_some_and(|l| l.distance(p) < 2.0) {
+    let (stream_in, stream_out) = stream_radii();
+    // A render-distance change re-evaluates the ring even with the camera parked.
+    if !*dirty && pending.is_empty() && last.is_some_and(|l| l.distance(p) < 2.0) && *last_in == stream_in {
         return;
     }
     *last = Some(p);
+    *last_in = stream_in;
     live.retain(|k, ents| {
-        if centre(k).distance(p) <= STREAM_OUT {
+        if centre(k).distance(p) <= stream_out {
             return true;
         }
         for e in ents.drain(..) {
@@ -1110,12 +1118,12 @@ fn stream_cover(
         false
     });
     // A merge for a chunk the camera already left is dropped (cancelled).
-    pending.retain(|k, _| centre(k).distance(p) <= STREAM_OUT);
+    pending.retain(|k, _| centre(k).distance(p) <= stream_out);
     let mut need: Vec<((i32, i32), f32)> = chunks
         .keys()
         .filter(|k| !live.contains_key(*k) && !pending.contains_key(*k))
         .map(|k| (*k, centre(k).distance(p)))
-        .filter(|(_, d)| *d <= STREAM_IN)
+        .filter(|(_, d)| *d <= stream_in)
         .collect();
     need.sort_by(|a, b| a.1.total_cmp(&b.1));
     *dirty = need.len() > STREAM_BUDGET;

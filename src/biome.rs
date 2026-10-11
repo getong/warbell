@@ -540,7 +540,8 @@ fn apply_world_atmosphere(
     for mut fog in &mut fog_q {
         fog.color = crate::scene::depth_haze(srgb(sky));
         // Linear: clear nearby, then ramp to the capped aerial haze without losing far shading.
-        fog.falloff = bevy::pbr::FogFalloff::Linear { start: fog_clear, end: fog_full };
+        let k = crate::quality::view_scale(); // render distance; x1 at Normal
+        fog.falloff = bevy::pbr::FogFalloff::Linear { start: fog_clear * k, end: fog_full * k };
     }
     for (mut light, mut tf) in &mut sun_q {
         light.color = srgb(sun_color);

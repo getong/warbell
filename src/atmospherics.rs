@@ -223,6 +223,7 @@ fn drive_atmospherics(
     sun: Query<&GlobalTransform, With<Sun>>,
     mut cams: Query<(&GlobalTransform, &Camera, &DistanceFog, &mut Atmospherics)>,
     mut base: Local<Option<(f32, f32)>>,
+    mut base_start: Local<Option<f32>>,
 ) {
     let Ok(sun_tf) = sun.single() else {
         return;
@@ -249,9 +250,14 @@ fn drive_atmospherics(
         // Realistic forest: much thinner veil, so the scanned trunks keep their contrast in depth
         // (the base values are captured once so a `FOREST_ATMO` startup override still applies).
         let (d0, m0) = *base.get_or_insert((atmo.density, atmo.fog_max));
+        let s0 = *base_start.get_or_insert(atmo.fog_start);
         let w = forest.as_ref().map_or(0.0, |f| f.0);
-        atmo.density = d0 * (1.0 - 0.72 * w);
+        // Render distance (Settings → Far/Extreme): thin the veil and push its clear bubble out by
+        // the same factor as the culls / DistanceFog. Exactly x1 at Normal.
+        let k = crate::quality::view_scale();
+        atmo.density = d0 * (1.0 - 0.72 * w) / k;
         atmo.fog_max = m0 * (1.0 - 0.6 * w);
+        atmo.fog_start = s0 * k;
     }
 }
 
