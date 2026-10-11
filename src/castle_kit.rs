@@ -123,6 +123,8 @@ const ROWS: [(&str, f32, Row); 3] = [
 
 /// Half depth (Z) of the ground each row needs, for the flatness probe.
 const ROW_HALF_DEPTH: f32 = 5.0;
+/// Half extents of the box around the castle the showcase never enters.
+const CASTLE_KEEP_OUT: Vec2 = Vec2::new(34.0, 27.0);
 
 #[derive(Clone)]
 struct Placed {
@@ -166,6 +168,10 @@ fn layout() -> Vec<Placed> {
 
 /// Ground usable for a showcase piece at relax level `relax` (0 strict .. 2 loosest).
 fn ground_ok(x: f32, z: f32, relax: usize) -> Option<f32> {
+    // Keep clear of the castle (at the origin) and its planned 28 x 21 ring (zamek v2 §2).
+    if x.abs() < CASTLE_KEEP_OUT.x && z.abs() < CASTLE_KEEP_OUT.y {
+        return None;
+    }
     let y = crate::worldmap::ground_at_world(x, z)?;
     let biome = crate::worldmap::tile_biome_world(x, z);
     let biome_ok = match relax {
@@ -230,7 +236,7 @@ pub fn plan() {
         let mut best: Option<(f32, Vec2, usize)> = None;
         'relax: for relax in 0..3 {
             for ring in 0..26 {
-                let r = 48.0 + ring as f32 * 5.0;
+                let r = 38.0 + ring as f32 * 5.0;
                 let n = 24 + ring * 4;
                 for k in 0..n {
                     let a = k as f32 * std::f32::consts::TAU / n as f32;
