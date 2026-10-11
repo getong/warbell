@@ -764,12 +764,47 @@ fn river_blocked(x: f32, z: f32) -> bool {
     // Keep rivers a healthy margin OUT of the peak massifs (a wider keep-out than `in_mountain`'s
     // terrain margin): a river clipping a steep mountain base left broken slivers + carved channels
     // fighting the mountain heightfield (the "rivers in the mountains cause bugs" report).
+    // The keep-out follows the massif's real MEMBERSHIP (`region_at`'s rule, padded 5 units), not
+    // its raw circle: the grown snow massif's circle (r 48) overlaps the forest and desert, and a
+    // circle keep-out erased the Snowmelt and the North brook where those biomes own the ground —
+    // taking every road bridge with them. (The massif fades to nothing at a contested boundary.)
     let wob = 2.4 * (x * 0.4 + 1.1).sin() + 2.4 * (z * 0.36 - 0.7).cos();
-    let near_peak = active_map().regions.iter().any(|r| r.peak > 0 && (x - r.x).hypot(z - r.z) + wob < r.r + 5.0);
+    let regs = active_map().regions;
+    let near_peak = regs.iter().any(|r| {
+        let own = (x - r.x).hypot(z - r.z) + wob - r.r;
+        r.peak > 0
+            && own < 5.0
+            && regs.iter().filter(|o| !std::ptr::eq(*o, r)).all(|o| {
+                let fray = if o.peak > 0 { 0.0 } else { edge_fray(x, z) };
+                let oe = (x - o.x).hypot(z - o.z) + wob + fray - o.r;
+                oe >= 0.0 || own < oe + 5.0
+            })
+    });
     dist_from_castle(x, z) < SAFE_R
         || crate::castle::village_dist((x - CX) * MAP_SCALE, (z - CZ) * MAP_SCALE) < VILLAGE_FLAT
         || near_peak
+        || near_pass_mouth(x, z)
         || crate::ork_fortress::blight_class_base(x, z).is_some()
+}
+/// On (or just outside the mouth of) a massif's pass corridor, padded 2 units each way: a river
+/// there would cut the only guaranteed ascent (the North brook runs past the snow massif's E
+/// pass mouth once the keep-out follows biome membership).
+fn near_pass_mouth(x: f32, z: f32) -> bool {
+    active_map().regions.iter().filter(|r| r.cliffy && r.peak > 0).any(|reg| {
+        let (dx, dz) = (x - reg.x, z - reg.z);
+        let dc = dx.hypot(dz);
+        dc < reg.r + 4.0
+            && reg.passes.iter().any(|p| {
+                let mut da = (dz.atan2(dx) - p.ang - pass_sway(dc, reg, p)) % std::f32::consts::TAU;
+                if da < -std::f32::consts::PI {
+                    da += std::f32::consts::TAU;
+                }
+                if da > std::f32::consts::PI {
+                    da -= std::f32::consts::TAU;
+                }
+                da.abs() * dc.max(1.5) < p.half + 2.0
+            })
+    })
 }
 fn in_mountain(x: f32, z: f32) -> bool {
     let wob = 2.4 * (x * 0.4 + 1.1).sin() + 2.4 * (z * 0.36 - 0.7).cos();
