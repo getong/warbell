@@ -158,7 +158,10 @@ pub struct Kit {
 }
 
 /// Material sets by the names Blender exported: (name, PBR set file stem, foliage card?).
-const MATERIALS: [(&str, &str, bool); 23] = [
+/// Albedo multiplier of the castle masonry material (`s_masonry`): s_rock averages sRGB ~118.
+const MASONRY_LIFT: f32 = 2.1;
+
+const MATERIALS: [(&str, &str, bool); 24] = [
     ("bark_oak", "bark_oak", false),
     ("bark_beech", "bark_beech", false),
     ("bark_pine", "bark_pine", false),
@@ -189,6 +192,10 @@ const MATERIALS: [(&str, &str, bool); 23] = [
     // Cast bronze (the Crown convoy's war bell): untextured true metal, colour from the vertex
     // colours (aged bronze mottled with verdigris), a soft sun highlight.
     ("bronze", "bronze", false),
+    // Castle masonry (castle_kit.glb): the mossy_rock scan lifted to a pale weathered grey
+    // (`MASONRY_LIFT`) — vertex colours (stored normalized, max 1) can only darken a texture, and
+    // the plain scans read near-black on sun-side-on walls.
+    ("s_masonry", "s_rock", false),
     // Creature parts (creatures.glb, animals.glb, people.glb) — never drawn with this material
     // (recoloured CPU meshes on the creature material); the entry only lets the loader accept them.
     ("creature", "", false),
@@ -966,7 +973,10 @@ fn try_build(
     let mut mat_index = HashMap::new();
     for (name, set, card) in MATERIALS {
         mat_index.insert(name.to_string(), mats.len());
-        let m = pbr_material(images, set, card)?;
+        let mut m = pbr_material(images, set, card)?;
+        if name == "s_masonry" {
+            m.base_color = Color::linear_rgb(MASONRY_LIFT, MASONRY_LIFT, MASONRY_LIFT);
+        }
         // Snow-dusted twin for the snow biome (`alpine::snowkit`): same textures, crown tint kept.
         let tint = match name {
             "canopy" => 0.6,

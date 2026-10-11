@@ -55,12 +55,12 @@ from wayside_models import (M_BARK, M_PLANK, M_STONE, M_THATCH, M_CLOTH, M_IRON,
                             slab, smoothstep, stone, tube, Noise)
 import stories_cold as SC  # noqa: E402  (aged-bronze bell recipe; same material table)
 
-MATS = SC.MATS  # W.MATS + s_snow + bronze — the bell's M_BRONZE index must match
+MATS = SC.MATS + ["s_masonry"]  # W.MATS + s_snow + bronze (the bell's M_BRONZE index) + masonry
 Q0 = quat_y(0.0)
 
-# Masonry is the mossy_rock scan (s_rock: mid grey) with the coursing drawn as joint strips — the
-# mossy_stone_wall scan (s_stone) reads near-black brown in game.
-M_MASON = M_ROCK
+# Masonry is the mossy_rock scan, brightened (s_masonry), with the coursing drawn as joint strips —
+# the mossy_stone_wall scan (s_stone) and plain s_rock read near-black on walls in game.
+M_MASON = len(SC.MATS)  # "s_masonry": the s_rock scan lifted x2.1 in realforest (pale grey)
 # Layer 1: old colony stone (cool grey, mossy and damp at the foot).
 OLD_TOP = (0.97, 0.99, 1.0)
 OLD_FOOT = (0.56, 0.62, 0.46)
