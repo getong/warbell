@@ -1,9 +1,8 @@
 //! **Micro-POIs + flags** (map-character overhaul pass 4) — the 40-second-rule layer: bigger
 //! roadside set-pieces spaced along the arteries so a traveller always has something ahead
 //! (CDPR's rule: something interesting every ~40 s of travel), plus the "weenie" FLAGS that
-//! pull the eye from far away — smoke columns over Gnashfang Hold and crows wheeling above it —
-//! and working farmland (tilled fields + fences) around the castle's build-plot ring so the
-//! meadow reads as a lived-in settlement instead of a bald lawn.
+//! pull the eye from far away — smoke columns over Gnashfang Hold and crows wheeling above it.
+//! (The village's farmland is ground now — `castle_ground::field_at`, not meshes.)
 //!
 //! Set-pieces (all vertex-coloured merged primitives, base y=0, ruins.rs contract): a gallows
 //! frame on the fortress approach, a burned-out cabin, wayside graves, a standing-stone circle,
@@ -238,33 +237,6 @@ fn shepherd_hut() -> Mesh {
         (Vec3::new(1.8, 0.42, 0.0), FRAC_PI_2, 2.0),
     ] {
         v.push(fence_rail(c, rot, l));
-    }
-    assemble(v)
-}
-
-/// A tilled field: dark earth bed with raised crop rows, framed by a low post fence.
-fn field() -> Mesh {
-    let mut v = Vec::new();
-    v.push(bx(6.4, 0.12, 4.4, Vec3::new(0.0, 0.05, 0.0), 0x3f2f1c)); // tilled bed
-    for k in 0..6 {
-        let z = -1.75 + k as f32 * 0.7;
-        v.push(bx(5.9, 0.14, 0.3, Vec3::new(0.0, 0.14, z), if k % 2 == 0 { 0x4d3a22 } else { 0x57432a }));
-        // Sparse green sprouts on the rows.
-        for s in 0..5 {
-            let x = -2.5 + s as f32 * 1.25 + (k as f32 * 0.7).sin() * 0.3;
-            v.push(ball(0.14, Vec3::new(x, 0.26, z), 0.9, 0x5f8f3a));
-        }
-    }
-    for (px, pz) in [(-3.2_f32, -2.2_f32), (3.2, -2.2), (-3.2, 2.2), (3.2, 2.2)] {
-        v.push(cyl(0.05, 0.5, Vec3::new(px, 0.25, pz), WOOD_DK));
-    }
-    for (c, yaw, l) in [
-        (Vec3::new(0.0, 0.38, -2.2), 0.0_f32, 6.4_f32),
-        (Vec3::new(0.0, 0.38, 2.2), 0.0, 6.4),
-        (Vec3::new(-3.2, 0.38, 0.0), FRAC_PI_2, 4.4),
-        (Vec3::new(3.2, 0.38, 0.0), FRAC_PI_2, 4.4),
-    ] {
-        v.push(fence_rail(c, yaw, l));
     }
     assemble(v)
 }
@@ -608,7 +580,7 @@ fn resite(kind: usize, others: &[StorySite]) -> Option<StorySite> {
     seated.pop()
 }
 
-/// Build-phase 32 entry: the planned set-pieces (roadside kinds + the gallows) + fortress flags + fields.
+/// Build-phase 32 entry: the planned set-pieces (roadside kinds + the gallows) + fortress flags.
 pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) {
     let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.9, ..default() });
     let range = VisibilityRange { start_margin: 0.0..0.0, end_margin: 120.0..120.0, use_aabb: true };
@@ -705,33 +677,9 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
         ));
     }
 
-    // 3. Farmland around the castle: tilled fields in the diagonal gaps outside the build-plot
-    //    corner ring (still on the forced-flat grass apron), so the meadow reads worked.
-    let field_mesh = meshes.add(field());
-    let mut fields = 0;
-    for (fx, fz) in [(27.0_f32, 15.0_f32), (-27.0, 15.0), (27.0, -15.0), (-16.0, 27.0), (16.0, -27.0)] {
-        if !spot_ok(fx, fz, 4.0) {
-            continue;
-        }
-        let y = crate::worldmap::ground_at_world(fx, fz).unwrap_or(0.0);
-        let yaw = if fx.abs() > fz.abs() { 0.0 } else { FRAC_PI_2 };
-        commands.spawn((
-            Mesh3d(field_mesh.clone()),
-            MeshMaterial3d(mat.clone()),
-            Transform::from_xyz(fx, y + 0.01, fz).with_rotation(Quat::from_rotation_y(yaw)),
-            BiomeEntity,
-            range.clone(),
-        ));
-        let rotation = Quat::from_rotation_y(yaw);
-        for (x, z, hw, hd) in [(0.0, -2.2, 3.25, 0.055), (0.0, 2.2, 3.25, 0.055),
-            (-3.2, 0.0, 0.055, 2.25), (3.2, 0.0, 0.055, 2.25)] {
-            let off = rotation * Vec3::new(x, 0.0, z);
-            crate::blockers::add_obb(fx + off.x, fz + off.z, hw, hd, yaw);
-        }
-        crate::blockers::reserve_visual(fx, fz, 4.0);
-        fields += 1;
-    }
-    info!("poi: {} set-pieces, {fields} fields, smoke + crows over the Hold", placed);
+    // (The low-poly tilled-field meshes that stood here — box beds + post fences, the "wooden
+    // rafts" on the meadow — are gone: the village's fields are ground now, `castle_ground::field_at`.)
+    info!("poi: {} set-pieces, smoke + crows over the Hold", placed);
 }
 
 /// A tiny low-poly crow: body + swept wings (rotated so local -Z is the flight direction).
@@ -761,7 +709,6 @@ mod tests {
     fn fence_meshes_stay_inside_their_reserved_footprints() {
         use bevy::mesh::VertexAttributeValues;
         let hut = shepherd_hut();
-        let field = field();
         let Some(VertexAttributeValues::Float32x3(hut_vertices)) = hut.attribute(Mesh::ATTRIBUTE_POSITION) else {
             panic!("hut positions must be readable");
         };
@@ -769,19 +716,11 @@ mod tests {
             assert!(Vec2::new(p[0], p[2]).length() <= STORY_FOOTPRINTS[4],
                 "pen rail escapes the reserved hut footprint: {p:?}");
         }
-        let Some(VertexAttributeValues::Float32x3(field_vertices)) = field.attribute(Mesh::ATTRIBUTE_POSITION) else {
-            panic!("field positions must be readable");
-        };
-        for p in field_vertices {
-            assert!(p[0].abs() <= 3.26 && p[2].abs() <= 2.26,
-                "field rail escapes its collision perimeter: {p:?}");
-        }
     }
 
     #[test]
     fn fence_meshes_fit_their_registered_footprints() {
         for (mesh, half_width, half_depth) in [
-            (field(), 3.26, 2.26),
             (shepherd_hut(), 1.95, 1.06),
         ] {
             let Some(bevy::mesh::VertexAttributeValues::Float32x3(vertices)) =

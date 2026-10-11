@@ -171,6 +171,8 @@ pub fn sample(wx: f32, wz: f32) -> CastleGround {
     let wood = near(at(crate::castle::WOOD_YARD), 3.6);
     let hay = near(at(crate::castle::HAY_CORNER), 3.4);
     let market = near(MARKET_CENTRE, 6.5) * 0.8;
+    // The town's build plots: a cleared, trodden earth pad inside each plot's timber frame.
+    let plot = crate::town::PLOT_OFFSETS.iter().map(|&c| near(c, 2.6) * 0.84).fold(0.0f32, f32::max);
 
     let path = (lane * 0.84 + crown * 0.16)
         .max(plaza * 0.84)
@@ -179,6 +181,7 @@ pub fn sample(wx: f32, wz: f32) -> CastleGround {
         .max(yard)
         .max(well)
         .max(market)
+        .max(plot)
         .max(cart)
         .max(wood * 0.55)
         .max(hay * 0.45)
@@ -194,6 +197,87 @@ pub fn sample(wx: f32, wz: f32) -> CastleGround {
         .max((0.24 + 0.12 * n_mid) * (1.0 - smoothstep(9.0, 16.0, d_out)));
     let floor = smoothstep(0.0, 0.55, path.max(debris)).max(lawn);
     CastleGround { floor, path, debris }
+}
+
+// ── The village's fields ─────────────────────────────────────────────────────────────────────
+// Open-field strips behind the street village's burgage plots (W of the castle, on the flat grass
+// lobe `worldmap` levels round the King's Road). They replace the old low-poly "tilled field"
+// meshes (`poi::field`: a dark box bed with box crop rows inside a post-and-rail fence — the
+// "wooden rafts" lying on the meadow). Like the castle yard they are ground, not geometry: the
+// scanned soil layer from the realforest mask (R + G) and furrows pressed in through the
+// wheel-rut mask, so the plough lines darken, hold puddles and catch the light exactly like ruts.
+
+/// One field strip: centre, half-extents (x along the furrows, z across), yaw (radians, about
+/// +Y like `Quat::from_rotation_y`), and how freshly ploughed it is (1 = bare furrowed soil,
+/// lower = stubble / fallow: the grass layer shows between shallower furrows).
+struct Field {
+    c: Vec2,
+    half: Vec2,
+    yaw: f32,
+    plough: f32,
+}
+
+const FIELDS: [Field; 6] = [
+    // North of the King's Road, behind the north-side burgages (x along the road).
+    Field { c: Vec2::new(-41.0, -16.5), half: Vec2::new(7.0, 2.4), yaw: -0.07, plough: 1.0 },
+    Field { c: Vec2::new(-41.5, -21.8), half: Vec2::new(7.0, 2.4), yaw: -0.07, plough: 0.55 },
+    Field { c: Vec2::new(-57.0, -11.5), half: Vec2::new(6.0, 2.3), yaw: -0.22, plough: 0.9 },
+    // South of the road, between the castle meadow and the side lane.
+    Field { c: Vec2::new(-39.0, 15.5), half: Vec2::new(6.5, 2.3), yaw: 0.05, plough: 0.8 },
+    Field { c: Vec2::new(-39.5, 20.6), half: Vec2::new(6.5, 2.3), yaw: 0.05, plough: 1.0 },
+    // West of the side lane.
+    Field { c: Vec2::new(-63.5, 23.0), half: Vec2::new(2.3, 6.0), yaw: 0.0, plough: 0.6 },
+];
+
+/// Furrow spacing (world units): ≥3 rut-mask texels (`roads::RUT_CELL` 0.35) per period, so the
+/// bilinear-filtered grooves stay parallel lines instead of aliasing into moiré.
+const FURROW: f32 = 1.1;
+
+/// A field at world `(wx, wz)`: `(weight, furrow groove 0..1, plough)` — `None` off every field.
+/// The edge is frayed by noise (a headland, not a ruled rectangle) and the field yields to roads,
+/// yards and anything but the open grass.
+pub fn field_at(wx: f32, wz: f32) -> Option<(f32, f32, f32)> {
+    let p = Vec2::new(wx, wz);
+    for f in &FIELDS {
+        let d = p - f.c;
+        let (s, co) = f.yaw.sin_cos();
+        // Inverse of `Quat::from_rotation_y(yaw)` on XZ.
+        let l = Vec2::new(co * d.x - s * d.y, s * d.x + co * d.y);
+        let edge = (f.half - l.abs()).min_element() + (noise(wx, wz, 0.7, 53) - 0.5) * 0.9;
+        if edge <= -0.6 {
+            continue;
+        }
+        if !crate::worldmap::is_grass_world(wx, wz)
+            || crate::roads::road_strength(wx, wz) > 0.05
+            || crate::castle::village_keep_clear(wx, wz, 0.6)
+            || crate::town::near_build_plot(wx, wz)
+        {
+            return None;
+        }
+        let w = smoothstep(-0.6, 0.6, edge);
+        // Furrows run along the strip's long axis.
+        let across = if f.half.x >= f.half.y { l.y } else { l.x };
+        let wave = 0.5 + 0.5 * (across * std::f32::consts::TAU / FURROW).cos();
+        let groove = smoothstep(0.45, 0.95, wave) * (0.75 + 0.25 * noise(wx, wz, 0.9, 61));
+        return Some((w, groove, f.plough));
+    }
+    None
+}
+
+/// Is `(wx, wz)` on a field (cover / clutter keep off the ploughed soil)?
+pub fn in_field(wx: f32, wz: f32) -> bool {
+    field_at(wx, wz).is_some_and(|(w, _, _)| w > 0.05)
+}
+
+/// The fields' rut-mask region (world XZ min, max), for `roads::bake_rut_mask`.
+pub fn field_bounds() -> (Vec2, Vec2) {
+    let (mut lo, mut hi) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
+    for f in &FIELDS {
+        let r = f.half.length() + 1.0;
+        lo = lo.min(f.c - r);
+        hi = hi.max(f.c + r);
+    }
+    (lo, hi)
 }
 
 #[cfg(test)]

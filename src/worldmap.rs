@@ -3776,6 +3776,7 @@ fn bs_grass_cover(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: 
                 && !crate::camps::in_clearing(x, z)
                 && !crate::town::near_build_plot(x, z)
                 && !crate::bridges::near_bridge(x, z, 1.0)
+                && !crate::castle_ground::in_field(x, z) // ploughed soil, not meadow
         },
         &|x, z| tile_top_y_world(x, z),
         meadow_affinity,
