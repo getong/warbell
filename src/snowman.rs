@@ -64,8 +64,10 @@ const SCATTER_R: f32 = 30.0;
 /// Target number of ambush snowmen on the island.
 const COUNT: usize = 10;
 
-/// The realistic snowmen in the forest kit (classic + scarf, the soldier's kettle hat, the old
-/// slumped one). Shared with the decor scatter (`alpine::snowkit::prop`).
+/// The realistic snowmen in the forest kit (the classic with a scarf, the bucket-head, the kids'
+/// small lopsided one in a knitted cap) — all intact and upright, so a dormant one reads as
+/// something villagers built, never as a glitch. Shared with the decor scatter
+/// (`alpine::snowkit::prop`).
 pub(crate) const KIT_MODELS: [&str; 3] = ["snowman_a", "snowman_b", "snowman_c"];
 /// Minimum spacing between two snowmen so each reads as its own ambush.
 const MIN_SEP: f32 = 6.0;
@@ -214,9 +216,21 @@ fn too_steep(p: Vec2) -> bool {
     ys.len() < probes.len() || ys.iter().copied().fold(f32::MIN, f32::max) - ys.iter().copied().fold(f32::MAX, f32::min) > 0.3
 }
 
+/// Height to stand a snowman whose centre's ground is `centre_y`: on a slope, bed it in by half the
+/// drop to the downhill edge of its base, so the base meets the low side instead of hanging over
+/// it (the uphill side just sinks into the snow, as a real one would). Flat ground: `centre_y`.
+fn seat_y(p: Vec2, scale: f32, centre_y: f32) -> f32 {
+    let r = 0.32 * scale;
+    let low = [(r, 0.0), (-r, 0.0), (0.0, r), (0.0, -r)]
+        .iter()
+        .filter_map(|&(dx, dz)| footing(p.x + dx, p.y + dz))
+        .fold(centre_y, f32::min);
+    centre_y - 0.5 * (centre_y - low)
+}
+
 /// Spawn one dormant snowman entity for `slot` at `pos`.
 fn spawn_one(commands: &mut Commands, field: &SnowmanField, slot: usize, pos: Vec2, facing: f32, scale: f32) {
-    let y = footing(pos.x, pos.y).unwrap_or(0.0);
+    let y = seat_y(pos, scale, footing(pos.x, pos.y).unwrap_or(0.0));
     let mut e = commands.spawn((
         Transform::from_translation(Vec3::new(pos.x, y, pos.y))
             .with_rotation(Quat::from_rotation_y(facing))
@@ -370,7 +384,7 @@ fn snowman_brain(
         // Horizontal scale counter-moves the vertical so the body reads as squashing, not growing.
         let sx = 1.0 + (1.0 - sy) * 0.5;
 
-        tf.translation = Vec3::new(sn.pos.x, cur_y + bob, sn.pos.y);
+        tf.translation = Vec3::new(sn.pos.x, seat_y(sn.pos, sn.scale, cur_y) + bob, sn.pos.y);
         tf.rotation = Quat::from_rotation_y(sn.facing)
             * Quat::from_rotation_z(lean_z)
             * Quat::from_rotation_x(lean_x);
