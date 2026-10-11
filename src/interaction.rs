@@ -142,6 +142,14 @@ impl Plugin for InteractionPlugin {
     }
 }
 
+/// Where the War Table (upgrade tree) is offered: the step before the keep's door
+/// (`castle::KEEP_STEPS`). It used to be the world origin — the keep's spot in the original small
+/// castle — but the keep moved to the N side (`castle::KEEP_POS`), leaving the origin in the middle
+/// of the open courtyard, so the `[E] Upgrades` prompt (and the tree) popped up in an empty yard.
+pub(crate) fn keep_anchor() -> Vec2 {
+    crate::castle::KEEP_STEPS
+}
+
 /// The merchant shop's world XZ — `castle::MERCHANT_SHOP` (by the market inside the west gate),
 /// matching where `villagers` builds it.
 fn shop_anchor() -> Vec2 {
@@ -180,7 +188,7 @@ fn drive_interaction(
 
     // (kind, position, radius, available?)
     let mut candidates: Vec<(InteractKind, Vec2, f32, bool)> = vec![
-        (InteractKind::Upgrades, Vec2::ZERO, KEEP_DIST, true),
+        (InteractKind::Upgrades, keep_anchor(), KEEP_DIST, true),
         (InteractKind::Shop, shop_anchor(), SHOP_DIST, true),
         (InteractKind::WarBell, crate::castle::BELL_POS, BELL_DIST, siege.phase == GamePhase::Prep),
     ];

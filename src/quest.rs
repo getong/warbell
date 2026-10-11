@@ -124,13 +124,14 @@ pub fn guidance_target(c: &Campaign, siege: &Siege, town: &TownRes, spots: &crat
     match objective {
         Objective::Rally => crate::camps::intro_target().and_then(crate::camps::camp_centre).map(|p| (p, "Captives")),
         Objective::Rescue => crate::camps::intro_target().and_then(crate::camps::camp_centre).map(|p| (p, "Captives")),
-        Objective::ReturnHome | Objective::PrepareDefense => Some((Vec2::ZERO, "Keep")),
+        // The keep's door — where the War Table's `[E]` is offered (`interaction::keep_anchor`).
+        Objective::ReturnHome | Objective::PrepareDefense => Some((crate::interaction::keep_anchor(), "Keep")),
         Objective::CallNight | Objective::SurviveRitual => Some((crate::castle::BELL_POS, if wave { "Keep" } else { "War bell" })),
         Objective::FeedPeople | Objective::DefendFarm => town.0.plots.iter().enumerate()
             .find(|(_, p)| p.kind == Some(BuildKind::Farm))
             .and_then(|(i, _)| spots.0.get(i)).copied()
             .map(|p| (p, "Farm")).or(Some((Vec2::ZERO, "Build a farm"))),
-        Objective::HoldKeep => Some((Vec2::ZERO, "Keep")),
+        Objective::HoldKeep => Some((crate::interaction::keep_anchor(), "Keep")),
         Objective::DisruptRitual | Objective::FreePlay if !wave => {
             let target = crate::camps::raid_target(night as i32)?;
             if c.raid_day == night as i32 && c.cleared_camps.get(target).copied().unwrap_or(false) { return None; }
