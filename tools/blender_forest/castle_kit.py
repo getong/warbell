@@ -276,12 +276,13 @@ def face_stones(g, rng, axis, fixed, sgn, a0, a1, y0, y1, colf, n, holes=0.35):
     """Weathering on a flat face: single stones a little proud (lighter or darker) and shadowed gaps
     where a stone has fallen out. axis "z": the face lies at z = fixed (outward normal sgn * Z) and
     spans x in a0..a1; axis "x": at x = fixed spanning z in a0..a1."""
-    for _ in range(n):
+    for k in range(n):
         w, h = rng.uniform(0.32, 0.62), rng.uniform(0.16, 0.26)
         u = rng.uniform(a0 + w / 2 + 0.05, a1 - w / 2 - 0.05)
         y = rng.uniform(y0 + h, y1 - h)
         hole = rng.random() < holes
-        d = 0.012 if hole else rng.uniform(0.025, 0.05)
+        # Every patch at its own depth: overlapping "holes" all sat at exactly +0.012 and z-fought.
+        d = 0.010 + 0.0008 * k if hole else rng.uniform(0.025, 0.05)
         col = scale(colf(y), 0.42) if hole else scale(colf(y), rng.uniform(0.82, 1.14))
         f0, f1 = sorted((fixed, fixed + sgn * d))
         if axis == "z":
@@ -509,14 +510,15 @@ def ck_bell_tower(rng):
         for nx, nz in ((0, -1), (1, 0), (-1, 0)):
             c = V(nx * (H + 0.005), y, nz * (H + 0.005))
             dark_patch(g, c, (0.06 if nx else 0.15, 0.7, 0.15 if nx else 0.06))
-    dark_patch(g, V(0.0, 3.9, H + 0.005), (0.15, 0.7, 0.06))
+    # (No slit on the yard face at 3.9: it fell inside the door opening below, the two dark patches
+    # overlapping in one plane.)
     # The raised door at platform level (x = 0.35), round-headed, old planks.
     py = 3.0
     dx = 0.35
     dark_patch(g, V(dx, py + 0.75, H + 0.005), (0.76, 1.5, 0.06))
     arch_x(g, rng, dx, py + 1.15, 0.38, H - 0.06, H + 0.08, old_col, n=5, block=0.18)
-    for k in range(3):
-        board(g, V(dx - 0.24 + k * 0.24, py + 0.62, H + 0.015), V(0, 1, 0), V(0, 0, 1), 1.24, 0.23, 0.04,
+    for k in range(3):  # planks 1 cm proud of the dark opening (their faces used to share its plane)
+        board(g, V(dx - 0.24 + k * 0.24, py + 0.62, H + 0.025), V(0, 1, 0), V(0, 0, 1), 1.24, 0.23, 0.04,
               mat=M_PLANK, col=OLD_TIMBER, rng=rng)
     # The bell frame on the belfry floor: two trestles, a headstock, the bronze bell + clapper.
     for x in (-0.9, 0.9):
@@ -942,7 +944,9 @@ def ck_gatehouse(rng):
     # Projecting outer turrets with slits, a parapet and merlons.
     for s in (-1, 1):
         x0, x1 = (ow + 0.2, X + 0.6) if s > 0 else (-X - 0.6, -ow - 0.2)
-        sbox(g, x0 - 0.2, x1 + 0.2, -0.3, 0.9, -Z - 1.4, -Z + 0.2, new_col)
+        # Turret plinth: its passage-side face 1 cm back from the passage plinth's (x = +-ow), which
+        # it used to share (z-fighting at the gate mouth).
+        sbox(g, x0 - (0.19 if s > 0 else 0.2), x1 + (0.2 if s > 0 else 0.19), -0.3, 0.9, -Z - 1.4, -Z + 0.2, new_col)
         sbox(g, x0, x1, 0.9, 6.0, -Z - 1.2, -Z + 0.2, new_col)
         quoins(g, rng, (x0 + x1) / 2, -Z - 0.5, (x1 - x0) / 2, 0.7, 0.9, 6.0, new_col)
         sbox(g, x0, x1, 6.0, 6.4, -Z - 1.2, -Z - 0.85, new_col)
