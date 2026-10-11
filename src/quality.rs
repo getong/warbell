@@ -166,8 +166,9 @@ impl Undergrowth {
 /// tuned gameplay budget (byte-for-byte the pre-setting behaviour); `Far` / `Extreme` are
 /// screenshot modes that multiply every distance cut by [`ViewDistance::scale`]: scatter/tree/prop
 /// `VisibilityRange` culls (and the terrain far-LOD hand-off), the camera far plane, the distance
-/// fog + atmospherics haze, and the realforest cover streaming radius ([`ViewDistance::cover_scale`],
-/// kept lower — cover is the memory-heavy layer). Applies live (no world rebuild).
+/// fog + atmospherics haze, the sun's shadow-cascade reach ([`ViewDistance::shadow_scale`]) and the
+/// realforest cover streaming radius ([`ViewDistance::cover_scale`], kept lower — cover is the
+/// memory-heavy layer). Applies live (no world rebuild).
 /// `FOREST_VIEWDIST=normal|far|extreme` overrides it at startup (capture harness).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, Default)]
 pub enum ViewDistance {
@@ -194,6 +195,16 @@ impl ViewDistance {
             ViewDistance::Normal => 1.0,
             ViewDistance::Far => 1.5,
             ViewDistance::Extreme => 2.2,
+        }
+    }
+
+    /// Multiplier on the sun's shadow-cascade far bound (cascade COUNT never changes at runtime, so
+    /// this trades a little mid-range shadow texel density for shadowed far trees/ridges).
+    pub fn shadow_scale(self) -> f32 {
+        match self {
+            ViewDistance::Normal => 1.0,
+            ViewDistance::Far => 1.4,
+            ViewDistance::Extreme => 2.0,
         }
     }
 
@@ -831,7 +842,8 @@ fn apply_quality(
             *c = bevy::light::CascadeShadowConfigBuilder {
                 num_cascades: auth.bounds.len(),
                 minimum_distance: auth.minimum_distance,
-                maximum_distance: far,
+                // Render distance stretches only the far bound (same cascade count — see above).
+                maximum_distance: far * settings.view_distance.shadow_scale(),
                 first_cascade_far_bound: auth.bounds.first().copied().unwrap_or(12.0),
                 overlap_proportion: auth.overlap_proportion,
             }
@@ -1246,5 +1258,40 @@ pub fn save_graphics_config(
             }
         }
         Err(e) => warn!("failed to serialise graphics config: {e}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::camera::visibility::VisibilityRange;
+
+    fn vr(s: std::ops::Range<f32>, e: std::ops::Range<f32>) -> VisibilityRange {
+        VisibilityRange { start_margin: s, end_margin: e, use_aabb: true }
+    }
+
+    #[test]
+    fn view_distance_scaling_keeps_lods_and_pairs() {
+        // Terrain fine/coarse hand-off at 150..176 moves together; "never cull" stays put.
+        let mut fine = vr(0.0..0.0, 150.0..176.0);
+        let mut coarse = vr(150.0..176.0, 1.0e30..1.0e30);
+        // Tree LOD0 (30±2) keeps its hand-off; the LOD1 cull at 180 scales.
+        let mut lod0 = vr(0.0..0.0, 28.0..32.0);
+        let mut lod1 = vr(28.0..32.0, 180.0..180.0);
+        for r in [&mut fine, &mut coarse, &mut lod0, &mut lod1] {
+            rescale_range(r, 1.0, 3.0);
+        }
+        assert_eq!(fine.end_margin, 450.0..528.0);
+        assert_eq!(coarse.start_margin, 450.0..528.0);
+        assert_eq!(coarse.end_margin, 1.0e30..1.0e30);
+        assert_eq!(lod0.end_margin, 28.0..32.0);
+        assert_eq!(lod1.start_margin, 28.0..32.0);
+        assert_eq!(lod1.end_margin, 540.0..540.0);
+        // Extreme -> Far -> Normal round-trips back to the authored values.
+        rescale_range(&mut lod1, 3.0, 1.8);
+        rescale_range(&mut lod1, 1.8, 1.0);
+        assert!((lod1.end_margin.start - 180.0).abs() < 1e-3);
+        assert_eq!(ViewDistance::Normal.scale(), 1.0);
+        assert_eq!(ViewDistance::Normal.cover_scale(), 1.0);
     }
 }
