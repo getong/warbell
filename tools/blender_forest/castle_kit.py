@@ -1337,7 +1337,7 @@ def ck_round_tower(rng):
     drum(g, 0, 0, 2.95, R + 0.02, -0.3, 1.1, new_col)
     drum(g, 0, 0, R + 0.08, R + 0.08, 1.1, 1.24, new_col)
     annulus(g, 0, 0, R, R + 0.08, 1.24, new_col)
-    drum(g, 0, 0, R, R - 0.04, 1.1, 5.0, new_col)
+    drum(g, 0, 0, R, R - 0.04, 1.1, 5.22, new_col)  # up behind the corbels to the wall-head
     drum(g, 0, 0, R + 0.06, R + 0.06, 3.0, 3.16, new_col)
     annulus(g, 0, 0, R - 0.02, R + 0.06, 3.16, new_col)
     annulus(g, 0, 0, R - 0.02, R + 0.06, 3.0, new_col, down=True)
