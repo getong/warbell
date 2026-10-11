@@ -2,7 +2,7 @@
 //! roadside set-pieces spaced along the arteries so a traveller always has something ahead
 //! (CDPR's rule: something interesting every ~40 s of travel), plus the "weenie" FLAGS that
 //! pull the eye from far away — smoke columns over Gnashfang Hold and crows wheeling above it.
-//! (The village's farmland is ground now — `castle_ground::field_at`, not meshes.)
+//! (The town's farmland is ground now — `castle_ground::field_at`, not meshes.)
 //!
 //! Set-pieces (all vertex-coloured merged primitives, base y=0, ruins.rs contract): a gallows
 //! frame on the fortress approach, a burned-out cabin, wayside graves, a standing-stone circle,
@@ -678,7 +678,7 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
     }
 
     // (The low-poly tilled-field meshes that stood here — box beds + post fences, the "wooden
-    // rafts" on the meadow — are gone: the village's fields are ground now, `castle_ground::field_at`.)
+    // rafts" on the meadow — are gone: the fields are ground now, `castle_ground::field_at`.)
     info!("poi: {} set-pieces, smoke + crows over the Hold", placed);
 }
 

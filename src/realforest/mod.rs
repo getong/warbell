@@ -293,6 +293,21 @@ impl Kit {
         }
     }
 
+    /// What the open grass frontier (castle meadow, village, NW grassland) draws for a cover roll,
+    /// in `worldmap::frontier_cover` order [grass, clover, fern, flower, mushroom]: a meadow is grass
+    /// and wildflowers — forest ferns, dead branches and mushrooms stay under the trees.
+    pub fn meadow_cover(&self, class: usize, roll: f32, roll2: f32) -> Option<(usize, f32)> {
+        const GRASS: [&str; 4] = ["grass_a", "grass_b", "grass_c", "grass_d"];
+        const FLOWERS: [&str; 6] = ["flower_daisy", "flower_yellow", "flower_daisy", "flower_yellow", "flower_lupine_a", "flower_daisy"];
+        let m = |names: &[&str], s: f32| self.pick(names, roll2).map(|i| (i, s));
+        match class {
+            0 | 1 | 2 => m(&GRASS, 0.9 + roll * 0.4),
+            3 if roll < 0.75 => m(&FLOWERS, 1.0),
+            3 => m(&["stalks_a"], 1.0),
+            _ => None,
+        }
+    }
+
     /// Hang tree `model` (its `_lod0`, plus the matching `_lod1`) under an already-spawned
     /// gameplay entity. The parent keeps `Transform` / `Sway` / `ChopTree`; the children only draw.
     pub fn attach_tree(&self, e: &mut EntityCommands, lod0: usize, cull: bool) {
@@ -550,6 +565,7 @@ impl Kit {
         hi: f32,
         mask: &dyn Fn(f32, f32) -> bool,
         height_fn: &dyn Fn(f32, f32) -> f32,
+        meadow: bool,
     ) {
         const LITTER: [&str; 4] = ["litter_a", "litter_b", "litter_c", "litter_d"];
         const GRASS: [&str; 4] = ["grass_a", "grass_b", "grass_c", "grass_d"];
@@ -570,7 +586,22 @@ impl Kit {
                     }
                     let road = crate::roads::road_strength(x, z);
                     let pick = |names: &[&str], s: f32| self.pick(names, d).map(|m| (m, s));
-                    let choice = if road > 0.9 {
+                    // Open meadow (`meadow`, the grass frontier): no forest floor here — no leaf
+                    // sheets, dead branches or ferns away from the trees. Grass tufts thick on the
+                    // verges and through the sward, the odd small stone.
+                    let choice = if meadow {
+                        if road > 0.55 {
+                            if road <= 0.9 && c < 0.10 { pick(&GRASS, 0.5 + d * 0.3) } else { None }
+                        } else if road > 0.12 {
+                            if c < 0.55 { pick(&GRASS, 0.8 + d * 0.5) } else if c < 0.75 { pick(&FLOWERS, 0.85 + d * 0.4) } else { None }
+                        } else if c < 0.50 {
+                            pick(&GRASS, 0.7 + d * 0.5)
+                        } else if c < 0.56 && !crate::blockers::any_within(x, z, 0.35) {
+                            pick(&PEBBLES, 0.12 + d * 0.14)
+                        } else {
+                            None
+                        }
+                    } else if road > 0.9 {
                         // The grass strip a cart track keeps between its two ruts.
                         if c < 0.14 { pick(&GRASS, 0.5 + d * 0.3) } else { None }
                     } else if road > 0.55 {
@@ -622,7 +653,7 @@ impl Kit {
                 // 2nd plant also goes into the far ring at 1.35x scale.
                 let fert = crate::biome::ground_patch(gx + 0.5, gz + 0.5).fertility;
                 // Glades (open, sunlit) grow a grass + flower sward; groves keep the drifts.
-                let glade = 1.0 - crate::biome::fg_smoothstep(0.08, 0.38, crate::biome::forest_grove(gx + 0.5, gz + 0.5));
+                let glade = if meadow { 1.0 } else { 1.0 - crate::biome::fg_smoothstep(0.08, 0.38, crate::biome::forest_grove(gx + 0.5, gz + 0.5)) };
                 let drift = crate::biome::forest_drift(gx + 0.5, gz + 0.5).max(glade * 0.85);
                 for k in 0..3u32 {
                     let (a, b) = rolls(gx + 0.13 + k as f32 * 0.71, gz + 0.29 - k as f32 * 0.43);
@@ -640,7 +671,17 @@ impl Kit {
                     }
                     // Variety over volume: grass, ferns, short dry stalks, a low shrub, a fallen-leaf
                     // sheet, the occasional flower — each patch reads as a mixed understorey.
-                    let (pick, s) = if glade > 0.5 {
+                    let (pick, s) = if meadow {
+                        // The sward: lush grass clumps, wildflowers, seed stalks — no ferns.
+                        const MEADOW_FLOWERS: [&str; 6] = ["flower_daisy", "flower_yellow", "flower_daisy", "flower_yellow", "flower_lupine_a", "flower_yellow"];
+                        if d < 0.70 {
+                            (self.pick(&LUSH, c), 0.6 + c * 0.5)
+                        } else if d < 0.90 {
+                            (self.pick(&MEADOW_FLOWERS, c), 0.8 + c * 0.3)
+                        } else {
+                            (self.pick(&["stalks_a"], c), 0.9)
+                        }
+                    } else if glade > 0.5 {
                         if d < 0.62 {
                             (self.pick(&LUSH, c), 0.6 + c * 0.5)
                         } else if d < 0.82 {
@@ -1271,7 +1312,7 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
             data[k + 3] = data[k + 3].max(to_u8(g.debris));
         }
     }
-    // The village's field strips (`castle_ground::field_at`): scanned soil (the path layer) on
+    // The field strips (`castle_ground::field_at`): scanned soil (the path layer) on
     // the ploughed strips, a soil/grass mix on the stubble ones, no litter. Furrows ride the rut mask.
     let (flo, fhi) = crate::castle_ground::field_bounds();
     let (i0, i1) = (((flo.x - x0) * RES).max(0.0) as usize, (((fhi.x - x0) * RES) as usize).min(w));
