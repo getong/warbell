@@ -353,6 +353,9 @@ fn keep_march_goal(from: Vec2) -> Vec2 {
     gate.interior(4.0)
 }
 
+/// Goal-change (gate shut / broken) A* replans allowed per frame across the whole horde.
+const GATE_REPLANS_PER_FRAME: u32 = 6;
+
 /// The keep-march goal for a wave invader, honouring the castle gates (`gates.rs`): inside the
 /// walls → the keep steps (as [`keep_march_goal`]); outside → the nearest OPEN gate's interior, or —
 /// when every gate is shut at night — the hacking standoff outside the nearest shut gate.
@@ -607,7 +610,7 @@ impl Plugin for SiegePlugin {
             // EVERY boot (the mode can flip mid-process); the HUD root is tagged `CampaignOnly` so
             // `apply_mode_visibility` hides it in Skirmish. All sim/update systems stay gated.
             .add_systems(Startup, (setup_invader_armory, setup_siege_hud))
-            .add_systems(PostStartup, seed_demo_wave.run_if(crate::rts::in_campaign)) // FOREST_WAVE screenshot hook only
+            .add_systems(Update, seed_demo_wave.run_if(crate::rts::in_campaign)) // FOREST_WAVE screenshot hook only
             // Pause-aware clock — advances before the sim, frozen behind any panel / outside Playing.
             .add_sim_systems(advance_game_clock.run_if(crate::rts::in_campaign))
             // Sim — frozen behind any panel / outside Playing.
@@ -1059,6 +1062,9 @@ pub(crate) fn invader_brain(
     // gate closing/breaking needs no forced replan: routes refresh on their staggered throttle and
     // the step clamp below keeps anyone from walking a stale route through a shut gap).
     let ork_boxes = gates.ork_boxes();
+    // A gate shutting/breaking moves every marcher's goal at once; cap those goal-change replans
+    // per frame so the whole horde re-paths over a few frames instead of stalling one.
+    let mut goal_replans = 0u32;
 
     // Living guards this frame (the dying are already filtered out — death is permanent now).
     live_guards.clear();
@@ -1232,7 +1238,9 @@ pub(crate) fn invader_brain(
                 // goal threads them through the gap; the in-yard press above then closes to
                 // batter range.
                 let keep_goal = ork_march_goal(o.pos, &gates);
-                if path.refresh_due(now) || path.goal_cached.distance(keep_goal) > 2.0 {
+                let goal_moved = path.goal_cached.distance(keep_goal) > 2.0 && goal_replans < GATE_REPLANS_PER_FRAME;
+                if path.refresh_due(now) || goal_moved {
+                    goal_replans += goal_moved as u32;
                     path.waypoints = crate::navgrid::path_to_avoiding(o.pos, keep_goal, crate::navgrid::NAV_MAX_NODES, &ork_boxes);
                     path.cursor = 0;
                     path.goal_cached = keep_goal;
@@ -1533,11 +1541,20 @@ fn update_siege_hud(
 }
 
 /// Screenshot hook: with `FOREST_WAVE` set, pre-spawn the whole Night-1 horde at the ring and
-/// jump straight into the wave, so a `FOREST_SHOT` frame shows the night assault.
-fn seed_demo_wave(mut siege: ResMut<Siege>, armory: Option<Res<InvaderArmory>>, mut commands: Commands) {
-    if std::env::var("FOREST_WAVE").is_err() {
+/// jump straight into the wave, so a `FOREST_SHOT` frame shows the night assault. Seeds ONCE, after
+/// the boot world build lands (`WorldReady`): seeded at PostStartup the horde was wiped with the
+/// rest of the `BiomeEntity` world by that build, the director saw `alive == 0` and called dawn.
+fn seed_demo_wave(
+    mut siege: ResMut<Siege>,
+    armory: Option<Res<InvaderArmory>>,
+    world_ready: Res<crate::biome::WorldReady>,
+    mut done: Local<bool>,
+    mut commands: Commands,
+) {
+    if *done || !world_ready.0 || std::env::var("FOREST_WAVE").is_err() {
         return;
     }
+    *done = true;
     let Some(arm) = armory.as_deref() else { return };
     let wave_index = staged_wave_index();
     let mods = mods_for(siege.difficulty);
