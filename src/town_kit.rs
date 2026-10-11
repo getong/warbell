@@ -2,8 +2,12 @@
 //! §3/§4): granary on staddle stones, smithy, the tavern "The Drowned Squire", Maud's house with
 //! the edict board, infirmary + herb garden, the courtyard fire pit, the empty grave of the drowned
 //! squire, the Crown set (banners, painted crates, tent, gallows, depot) and four timber-frame
-//! houses, built by `tools/blender_forest/town_kit.py` → `town_kit.glb` (node names, footprints and
-//! heights are listed in that script's docstring).
+//! houses; for spec v3 §2 the podgrodzie kit (two narrow street-gable houses, one a shop with a
+//! fold-down counter; wattle / picket fence modules 3 u + gates, garden, woodpile, shed, coop,
+//! privy, dung heap, hay rick) and four lean-tos for inside the walls (stable, barracks, store,
+//! cart shed: mono-pitch, back flat at local -Z to butt onto the curtain). Built by
+//! `tools/blender_forest/town_kit.py` → `town_kit.glb` (node names, footprints and heights are
+//! listed in that script's docstring).
 //!
 //! Every piece has its pivot on the ground under the centre of its footprint with the door / front
 //! toward local +Z (`crown_banner_wall` hangs down from its bracket at the origin instead), so a
@@ -14,6 +18,8 @@
 
 use bevy::camera::visibility::VisibilityRange;
 use bevy::prelude::*;
+
+use std::f32::consts::{FRAC_PI_2, PI};
 
 use crate::biome::BiomeEntity;
 
@@ -28,7 +34,7 @@ impl Plugin for TownKitPlugin {
 }
 
 /// The pieces `town_kit.glb` carries, in the script's priority order.
-pub const PIECES: [&str; 19] = [
+pub const PIECES: [&str; 36] = [
     "town_granary",
     "town_smithy",
     "town_tavern",
@@ -48,6 +54,25 @@ pub const PIECES: [&str; 19] = [
     "town_house_d",
     "town_carpenter",
     "town_archery",
+    // v3 (spec §2): the podgrodzie outside the W gate (street-gable houses on burgage plots +
+    // plot dressing) and the lean-tos against the curtain (back flat at local -Z).
+    "town_street_house_a",
+    "town_street_house_b",
+    "town_fence_wattle",
+    "town_fence_wattle_gate",
+    "town_fence_picket",
+    "town_fence_picket_gate",
+    "town_garden",
+    "town_woodpile",
+    "town_shed",
+    "town_coop",
+    "town_outhouse",
+    "town_dung",
+    "town_hayrick",
+    "castle_stable",
+    "castle_barracks",
+    "castle_store",
+    "castle_cartshed",
 ];
 
 /// A spawned town-kit model root.
@@ -65,11 +90,17 @@ pub fn spawn_piece(commands: &mut Commands, name: &str, tf: Transform) -> Option
     Some(e)
 }
 
-/// Showcase layout: (piece, world XZ, yaw, collider half-extents of the main body or zero).
-/// Rows on the flat ground north of the castle, fronts facing south (+Z) toward the north wall so
-/// a camera just outside the wall sees them at 15-20 u: the landmarks + the Crown set at z -29,
-/// small props at z -37.5, Maud's house, the infirmary and the houses at z -46.
-pub const SHOWCASE: [(&str, Vec2, f32, Vec2); 19] = [
+/// Showcase layout: (piece, world XZ, yaw, collider half-extents of the main body in the piece's
+/// own frame, or zero). Rows on the flat ground north of the castle, fronts facing south (+Z)
+/// toward the north wall so a camera just outside the wall sees them at 15-20 u: the landmarks +
+/// the Crown set at z -29, small props at z -37.5, Maud's house, the infirmary and the houses at
+/// z -46. Spec v3 pieces: two mock burgage plots south of the castle, east of the S gate (a road
+/// along z ~23 under the south wall, the street-gable houses fronting it at z 24 facing north,
+/// plots 6 u wide running back south to a fence at z 37.6: wattle plot A x 8..14, picket plot B
+/// x 14..20), and the four lean-tos against the OUTSIDE face of the east curtain (x 28.65), fronts
+/// east: stand-ins for their place inside the walls (backs flat on the stone, the same fit; the
+/// curtain shows once the walls are built, e.g. `FOREST_DEFEND=1`).
+pub const SHOWCASE: [(&str, Vec2, f32, Vec2); 42] = [
     ("town_granary", Vec2::new(-25.0, -29.0), 0.0, Vec2::new(1.75, 2.25)),
     ("town_smithy", Vec2::new(-16.0, -29.0), 0.0, Vec2::ZERO),
     ("town_tavern", Vec2::new(-5.5, -29.0), 0.0, Vec2::new(3.3, 2.5)),
@@ -90,6 +121,33 @@ pub const SHOWCASE: [(&str, Vec2, f32, Vec2); 19] = [
     ("town_house_b", Vec2::new(7.0, -46.0), 0.0, Vec2::new(2.9, 1.9)),
     ("town_house_c", Vec2::new(15.0, -46.0), 0.0, Vec2::new(2.0, 1.7)),
     ("town_house_d", Vec2::new(22.0, -46.0), 0.0, Vec2::new(2.5, 1.9)),
+    // Burgage plot A (wattle, x 8..14): house fronting the road, woodpile on its back wall, shed
+    // on the shared fence, garden, a gate in the back fence to the fields.
+    ("town_street_house_a", Vec2::new(11.0, 27.8), PI, Vec2::new(2.3, 3.9)),
+    ("town_woodpile", Vec2::new(12.4, 32.1), 0.0, Vec2::ZERO),
+    ("town_shed", Vec2::new(13.05, 35.5), -FRAC_PI_2, Vec2::ZERO),
+    ("town_garden", Vec2::new(10.0, 35.0), 0.0, Vec2::ZERO),
+    ("town_fence_wattle", Vec2::new(8.0, 33.1), FRAC_PI_2, Vec2::ZERO),
+    ("town_fence_wattle", Vec2::new(8.0, 36.1), FRAC_PI_2, Vec2::ZERO),
+    ("town_fence_wattle", Vec2::new(9.5, 37.6), 0.0, Vec2::ZERO),
+    ("town_fence_wattle_gate", Vec2::new(12.5, 37.6), 0.0, Vec2::ZERO),
+    ("town_fence_picket", Vec2::new(14.0, 33.1), FRAC_PI_2, Vec2::ZERO),
+    ("town_fence_picket", Vec2::new(14.0, 36.1), FRAC_PI_2, Vec2::ZERO),
+    // Plot B (picket, x 14..20): the shop house, coop, hay rick, dung heap, the privy.
+    ("town_street_house_b", Vec2::new(17.0, 27.5), PI, Vec2::new(2.5, 3.6)),
+    ("town_coop", Vec2::new(15.2, 32.3), 0.0, Vec2::ZERO),
+    ("town_hayrick", Vec2::new(17.8, 34.5), 0.0, Vec2::new(1.2, 1.2)),
+    ("town_dung", Vec2::new(15.3, 36.3), 0.0, Vec2::ZERO),
+    ("town_outhouse", Vec2::new(19.0, 32.0), -FRAC_PI_2, Vec2::ZERO),
+    ("town_fence_picket", Vec2::new(20.0, 33.1), -FRAC_PI_2, Vec2::ZERO),
+    ("town_fence_picket", Vec2::new(20.0, 36.1), -FRAC_PI_2, Vec2::ZERO),
+    ("town_fence_picket", Vec2::new(15.5, 37.6), 0.0, Vec2::ZERO),
+    ("town_fence_picket_gate", Vec2::new(18.5, 37.6), 0.0, Vec2::ZERO),
+    // Lean-tos on the east curtain's outer face (x 28.65 + depth / 2), fronts east.
+    ("castle_stable", Vec2::new(30.39, -13.6), FRAC_PI_2, Vec2::ZERO),
+    ("castle_barracks", Vec2::new(30.49, -1.9), FRAC_PI_2, Vec2::ZERO),
+    ("castle_store", Vec2::new(30.29, 5.6), FRAC_PI_2, Vec2::ZERO),
+    ("castle_cartshed", Vec2::new(30.59, 13.0), FRAC_PI_2, Vec2::ZERO),
 ];
 
 /// Lays the showcase out once the kit has loaded; a world rebuild clears it (`BiomeEntity`) and
@@ -117,16 +175,26 @@ fn spawn_showcase(mut commands: Commands, existing: Query<(), With<TownPiece>>) 
 mod tests {
     use super::*;
 
-    /// The showcase lays out every piece exactly once, and the pieces don't overlap.
+    /// World-aligned half extents of a collider turned by `yaw`.
+    fn aabb_half(half: Vec2, yaw: f32) -> Vec2 {
+        let (s, c) = (yaw.sin().abs(), yaw.cos().abs());
+        Vec2::new(c * half.x + s * half.y, s * half.x + c * half.y)
+    }
+
+    /// The showcase lays out every piece at least once (the fence modules repeat), names only kit
+    /// pieces, and the pieces with colliders don't overlap.
     #[test]
     fn showcase_covers_every_piece_once() {
         for name in PIECES {
-            assert_eq!(SHOWCASE.iter().filter(|s| s.0 == name).count(), 1, "{name}");
+            assert!(SHOWCASE.iter().any(|s| s.0 == name), "{name}");
+        }
+        for s in SHOWCASE {
+            assert!(PIECES.contains(&s.0), "{}", s.0);
         }
         for (i, a) in SHOWCASE.iter().enumerate() {
             for b in &SHOWCASE[i + 1..] {
                 if a.3 != Vec2::ZERO && b.3 != Vec2::ZERO {
-                    let gap = (a.1 - b.1).abs() - (a.3 + b.3);
+                    let gap = (a.1 - b.1).abs() - (aabb_half(a.3, a.2) + aabb_half(b.3, b.2));
                     assert!(gap.x > 0.5 || gap.y > 0.5, "{} overlaps {}", a.0, b.0);
                 }
             }
