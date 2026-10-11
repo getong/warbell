@@ -10,6 +10,7 @@
 pub(crate) mod anim;
 mod arts;
 mod block;
+pub(crate) mod boom;
 mod camera;
 mod charge;
 mod combat;
@@ -32,6 +33,8 @@ mod viewmodel;
 
 /// First-person view state, toggled by the HUD eye button ([`crate::ui::settings`]) and the V key.
 pub use camera::FirstPerson;
+/// Marker for solid buildings the third-person camera boom collides with (see [`boom`]).
+pub use boom::CameraOccluder;
 pub(crate) use camera::fp_body_visibility;
 pub use viewmodel::ReticleTarget;
 /// Sand-Dash slide duration — re-exported so the standalone viewer (`viewer.rs`) can drive the
@@ -482,6 +485,10 @@ impl Plugin for PlayerPlugin {
             // look-inertia reads this frame's view angles.
             .init_resource::<viewmodel::ReticleTarget>()
             .add_systems(Startup, viewmodel::spawn_reticle)
+            // Camera boom collision: push `CameraOccluder` down onto meshes under tagged roots
+            // (ungated — buildings spawn in every mode), + the `FOREST_TALLWALLS` test rig.
+            .add_systems(PostStartup, boom::spawn_tall_test_walls)
+            .add_systems(Update, (boom::propagate_occluders, boom::boom_shot_seq.before(camera::player_camera)))
             .add_systems(
                 Update,
                 (

@@ -19,7 +19,7 @@ use super::{Hero, PlayMode};
 /// `player_camera` under Bevy's 16-param system cap. Build mode flips the camera up over the town
 /// and frees the cursor (`build_mode.active`).
 #[derive(SystemParam)]
-pub struct CamGate<'w> {
+pub struct CamGate<'w, 's> {
     app: Res<'w, State<AppState>>,
     modal: Option<Res<'w, State<Modal>>>,
     egui_wants: Res<'w, crate::debug_panel::EguiWantsPointer>,
@@ -28,6 +28,8 @@ pub struct CamGate<'w> {
     crit_tension: Option<Res<'w, crate::boss::CritTension>>,
     /// The succession beat — when active, the camera is pulled to frame the peasant being possessed.
     succ: Res<'w, crate::succession::Succession>,
+    /// Solid buildings the follow boom collides with (see [`super::boom`]).
+    occ: super::boom::Occluders<'w, 's>,
 }
 
 const SENS_X: f32 = 0.0035;
@@ -103,6 +105,8 @@ pub struct OrbitCam {
     /// a foe wandering across the tally line can't pump the zoom. Kept here (not a system `Local`)
     /// because `player_camera` sits at Bevy's 16-param ceiling.
     pub combat: f32,
+    /// Boom-collision state (pulled-in length, hold timer, allowed shoulder) — see [`super::boom`].
+    pub boom: super::boom::BoomState,
 }
 
 impl Default for OrbitCam {
@@ -121,6 +125,7 @@ impl Default for OrbitCam {
             lead: Vec3::ZERO,
             anchor: Vec3::ZERO,
             combat: 0.0,
+            boom: Default::default(),
         }
     }
 }
@@ -358,7 +363,7 @@ pub fn player_camera(
     time: Res<Time>,
     feedback: Option<Res<crate::combat_fx::HitFeedback>>,
     mut base_fov: Local<Option<f32>>,
-    gate: CamGate,
+    mut gate: CamGate,
     mut build_blend: Local<f32>,
     mut tension_blend: Local<f32>,
 ) {
@@ -478,6 +483,22 @@ pub fn player_camera(
     // hero and camera). `smooth_surface_y` is continuous so the lift glides instead of popping; only
     // the third-person eye is clamped (FP rides at head height; build cam is far overhead). `None` —
     // over water / off the island — leaves the eye free.
+    if let Some(g) = crate::worldmap::ground_at_world(follow_eye.x, follow_eye.z) {
+        follow_eye.y = follow_eye.y.max(g + CAM_GROUND_CLEAR);
+    }
+    // Boom collision (Witcher-style spring arm): solid buildings tagged `CameraOccluder` pull the
+    // eye in toward the hero — fast in, held, slow out — and shrink the shoulder shift when he
+    // hugs a wall on that side. The terrain clamp is re-applied to the pulled-in eye.
+    let anchor = orbit.anchor;
+    let boom = gate.occ.resolve(
+        &mut orbit.boom,
+        anchor,
+        follow_target - anchor,
+        follow_eye - follow_target,
+        time.delta_secs(),
+    );
+    let follow_target = boom.target;
+    follow_eye = boom.eye;
     if let Some(g) = crate::worldmap::ground_at_world(follow_eye.x, follow_eye.z) {
         follow_eye.y = follow_eye.y.max(g + CAM_GROUND_CLEAR);
     }
