@@ -187,6 +187,26 @@ pub fn treeline_at(x: f32, z: f32) -> f32 {
     TREELINE.0 + (TREELINE.1 - TREELINE.0) * a
 }
 
+/// Real ground slope (rise / run, relief included) at `(x, z)`. The alpine scrub only grows on
+/// walkable ground: the shader turns slopes past ~37° (≈0.75) into bare rock.
+pub fn slope_at(x: f32, z: f32) -> f32 {
+    let g = |x: f32, z: f32| crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
+    let d = 0.7;
+    let gx = (g(x + d, z) - g(x - d, z)) / (2.0 * d);
+    let gz = (g(x, z + d) - g(x, z - d)) / (2.0 * d);
+    (gx * gx + gz * gz).sqrt()
+}
+
+/// Is `(x, z)` a sun-facing (+z) or convex spot where the wind / sun keeps the snow thin — where
+/// alpine grass tussocks poke through? (Crest: ≥0.15u above its 2u ring.)
+pub fn thin_snow_spot(x: f32, z: f32) -> bool {
+    let g = |x: f32, z: f32| crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
+    let h = g(x, z);
+    let ring = (g(x + 2.0, z) + g(x - 2.0, z) + g(x, z + 2.0) + g(x, z - 2.0)) * 0.25;
+    let sunny = g(x, z + 0.7) - g(x, z - 0.7) < -0.25;
+    sunny || h - ring > 0.15
+}
+
 /// Ground height of the TOP of the tree-line band (no tree of any kind past it).
 pub const TREELINE_TOP: f32 = TREELINE.1;
 
@@ -267,7 +287,11 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
             let (jn, jp) = (j.saturating_sub(1), (j + 1).min(h - 1));
             let dhdz = (hgt[jp * w + i] - hgt[jn * w + i]) * RES / (jp - jn).max(1) as f32;
             let shade = smoothstep(0.25, 0.8, dhdz);
-            let drift = (foot * 0.78).max(hollow * 0.7).max(shade * 0.6);
+            // Lingering patches (old avalanche / cornice snow in the shade of the stands): a coarse
+            // value noise, so a few white islands lie out on the valley meadow too.
+            let (wx, wz) = (x0 + (i as f32 + 0.5) / RES, z0 + (j as f32 + 0.5) / RES);
+            let patch = smoothstep(0.66, 0.8, value_noise(wx * 0.07, wz * 0.07));
+            let drift = foot.max(hollow * 0.95).max(shade * 0.8).max(patch * 0.9);
             snow[k] += (1.0 - snow[k]) * drift;
         }
     }
@@ -296,6 +320,17 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
         ..default()
     });
     (images.add(img), Vec4::new(x0, z0, 1.0 / COLS as f32, 1.0 / ROWS as f32))
+}
+
+/// Smooth value noise 0..1 on the integer lattice (hash = [`crate::realforest::rolls`]).
+fn value_noise(x: f32, z: f32) -> f32 {
+    let (xi, zi) = (x.floor(), z.floor());
+    let (fx, fz) = (x - xi, z - zi);
+    let (sx, sz) = (fx * fx * (3.0 - 2.0 * fx), fz * fz * (3.0 - 2.0 * fz));
+    let h = |a: f32, b: f32| crate::realforest::rolls(a * 0.37 + 101.0, b * 0.37 - 57.0).0;
+    let top = h(xi, zi) + (h(xi + 1.0, zi) - h(xi, zi)) * sx;
+    let bot = h(xi, zi + 1.0) + (h(xi + 1.0, zi + 1.0) - h(xi, zi + 1.0)) * sx;
+    top + (bot - top) * sz
 }
 
 /// Separable box blur, radius `r` texels.

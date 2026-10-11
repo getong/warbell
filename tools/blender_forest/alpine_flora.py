@@ -32,8 +32,8 @@ def ucell(cell):
 
 
 UV_GRASS = [ucell(c) for c in LAYOUT["undergrowth"]["grass"]]
-DWARF_PINE = (0.70, 0.82, 0.66)  # darker, denser needles than the forest spruce
-JUNIPER = (0.56, 0.70, 0.68)  # blue-grey
+DWARF_PINE = (0.80, 0.95, 0.90)  # paler blue-green than the forest spruce (reads as scrub, not a dark blob)
+JUNIPER = (0.66, 0.80, 0.80)  # blue-grey
 BARK = (0.70, 0.64, 0.60)
 
 
@@ -48,7 +48,7 @@ def krummholz(seed, spread, height, stems):
     az0 = rng.uniform(0, 6.3)
     for i in range(stems):
         az = az0 + i * 2 * math.pi / stems + rng.uniform(-0.35, 0.35)
-        L = spread * rng.uniform(0.75, 1.05)
+        L = spread * rng.uniform(0.55, 1.15)  # ragged outline, not a disc
         d = Vector((math.cos(az), math.sin(az), rng.uniform(0.08, 0.22)))
         pts = grow_path((0, 0, 0.03), d, L, 3, rng, bend=0.12, gravity=0.10)
         tube(b, Limb(pts, taper(4, 0.045, 0.014), 1), 3, 0, BARK, uv_phase=rng.uniform(0, 1))
@@ -91,7 +91,17 @@ def krummholz(seed, spread, height, stems):
         flat = Vector((0, 0, 1)) + up.cross(Vector((0, 0, 1))).normalized() * rng.uniform(-0.6, 0.6)
         card(b, base, up, flat, rng.uniform(0.6, 0.85), UV_CONIFER, 1, crown_c, crown_r, DWARF_PINE, rng,
              fold=0.2, bend_w=0.75)
+    snow_cap(b, 0.6)
     return b, mats
+
+
+def snow_cap(b, k):
+    """Tilt the needle cards' normals toward the sky by `k`: the frosted material twin settles
+    snow on sky-facing normals, so the mat's top reads as a snow cap over dark needles below."""
+    up = Vector((0, 0, 1))
+    for i, (idx, uvs, nrms, cols, mat) in enumerate(b.faces):
+        if mat == 1:
+            b.faces[i] = (idx, uvs, [tuple((Vector(n) * (1 - k) + up * k).normalized()) for n in nrms], cols, mat)
 
 
 def flagged_spruce(seed, lod, height, trunk_r):
@@ -176,6 +186,7 @@ def juniper(seed):
         a = rng.uniform(0, 6.3)
         pts = grow_path((0, 0, 0.02), (math.cos(a), math.sin(a), 0.05), 0.7, 2, rng, bend=0.1)
         tube(b, Limb(pts, taper(3, 0.03, 0.012), 1), 3, 0, BARK)
+    snow_cap(b, 0.5)
     return b, mats
 
 
@@ -207,10 +218,10 @@ def tussock(seed, size, tint):
 
 
 MODELS = {
-    "krummholz_a": lambda: krummholz(201, spread=1.75, height=0.9, stems=7),
-    "krummholz_b": lambda: krummholz(211, spread=1.45, height=0.75, stems=6),
-    "spruce_flag_lod0": lambda: flagged_spruce(223, 0, height=3.2, trunk_r=0.12),
-    "spruce_flag_lod1": lambda: flagged_spruce(223, 1, height=3.2, trunk_r=0.12),
+    "krummholz_a": lambda: krummholz(201, spread=2.1, height=0.85, stems=8),
+    "krummholz_b": lambda: krummholz(211, spread=1.75, height=0.7, stems=7),
+    "spruce_flag_lod0": lambda: flagged_spruce(223, 0, height=3.2, trunk_r=0.075),
+    "spruce_flag_lod1": lambda: flagged_spruce(223, 1, height=3.2, trunk_r=0.075),
     "juniper_a": lambda: juniper(231),
     "tussock_a": lambda: tussock(241, 0.7, (1.35, 1.15, 0.70)),
     "tussock_b": lambda: tussock(251, 0.6, (1.25, 1.12, 0.75)),

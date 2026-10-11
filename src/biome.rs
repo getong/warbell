@@ -1142,6 +1142,9 @@ pub fn scatter_region(
                                 && !landmark_core
                                 && !story_clearing
                                 && crate::alpine::above_treeline(cx, cz, py)
+                                // Walkable benches / flats only (≈27°, stricter than the shader's
+                                // ~37° rock line): no scrub hanging on a crag.
+                                && crate::alpine::slope_at(cx, cz) < 0.5
                         }) {
                             let over = py - crate::alpine::treeline_at(cx, cz);
                             if let Some((m, fs, a)) = crate::alpine::snowkit::alpine_flora(k, cx, cz, over) {

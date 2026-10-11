@@ -72,7 +72,8 @@ pub fn tree(kit: &Kit, src: usize, x: f32, z: f32) -> Option<(usize, bool)> {
     let y = crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
     let below_line = super::treeline_at(x, z) - y;
     let name = match src {
-        _ if below_line < 2.5 && c < 0.75 - below_line * 0.2 => "spruce_flag_lod0",
+        // (Only on walkable ground: no stunted spruce hanging on a rock face.)
+        _ if below_line < 2.5 && c < 0.75 - below_line * 0.2 && super::slope_at(x, z) < 0.6 => "spruce_flag_lod0",
         0 => "pine_a_lod0",
         1 => "pine_b_lod0",
         2 => "pine_c_lod0",
@@ -161,13 +162,23 @@ pub fn cover(kit: &Kit, class: usize, x: f32, z: f32) -> Option<(usize, f32, boo
             _ => None,
         };
     }
-    // Past the tree line: tough alpine grass tussocks poke through the snow, and lichen-crusted
-    // stones (pebbles) — sparser than the meadow sward, but alive.
+    // Nothing grows on the steep / rock faces (the shader paints them bare rock past ~37°) —
+    // bar the very odd tuft in a crevice.
+    let slope = super::slope_at(x, z);
+    if slope > 0.7 && a > 0.03 {
+        return None;
+    }
+    // Past the tree line: tough alpine grass tussocks poke through where the snow is thin (sun-
+    // facing ribs, wind-scoured crests), in clusters — never peppered over the deep snow; plus
+    // the odd stone. Pale straw, unfrosted, so they catch the light instead of reading as dirt.
     let y = crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
     if y > super::treeline_at(x, z) - 1.0 {
+        let cluster = crate::realforest::rolls((x / 5.0).floor() * 5.0 + 0.5, (z / 5.0).floor() * 5.0 + 0.5).1 < 0.3;
         return match class {
-            0 if a < 0.4 => pick(&["tussock_a", "tussock_b"], 1.0).or_else(|| pick(&GRASS, 0.7)),
-            2 if a < 0.45 => pick(&PEBBLES, 0.32),
+            0 if a < 0.5 && slope < 0.6 && cluster && super::thin_snow_spot(x, z) => {
+                kit.pick_named(&["tussock_a", "tussock_b"], b).map(|m| (m, 1.0, false))
+            }
+            2 if a < 0.2 && slope < 0.6 => pick(&PEBBLES, 0.32),
             _ => None,
         };
     }

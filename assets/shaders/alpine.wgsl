@@ -312,6 +312,12 @@ fn alpine_apply(pbr: ptr<function, PbrInput>, p: vec3<f32>, gn_in: vec3<f32>, cl
         let lush = smoothstep(0.35, 0.75, nb);
         ma = mix(ma, ma * vec3<f32>(0.82, 1.06, 0.78), lush * 0.6);
         ma = mix(ma, vec3<f32>(ml) * vec3<f32>(1.10, 1.02, 0.80), smoothstep(0.20, 0.55, m.r) * 0.45);
+        // Inside the alpine zone (G) the valley apron is a high, grazed meadow, not a lowland
+        // lawn: duller and straw-brown, with dark earth showing through in broken patches.
+        let alp_m = smoothstep(0.5, 1.0, m.g);
+        ma = mix(ma, vec3<f32>(ml) * vec3<f32>(1.06, 0.96, 0.70), alp_m * 0.55);
+        let earth = smoothstep(0.52, 0.72, a_noise(p.xz * 0.55 + vec2<f32>(13.0, -7.0)) * 0.7 + nb * 0.3);
+        ma = mix(ma, vec3<f32>(ml) * vec3<f32>(0.62, 0.50, 0.40), alp_m * earth * 0.6);
         alb += w.y * ma;
         nw += w.y * nm;
         // The AO / roughness tile too (AO darkens the turf's hollows in the same dashed rows).
