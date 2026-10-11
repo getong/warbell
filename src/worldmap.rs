@@ -2056,14 +2056,16 @@ fn tiles() -> Arc<Grid> {
 /// BASE space so the island silhouette is unchanged; `active_map()` (via `classify`/the noise
 /// phase/the regions) makes it the right world.
 fn build_grid() -> Arc<Grid> {
-    let mut v = Vec::with_capacity((COLS * ROWS) as usize);
-    for iz in 0..ROWS {
-        for ix in 0..COLS {
-            v.push(classify(ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE));
-        }
-    }
+    let t0 = std::time::Instant::now();
+    // `classify` is a pure function of (x, z, active map): rows classify in parallel, in order.
+    let rows = crate::par::par_map(ROWS as usize, |iz| {
+        (0..COLS).map(|ix| classify(ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE)).collect::<Vec<_>>()
+    });
+    let mut v: Grid = rows.into_iter().flatten().collect();
+    let t1 = t0.elapsed().as_secs_f64() * 1000.0;
     prune_stray_islets(&mut v);
     terrace_inland(&mut v);
+    info!("worldmap: tile grid {COLS}x{ROWS} classified in {t1:.0} ms, relaxed in {:.0} ms", t0.elapsed().as_secs_f64() * 1000.0 - t1);
     Arc::new(v)
 }
 
@@ -3895,16 +3897,32 @@ fn spawn_terrain_sheet(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     mat: Handle<TerrainMaterial>,
-    keep: impl Fn(TB) -> bool + Copy,
+    keep: impl Fn(TB) -> bool + Copy + Sync,
 ) {
     let lod = terrain_lod_enabled();
+    // Mesh every chunk (full-res + coarse drape) in parallel — pure functions of the tile caches —
+    // then spawn serially in the original row-major order.
+    let mut rects = Vec::new();
     let mut cz = 0;
     while cz < ROWS {
         let mut cx = 0;
         while cx < COLS {
-            let (x1, z1) = ((cx + TERRAIN_CHUNK).min(COLS), (cz + TERRAIN_CHUNK).min(ROWS));
-            let mut mesh = build_terrain_chunk(keep, cx, x1, cz, z1);
-            if mesh.count_vertices() > 0 {
+            rects.push((cx, (cx + TERRAIN_CHUNK).min(COLS), cz, (cz + TERRAIN_CHUNK).min(ROWS)));
+            cx += TERRAIN_CHUNK;
+        }
+        cz += TERRAIN_CHUNK;
+    }
+    let built = crate::par::par_map(rects.len(), |i| {
+        let (cx, x1, cz, z1) = rects[i];
+        let mesh = build_terrain_chunk(keep, cx, x1, cz, z1);
+        if mesh.count_vertices() == 0 {
+            return None;
+        }
+        let coarse = if lod { build_terrain_chunk_coarse(keep, cx, x1, cz, z1) } else { None };
+        Some((mesh, coarse))
+    });
+    for (mut mesh, mut coarse) in built.into_iter().flatten() {
+            {
                 // Attach the chunk's own AABB up front. The LOD `VisibilityRange` measures the
                 // camera→AABB-centre distance, and until Bevy's `calculate_bounds` fills the AABB in,
                 // the range check falls back to the entity *translation* — so a chunk under a player
@@ -3918,7 +3936,6 @@ fn spawn_terrain_sheet(
                 // vertices for the distant majority of the island. The band is a dithered
                 // crossfade (only the ring of chunks currently inside it pays the discard
                 // cost) so the swap doesn't pop; skirts on the coarse mesh hide the seam.
-                let mut coarse = if lod { build_terrain_chunk_coarse(keep, cx, x1, cz, z1) } else { None };
                 // ONE SHARED AABB (the union) for BOTH siblings. `VisibilityRange` with
                 // `use_aabb` measures the camera→AABB distance, and the dither crossfade
                 // is only COMPLEMENTARY (fine discards exactly the pixels the coarse
@@ -3995,9 +4012,6 @@ fn spawn_terrain_sheet(
                     }
                 }
             }
-            cx += TERRAIN_CHUNK;
-        }
-        cz += TERRAIN_CHUNK;
     }
 }
 

@@ -860,16 +860,23 @@ impl Chunks {
 
     pub fn spawn(self, kit: &Kit, commands: &mut Commands, meshes: &mut Assets<Mesh>, cull: bool) {
         SCATTER_DONE.store(true, std::sync::atomic::Ordering::Release);
-        for ((key, tier, slice, mat, snow), items) in self.groups {
-            let mut it = items.into_iter();
-            let Some((m0, p0, t0)) = it.next() else { continue };
+        // Merge every group in parallel (pure vertex work — this was most of each scatter phase),
+        // then spawn serially in the groups' iteration order.
+        let groups: Vec<_> = self.groups.into_iter().collect();
+        let merged = crate::par::par_map(groups.len(), |gi| {
+            let mut it = groups[gi].1.iter();
+            let &(m0, p0, t0) = it.next()?;
             let mut base = kit.models[m0].parts[p0].mesh.clone().transformed_by(t0);
-            for (m, p, t) in it {
+            for &(m, p, t) in it {
                 let part = kit.models[m].parts[p].mesh.clone().transformed_by(t);
                 if base.merge(&part).is_err() {
                     warn!("realforest: chunk merge failed (attribute mismatch) — part skipped");
                 }
             }
+            Some(base)
+        });
+        for (((key, tier, slice, mat, snow), _), base) in groups.into_iter().zip(merged) {
+            let Some(mut base) = base else { continue };
             // GPU-only: the merged chunk is never read back on the CPU (the reskin pass inspects it in
             // PostUpdate of its spawn frame, before extraction), so drop the main-world copy once
             // it's uploaded. These merges were ~3 GiB of resident RAM at MAP_SCALE 3.9.

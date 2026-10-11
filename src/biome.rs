@@ -813,9 +813,17 @@ fn spawn_chunks(
         end_margin: 62.0..62.0,   // abrupt cutoff at 62 world units — inside the fog ramp so it hides
         use_aabb: true,
     };
-    for (key, bucket) in chunks {
+    // Merge every bucket in parallel (pure vertex work), then spawn serially in bucket order.
+    let mut keyed: Vec<((i32, i32), Option<ChunkBucket>)> = chunks.into_iter().map(|(k, b)| (k, Some(b))).collect();
+    let buckets: Vec<std::sync::Mutex<Option<ChunkBucket>>> =
+        keyed.iter_mut().map(|(_, b)| std::sync::Mutex::new(b.take())).collect();
+    let merged = crate::par::par_map(buckets.len(), |i| {
+        let b = buckets[i].lock().expect("bucket").take().unwrap_or_default();
+        (merge_props(b.cover), merge_props(b.props))
+    });
+    for ((key, _), (cover, props)) in keyed.into_iter().zip(merged) {
         let center = chunk_center(key);
-        if let Some(mesh) = merge_props(bucket.cover).filter(|_| !no_grass()).map(gpu_only) {
+        if let Some(mesh) = cover.filter(|_| !no_grass()).map(gpu_only) {
             let mut e = commands.spawn((
                 Mesh3d(meshes.add(mesh)),
                 MeshMaterial3d(mat.clone()),
@@ -828,7 +836,7 @@ fn spawn_chunks(
                 e.insert(cover_range.clone());
             }
         }
-        if let Some(mesh) = merge_props(bucket.props).map(gpu_only) {
+        if let Some(mesh) = props.map(gpu_only) {
             let mut e = commands.spawn((
                 Mesh3d(meshes.add(mesh)),
                 MeshMaterial3d(mat.clone()),
