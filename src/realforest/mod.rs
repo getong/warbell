@@ -1027,6 +1027,8 @@ const STREAM_OUT: f32 = STREAM_IN + 24.0;
 /// Most chunk KEYS whose async merge is launched per frame (nearest first); the rest follow next
 /// frame. The boot radius (~110 keys) is queued within ~4 frames.
 const STREAM_BUDGET: usize = 32;
+/// Vertices of finished chunk merges landed (spawned + uploaded) per frame — see `stream_cover`.
+const LAND_BUDGET_VERTS: usize = 150_000;
 
 /// Is cover streaming on? (`FOREST_NOSTREAM=1` turns it off; `FOREST_NOCULL` bypasses it too.)
 pub fn cover_stream_enabled() -> bool {
@@ -1066,27 +1068,38 @@ fn stream_cover(
     if chunks.is_empty() && live.is_empty() {
         return;
     }
-    // Land finished merges (spawned whole-chunk at once, so a chunk never appears half-built).
-    pending.retain(|key, task| {
-        let Some(merged) = bevy::tasks::block_on(bevy::tasks::poll_once(task)) else { return true };
-        let ents = live.entry(*key).or_default();
-        if let Some(recipes) = chunks.get(key) {
-            for (r, mesh) in recipes.iter().zip(merged) {
-                if let Some(mesh) = mesh {
-                    ents.push(spawn_group(kit, &mut commands, &mut meshes, *key, r, mesh, true));
-                }
-            }
-        }
-        false
-    });
-    if !*dirty && pending.is_empty() && last.is_some_and(|l| l.distance(p) < 2.0) {
-        return;
-    }
-    *last = Some(p);
     let centre = |k: &(i32, i32)| {
         let c = chunk_center(*k);
         Vec2::new(c.x, c.z)
     };
+    // Land finished merges (spawned whole-chunk at once, so a chunk never appears half-built),
+    // nearest first and at most LAND_BUDGET_VERTS per frame (always at least one chunk): landing
+    // every finished chunk in one frame put a whole ring of chunks through Bevy's mesh upload at
+    // once — 20-40 ms `allocate_and_free_meshes` hitches while walking. The rest land next frame.
+    let mut done: Vec<((i32, i32), f32)> =
+        pending.iter().filter(|(_, t)| t.is_finished()).map(|(k, _)| (*k, centre(k).distance(p))).collect();
+    done.sort_by(|a, b| a.1.total_cmp(&b.1));
+    let mut landed_verts = 0usize;
+    for (key, _) in done {
+        if landed_verts >= LAND_BUDGET_VERTS {
+            break; // still in `pending`, so next frame lands it (this runs before the idle early-out)
+        }
+        let Some(task) = pending.remove(&key) else { continue };
+        let merged = bevy::tasks::block_on(task);
+        let ents = live.entry(key).or_default();
+        if let Some(recipes) = chunks.get(&key) {
+            for (r, mesh) in recipes.iter().zip(merged) {
+                if let Some(mesh) = mesh {
+                    landed_verts += mesh.count_vertices();
+                    ents.push(spawn_group(kit, &mut commands, &mut meshes, key, r, mesh, true));
+                }
+            }
+        }
+    }
+    if !*dirty && pending.is_empty() && last.is_some_and(|l| l.distance(p) < 2.0) {
+        return;
+    }
+    *last = Some(p);
     live.retain(|k, ents| {
         if centre(k).distance(p) <= STREAM_OUT {
             return true;
