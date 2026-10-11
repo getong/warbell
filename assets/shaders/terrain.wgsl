@@ -900,8 +900,8 @@ fn fragment(
         let src = pbr_input.material.base_color.rgb;
         // Keep a little of the vertex colour's own variation (and the bank / shore tints).
         var swamp_rgb = mix(src, mix(floor_c, src * 0.3, 0.15), smoothstep(0.0, 0.6, wet));
-        let pool_n = ter_noise_rot(sp * 0.31, 0.95, 0.31) * 0.65 + ter_noise_rot(sp * 1.1, 0.47, 0.88) * 0.35;
-        let standing = (1.0 - smoothstep(0.30, 0.36, pool_n)) * smoothstep(0.55, 0.9, wet)
+        let pool_n = ter_noise_rot(sp * 0.42, 0.95, 0.31) * 0.6 + ter_noise_rot(sp * 1.3, 0.47, 0.88) * 0.4;
+        let standing = (1.0 - smoothstep(0.24, 0.32, pool_n)) * smoothstep(0.55, 0.9, wet)
             * smoothstep(0.90, 0.98, in.world_normal.y) * (1.0 - cliff);
         swamp_rgb = mix(swamp_rgb, swamp_rgb * 0.22 + vec3<f32>(0.004, 0.006, 0.004), standing);
         pbr_input.material.base_color = vec4<f32>(swamp_rgb, pbr_input.material.base_color.a);

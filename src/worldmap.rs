@@ -2954,7 +2954,9 @@ pub(crate) fn ground_color(x: f32, z: f32) -> [f32; 4] {
     if yard_s > 0.0 {
         col = mix3(col, lin3(0x52391f), yard_s * 0.92);
     }
-    [col[0], col[1], col[2], wet.clamp(0.0, 1.0)]
+    // The Blight is the hold's trampled mud, not bog: the swamp region's wetness (which drives
+    // the shader's swamp floor + standing water) fades out over the Blight's own blend band.
+    [col[0], col[1], col[2], (wet * (1.0 - blight_w)).clamp(0.0, 1.0)]
 }
 
 // ── Water field (water shader: depth stand-in, bog murk, river flow) ────────────────
