@@ -80,21 +80,25 @@ const VENDOR_Z: f32 = -0.85;
 
 /// North row faces the lane southward (+Z), south row faces it northward. The west lane runs
 /// along z ≈ 0 (`castle_ground::LANES`), the stalls sit just off its trodden shoulder.
+///
+/// Castle v2 (spec §2): the market square sits just inside the WEST main gate, centred on
+/// `castle::MARKET_CENTRE`; everything here is laid out relative to it.
+const MC: Vec2 = crate::castle::MARKET_CENTRE;
 const STALLS: [Stall; 4] = [
-    Stall { model: "market_bread", pos: Vec2::new(-8.2, -2.9), yaw: 0.0, vendor_x: 0.35 },
-    Stall { model: "market_pots", pos: Vec2::new(-11.0, -2.9), yaw: 0.0, vendor_x: -0.1 },
-    Stall { model: "market_cloth", pos: Vec2::new(-8.2, 2.9), yaw: PI, vendor_x: -0.2 },
-    Stall { model: "market_veg", pos: Vec2::new(-11.0, 2.9), yaw: PI, vendor_x: -0.3 },
+    Stall { model: "market_bread", pos: Vec2::new(MC.x + 1.6, MC.y - 2.9), yaw: 0.0, vendor_x: 0.35 },
+    Stall { model: "market_pots", pos: Vec2::new(MC.x - 1.6, MC.y - 2.9), yaw: 0.0, vendor_x: -0.1 },
+    Stall { model: "market_cloth", pos: Vec2::new(MC.x + 1.6, MC.y + 2.9), yaw: PI, vendor_x: -0.2 },
+    Stall { model: "market_veg", pos: Vec2::new(MC.x - 1.6, MC.y + 2.9), yaw: PI, vendor_x: -0.3 },
 ];
 
 /// Loose props: (model, world XZ, yaw, blocker radius).
 const PROPS: [(&str, Vec2, f32, f32); 2] = [
-    ("market_cart", Vec2::new(-13.1, 2.3), 2.6, 0.8),
-    ("market_barrels", Vec2::new(-9.6, -4.0), 0.3, 0.75),
+    ("market_cart", Vec2::new(MC.x - 4.2, MC.y + 2.3), 2.6, 0.8),
+    ("market_barrels", Vec2::new(MC.x, MC.y - 4.4), 0.3, 0.75),
 ];
 
 /// Townsfolk pausing at a counter: (world XZ, facing yaw).
-const SHOPPERS: [(Vec2, f32); 2] = [(Vec2::new(-8.45, -1.65), PI), (Vec2::new(-11.25, 1.65), 0.0)];
+const SHOPPERS: [(Vec2, f32); 2] = [(Vec2::new(MC.x + 1.35, MC.y - 1.65), PI), (Vec2::new(MC.x - 1.85, MC.y + 1.65), 0.0)];
 
 fn spawn_market(
     mut commands: Commands,

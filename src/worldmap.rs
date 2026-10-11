@@ -105,7 +105,28 @@ const ISLAND_EXP: f32 = 2.6;
 // each bump silently grows the *world* safe-zone; the trims keep the biome-free ring round the
 // castle at its tuned ~32.4-unit world size. Town build plots flatten themselves
 // (`near_build_plot`), so this doesn't gate their footing.
-pub const SAFE_R: f32 = 12.45;
+//
+// Castle v2 (spec `2026-10-11-zamek-v2-design.md` §1): the walls grew to 28×21 half-extents and the
+// spec wants ≥15u of open flat ground past EVERY wall face, corners included. A circle big enough
+// for the corners (≥50u) bit 4-class cliffs into the snow mesa NW of the castle, so the forced
+// grass is now the wall rectangle grown by [`SAFE_PAD`] (a rounded rectangle, see
+// [`castle_ring_dist`]) and `SAFE_R` is the radius that ENCLOSES it (corner diagonal ≈13.46 base +
+// the pad) — still the radius every other consumer (rivers, hills, swamp, poi/story rings) keeps.
+pub const SAFE_R: f32 = 20.1;
+/// Forced-grass margin round the castle walls (base units): 6.6·2.6 ≈ 17.2u nominal, and with the
+/// fray clamped to ±[`SAFE_FRAY`] never under (6.6 − 0.8)·2.6 ≈ 15.1u past any wall face or corner.
+const SAFE_PAD: f32 = 6.6;
+/// How far the frayed grass edge may wander either side of [`SAFE_PAD`] (base units). `edge_fray`
+/// swings ±3.7 — clamped so the ring stays ≥15u and doesn't bite into the nearby mesas.
+const SAFE_FRAY: f32 = 0.8;
+
+/// Base-space distance from `(x, z)` to the castle's wall rectangle (`castle::HALF_X`×`HALF_Z`,
+/// world-centred on the origin = base `(CX, CZ)`); 0 inside the walls.
+fn castle_ring_dist(x: f32, z: f32) -> f32 {
+    let dx = ((x - CX).abs() - crate::castle::HALF_X / MAP_SCALE).max(0.0);
+    let dz = ((z - CZ).abs() - crate::castle::HALF_Z / MAP_SCALE).max(0.0);
+    dx.hypot(dz)
+}
 pub const GROUND_STEP: f32 = 0.5; // world-Y per height class
 pub const SEA_Y: f32 = -0.4;
 /// Cliff-face mesh knobs (`build_terrain_chunk`): a tile-edge wall whose mean drop is at
@@ -1872,7 +1893,23 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
         return Some((TB::Desert, 1));
     }
     let dc = dist_from_castle(x, z);
-    if dc < SAFE_R + edge_fray(x, z).max(-4.0) {
+    let ring = castle_ring_dist(x, z);
+    if ring < SAFE_PAD + SAFE_FRAY {
+        // A mesa's pass corridor keeps its ramp even where it noses into the castle's open ring
+        // (the snow massif's SE trail mouth lies ~15u off the NW wall corner): flattening its first
+        // tiles to grass left a 3–4-class lip at the foot of the only walkable ascent.
+        for reg in active_map().regions {
+            if reg.cliffy && reg.peak > 0 {
+                if let Some(cls) = pass_class(x, z, reg) {
+                    let cls = if reg.biome == TB::Snow { alpine_massif::massif_class(x, z, reg) } else { cls };
+                    if cls > 1 {
+                        return Some((reg.biome, cls));
+                    }
+                }
+            }
+        }
+    }
+    if ring < SAFE_PAD + edge_fray(x, z).clamp(-SAFE_FRAY, SAFE_FRAY) {
         return Some((TB::Grass, 1));
     }
     if is_river(x, z) {
@@ -4864,8 +4901,8 @@ mod tests {
         let mut total_pts = 0usize;
         for k in 0..40 {
             let ang = k as f32 * 0.157;
-            let from = Vec2::new(ang.cos() * 34.0, ang.sin() * 34.0);
-            total_pts += crate::navgrid::path_to_budget(from, Vec2::new(0.0, -8.0), crate::navgrid::NAV_MAX_NODES).len();
+            let from = Vec2::new(ang.cos() * 48.0, ang.sin() * 48.0);
+            total_pts += crate::navgrid::path_to_budget(from, crate::castle::KEEP_STEPS, crate::navgrid::NAV_MAX_NODES).len();
         }
         println!("bench_navgrid: 40 spawn-ring→keep paths in {:?} ({total_pts} waypoints)", t.elapsed());
     }
@@ -5008,7 +5045,7 @@ mod tests {
     fn mesa_summits_reachable_from_castle() {
         for reg in MAP_HOME.regions.iter().filter(|r| r.cliffy && r.peak > 0) {
             let summit = Vec2::new(reg.x * MAP_SCALE - GX, reg.z * MAP_SCALE - GZ);
-            let path = crate::navgrid::path_to_budget(Vec2::new(0.0, -8.0), summit, 120_000);
+            let path = crate::navgrid::path_to_budget(crate::castle::KEEP_STEPS, summit, 120_000);
             assert!(
                 !path.is_empty(),
                 "no nav-grid route castle → {:?} summit at {summit:?}",

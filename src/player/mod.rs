@@ -10,6 +10,7 @@
 pub(crate) mod anim;
 mod arts;
 mod block;
+pub(crate) mod boom;
 mod camera;
 mod charge;
 mod combat;
@@ -32,6 +33,8 @@ mod viewmodel;
 
 /// First-person view state, toggled by the HUD eye button ([`crate::ui::settings`]) and the V key.
 pub use camera::FirstPerson;
+/// Marker for solid buildings the third-person camera boom collides with (see [`boom`]).
+pub use boom::CameraOccluder;
 pub(crate) use camera::fp_body_visibility;
 pub use viewmodel::ReticleTarget;
 /// Sand-Dash slide duration — re-exported so the standalone viewer (`viewer.rs`) can drive the
@@ -482,6 +485,10 @@ impl Plugin for PlayerPlugin {
             // look-inertia reads this frame's view angles.
             .init_resource::<viewmodel::ReticleTarget>()
             .add_systems(Startup, viewmodel::spawn_reticle)
+            // Camera boom collision: push `CameraOccluder` down onto meshes under tagged roots
+            // (ungated — buildings spawn in every mode), + the `FOREST_TALLWALLS` test rig.
+            .add_systems(PostStartup, boom::spawn_tall_test_walls)
+            .add_systems(Update, (boom::propagate_occluders, boom::boom_shot_seq.before(camera::player_camera)))
             .add_systems(
                 Update,
                 (
@@ -653,7 +660,9 @@ pub(crate) fn spawn_hero_meshes(
 /// the meadow (2026-07; previously just outside the north gate at `gate - 3`). Returns
 /// `(world XZ, facing)`; the facing aims at the keep so the opening frame reads immediately.
 pub fn spawn_point() -> (Vec2, f32) {
-    let pos = Vec2::new(-26.0, 18.0);
+    // Castle v2: the same spot relative to the (now 28×21) walls — 9u west, 6u south of the SW
+    // corner, beside the meadow campfire.
+    let pos = Vec2::new(-crate::castle::HALF_X - 9.0, crate::castle::HALF_Z + 6.0);
     // Yaw 0 faces +Z; aim at the castle at the origin.
     let facing = (-pos.x).atan2(-pos.y);
     (pos, facing)

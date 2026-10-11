@@ -316,7 +316,7 @@ fn rallied(world: &mut World) -> usize {
 }
 
 fn ring(world: &mut World, v: &mut Verify, night: usize) {
-    pin_hero(world, crate::castle::BELL_POS);
+    pin_hero(world, crate::castle::BELL_ROPE);
     v.key(KeyCode::KeyE);
     v.advance(Step::Bell(night));
 }

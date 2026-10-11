@@ -183,7 +183,7 @@ fn drive_succession(
             succ.steal_pos = corpse;
         } else {
             // Possess the nearest living townsperson (militia keep the `Townsfolk` tag at night, so
-            // there's always a body during a siege). No body found → rise at the north gate.
+            // there's always a body during a siege). No body found → rise inside the west gate.
             let mut nearest: Option<(Entity, Vec3, f32)> = None;
             for (e, vtf) in &villagers {
                 let d = Vec2::new(vtf.translation.x, vtf.translation.z).distance(corpse_xz);
@@ -197,9 +197,9 @@ fn drive_succession(
                     succ.steal_pos = pos;
                 }
                 None => {
-                    let gate = crate::castle::gate_centers()[0];
-                    let gx = gate.x;
-                    let gz = gate.y - 3.0;
+                    let inside = crate::castle::Gate::West.interior(3.0);
+                    let gx = inside.x;
+                    let gz = inside.y;
                     let gy = crate::worldmap::ground_at_world(gx, gz).unwrap_or(0.0);
                     succ.steal_pos = Vec3::new(gx, gy, gz);
                 }

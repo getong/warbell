@@ -1333,7 +1333,7 @@ fn stage_raid_for_shot(
     *done = true;
     for i in 0..4 {
         let s = 0x5a1d_7000u32.wrapping_add((i as u32).wrapping_mul(2654435761)) | 1;
-        let pos = crate::siege::KEEP_POS + Vec2::new((i as f32 - 1.5) * 1.6, 16.0);
+        let pos = crate::castle::Gate::South.center() + Vec2::new((i as f32 - 1.5) * 1.6, 4.0);
         spawn_raider(&mut commands, &mut meshes, &mut creature_mats, pos, s);
     }
 }

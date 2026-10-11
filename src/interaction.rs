@@ -142,10 +142,10 @@ impl Plugin for InteractionPlugin {
     }
 }
 
-/// The merchant stall's world XZ — `castle::gate_centers()[0] + (2.5, -5.0)`, matching where
-/// `villagers` builds the market.
+/// The merchant shop's world XZ — `castle::MERCHANT_SHOP` (by the market inside the west gate),
+/// matching where `villagers` builds it.
 fn shop_anchor() -> Vec2 {
-    crate::castle::gate_centers()[0] + Vec2::new(2.5, -5.0)
+    crate::castle::MERCHANT_SHOP
 }
 
 #[allow(clippy::too_many_arguments)]

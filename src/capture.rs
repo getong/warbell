@@ -22,7 +22,12 @@ use std::time::Duration;
 pub struct CapturePlugin;
 
 #[derive(Resource)]
-struct ShotPath(String);
+pub(crate) struct ShotPath(pub(crate) String);
+
+/// Set `true` by a follow-up shot sequence (e.g. `player::boom`'s `FOREST_BOOMSHOTS`) to keep the
+/// app alive after the main `FOREST_SHOT` lands; `drive_shot` exits once it drops back to `false`.
+#[derive(Resource, Default)]
+pub(crate) struct ShotHold(pub(crate) bool);
 
 #[derive(Resource, Default)]
 struct ShotClock {
@@ -45,6 +50,7 @@ impl Plugin for CapturePlugin {
         if let Ok(path) = std::env::var("FOREST_SHOT") {
             app.insert_resource(ShotPath(path))
                 .init_resource::<ShotClock>()
+                .init_resource::<ShotHold>()
                 .add_systems(Update, drive_shot);
         } else if let Ok(dir) = std::env::var("FOREST_CLIP") {
             let cfg = clip_cfg(dir);
@@ -93,6 +99,7 @@ fn drive_shot(
     mut commands: Commands,
     mut exit: MessageWriter<AppExit>,
     mut cams: Query<(&mut Transform, Option<&mut crate::controls::FlyCam>), With<Camera3d>>,
+    hold: Res<ShotHold>,
 ) {
     clock.frame += 1;
     // Take the shot once the scene has actually WARMED: ≥240 rendered frames AND ≥10 s wall-clock
@@ -127,14 +134,33 @@ fn drive_shot(
     // from the REQUEST frame — see `shot_at`), THEN exit — a fixed-frame exit would race the
     // readback and write no PNG.
     if clock.shot && (std::path::Path::new(&path.0).exists() || clock.frame > clock.shot_at + 1800) {
-        if std::env::var("FOREST_SHOT_STORIES").is_ok() && drive_story_seq(&mut clock, &path.0, &mut commands, &mut cams) {
+        let seq_wanted = std::env::var("FOREST_SHOT_STORIES").is_ok() || std::env::var("FOREST_SHOT_CAMS").is_ok();
+        if seq_wanted && drive_story_seq(&mut clock, &path.0, &mut commands, &mut cams) {
+            return;
+        }
+        if hold.0 {
             return;
         }
         exit.write(AppExit::Success);
     }
 }
 
-/// One extra shot per story site after the main shot: park the camera (and the fly-cam's eased
+/// `FOREST_SHOT_CAMS="name:x,y,z,tx,ty,tz|name2:…"` — extra fixed-camera shots after the main one
+/// (eye → look-at target, world units), each saved next to the main PNG as `<name>.png`.
+fn parse_shot_cams(spec: &str) -> Vec<(String, Transform)> {
+    spec.split('|')
+        .filter_map(|item| {
+            let (name, nums) = item.split_once(':')?;
+            let v: Vec<f32> = nums.split(',').filter_map(|t| t.trim().parse().ok()).collect();
+            (v.len() == 6).then(|| {
+                let tf = Transform::from_xyz(v[0], v[1], v[2]).looking_at(Vec3::new(v[3], v[4], v[5]), Vec3::Y);
+                (name.trim().to_string(), tf)
+            })
+        })
+        .collect()
+}
+
+/// One extra shot per story site (or per `FOREST_SHOT_CAMS` entry) after the main shot: park the camera (and the fly-cam's eased
 /// yaw/pitch, so it doesn't swing back), let ~45 frames settle, grab, wait for the PNG, next.
 /// Returns `true` while the sequence still runs.
 fn drive_story_seq(
@@ -144,7 +170,10 @@ fn drive_story_seq(
     cams: &mut Query<(&mut Transform, Option<&mut crate::controls::FlyCam>), With<Camera3d>>,
 ) -> bool {
     if clock.seq.is_none() {
-        clock.seq = Some(crate::stories_cold::shot_cams());
+        clock.seq = Some(match std::env::var("FOREST_SHOT_CAMS") {
+            Ok(spec) => parse_shot_cams(&spec),
+            Err(_) => crate::stories_cold::shot_cams(),
+        });
     }
     let dir = std::path::Path::new(main).parent().map(|p| p.to_path_buf()).unwrap_or_default();
     let list = clock.seq.clone().unwrap_or_default();

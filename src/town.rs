@@ -599,25 +599,29 @@ fn restore_buildings(
 #[derive(Resource, Default)]
 pub struct PlotSpots(pub Vec<Vec2>);
 
-/// Fixed plot offsets from the castle origin — corners of the grass safe-zone,
-/// OUTSIDE the ~17×12 castle wall footprint (in_footprint: |x|<=18.6 && |z|<=13.6)
-/// and OFF the cardinal (N/S/E/W) gate lanes, all within ~21 world units so they
-/// sit on forced-flat grass.
+/// Castle v2 moved the walls out from 17×12 to `castle::HALF_X`×`HALF_Z` (28×21); the plots keep
+/// their old place RELATIVE TO THE WALLS (the fields in the open ring outside them, spec v2 §1).
+const PDX: f32 = crate::castle::HALF_X - 17.0;
+const PDZ: f32 = crate::castle::HALF_Z - 12.0;
+
+/// Fixed plot offsets from the castle origin — the fields in the open ring OUTSIDE the castle
+/// walls (in_footprint: |x|<=HALF_X+1.6 && |z|<=HALF_Z+1.6), OFF the gate lanes (W at z=0, S at
+/// x=0, N postern at x≈8) and the W-gate outer plots (Crown depot, gallows, grave), all inside the
+/// forced-flat grass of `worldmap::SAFE_R`.
 const PLOT_OFFSETS: [Vec2; PLOT_COUNT] = [
-    Vec2::new(10.0, 15.5),   // NE — north of wall, off gate lane
-    Vec2::new(-10.0, 15.5),  // NW — north of wall, off gate lane
-    Vec2::new(10.0, -15.5),  // SE — south of wall, off gate lane
-    Vec2::new(-10.0, -15.5), // SW — south of wall, off gate lane
-    Vec2::new(20.0, 8.0),    // E  — east of wall, off gate lane
-    Vec2::new(-20.0, 8.0),   // W  — west of wall, off gate lane
-    Vec2::new(20.0, -8.0),   // E  — east of wall, off gate lane
-    Vec2::new(-20.0, -8.0),  // W  — west of wall, off gate lane
-    // Outer corner ring — diagonal of each quadrant, still on forced-flat grass
-    // (length ~24.8 < SAFE_R+8 hill-flat cutoff), clear of the footprint and gate lanes.
-    Vec2::new(18.0, 17.0),   // NE corner
-    Vec2::new(-18.0, 17.0),  // NW corner
-    Vec2::new(18.0, -17.0),  // SE corner
-    Vec2::new(-18.0, -17.0), // SW corner
+    Vec2::new(10.0 + PDX, 15.5 + PDZ),   // S side, east of the south gate lane
+    Vec2::new(-10.0 - PDX, 15.5 + PDZ),  // S side, west of the south gate lane
+    Vec2::new(10.0 + PDX, -15.5 - PDZ),  // N side, east of the postern lane
+    Vec2::new(-10.0 - PDX, -15.5 - PDZ), // N side, west
+    Vec2::new(20.0 + PDX, 8.0 + PDZ),    // E — off the solid east wall
+    Vec2::new(-20.0 - PDX, 8.0 + PDZ),   // W — south of the King's Road
+    Vec2::new(20.0 + PDX, -8.0 - PDZ),   // E
+    Vec2::new(-20.0 - PDX, -8.0 - PDZ),  // W — north of the King's Road, behind the Crown depot
+    // Outer corner ring — diagonal of each quadrant, still on forced-flat grass.
+    Vec2::new(18.0 + PDX, 17.0 + PDZ),   // SE corner
+    Vec2::new(-18.0 - PDX, 17.0 + PDZ),  // SW corner
+    Vec2::new(18.0 + PDX, -17.0 - PDZ),  // NE corner
+    Vec2::new(-18.0 - PDX, -17.0 - PDZ), // NW corner
 ];
 
 /// World-XZ radius around each plot centre that must stay clear so a future building has room:

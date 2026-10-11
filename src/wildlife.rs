@@ -171,7 +171,8 @@ const PREDATOR_RESPAWN: f32 = 150.0;
 /// acquire a target standing in the sanctuary (struck-enrage still overrides — a wounded
 /// predator fights back anywhere), and predator herd anchors / respawn homes keep their whole
 /// wander circle outside it so packs don't mill around the gates.
-const TOWN_SANCTUARY_R: f32 = 27.0;
+/// Castle v2: the wall corners sit ≈35u out (`castle::HALF_X`×`HALF_Z` = 28×21) — keep ~6u past.
+const TOWN_SANCTUARY_R: f32 = crate::castle::HALF_X + 13.0;
 
 fn in_sanctuary(p: Vec2) -> bool {
     p.length() < TOWN_SANCTUARY_R
@@ -1163,11 +1164,12 @@ pub fn populate(
         let mut tries = 0;
         while placed < n && tries < 400 {
             tries += 1;
-            let ax = rng_range(&mut rng, -16.0, 16.0);
-            let az = rng_range(&mut rng, -16.0, 16.0);
+            let (hx, hz) = (crate::castle::HALF_X - 3.0, crate::castle::HALF_Z - 3.0);
+            let ax = rng_range(&mut rng, -hx, hx);
+            let az = rng_range(&mut rng, -hz, hz);
             let p = Vec2::new(ax, az);
             // Open grass, outside the keep core, off any wall/house/prop blocker or build plot.
-            if p.length() < 6.0
+            if p.distance(crate::castle::KEEP_POS) < 7.0
                 || !worldmap::is_grass_world(ax, az)
                 || crate::blockers::is_blocked(ax, az)
                 || crate::town::near_build_plot(ax, az)

@@ -548,7 +548,7 @@ pub fn spawn_courtyard_guard(
     let mat = shared_body_material(creature_mats);
     let mut rng = seed | 1;
     let half = crate::castle::courtyard_half();
-    let home = courtyard_spot(&mut rng, half, &[]).unwrap_or(Vec2::new(0.0, 5.0));
+    let home = courtyard_spot(&mut rng, half, &[]).unwrap_or(crate::castle::KEEP_STEPS);
     let skin = SKIN[(seed as usize) % SKIN.len()];
     let kind = if is_bowman(seed) {
         Kind::Archer { skin, tunic: TUNIC[2] }
@@ -851,7 +851,7 @@ fn spawn_freed_townsfolk(
     let skin = SKIN[(seed as usize) % SKIN.len()];
     let tunic = TUNIC[(seed as usize >> 3) % TUNIC.len()];
     let half = crate::castle::courtyard_half();
-    let home = courtyard_spot(&mut rng, half, &[]).unwrap_or(Vec2::new(0.0, 5.0));
+    let home = courtyard_spot(&mut rng, half, &[]).unwrap_or(crate::castle::KEEP_STEPS);
     let e = spawn(
         commands,
         meshes,
@@ -2561,12 +2561,11 @@ pub fn populate(
     // panel. A roofed, textured shopfront (see `shop_parts`) with a hanging coin sign + a stationary
     // merchant behind the counter, so it reads unmistakably as a shop. Its open front faces the
     // castle (where the player approaches from); `interaction::shop_anchor()` points at `market`.
-    let south = crate::castle::gate_centers()[0];
-    let market = south + Vec2::new(2.5, -5.0);
+    let market = crate::castle::MERCHANT_SHOP;
     let my = worldmap::ground_at_world(market.x, market.y).unwrap_or(0.0);
-    // Face the open front toward the castle (origin): from_rotation_y(yaw)*(+Z) points that way.
-    let to_castle = (Vec2::ZERO - market).normalize_or_zero();
-    let shop_yaw = to_castle.x.atan2(to_castle.y);
+    // Face the open front south onto the west market lane: from_rotation_y(0)*(+Z) = +Z.
+    let to_castle = Vec2::Y;
+    let shop_yaw = 0.0_f32;
     prop(commands, meshes, shop_parts(), Vec3::new(market.x, my, market.y), shop_yaw);
     // Solid shopfront — counter + posts + back wall block; the hero routes around and stops at the
     // interaction range to browse. Oriented box (yaw) so it hugs the rotated booth.
@@ -2591,10 +2590,9 @@ pub fn populate(
 
     // Two wandering pilgrims who trek between the island's landmarks, hinting the way (see
     // `pilgrim_brain` / `pilgrim_hint`). They start just outside a gate and head off.
-    let gates = crate::castle::gate_centers();
+    let gates = [crate::castle::Gate::West, crate::castle::Gate::South];
     for i in 0..2 {
-        let g = gates[i % gates.len()];
-        let home = g + (-g).normalize_or_zero() * 2.0;
+        let home = gates[i % gates.len()].interior(2.0);
         let kind = Kind::Peasant { skin: SKIN[i % SKIN.len()], tunic: PILGRIM_ROBE, hat: true };
         let e = spawn(commands, meshes, &body_mat, kind, home, home, 2.0, 2.0, SCALE, next_u32(&mut rng), false);
         commands.entity(e).insert(Pilgrim {
@@ -2608,28 +2606,27 @@ pub fn populate(
     // ── Gathering stations: a well + a woodpile the townsfolk cluster around for a chat or a
     // chore. The market and the keep steps round out the gather spots. Props are solid (small
     // blockers); the gather ring in `pick_walk` sits just outside them so nobody gets stuck. ──
-    let mut spots: Vec<Vec2> = vec![market, Vec2::new(0.0, 3.4)]; // market stall + keep steps
-    if let Some(well) = courtyard_spot(&mut rng, half, &placed) {
-        let wy = worldmap::ground_at_world(well.x, well.y).unwrap_or(0.0);
-        prop(commands, meshes, well_parts(), Vec3::new(well.x, wy, well.y), 0.0);
-        crate::blockers::add_box(well.x, well.y, 0.5, 0.5);
-        placed.push(well);
-        spots.push(well);
+    // Castle v2: the well and the fire pit are reserved plots at the courtyard's north edge and the
+    // wood yard is a castle prop (`castle::build`) — gather at THOSE instead of dropping a second
+    // random well/woodpile into the open courtyard (spec v2 §2: nothing built there).
+    let mut spots: Vec<Vec2> = vec![market, crate::castle::KEEP_STEPS, crate::castle::MARKET_CENTRE];
+    for name in ["well", "fire_pit"] {
+        if let Some(tp) = crate::castle::town_plot(name) {
+            spots.push(tp.pos);
+            placed.push(tp.pos);
+        }
     }
-    if let Some(pile) = courtyard_spot(&mut rng, half, &placed) {
-        let py = worldmap::ground_at_world(pile.x, pile.y).unwrap_or(0.0);
-        prop(commands, meshes, woodpile_parts(), Vec3::new(pile.x, py, pile.y), 0.4);
-        crate::blockers::add_box(pile.x, pile.y, 0.6, 0.5);
-        placed.push(pile);
-        spots.push(pile);
-    }
+    let wood = Vec2::new(crate::castle::WOOD_YARD.0, crate::castle::WOOD_YARD.1);
+    spots.push(wood);
+    placed.push(wood);
+    let _ = (well_parts, woodpile_parts, half);
     commands.insert_resource(TownSpots(spots));
 
     // ── Kids: a few small villagers scampering around a play patch just inside the south gate.
     // High speed + tiny wander radius + the `Kid` marker → short darting bursts that read as play
     // (they skip the adults' gathering behaviour). The night curfew hides them with the rest of the
     // ambient townsfolk — they just disappear when the wave falls. ──
-    let play = gates[0] + (-gates[0]).normalize_or_zero() * 3.0;
+    let play = crate::castle::Gate::South.interior(6.0) + Vec2::new(4.5, 0.0);
     for i in 0..4 {
         let home = play + Vec2::new(rng_range(&mut rng, -1.6, 1.6), rng_range(&mut rng, -1.6, 1.6));
         let kind = Kind::Peasant { skin: SKIN[i % SKIN.len()], tunic: TUNIC[(i + 1) % TUNIC.len()], hat: i % 2 == 0 };
@@ -2805,8 +2802,8 @@ fn courtyard_spot(rng: &mut u32, half: (f32, f32), placed: &[Vec2]) -> Option<Ve
         let x = rng_range(rng, -(half.0 - 2.0), half.0 - 2.0);
         let z = rng_range(rng, -(half.1 - 2.0), half.1 - 2.0);
         let p = Vec2::new(x, z);
-        if crate::blockers::is_blocked(x, z) || p.length() < 4.5 {
-            continue; // skip props/walls/houses and the central keep
+        if crate::blockers::is_blocked(x, z) || p.distance(crate::castle::KEEP_POS) < 6.5 {
+            continue; // skip props/walls/houses and the keep
         }
         if placed.iter().any(|q| q.distance(p) < 2.0) {
             continue;

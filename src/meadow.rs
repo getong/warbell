@@ -32,9 +32,15 @@ use crate::meshkit::{merged_flat as merged, tinted};
 const REST_R: f32 = 3.2;
 /// Rest heal per second — deliberately gentle (the shrine/potions stay the real heals).
 const REST_HPS: f64 = 3.5;
+/// Castle v2 grew the walls from 17×12 to `castle::HALF_X`×`HALF_Z` (28×21): every meadow piece
+/// below keeps its old place RELATIVE TO THE WALLS by moving out by this much per quadrant (the old
+/// literals are the 17×12 layout; `+DX` east / `−DX` west, `+DZ` south / `−DZ` north).
+const DX: f32 = crate::castle::HALF_X - 17.0;
+const DZ: f32 = crate::castle::HALF_Z - 12.0;
+
 /// The campfire's world spot — forest side, next to the hero's new spawn (see
-/// `player::spawn_point`), clear of plot (-18,17) and the west gate lane.
-const FIRE_POS: Vec2 = Vec2::new(-22.0, 14.0);
+/// `player::spawn_point`), clear of the SW town plot and the west gate lane.
+const FIRE_POS: Vec2 = Vec2::new(-22.0 - DX, 14.0 + DZ);
 
 pub struct MeadowPlugin;
 
@@ -125,20 +131,20 @@ pub fn build(
 
     // ── Village life ─────────────────────────────────────────────────────────────
     // Hay-making corner, NE quarter (clear of plots (10,-15.5)/(18,-17) by ≥5).
-    prop(commands, meshes, hay_cart_mesh(), 13.0, -20.5, 0.55, Vec2::new(1.1, 0.7));
-    prop(commands, meshes, hay_bale_mesh(0), 15.6, -21.8, 0.2, Vec2::new(0.55, 0.4));
-    prop(commands, meshes, hay_bale_mesh(1), 14.6, -23.0, 1.1, Vec2::new(0.55, 0.4));
-    prop(commands, meshes, scarecrow_mesh(), 17.5, -23.5, -0.4, Vec2::ZERO);
-    fence_run(commands, meshes, &mat, Vec2::new(10.5, -18.5), Vec2::new(16.5, -18.0));
+    prop(commands, meshes, hay_cart_mesh(), 13.0 + DX, -20.5 - DZ, 0.55, Vec2::new(1.1, 0.7));
+    prop(commands, meshes, hay_bale_mesh(0), 15.6 + DX, -21.8 - DZ, 0.2, Vec2::new(0.55, 0.4));
+    prop(commands, meshes, hay_bale_mesh(1), 14.6 + DX, -23.0 - DZ, 1.1, Vec2::new(0.55, 0.4));
+    prop(commands, meshes, scarecrow_mesh(), 17.5 + DX, -23.5 - DZ, -0.4, Vec2::ZERO);
+    fence_run(commands, meshes, &mat, Vec2::new(10.5 + DX, -18.5 - DZ), Vec2::new(16.5 + DX, -18.0 - DZ));
 
     // Beekeeper's west edge (clear of plots (-20,-8)/(-18,-17)).
-    for (i, (bx_, bz)) in [(-21.0, -13.0), (-22.4, -12.2), (-21.6, -14.6)].into_iter().enumerate() {
+    for (i, (bx_, bz)) in [(-21.0 - DX, -13.0 - DZ), (-22.4 - DX, -12.2 - DZ), (-21.6 - DX, -14.6 - DZ)].into_iter().enumerate() {
         prop(commands, meshes, beehive_mesh(i as u32), bx_, bz, i as f32 * 0.7, Vec2::new(0.3, 0.3));
     }
-    prop(commands, meshes, firewood_rack_mesh(), -24.5, -11.5, FRAC_PI_2 * 0.85, Vec2::new(0.9, 0.35));
+    prop(commands, meshes, firewood_rack_mesh(), -24.5 - DX, -11.5 - DZ, FRAC_PI_2 * 0.85, Vec2::new(0.9, 0.35));
 
     // Supply drop-off by the east wall (clear of plot (20,8), off the z=0 lane).
-    prop(commands, meshes, crate_stack_mesh(), 21.0, 4.6, -0.3, Vec2::new(0.75, 0.55));
+    prop(commands, meshes, crate_stack_mesh(), 21.0 + DX, 4.6 + DZ, -0.3, Vec2::new(0.75, 0.55));
 
     // ── The rest campfire, forest side (next to the hero spawn) ────────────────────
     let fy = ground(FIRE_POS.x, FIRE_POS.y);
@@ -183,24 +189,24 @@ pub fn build(
     };
     use crate::trees::TreeKind as TK;
     // NE corner clump.
-    tree(commands, meshes, TK::Broadleaf, 24.0, -24.0, 1.15, 0.4);
-    tree(commands, meshes, TK::Birch, 26.5, -21.5, 1.0, 2.1);
-    prop(commands, meshes, boulder_mesh(11), 22.3, -21.9, 0.9, Vec2::new(0.55, 0.5));
+    tree(commands, meshes, TK::Broadleaf, 24.0 + DX, -24.0 - DZ, 1.15, 0.4);
+    tree(commands, meshes, TK::Birch, 26.5 + DX, -21.5 - DZ, 1.0, 2.1);
+    prop(commands, meshes, boulder_mesh(11), 22.3 + DX, -21.9 - DZ, 0.9, Vec2::new(0.55, 0.5));
     // NW pine corner.
-    tree(commands, meshes, TK::Pine, -26.0, -18.0, 1.1, 1.2);
-    prop(commands, meshes, boulder_mesh(23), -24.0, -20.3, 2.3, Vec2::new(0.5, 0.45));
+    tree(commands, meshes, TK::Pine, -26.0 - DX, -18.0 - DZ, 1.1, 1.2);
+    prop(commands, meshes, boulder_mesh(23), -24.0 - DX, -20.3 - DZ, 2.3, Vec2::new(0.5, 0.45));
     // SE autumn accent.
-    tree(commands, meshes, TK::Autumn, 26.0, 18.0, 1.1, 3.6);
-    prop(commands, meshes, bush_mesh(7), 23.4, 20.2, 0.0, Vec2::ZERO);
+    tree(commands, meshes, TK::Autumn, 26.0 + DX, 18.0 + DZ, 1.1, 3.6);
+    prop(commands, meshes, bush_mesh(7), 23.4 + DX, 20.2 + DZ, 0.0, Vec2::ZERO);
     // Forest-side birches framing the spawn walk-in.
-    tree(commands, meshes, TK::Birch, -29.0, 21.5, 1.05, 0.9);
-    tree(commands, meshes, TK::Broadleaf, -26.0, 25.5, 1.1, 4.2);
-    prop(commands, meshes, bush_mesh(19), -24.6, 18.4, 0.6, Vec2::ZERO);
+    tree(commands, meshes, TK::Birch, -29.0 - DX, 21.5 + DZ, 1.05, 0.9);
+    tree(commands, meshes, TK::Broadleaf, -26.0 - DX, 25.5 + DZ, 1.1, 4.2);
+    prop(commands, meshes, bush_mesh(19), -24.6 - DX, 18.4 + DZ, 0.6, Vec2::ZERO);
     // Loose boulders + bushes breaking the remaining sightlines (all off-lane, off-plot).
-    prop(commands, meshes, boulder_mesh(41), 8.0, 21.0, 1.4, Vec2::new(0.5, 0.45));
-    prop(commands, meshes, bush_mesh(31), 6.8, 22.6, 0.0, Vec2::ZERO);
-    prop(commands, meshes, boulder_mesh(57), -7.0, -23.0, 0.4, Vec2::new(0.45, 0.4));
-    prop(commands, meshes, bush_mesh(43), -9.0, -21.4, 1.8, Vec2::ZERO);
+    prop(commands, meshes, boulder_mesh(41), 8.0 + DX, 21.0 + DZ, 1.4, Vec2::new(0.5, 0.45));
+    prop(commands, meshes, bush_mesh(31), 6.8 + DX, 22.6 + DZ, 0.0, Vec2::ZERO);
+    prop(commands, meshes, boulder_mesh(57), -7.0 - DX, -23.0 - DZ, 0.4, Vec2::new(0.45, 0.4));
+    prop(commands, meshes, bush_mesh(43), -9.0 - DX, -21.4 - DZ, 1.8, Vec2::ZERO);
 }
 
 /// A short two-rail paddock fence between `a` and `b` (posts every ~1.5). Decorative-only —
