@@ -1736,6 +1736,11 @@ pub fn in_courtyard(wx: f32, wz: f32) -> bool {
 }
 
 /// The keep's footprint half-extents (body, without the plinth) — for props that dress its walls.
+/// World Y of the keep's flat roof (the body top) — where the keep-roof archers stand.
+pub(crate) const KEEP_ROOF_Y: f32 = (KEEP_FOUND + KEEP_H) * KEEP_SCALE.y;
+/// World Y of a corner tower's fighting top — the tower defenders' muzzle height.
+pub(crate) const TOWER_TOP: f32 = TOWER_H * TOWER_SCALE.y;
+
 pub(crate) const KEEP_HALF: Vec2 = Vec2::new(KEEP_W * KEEP_SCALE.x / 2.0, KEEP_D * KEEP_SCALE.z / 2.0);
 
 /// The keep steps — the gather spot / muster mark just in front of the keep door.

@@ -105,7 +105,15 @@ const ISLAND_EXP: f32 = 2.6;
 // each bump silently grows the *world* safe-zone; the trims keep the biome-free ring round the
 // castle at its tuned ~32.4-unit world size. Town build plots flatten themselves
 // (`near_build_plot`), so this doesn't gate their footing.
-pub const SAFE_R: f32 = 12.45;
+//
+// Castle v2 (spec `2026-10-11-zamek-v2-design.md` §1): the walls grew to 28×21 half-extents, so
+// the corners stand ≈35u out; the spec wants ≥15u of open flat ground past EVERY wall face, corners
+// included → a ≥50u world radius. The grass edge is `SAFE_R + edge_fray` with the fray clamped at
+// [`SAFE_FRAY_MIN`], so the guaranteed radius is (20.25 − 1.0)·2.6 ≈ 50.0u (nominal ≈52.7u).
+pub const SAFE_R: f32 = 20.25;
+/// Lowest the frayed grass edge may dip below `SAFE_R` (base units). `edge_fray` swings ±3.7; the
+/// old −4 clamp never bit. −1 keeps a little wobble without eating into the 15u ring round the walls.
+const SAFE_FRAY_MIN: f32 = -1.0;
 pub const GROUND_STEP: f32 = 0.5; // world-Y per height class
 pub const SEA_Y: f32 = -0.4;
 /// Cliff-face mesh knobs (`build_terrain_chunk`): a tile-edge wall whose mean drop is at
@@ -1872,7 +1880,7 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
         return Some((TB::Desert, 1));
     }
     let dc = dist_from_castle(x, z);
-    if dc < SAFE_R + edge_fray(x, z).max(-4.0) {
+    if dc < SAFE_R + edge_fray(x, z).max(SAFE_FRAY_MIN) {
         return Some((TB::Grass, 1));
     }
     if is_river(x, z) {
@@ -4864,8 +4872,8 @@ mod tests {
         let mut total_pts = 0usize;
         for k in 0..40 {
             let ang = k as f32 * 0.157;
-            let from = Vec2::new(ang.cos() * 34.0, ang.sin() * 34.0);
-            total_pts += crate::navgrid::path_to_budget(from, Vec2::new(0.0, -8.0), crate::navgrid::NAV_MAX_NODES).len();
+            let from = Vec2::new(ang.cos() * 48.0, ang.sin() * 48.0);
+            total_pts += crate::navgrid::path_to_budget(from, crate::castle::KEEP_STEPS, crate::navgrid::NAV_MAX_NODES).len();
         }
         println!("bench_navgrid: 40 spawn-ring→keep paths in {:?} ({total_pts} waypoints)", t.elapsed());
     }
@@ -5008,7 +5016,7 @@ mod tests {
     fn mesa_summits_reachable_from_castle() {
         for reg in MAP_HOME.regions.iter().filter(|r| r.cliffy && r.peak > 0) {
             let summit = Vec2::new(reg.x * MAP_SCALE - GX, reg.z * MAP_SCALE - GZ);
-            let path = crate::navgrid::path_to_budget(Vec2::new(0.0, -8.0), summit, 120_000);
+            let path = crate::navgrid::path_to_budget(crate::castle::KEEP_STEPS, summit, 120_000);
             assert!(
                 !path.is_empty(),
                 "no nav-grid route castle → {:?} summit at {summit:?}",

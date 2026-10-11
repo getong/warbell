@@ -36,12 +36,12 @@ use crate::game_state::SimAppExt;
 /// ~7.8 dmg/bolt (≈7.8 DPS), a ballista ~29/bolt, so a fully-built castle chips ~50 DPS into a
 /// wave: real help, not an auto-clear.
 const DMG_SCALE: f32 = 0.65;
-const HALF_X: f32 = 17.0;
-const HALF_Z: f32 = 12.0;
+use crate::castle::{HALF_X, HALF_Z};
 const DEFENDER_BOLT_TTL: f32 = 3.0;
 /// World Y of the keep roof the archer figures stand on (the keep body top, ≈ `(KEEP_FOUND + KEEP_H)`
 /// scaled by the keep's 0.7 y-scale). Tuned against a staged shot.
-const ARCHER_FEET_Y: f32 = 1.54;
+/// Castle v2: derived from the keep's own roof height (`castle::KEEP_ROOF_Y`).
+const ARCHER_FEET_Y: f32 = crate::castle::KEEP_ROOF_Y;
 /// Root scale of the keep-roof archer bipeds — the same size the townsfolk render at
 /// (`villagers::SCALE`), so the roof sentries read as the same people as the courtyard militia.
 const ARCHER_SCALE: f32 = 0.81;
@@ -467,7 +467,7 @@ pub fn populate_defenders(
             Defender {
                 kind: Kind::Tower,
                 profile: TOWER_BASE,
-                muzzle: Vec3::new(x, 4.0, z),
+                muzzle: Vec3::new(x, crate::castle::TOWER_TOP - 0.2, z),
                 ready_at: 0.0,
                 hp: tower_hp,
                 max_hp: tower_hp,
@@ -486,8 +486,11 @@ pub fn populate_defenders(
         [(0xd8a06a, 0x4a6a3a), (0xc89070, 0x3a7a72), (0xe8c4a0, 0x6a4a6a), (0xa36b4a, 0x4a6a3a)];
     // One archer at the middle of each roof edge (front/back/sides) — on the open roof, clear of
     // the corner turrets, facing out over the battlements.
-    for (i, (x, z)) in [(0.0_f32, 2.0_f32), (0.0, -2.0), (2.7, 0.0), (-2.7, 0.0)].into_iter().enumerate() {
-        let home_yaw = x.atan2(z); // villager facing convention: from_rotation_y(yaw), forward +Z
+    // Castle v2: on the keep (north-centre, `castle::KEEP_POS`), each ~0.77 of the way to its edge.
+    let (kx, kz) = (crate::castle::KEEP_HALF.x * 0.77, crate::castle::KEEP_HALF.y * 0.67);
+    for (i, (ox, oz)) in [(0.0_f32, kz), (0.0, -kz), (kx, 0.0), (-kx, 0.0)].into_iter().enumerate() {
+        let home_yaw = ox.atan2(oz); // villager facing convention: from_rotation_y(yaw), forward +Z
+        let (x, z) = (crate::castle::KEEP_POS.x + ox, crate::castle::KEEP_POS.y + oz);
         let root = commands
             .spawn((
                 Transform {
@@ -534,7 +537,8 @@ pub fn populate_defenders(
     }
     // Ballista flanking the north gate (offset off the gate axis so it doesn't sit on the hero
     // spawn / follow-cam line — the hero spawns at the gate centre, `gate.y - 3.0`).
-    let (bx, bz) = (2.6, -HALF_Z - 2.2);
+    let north = crate::castle::Gate::North.center();
+    let (bx, bz) = (north.x + 2.6, north.y - 2.2);
     let y = crate::worldmap::ground_at_world(bx, bz).unwrap_or(0.0);
     // A real low-poly ballista (vertex-coloured): wheeled sled, A-frame, stock, bow limbs +
     // string and a loaded bolt — aimed outward (−Z) away from the gate. One white material so the
