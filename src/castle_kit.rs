@@ -17,7 +17,9 @@
 //!
 //! `FOREST_CASTLEKIT_SHOWCASE=1` lays every piece out in three rows on open flat ground away from the
 //! castle (old colony / timber tier / stone tier), logged as `castle_kit showcase:`, for screenshots
-//! beside the hero (`FOREST_HERO`).
+//! beside the hero (`FOREST_HERO`). `FOREST_CASTLEKIT_SHOWCASE=old|timber|stone|keep` instead lays
+//! ONE group north-south on the flat meadow ring just outside the castle's E wall (x 37.5,
+//! z -15..15), outer faces turned east.
 
 use bevy::prelude::*;
 use std::sync::Mutex;
@@ -107,7 +109,7 @@ fn x_extent(name: &str, yaw: f32) -> (f32, f32) {
         "ck_stone_tower" => (-2.8, 2.8),
         "ck_gatehouse" => (-3.2, 3.2),
         "ck_keep_t1" => (-4.05, 4.25),
-        "ck_keep_t2" => (-3.85, 4.6),
+        "ck_keep_t2" => (-4.45, 4.82),
         _ => (-2.0, 2.0), // palisade, timber gate, curtain: 4u modules
     }
 }
@@ -144,6 +146,38 @@ const ROWS: [(&str, f32, Row); 3] = [
     ]),
 ];
 
+/// Groups for `FOREST_CASTLEKIT_SHOWCASE=<group>`: one row, ≤31u long, laid north-south (row yaw
+/// -90°: local +X -> world +Z, outer faces -Z -> +X, east) at x = `STRIP_X`, centred on z = 0.
+const STRIP_ROWS: [(&str, Row); 4] = [
+    ("old", &[
+        ("ck_bell_tower", 0.0, 0.0),
+        ("ck_ruin_keep", 3.0, 0.0),
+        ("ck_ruin_wall_a", 3.0, 0.0),
+        ("ck_rubble", 2.0, 0.0),
+    ]),
+    ("timber", &[
+        ("ck_palisade", 0.0, 0.0),
+        ("ck_timber_gate", 0.0, 0.0),
+        ("ck_palisade", 0.0, 0.0),
+        ("ck_watchtower", 3.0, 0.0),
+        ("ck_keep_t1", 3.0, 0.0),
+    ]),
+    ("stone", &[
+        ("ck_curtain_corner", 0.0, 0.0),
+        ("ck_curtain", 0.0, 0.0),
+        ("ck_gatehouse", 0.0, 0.0),
+        ("ck_curtain", 0.0, 0.0),
+        ("ck_corner_tower", 0.0, -std::f32::consts::FRAC_PI_2),
+    ]),
+    ("keep", &[
+        ("ck_stone_tower", 0.0, 0.0),
+        ("ck_keep_t2", 4.0, 0.0),
+        ("ck_ruin_wall_b", 3.0, 0.0),
+    ]),
+];
+/// The open meadow ring outside the castle's E wall (zamek v2: flat grass, nothing built there).
+const STRIP_X: f32 = 37.5;
+
 /// Half depth (Z) of the ground each row needs, for the flatness probe.
 const ROW_HALF_DEPTH: f32 = 5.0;
 /// Half extents of the box around the castle the showcase never enters.
@@ -152,9 +186,20 @@ const CASTLE_KEEP_OUT: Vec2 = Vec2::new(34.0, 27.0);
 #[derive(Clone)]
 struct Placed {
     name: &'static str,
+    /// World (x, z) of the piece pivot (in `layout`: x along the row, z = the row's z).
     pos: Vec2,
+    /// The piece's own yaw within its row (what `x_extent` takes).
     yaw: f32,
     group: usize,
+    /// Yaw of the whole row: 0 (runs along +X) or -90° (runs along +Z, the E-ring strip).
+    row_yaw: f32,
+}
+
+impl Placed {
+    /// Unit direction the row runs in, in world (x, z).
+    fn along(&self) -> Vec2 {
+        if self.row_yaw == 0.0 { Vec2::X } else { Vec2::Y }
+    }
 }
 
 static SHOWCASE: Mutex<Vec<Placed>> = Mutex::new(Vec::new());
@@ -163,30 +208,40 @@ pub fn showcase_enabled() -> bool {
     std::env::var("FOREST_CASTLEKIT_SHOWCASE").is_ok_and(|v| v != "0")
 }
 
+/// One row laid out along x, centred on 0, at `z`: pieces with their contiguous-run group index
+/// (counting on from `group`, which is left at the next free index).
+fn layout_row(row: Row, z: f32, group: &mut usize) -> Vec<Placed> {
+    let mut cursor = 0.0;
+    let mut pieces = Vec::new();
+    for (i, &(name, gap, yaw)) in row.iter().enumerate() {
+        if i > 0 && gap > 0.0 {
+            *group += 1;
+        }
+        cursor += gap;
+        let (lo, hi) = x_extent(name, yaw);
+        let cx = cursor - lo;
+        cursor = cx + hi;
+        pieces.push(Placed { name, pos: Vec2::new(cx, z), yaw, group: *group, row_yaw: 0.0 });
+    }
+    *group += 1;
+    for p in &mut pieces {
+        p.pos.x -= cursor / 2.0;
+    }
+    pieces
+}
+
 /// Local layout (origin-centred) of every row: pieces with their contiguous-run group index.
 fn layout() -> Vec<Placed> {
-    let mut out = Vec::new();
     let mut group = 0;
-    for (_, z, row) in ROWS {
-        let mut cursor = 0.0;
-        let mut pieces = Vec::new();
-        for (i, &(name, gap, yaw)) in row.iter().enumerate() {
-            if i > 0 && gap > 0.0 {
-                group += 1;
-            }
-            cursor += gap;
-            let (lo, hi) = x_extent(name, yaw);
-            let cx = cursor - lo;
-            cursor = cx + hi;
-            pieces.push(Placed { name, pos: Vec2::new(cx, z), yaw, group });
-        }
-        group += 1;
-        for p in &mut pieces {
-            p.pos.x -= cursor / 2.0;
-        }
-        out.extend(pieces);
-    }
-    out
+    ROWS.iter().flat_map(|&(_, z, row)| layout_row(row, z, &mut group)).collect()
+}
+
+/// `FOREST_CASTLEKIT_SHOWCASE=<group>`: that group north-south on the E-ring strip.
+fn strip(row: Row) -> Vec<Placed> {
+    layout_row(row, 0.0, &mut 0)
+        .into_iter()
+        .map(|p| Placed { pos: Vec2::new(STRIP_X, p.pos.x), row_yaw: -std::f32::consts::FRAC_PI_2, ..p })
+        .collect()
 }
 
 /// Ground usable for a showcase piece at relax level `relax` (0 strict meadow .. 3 loosest).
@@ -238,6 +293,17 @@ fn site_ok(origin: Vec2, spans: &[(f32, f32)], relax: usize) -> bool {
 pub fn plan() {
     SHOWCASE.lock().unwrap().clear();
     if !showcase_enabled() {
+        return;
+    }
+    let want = std::env::var("FOREST_CASTLEKIT_SHOWCASE").unwrap_or_default();
+    if let Some((label, row)) = STRIP_ROWS.iter().find(|r| r.0 == want.trim()) {
+        let placed = strip(row);
+        info!("castle_kit showcase: group '{label}' north-south at x {STRIP_X} (E ring)");
+        for p in &placed {
+            let (lo, hi) = x_extent(p.name, p.yaw);
+            crate::blockers::reserve_visual(p.pos.x, p.pos.y, (hi - lo) * 0.5 + 3.0);
+        }
+        *SHOWCASE.lock().unwrap() = placed;
         return;
     }
     let local = layout();
@@ -307,11 +373,12 @@ pub fn populate(commands: &mut Commands) {
     commands.insert_resource(kit);
     let foot_y = |p: &Placed| {
         let (lo, hi) = x_extent(p.name, p.yaw);
+        let (along, across) = (p.along(), p.along().perp());
         let mut y = f32::MAX;
         for fx in [0.0, 0.5, 1.0] {
             for dz in [-1.2, 0.0, 1.2] {
-                let x = p.pos.x + lo + (hi - lo) * fx;
-                if let Some(g) = crate::worldmap::ground_at_world(x, p.pos.y + dz) {
+                let q = p.pos + along * (lo + (hi - lo) * fx) + across * dz;
+                if let Some(g) = crate::worldmap::ground_at_world(q.x, q.y) {
                     y = y.min(g);
                 }
             }
@@ -320,7 +387,7 @@ pub fn populate(commands: &mut Commands) {
     };
     for p in &placed {
         let y = placed.iter().filter(|q| q.group == p.group).map(&foot_y).fold(f32::MAX, f32::min);
-        let tf = Transform::from_xyz(p.pos.x, y, p.pos.y).with_rotation(Quat::from_rotation_y(p.yaw));
+        let tf = Transform::from_xyz(p.pos.x, y, p.pos.y).with_rotation(Quat::from_rotation_y(p.row_yaw + p.yaw));
         if let Some(e) = kit.spawn_piece(commands, p.name, tf) {
             commands.entity(e).insert(BiomeEntity);
             info!("castle_kit showcase: {} at {:.1},{:.2},{:.1}", p.name, p.pos.x, y, p.pos.y);
@@ -351,6 +418,20 @@ mod tests {
         assert_eq!(l.len(), ROWS.iter().map(|r| r.2.len()).sum::<usize>());
         for name in PIECES {
             assert!(l.iter().any(|p| p.name == name), "{name} not in the showcase");
+            assert!(STRIP_ROWS.iter().any(|r| r.1.iter().any(|q| q.0 == name)), "{name} in no E-ring group");
+        }
+        // Each E-ring group fits the strip (z -16..16) without overlaps.
+        for (label, row) in STRIP_ROWS {
+            let s = strip(row);
+            for (i, a) in s.iter().enumerate() {
+                let (alo, ahi) = x_extent(a.name, a.yaw);
+                assert!(a.pos.y + alo > -16.0 && a.pos.y + ahi < 16.0, "group {label}: {} off the strip", a.name);
+                for b in &s[i + 1..] {
+                    let (blo, bhi) = x_extent(b.name, b.yaw);
+                    let overlap = (a.pos.y + ahi).min(b.pos.y + bhi) - (a.pos.y + alo).max(b.pos.y + blo);
+                    assert!(overlap < 0.01, "group {label}: {} and {} overlap", a.name, b.name);
+                }
+            }
         }
     }
 }
