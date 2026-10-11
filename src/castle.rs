@@ -1464,6 +1464,16 @@ const PATH_RECTS: [(f32, f32, f32, f32); 5] = [
     (11.75, 0.0, 10.5, 3.4),  // east gate → plaza
 ];
 
+/// Cobble paving raised with the walls `(cx, cz, w, d)`: [0] the keep + bell apron, then the four
+/// gate passages (through the gap, a stride either side). Everything else stays earth.
+const PAVED_RECTS: [(f32, f32, f32, f32); 5] = [
+    (0.6, 1.6, 10.2, 9.6),
+    (0.0, -HALF_Z, 3.6, 5.0),
+    (0.0, HALF_Z, 3.6, 5.0),
+    (-HALF_X, 0.0, 5.0, 3.6),
+    (HALF_X, 0.0, 5.0, 3.6),
+];
+
 /// How strongly world point `(wx, wz)` sits on the trodden castle yard (the plaza + the four gate
 /// paths of [`PATH_RECTS`]): 1 across a rect's core, fading to 0 over ~`EDGE` beyond its rim, with
 /// a little sine wobble so the outline isn't a crisp rectangle. `worldmap::ground_color` bakes this
@@ -1613,7 +1623,11 @@ pub fn build(
     // so it's the same surface as the lawn, not a slab laid on top. Only the cobble paving is a
     // raised `worn_slab` (a genuine built pavement), sitting 1.5cm above the ground; its frayed rim
     // overlaps at the junctions sit slightly higher so they can't z-fight.
-    for (i, (px, pz, w, d)) in PATH_RECTS.into_iter().enumerate() {
+    // Map-centre rework (`castle_ground`): the walls no longer pave the WHOLE route network — a
+    // pale cobble cross wall-to-wall read as a carpet. Cobble goes only where traffic is heaviest
+    // (the keep apron + the four gate passages); the lanes between stay trodden mud with wheel
+    // ruts and puddles, baked into the terrain masks.
+    for (i, (px, pz, w, d)) in PAVED_RECTS.into_iter().enumerate() {
         let y = if i == 0 { 0.02 } else { 0.035 };
         spawn(
             vec![(worn_slab(w, d, y + 0.005, 0.7, 0.12, 0.04), M::Cobble)],
