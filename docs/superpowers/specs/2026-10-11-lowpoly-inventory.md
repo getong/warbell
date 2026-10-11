@@ -30,8 +30,8 @@ Widoczność: **W** = wysoka (blisko zamku / głównych dróg albo duże na tle 
 | Pustynia: opuncja | `biome_desert.rs:322` (:603) | ~200 | Ś | zostaje |
 | Pustynia: wybielone skały + kości / czaszka | `biome_desert.rs:368` (:611) | ~400 | Ś | zostaje |
 | Pustynia: pokrycie (kamyczki, sucha trawa, sukulenty) | `biome_desert.rs:422/440/469/482` | tysiące | N | zostaje |
-| Bagno: namorzyn („grzybkowe” drzewa) | `biome_swamp.rs:195` (klasa :908) | ~500–650 | W | zostaje (następny priorytet) |
-| Bagno: pień cyprysu z kolanami | `biome_swamp.rs:338` | ~200–250 | Ś | zostaje |
+| Bagno: namorzyn („grzybkowe” drzewa) | `biome_swamp.rs:195` (klasa :908) | ~500–650 | W | **zamienione** → `oak_*` / `beech_*` / `dead_a` z kitu |
+| Bagno: pień cyprysu z kolanami | `biome_swamp.rs:338` | ~200–250 | Ś | **zamienione** → `stump_a` (skan) |
 | Bagno: pałka wodna | `biome_swamp.rs:390` (:923) | ~500 | Ś | zostaje |
 | Bagno: muchomory, omszały głaz, zatopiona kłoda | `biome_swamp.rs:464` (:934) | ~300 | Ś | zostaje |
 | Bagno: pokrycie (mech, trzcinka, grzybki, wełnianka) | `biome_swamp.rs:570–634` | tysiące | N | zostaje |
@@ -85,13 +85,21 @@ Martwy kod (nigdzie nie spawnowany): `landmarks()` w `biome_desert.rs` (palmy oa
 Nowy zestaw `tools/blender_forest/biome_props.py` → `assets/forest_pbr/biome_props.glb`
 (skan `s_rock` dla kamienia, `s_plaster` zabarwiony na zielono dla kaktusów) i
 `src/realforest/biomekit.rs` z wyborem modeli. W `biome::scatter_region` dodana gałąź
-`rocky_kit` / `desert_kit` obok `snow_kit`: ten sam RNG, maski, odstępy i blokery low-poly, zmienia
-się tylko to, co jest rysowane.
+`rocky_kit` / `desert_kit` / `swamp_kit` obok `snow_kit`: ten sam RNG, maski, odstępy i blokery
+low-poly, zmienia się tylko to, co jest rysowane (bez `biome_props.glb` wraca stary scatter).
+Budżet: grań 0.9–1.25k trójkątów, kopczyk 1k, iglica 1.3–1.8k, saguaro 1.2–2.4k, piarg 0.6–0.9k,
+kamyczki pokrycia 60; propsy łączone w chunki jak w lesie (cięcie 75 u), iglice i kaktusy znikają
+od 180 u jak drzewa.
+
+Do poprawy przy następnym podejściu: płyty grani wciąż trochę „bochenkowe” (za okrągłe krawędzie,
+za jasny ciepły ton pod słońcem pustyni), jałowce z kitu są soczyście zielone jak na suche wyżyny,
+saguaro są ciemne i smukłe. Bagno z drzewami kitu wygląda jak las — brakuje olch / wierzb
+z ciemniejszą, mokrą korą.
 
 ## 5. Kolejność dalszej pracy
 
-1. Bagno: namorzyn + pień cyprysu (klasa tree, ~800 sztuk) → drzewa z kitu (`dead_a`, `oak_*`
-   z ciemnym tintem) albo nowa wierzba / cypr w `trees.py`; ta sama gałąź co pustynia.
+1. Bagno: utopione drzewa w `bog.rs` (te same meshe namorzynu, ≤28) + pałki i muchomory;
+   własna wierzba / olcha w `trees.py` zamiast lasowych dębów.
 2. Złoża rudy w skałach (64 sztuki, gameplay) → kamień `rk_crag_b` + kryształy z Blendera.
 3. Łąka przy zamku (7 drzew, 4 głazy, 4 krzaki, ognisko) → gotowe modele z kitu.
 4. Twierdza orków: namioty / kolce / palenisko → istniejące GLB z obozów (jedna linia na spawn).

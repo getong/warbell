@@ -1059,6 +1059,13 @@ pub fn scatter_region(
     // (position-hashed picks, like the forest); the hand-built snowmen stay.
     let snow_kit = if cfg.biome == Biome::Snow && crate::alpine::enabled() { crate::realforest::get() } else { None };
     let mut alp_chunks = crate::realforest::Chunks::default();
+    // Rocky highlands + desert saguaros (`realforest::biomekit`): the same last-moment swap for the
+    // last low-poly biomes — placement, RNG draws and the low-poly blockers stay as they were.
+    use crate::realforest::biomekit as bkit;
+    let rocky_kit = crate::realforest::get().filter(|k| cfg.biome == Biome::Rocky && bkit::rocky(k));
+    let desert_kit = crate::realforest::get().filter(|k| cfg.biome == Biome::Desert && bkit::desert(k));
+    let swamp_kit = crate::realforest::get().filter(|_| cfg.biome == Biome::Swamp);
+    let mut bk_chunks = crate::realforest::Chunks::default();
 
     // ── Main per-tile scatter ──
     let mut gx = lo;
@@ -1197,6 +1204,10 @@ pub fn scatter_region(
                                     if !snow_prop(k, &mut alp_chunks, class_index(fb), fi, at, rot, fs) && fb.block_radius * fs >= 0.30 {
                                         queue(false, fb.variants[fi].clone(), at, rot, fs);
                                     }
+                                } else if let Some(k) = rocky_kit {
+                                    if let Some((m, sm)) = bkit::rocky_prop(k, class_index(fb), fi / PROP_TINTS.len(), cx, cz) {
+                                        bk_chunks.push(k, m, Vec3::new(cx, py, cz), rot, fs * sm, crate::realforest::Tier::Props);
+                                    }
                                 } else {
                                     queue(false, fb.variants[fi].clone(), Vec3::new(cx, py, cz), rot, fs);
                                 }
@@ -1267,6 +1278,42 @@ pub fn scatter_region(
                                 BiomeEntity,
                             ));
                             k.attach_tree_snowy(&mut tree, lod0, scatter_cull_enabled(), frosted);
+                            gz += 1.0;
+                            continue;
+                        }
+                        // Rocky / desert: kit pines, snags, sandstone spires and saguaros on the same
+                        // gameplay entity (low-poly trunk blocker kept, like the snow kit).
+                        let bk_tree = rocky_kit
+                            .and_then(|k| bkit::rocky_tree(k, vi / PROP_TINTS.len(), cx, cz).map(|t| (k, t)))
+                            .or_else(|| desert_kit.map(|k| (k, bkit::saguaro(vi / PROP_TINTS.len()))))
+                            .or_else(|| swamp_kit.and_then(|k| bkit::swamp_tree(k, vi / PROP_TINTS.len(), cx, cz).map(|t| (k, t))));
+                        if let Some((k, t)) = bk_tree {
+                            let mut tree = commands.spawn((
+                                Transform { translation: Vec3::new(cx, py, cz), rotation: base, scale: Vec3::splat(s) },
+                                crate::verbs::ChopTree::new(trunk_r),
+                                BiomeEntity,
+                            ));
+                            match t {
+                                bkit::KitTree::Tree(lod0) => {
+                                    tree.insert(crate::wind::sway_for(cx, cz, base));
+                                    k.attach_tree(&mut tree, lod0, scatter_cull_enabled());
+                                }
+                                bkit::KitTree::Static(name, sway) => {
+                                    if sway {
+                                        tree.insert(crate::wind::sway_for(cx, cz, base));
+                                    }
+                                    let far = if scatter_cull_enabled() { 180.0 } else { 1.0e6 };
+                                    let range = bevy::camera::visibility::VisibilityRange {
+                                        start_margin: 0.0..0.0,
+                                        end_margin: far..far,
+                                        use_aabb: true,
+                                    };
+                                    k.attach_static_with(&mut tree, name, Transform::IDENTITY, range);
+                                }
+                            }
+                            if cfg.biome == Biome::Desert {
+                                tree.insert(crate::verbs::Cactus);
+                            }
                             gz += 1.0;
                             continue;
                         }
@@ -1349,6 +1396,16 @@ pub fn scatter_region(
                         if snow_prop(k, &mut alp_chunks, class_index(c), vi, at, rot, s) {
                             register_passive_blocker(cx, cz, c.footprints[vi], s, c.block_radius, rot);
                             crate::blockers::reserve_visual(cx, cz, footprint);
+                        }
+                    } else if let Some(k) = rocky_kit {
+                        // Bedded into the hillside; keeps the low-poly prop's blocker (a spot the
+                        // kit leaves clear gets neither model nor blocker, like the snow kit).
+                        let at = Vec3::new(cx, py - slope * 0.25 * s, cz);
+                        if let Some((m, sm)) = bkit::rocky_prop(k, class_index(c), vi / PROP_TINTS.len(), cx, cz) {
+                            if bk_chunks.push(k, m, at, rot, s * sm, crate::realforest::Tier::Props) {
+                                register_passive_blocker(cx, cz, c.footprints[vi], s, c.block_radius, rot);
+                                crate::blockers::reserve_visual(cx, cz, footprint);
+                            }
                         }
                     } else {
                         register_passive_blocker(cx, cz, c.footprints[vi], s, c.block_radius, rot);
@@ -1434,6 +1491,10 @@ pub fn scatter_region(
                                         let at = Vec3::new(x, py, z);
                                         alp_chunks.push_snowy(k, m, at, rot, s * sm, crate::realforest::Tier::Cover, snowy);
                                     }
+                                } else if let Some(k) = rocky_kit {
+                                    if let Some((m, sm)) = bkit::rocky_cover(k, i, x, z).filter(|_| !no_grass()) {
+                                        bk_chunks.push(k, m, Vec3::new(x, py, z), rot, s * sm, crate::realforest::Tier::Cover);
+                                    }
                                 } else {
                                     queue(true, c.variants[vi].clone(), Vec3::new(x, py, z), rot, s);
                                 }
@@ -1464,6 +1525,9 @@ pub fn scatter_region(
     }
     if let Some(k) = snow_kit {
         alp_chunks.spawn(k, commands, meshes, scatter_cull_enabled());
+    }
+    if let Some(k) = rocky_kit.or(desert_kit) {
+        bk_chunks.spawn(k, commands, meshes, scatter_cull_enabled());
     }
 }
 
