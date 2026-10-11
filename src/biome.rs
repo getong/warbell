@@ -1421,7 +1421,10 @@ pub fn scatter_region(
                                 let rot = yaw(&mut r);
                                 if let Some(k) = kit {
                                     let (a, b) = crate::realforest::rolls(x, z);
-                                    if let Some((m, sm)) = k.passive_for(i, true, a, b).filter(|_| !no_grass()) {
+                                    // The open grass frontier is a meadow: its own grass / flower mapping
+                                    // (its class order differs from the forest's, and no forest ferns).
+                                    let pick = if cfg.name == "Grass" { k.meadow_cover(i, a, b) } else { k.passive_for(i, true, a, b) };
+                                    if let Some((m, sm)) = pick.filter(|_| !no_grass()) {
                                         kit_chunks.push(k, m, Vec3::new(x, py, z), rot, s * sm, crate::realforest::Tier::Cover);
                                     }
                                 } else if let Some(k) = snow_kit {
@@ -1451,7 +1454,7 @@ pub fn scatter_region(
     if let Some(k) = kit {
         if !no_grass() {
             let clutter_mask = |x: f32, z: f32| mask(x, z) && !(river_guard && crate::water::on_river(x, z));
-            k.scatter_clutter(&mut kit_chunks, lo, hi, &clutter_mask, height_fn);
+            k.scatter_clutter(&mut kit_chunks, lo, hi, &clutter_mask, height_fn, cfg.name == "Grass");
         }
         // Pebbles at the waterline + the grass fringe on the eroded river / lake banks.
         k.scatter_shore(&mut kit_chunks, lo, hi, mask);

@@ -163,7 +163,7 @@ pub fn bake_rut_mask() -> (Vec<u8>, usize, usize, Vec4) {
     let pad = RUT_D + RUT_W + 1.0;
     lo -= pad;
     hi += pad;
-    // The village fields' furrows are pressed in through this mask too (`castle_ground::field_at`).
+    // The fields. furrows are pressed in through this mask too (`castle_ground::field_at`).
     let (flo, fhi) = crate::castle_ground::field_bounds();
     lo = lo.min(flo);
     hi = hi.max(fhi);
@@ -199,7 +199,7 @@ pub fn bake_rut_mask() -> (Vec<u8>, usize, usize, Vec4) {
             }
         }
     }
-    // Plough furrows on the village fields: shallower on the stubble strips.
+    // Plough furrows on the fields: shallower on the stubble strips.
     let (i0, i1) = (((flo.x - lo.x) / RUT_CELL).max(0.0) as usize, (((fhi.x - lo.x) / RUT_CELL).ceil() as usize).min(w));
     let (j0, j1) = (((flo.y - lo.y) / RUT_CELL).max(0.0) as usize, (((fhi.y - lo.y) / RUT_CELL).ceil() as usize).min(h));
     for cz in j0..j1 {

@@ -25,8 +25,7 @@ use crate::castle::{COURTYARD, HALF_X, HALF_Z, KEEP_FRONT, MARKET_CENTRE, N_GATE
 pub struct CastleGround {
     /// Scanned-floor weight (realforest mask R): how far the procedural meadow gives way.
     pub floor: f32,
-    /// Trodden-earth strength (mask G). Kept ≤ ~0.86 off the lane centrelines: the shader turns
-    /// G > 0.88 without a rut into the grass strip a cart path keeps between its wheel tracks.
+    /// Trodden-earth strength (mask G).
     pub path: f32,
     /// Debris (mask A, the grove field): chips / straw / litter instead of moss.
     pub debris: f32,
@@ -199,13 +198,14 @@ pub fn sample(wx: f32, wz: f32) -> CastleGround {
     CastleGround { floor, path, debris }
 }
 
-// ── The village's fields ─────────────────────────────────────────────────────────────────────
-// Open-field strips behind the street village's burgage plots (W of the castle, on the flat grass
-// lobe `worldmap` levels round the King's Road). They replace the old low-poly "tilled field"
-// meshes (`poi::field`: a dark box bed with box crop rows inside a post-and-rail fence — the
-// "wooden rafts" lying on the meadow). Like the castle yard they are ground, not geometry: the
-// scanned soil layer from the realforest mask (R + G) and furrows pressed in through the
-// wheel-rut mask, so the plough lines darken, hold puddles and catch the light exactly like ruts.
+// ── The fields ─────────────────────────────────────────────────────────────────────────────────
+// Open-field strips on the castle meadow N and S of the walls (the forced-flat grass ring the town
+// farms, beside the street village; the village lobe itself is all burgage yards + forest edge).
+// They replace the old low-poly "tilled field" meshes (`poi::field`: a dark box bed with box crop
+// rows inside a post-and-rail fence — the "wooden rafts" lying on the meadow). Like the castle yard
+// they are ground, not geometry: the scanned soil layer from the realforest mask (R + G) and
+// furrows pressed in through the wheel-rut mask, so the plough lines darken, catch the light
+// (`terrain.wgsl` tilts the normal by the rut gradient) and hold puddles exactly like ruts.
 
 /// One field strip: centre, half-extents (x along the furrows, z across), yaw (radians, about
 /// +Y like `Quat::from_rotation_y`), and how freshly ploughed it is (1 = bare furrowed soil,
@@ -218,15 +218,16 @@ struct Field {
 }
 
 const FIELDS: [Field; 6] = [
-    // North of the King's Road, behind the north-side burgages (x along the road).
-    Field { c: Vec2::new(-41.0, -16.5), half: Vec2::new(7.0, 2.4), yaw: -0.07, plough: 1.0 },
-    Field { c: Vec2::new(-41.5, -21.8), half: Vec2::new(7.0, 2.4), yaw: -0.07, plough: 0.55 },
-    Field { c: Vec2::new(-57.0, -11.5), half: Vec2::new(6.0, 2.3), yaw: -0.22, plough: 0.9 },
-    // South of the road, between the castle meadow and the side lane.
-    Field { c: Vec2::new(-39.0, 15.5), half: Vec2::new(6.5, 2.3), yaw: 0.05, plough: 0.8 },
-    Field { c: Vec2::new(-39.5, 20.6), half: Vec2::new(6.5, 2.3), yaw: 0.05, plough: 1.0 },
-    // West of the side lane.
-    Field { c: Vec2::new(-63.5, 23.0), half: Vec2::new(2.3, 6.0), yaw: 0.0, plough: 0.6 },
+    // South meadow, W of the south gate road: two strips side by side, ploughed + stubble.
+    Field { c: Vec2::new(-11.0, 31.0), half: Vec2::new(6.0, 2.1), yaw: 0.04, plough: 1.0 },
+    Field { c: Vec2::new(-11.5, 35.6), half: Vec2::new(6.0, 2.1), yaw: 0.04, plough: 0.55 },
+    // South meadow, E of the road.
+    Field { c: Vec2::new(11.5, 33.5), half: Vec2::new(5.5, 2.2), yaw: -0.05, plough: 0.85 },
+    // North meadow, either side of the postern lane.
+    Field { c: Vec2::new(-9.5, -33.5), half: Vec2::new(6.0, 2.2), yaw: -0.03, plough: 0.7 },
+    Field { c: Vec2::new(16.0, -32.0), half: Vec2::new(5.0, 2.1), yaw: 0.06, plough: 1.0 },
+    // East meadow, off the solid east wall (furrows run N-S).
+    Field { c: Vec2::new(41.0, 0.0), half: Vec2::new(2.2, 6.0), yaw: 0.0, plough: 0.8 },
 ];
 
 /// Furrow spacing (world units): ≥3 rut-mask texels (`roads::RUT_CELL` 0.35) per period, so the
@@ -258,7 +259,7 @@ pub fn field_at(wx: f32, wz: f32) -> Option<(f32, f32, f32)> {
         // Furrows run along the strip's long axis.
         let across = if f.half.x >= f.half.y { l.y } else { l.x };
         let wave = 0.5 + 0.5 * (across * std::f32::consts::TAU / FURROW).cos();
-        let groove = smoothstep(0.45, 0.95, wave) * (0.75 + 0.25 * noise(wx, wz, 0.9, 61));
+        let groove = smoothstep(0.15, 0.95, wave) * (0.8 + 0.2 * noise(wx, wz, 0.9, 61));
         return Some((w, groove, f.plough));
     }
     None

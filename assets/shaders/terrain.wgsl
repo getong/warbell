@@ -471,11 +471,15 @@ fn fragment(
         // path in tongues instead of along the mask's straight iso-line.
         let edge = (ter_noise(wp * 0.45 + vec2<f32>(17.0, 3.0)) - 0.5) * 0.45
                  + (ter_noise(wp * 1.7 + vec2<f32>(4.0, 29.0)) - 0.5) * 0.25;
-        // Narrower worn track, and the grass strip a cart path keeps between its ruts (centre of
-        // the road field, away from the grooves) goes back to the mossy layer.
-        let centre_strip = smoothstep(0.88, 0.97, fmask.g) * (1.0 - smoothstep(0.05, 0.3, rut)) * 0.85;
+        // (No "grass strip between the ruts" carved out of the road field any more: it keyed on a
+        // thin G band (0.88-0.97) that also runs just OUTSIDE every rut and along the castle lanes'
+        // centrelines, so it drew hairline grass slivers with texel-stepped edges down every road —
+        // the stray thin lines on the ground. The kit's clutter still plants tufts between ruts.)
+        // Trampled verges: the sward beside a track is worn through to soil in broken patches.
+        let verge = smoothstep(0.04, 0.30, fmask.g) * (1.0 - smoothstep(0.55, 0.85, fmask.g))
+                  * smoothstep(0.50, 0.78, ter_noise(wp * 0.33 + vec2<f32>(57.0, 11.0)) * 0.7 + ter_noise(wp * 1.1 + vec2<f32>(3.0, 91.0)) * 0.3);
         // Bank earth claims its share of the floor as path (all of it off the forest mask).
-        let path = max(smoothstep(0.36, 0.86, fmask.g + edge) * (1.0 - centre_strip), bank_fp / fp_w);
+        let path = max(max(smoothstep(0.36, 0.86, fmask.g + edge), verge * glade * 0.75), bank_fp / fp_w);
         let mossn = ter_noise_rot(wp * 0.05, 0.946, 0.326) * 0.65 + ter_noise(wp * 0.19 + vec2<f32>(5.0, 9.0)) * 0.35;
         // Moss/grass is the dominant floor (it sits under the green carpet and IS the carpet past
         // its draw range); leaf litter keeps the drier hollows.
@@ -607,7 +611,8 @@ fn fragment(
         if sward > 0.01 {
             let al = dot(alb, vec3<f32>(0.2126, 0.7152, 0.0722));
             let lushn = smoothstep(0.30, 0.75, ter_noise(wp * 0.045 + vec2<f32>(3.0, 17.0)));
-            let sw = mix(vec3<f32>(al), alb, 1.2) * mix(vec3<f32>(0.86, 1.0, 0.72), vec3<f32>(0.76, 1.0, 0.64), lushn);
+            // Late-summer green-gold: less mustard than the raw scan, never a park lawn.
+            let sw = mix(vec3<f32>(al), alb, 1.15) * mix(vec3<f32>(0.80, 1.0, 0.64), vec3<f32>(0.70, 1.0, 0.58), lushn);
             alb = mix(alb, sw, sward * 0.85);
         }
         // Micro self-shadow (above), contact darkening where roots / stones meet the floor (mask
@@ -615,7 +620,11 @@ fn fragment(
         // (the procedural rut tint applied earlier is overwritten by this mix).
         alb *= 1.0 - 0.4 * self_shadow;
         alb *= 1.0 - 0.35 * fmask.b;
-        alb *= 1.0 - 0.45 * rut * rut_wear;
+        // Plough furrows (`castle_ground::field_at`, fields carry G ~0.3-0.84, roads ~1 at their ruts):
+        // deeper, darker furrows and sun-dried pale ridges, so the strips read as ploughed rows.
+        let furrow_k = (1.0 - smoothstep(0.86, 0.95, fmask.g)) * smoothstep(0.10, 0.28, fmask.g);
+        alb *= 1.0 - (0.45 + 0.30 * furrow_k) * rut * rut_wear;
+        alb *= 1.0 + 0.30 * furrow_k * w.z * (1.0 - smoothstep(0.05, 0.45, rut));
         // Wet mud + puddles on the trail: the path layer darkens toward damp earth, and water
         // pools in its LOW texels (height below a noise-varied water line, deeper in the ruts).
         // Puddles are near-black, glassy and flat, so the IBL sky and sun glint off them.
@@ -636,7 +645,17 @@ fn fragment(
         let tx = normalize(vec3<f32>(1.0, 0.0, 0.0) - gn * gn.x);
         let bz = cross(gn, tx);
         let n_ts = vec3<f32>(nts.xy * 1.7, max(nts.z, 0.2));
-        fp_nw = normalize(mix(tx * n_ts.x + bz * n_ts.y + gn * n_ts.z, gn, puddle));
+        var rut_tilt = vec3<f32>(0.0);
+        if rut > 0.003 {
+            let ro = 0.22 * forest.rut_region.zw;
+            let rgx = textureSampleLevel(rut_tex, rut_samp, rut_uv + vec2<f32>(ro.x, 0.0), 0.0).r
+                    - textureSampleLevel(rut_tex, rut_samp, rut_uv - vec2<f32>(ro.x, 0.0), 0.0).r;
+            let rgz = textureSampleLevel(rut_tex, rut_samp, rut_uv + vec2<f32>(0.0, ro.y), 0.0).r
+                    - textureSampleLevel(rut_tex, rut_samp, rut_uv - vec2<f32>(0.0, ro.y), 0.0).r;
+            // Height = -0.12 * rut  ->  N ~ (0.12 * drut/dx, 1, 0.12 * drut/dz); the taps are 0.44u apart.
+            rut_tilt = vec3<f32>(rgx, 0.0, rgz) * (0.12 / 0.44) * 2.2 * rut_in * (1.0 + 1.5 * furrow_k);
+        }
+        fp_nw = normalize(mix(tx * n_ts.x + bz * n_ts.y + gn * n_ts.z + rut_tilt, gn, puddle));
         fp_ao = orm.r;
         // Dry packed earth is matte: keep the trail rough so only real puddles glint.
         fp_rough = mix(max(orm.g, 0.82 * w.z) * mix(1.0, 0.85, rut * rut_wear), 0.04, puddle);
@@ -741,7 +760,10 @@ fn fragment(
     let wp3_dx = dpdx(in.world_position.xyz);
     let wp3_dy = dpdy(in.world_position.xyz);
     let alp_road = select(0.0, fmask.g, forest.pbr.x > 0.5);
-    let alp_k = alpine_apply(&pbr_input, in.world_position.xyz, in.world_normal, cliff, fp_w, alp_road, wp3_dx, wp3_dy, forest.params2.y);
+    // Open grass (and glades) under the scanned floor still take the alpine meadow where its zone
+    // reaches (the apron round the snow biome); only the wooded floor skips it, as before.
+    let alp_skip = select(fp_w, fp_w * (1.0 - glade), forest.pbr.x > 0.5);
+    let alp_k = alpine_apply(&pbr_input, in.world_position.xyz, in.world_normal, cliff, alp_skip, alp_road, wp3_dx, wp3_dy, forest.params2.y);
 
     // ── Wet ground (marsh) — the vertex-colour ALPHA carries a per-vertex wetness (0 = dry … 1 =
     //    standing bog), which `worldmap::ground_color` feathers over the biome BLEND band. Lower the
