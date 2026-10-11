@@ -44,6 +44,7 @@ mod castle;
 mod castle_decor;
 mod gates; // castle gate mechanics: shut at dusk (oak leaves / wagon barricade), orks hack them
 mod market; // castle market: kit stalls + cart + barrels, vendors behind the counters, shoppers
+mod town_kit; // castle town kit (town_kit.glb): spawn_piece handle + FOREST_TOWNKIT_SHOWCASE row
 mod castle_ground; // lived-in castle yard ground: lanes, ruts, plaza, worn grass (baked into the terrain masks)
 mod chest;
 mod combat_fx;
@@ -251,6 +252,7 @@ fn main() {
         ))
         .add_plugins(gates::GatesPlugin) // gates shut at dusk, open at dawn; ork-only solid, hackable
         .add_plugins(market::MarketPlugin) // the living market on the west lane: stalls, vendors, vendor greetings
+        .add_plugins(town_kit::TownKitPlugin) // town-kit pieces (showcase only until the phase-4 layout)
         .add_plugins(bog::BogPlugin) // swamp-pool will-o'-wisp hover anim (dressing spawned at build)
         .add_plugins(poi::PoiPlugin) // micro-POI flags: fortress smoke column + wheeling crows
         .add_plugins(vista::VistaPlugin) // waterfall foam/mist animation
