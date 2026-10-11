@@ -64,10 +64,21 @@ const HALF_PI: f32 = std::f32::consts::FRAC_PI_2;
 /// Texture tiles every ~this many world units (keeps block scale consistent).
 const TILE: f32 = 1.5;
 
-// Perimeter half-extents (widened from the TS 13×9 for more courtyard room).
-const HALF_X: f32 = 17.0;
-const HALF_Z: f32 = 12.0;
-const GATE_GAP: f32 = 4.0;
+// Perimeter half-extents — castle v2 (`docs/superpowers/specs/2026-10-11-zamek-v2-design.md` §2):
+// 28×21, an interior of 56×42u (≈84×63 m at 1u ≈ 1.5 m) — a small town inside the walls with an
+// open courtyard between the keep and the south gate. EVERY castle position below derives from
+// these two numbers (gates, keep, zones, houses, yard props, paths), so the perimeter can be
+// re-tuned in one place.
+pub(crate) const HALF_X: f32 = 28.0;
+pub(crate) const HALF_Z: f32 = 21.0;
+/// Gap left in a wall run for a gate; the gate posts stand inside it (opening ≈2.9u, a cart passes).
+const GATE_GAP: f32 = 3.8;
+/// Gate positions along their walls (spec v2 §5): the WEST main gate (King's Road to the bay) at
+/// mid-wall, the SOUTH gate (the orc side, under the bell tower) at mid-wall, the NORTH postern
+/// (forest + quarry) east of the keep. The EAST wall is solid.
+pub(crate) const W_GATE_Z: f32 = 0.0;
+pub(crate) const S_GATE_X: f32 = 0.0;
+pub(crate) const N_GATE_X: f32 = HALF_X * 0.29;
 
 // ── Material slots ───────────────────────────────────────────────────────────────
 // `pub(crate)` so the town's producer buildings (`town_meshes`) render with the SAME
@@ -811,6 +822,11 @@ const KEEP_W: f32 = 7.0;
 const KEEP_H: f32 = 1.9;
 const KEEP_D: f32 = 6.0;
 const KEEP_FOUND: f32 = 0.3;
+/// Keep centre (world XZ): north-centre, its back ~5u off the north wall, so the whole band south
+/// of its door down to the south gate is open courtyard (spec v2 §2).
+pub const KEEP_POS: Vec2 = Vec2::new(0.0, -HALF_Z + 9.5);
+/// World Z of the keep's front (door) face.
+pub(crate) const KEEP_FRONT: f32 = KEEP_POS.y + KEEP_D * KEEP_SCALE.z / 2.0;
 
 fn keep_parts() -> Vec<(Mesh, M)> {
     let mut v: Vec<(Mesh, M)> = Vec::new();
@@ -923,8 +939,9 @@ fn keep_tier2_parts() -> Vec<(Mesh, M)> {
     v
 }
 
-const WALL_H: f32 = 1.35;
-const WALL_THICK: f32 = 0.6;
+/// Curtain wall to the wall-walk (spec v2 §1: 3.6–4.0u to the merlon tops, 1.2–1.5u thick).
+const WALL_H: f32 = 3.4;
+const WALL_THICK: f32 = 1.3;
 
 fn wall_parts(len: f32) -> Vec<(Mesh, M)> {
     let mut v: Vec<(Mesh, M)> = Vec::new();
@@ -941,7 +958,8 @@ fn wall_parts(len: f32) -> Vec<(Mesh, M)> {
     v
 }
 
-const TOWER_H: f32 = 2.5;
+/// Wall-tower shaft (spec v2 §1: towers 5.5–6.5u to the battlement).
+const TOWER_H: f32 = 5.0;
 
 fn tower_parts() -> Vec<(Mesh, M)> {
     let mut v: Vec<(Mesh, M)> = Vec::new();
@@ -967,21 +985,25 @@ fn tower_parts() -> Vec<(Mesh, M)> {
     v
 }
 
-const GATE_H: f32 = 2.0;
+/// Gate passage clear height (spec v2 §1: 2.6–2.8u high × 2.6–3.0u wide — a loaded cart passes).
+const GATE_H: f32 = 2.8;
 
 fn gate_parts(width: f32) -> Vec<(Mesh, M)> {
     let mut v: Vec<(Mesh, M)> = Vec::new();
     let half = width / 2.0;
+    let post_h = WALL_H + 0.5;
     for sx in [-half, half] {
-        v.push((bx(0.9, GATE_H, 0.9, sx, GATE_H / 2.0, 0.0), M::Stone));
-        v.push((bx(1.0, 0.3, 1.0, sx, GATE_H + 0.05, 0.0), M::DarkStone)); // capital
+        v.push((bx(0.9, post_h, WALL_THICK + 0.3, sx, post_h / 2.0, 0.0), M::Stone));
+        v.push((bx(1.05, 0.3, WALL_THICK + 0.4, sx, post_h + 0.1, 0.0), M::DarkStone)); // capital
     }
-    v.push((bx(width + 1.2, 0.5, 0.8, 0.0, GATE_H + 0.35, 0.0), M::Beam)); // lintel
-    v.push((bx(0.5, 0.4, 0.12, 0.0, GATE_H + 0.8, 0.0), M::Gold)); // crest
+    // Stone head over the passage, from the clear height up to the wall-walk.
+    v.push((bx(width + 0.9, WALL_H - GATE_H + 0.2, WALL_THICK, 0.0, (GATE_H + WALL_H + 0.2) / 2.0, 0.0), M::Stone));
+    v.push((bx(width + 1.2, 0.3, WALL_THICK + 0.2, 0.0, GATE_H + 0.1, 0.0), M::Beam)); // lintel beam
+    v.push((bx(0.6, 0.5, 0.12, 0.0, GATE_H + 0.75, WALL_THICK / 2.0 + 0.04), M::Gold)); // crest
     // Open door leaves swung against the posts (with iron band).
     for (sx, rot) in [(-half + 0.1, 0.9_f32), (half - 0.1, -0.9)] {
         let leaf = (half - 0.1).max(0.3);
-        v.push((bake(bx(leaf, GATE_H - 0.4, 0.12, 0.0, 0.0, 0.0), Vec3::new(sx, GATE_H / 2.0, 0.6), rot, Vec3::ONE), M::Wood));
+        v.push((bake(bx(leaf, GATE_H - 0.1, 0.12, 0.0, 0.0, 0.0), Vec3::new(sx, (GATE_H - 0.1) / 2.0, WALL_THICK / 2.0 + 0.5), rot, Vec3::ONE), M::Wood));
     }
     v
 }
@@ -1002,13 +1024,18 @@ pub(crate) const BUILDING_TALLER: f32 = 1.15;
 /// Per-dwelling root scale: the original squat (0.9, 0.74, 0.9) × [`WORLD_BUMP`], with the Y also
 /// ×[`BUILDING_TALLER`]. Shared by the spawn transform, the shutter window placement
 /// (`shutters.rs`), the collision blocker and the chimney-smoke anchors so they never desync.
+/// Castle v2 (spec §1) re-scales the dwellings to the hero: eaves ≈2.0u, door ≈1.4u
+/// (×1.32 in Y over the old squat cottages, ×1.2 on the footprint to keep the proportions).
 pub(crate) const HOUSE_SCALE: Vec3 =
-    Vec3::new(0.9 * WORLD_BUMP, 0.74 * WORLD_BUMP * BUILDING_TALLER, 0.9 * WORLD_BUMP);
+    Vec3::new(0.9 * WORLD_BUMP * 1.2, 0.74 * WORLD_BUMP * BUILDING_TALLER * 1.32, 0.9 * WORLD_BUMP * 1.2);
 /// Keep root scale (shared by the keep + both grandeur tiers so their parts stay registered). Y is
 /// ×[`BUILDING_TALLER`]; footprint unchanged.
-const KEEP_SCALE: Vec3 = Vec3::new(0.88, 0.7 * BUILDING_TALLER, 0.88);
+/// Castle v2 (spec §1): a keep that dominates the yard — ≈9.5×8u footprint, the body ≈5u, the
+/// central tower ≈8u, the roof peak ≈10u (interim primitive heights until `castle_kit.glb`).
+const KEEP_SCALE: Vec3 = Vec3::new(1.35, 2.3, 1.35);
 /// Corner-tower root scale. Y is ×[`BUILDING_TALLER`]; footprint unchanged.
-const TOWER_SCALE: Vec3 = Vec3::new(0.92, 0.74 * BUILDING_TALLER, 0.92);
+/// Castle v2: 2.7u-square towers, the shaft ([`TOWER_H`]) at full height.
+const TOWER_SCALE: Vec3 = Vec3::new(1.5, 1.0, 1.5);
 
 /// Four dwelling silhouettes spread across the twelve slots (3 huts, 4 cottages, 3 townhouses,
 /// 2 longhouses) so the rows read as a grown village instead of barracks. All archetypes keep
@@ -1027,8 +1054,8 @@ enum HouseStyle {
 /// settlement mixes a hut, cottages and a townhouse rather than clones.
 const HOUSE_STYLES: [HouseStyle; 12] = [
     HouseStyle::Hut, HouseStyle::Cottage, HouseStyle::Townhouse, HouseStyle::Cottage, // N row
-    HouseStyle::Cottage, HouseStyle::Longhouse, HouseStyle::Cottage, HouseStyle::Hut, // S row
-    HouseStyle::Townhouse, HouseStyle::Hut, HouseStyle::Longhouse, HouseStyle::Townhouse, // E/W
+    HouseStyle::Cottage, HouseStyle::Longhouse, HouseStyle::Cottage, HouseStyle::Longhouse, // S row | W/E flanks
+    HouseStyle::Townhouse, HouseStyle::Hut, HouseStyle::Hut, HouseStyle::Townhouse, // W/E flanks (a hut fits between the smithy and the tavern)
 ];
 
 /// Roof material per slot — huts thatch; the rest alternate warm vs weathered shingle.
@@ -1207,33 +1234,49 @@ fn longhouse_parts(roof: M) -> Vec<(Mesh, M)> {
 // swinging assembly hinged at the crossbeam (`spawn_bell_swing` + `swing_bell`) — the bell,
 // clapper and pull-rope are real entities so ringing it actually rocks the bronze.
 
-/// World-XZ of the war bell. Shared with `interaction.rs`'s ring zone so the prompt and the prop
-/// can never drift apart. Moved off the keep's doorstep (it stood hard against the north face at
-/// (0,6)) out to the plaza's south-east quarter — its own station, clear of the keep in shots.
-pub const BELL_POS: Vec2 = Vec2::new(4.5, 7.5);
-/// Frame yaw — angles the crossbeam so the bell's swing plane faces the keep-door approach.
-const BELL_YAW: f32 = -0.55;
-/// Crossbeam-centre height the swing assembly hinges at (world Y over `BELL_POS`).
-const BELL_PIVOT_Y: f32 = 2.2;
+/// World-XZ of the war bell — the BELL TOWER on the south wall line, flanking the south gate on
+/// its west side (spec v2 §4/§5: the gate "under the bell tower", where the orcs come from).
+/// Shared with `interaction.rs`'s ring zone so the prompt and the prop can never drift apart.
+pub const BELL_POS: Vec2 = Vec2::new(S_GATE_X - GATE_GAP / 2.0 - BELL_TOWER_HALF - 0.4, HALF_Z);
+/// Half-width of the bell tower's square shaft.
+pub(crate) const BELL_TOWER_HALF: f32 = 1.7;
+/// Shaft height; the open belfry (four corner piers) stands on it up to [`BELL_TOWER_TOP`].
+const BELL_TOWER_SHAFT: f32 = 6.2;
+const BELL_TOWER_TOP: f32 = 8.0;
+/// Frame yaw — the headstock runs along the wall, so the bell swings in and out of the town.
+const BELL_YAW: f32 = 0.0;
+/// Headstock hinge height (world Y over `BELL_POS`): the bell hangs in the open belfry.
+const BELL_PIVOT_Y: f32 = 7.75;
 
-/// The bell STAND only: two stone steps, a pair of posts with knee braces, the crossbeam and a
-/// small shingle cap. Static — baked like every other castle part.
+/// The BELL TOWER (interim primitive until `castle_kit.glb`): old-colony stone — the one thing of
+/// the first colony that still stands whole (spec v2 §3). A square ashlar shaft with a dark plinth
+/// and string courses, a door on the town side, an OPEN belfry of four corner piers carrying the
+/// headstock beam the live bell hangs from, a slab cap and a pyramid roof. Static, `Always`.
 fn bell_frame_parts() -> Vec<(Mesh, M)> {
     let mut v: Vec<(Mesh, M)> = Vec::new();
-    v.push((bx(2.1, 0.18, 1.35, 0.0, 0.09, 0.0), M::DarkStone)); // lower step
-    v.push((bx(1.7, 0.16, 1.0, 0.0, 0.26, 0.0), M::Stone)); // upper step
-    for sx in [-1.0_f32, 1.0] {
-        v.push((bx(0.16, 2.0, 0.16, sx * 0.75, 1.34, 0.0), M::Beam)); // post (0.34 → 2.34)
-        // Knee brace: leans from the post up into the crossbeam centre.
-        v.push((
-            bx(0.09, 1.0, 0.09, 0.0, 0.0, 0.0)
-                .rotated_by(Quat::from_rotation_z(sx * 0.62))
-                .translated_by(Vec3::new(sx * 0.45, 1.72, 0.0)),
-            M::Beam,
-        ));
+    let w = BELL_TOWER_HALF * 2.0;
+    v.push((bx(w + 0.5, 0.6, w + 0.5, 0.0, 0.3, 0.0), M::DarkStone)); // plinth
+    v.push((bx(w, BELL_TOWER_SHAFT, w, 0.0, BELL_TOWER_SHAFT / 2.0, 0.0), M::Stone)); // shaft
+    for y in [2.4_f32, BELL_TOWER_SHAFT - 0.1] {
+        v.push((bx(w + 0.16, 0.2, w + 0.16, 0.0, y, 0.0), M::DarkStone)); // string courses
     }
-    v.push((bx(1.9, 0.16, 0.18, 0.0, BELL_PIVOT_Y, 0.0), M::Beam)); // crossbeam (the hinge line)
-    v.push((gable(2.5, 1.15, 0.45, 2.34), M::HouseRoof)); // weather cap
+    // Door on the town (north, -Z) face + a slit above it; a slit on the field side too.
+    v.push((bx(1.0, 1.9, 0.08, 0.0, 1.25, -BELL_TOWER_HALF - 0.03), M::Wood));
+    v.push((bx(1.2, 0.2, 0.12, 0.0, 2.25, -BELL_TOWER_HALF - 0.05), M::DarkStone));
+    v.push((bx(0.16, 0.8, 0.06, 0.0, 4.2, -BELL_TOWER_HALF - 0.02), M::Slit));
+    v.push((bx(0.16, 0.8, 0.06, 0.0, 4.2, BELL_TOWER_HALF + 0.02), M::Slit));
+    // Open belfry: four corner piers, the headstock beam across them.
+    let pier = 0.55;
+    let ph = BELL_TOWER_TOP - BELL_TOWER_SHAFT;
+    for sx in [-1.0_f32, 1.0] {
+        for sz in [-1.0_f32, 1.0] {
+            let (px, pz) = (sx * (BELL_TOWER_HALF - pier / 2.0), sz * (BELL_TOWER_HALF - pier / 2.0));
+            v.push((bx(pier, ph, pier, px, BELL_TOWER_SHAFT + ph / 2.0, pz), M::Stone));
+        }
+    }
+    v.push((bx(w - 0.2, 0.22, 0.24, 0.0, BELL_PIVOT_Y, 0.0), M::Beam)); // headstock beam (the hinge line)
+    v.push((bx(w + 0.3, 0.3, w + 0.3, 0.0, BELL_TOWER_TOP + 0.15, 0.0), M::DarkStone)); // cap slab
+    v.push((pyramid(BELL_TOWER_HALF * 1.25, 1.6, BELL_TOWER_TOP + 0.3), M::Roof));
     v
 }
 
@@ -1489,25 +1532,29 @@ fn hen_parts() -> Vec<(Mesh, M)> {
 
 // ── Layout (parametric perimeter) ────────────────────────────────────────────────
 
-/// The worn route network `(cx, cz, w, d)`: [0] the keep/bell/muster plaza, then the four
-/// gate paths. Drawn as packed earth pre-walls and cobble after (see `build`); also used to
-/// keep grass sprigs off the paving.
-const PATH_RECTS: [(f32, f32, f32, f32); 5] = [
-    (0.0, 2.0, 13.0, 13.0),   // plaza: keep + bell + muster yard
-    (0.0, -8.25, 3.4, 7.5),   // north gate → plaza
-    (0.0, 10.25, 3.4, 3.5),   // south gate → plaza
-    (-11.75, 0.0, 10.5, 3.4), // west gate → plaza
-    (11.75, 0.0, 10.5, 3.4),  // east gate → plaza
+/// The open COURTYARD (spec v2 §2: ≥24×16u, nothing built in it but the fire pit + well at its
+/// north edge) as `(cx, cz, half_x, half_z)`: from just south of the keep's door to the south house
+/// row, between the west market and the east plots.
+pub(crate) const COURTYARD: (f32, f32, f32, f32) =
+    (0.0, (KEEP_FRONT + 1.2 + HALF_Z - 5.4) / 2.0, 12.5, (HALF_Z - 5.4 - KEEP_FRONT - 1.2) / 2.0);
+
+/// The worn route network `(cx, cz, w, d)`: [0] the courtyard (the keep apron → the south gate),
+/// then the three gate paths. Drawn as packed earth pre-walls and cobble after (see `build`); also
+/// used to keep grass sprigs off the paving.
+const PATH_RECTS: [(f32, f32, f32, f32); 4] = [
+    (COURTYARD.0, COURTYARD.1, COURTYARD.2 * 2.0 - 4.0, COURTYARD.3 * 2.0 - 2.0), // courtyard
+    (N_GATE_X, (-HALF_Z + KEEP_FRONT + 1.0) / 2.0, 3.2, KEEP_FRONT + 1.0 + HALF_Z), // north postern → yard
+    (S_GATE_X, HALF_Z - 3.0, 3.6, 6.0),                                           // south gate → yard
+    ((-HALF_X - COURTYARD.2) / 2.0, W_GATE_Z, HALF_X - COURTYARD.2 + 2.0, 3.6),    // west gate → market → yard
 ];
 
-/// Cobble paving raised with the walls `(cx, cz, w, d)`: [0] the keep + bell apron, then the four
-/// gate passages (through the gap, a stride either side). Everything else stays earth.
-const PAVED_RECTS: [(f32, f32, f32, f32); 5] = [
-    (0.6, 1.6, 10.2, 9.6),
-    (0.0, -HALF_Z, 3.6, 5.0),
-    (0.0, HALF_Z, 3.6, 5.0),
-    (-HALF_X, 0.0, 5.0, 3.6),
-    (HALF_X, 0.0, 5.0, 3.6),
+/// Cobble paving raised with the walls `(cx, cz, w, d)`: [0] the keep apron, then the three gate
+/// passages (through the gap, a stride either side). Everything else stays earth.
+const PAVED_RECTS: [(f32, f32, f32, f32); 4] = [
+    (KEEP_POS.x, KEEP_FRONT + 1.4, KEEP_W * KEEP_SCALE.x + 1.0, 3.2),
+    (N_GATE_X, -HALF_Z, 3.4, 5.0),
+    (S_GATE_X, HALF_Z, 3.8, 5.0),
+    (-HALF_X, W_GATE_Z, 5.0, 3.8),
 ];
 
 /// How strongly world point `(wx, wz)` sits on the trodden castle yard (the plaza + the four gate
@@ -1537,42 +1584,131 @@ fn on_paving(wx: f32, wz: f32) -> bool {
         .any(|(cx, cz, w, d)| (wx - cx).abs() < w / 2.0 + 0.5 && (wz - cz).abs() < d / 2.0 + 0.5)
 }
 
-fn wall_segments() -> [(f32, f32, f32, f32); 8] {
-    let g = GATE_GAP / 2.0;
-    let seg_x = HALF_X - g;
-    let cx = (HALF_X + g) / 2.0;
-    let seg_z = HALF_Z - g;
-    let cz = (HALF_Z + g) / 2.0;
-    [
-        (-cx, -HALF_Z, 0.0, seg_x),
-        (cx, -HALF_Z, 0.0, seg_x),
-        (-cx, HALF_Z, 0.0, seg_x),
-        (cx, HALF_Z, 0.0, seg_x),
-        (-HALF_X, -cz, HALF_PI, seg_z),
-        (-HALF_X, cz, HALF_PI, seg_z),
-        (HALF_X, -cz, HALF_PI, seg_z),
-        (HALF_X, cz, HALF_PI, seg_z),
-    ]
+/// The three gates (spec v2 §5). The east wall has none.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Gate {
+    /// Main gate — the King's Road west to the bay (later a portcullis).
+    West,
+    /// The attacked gate, under the bell tower — the orcs come from the south (later a barbican).
+    South,
+    /// The north postern — forest and quarry.
+    North,
 }
-fn gates() -> [(f32, f32, f32); 4] {
-    [(0.0, -HALF_Z, 0.0), (0.0, HALF_Z, 0.0), (-HALF_X, 0.0, HALF_PI), (HALF_X, 0.0, HALF_PI)]
+
+impl Gate {
+    pub const ALL: [Gate; 3] = [Gate::West, Gate::South, Gate::North];
+    /// Gate-gap centre on the wall line (world XZ).
+    pub fn center(self) -> Vec2 {
+        match self {
+            Gate::West => Vec2::new(-HALF_X, W_GATE_Z),
+            Gate::South => Vec2::new(S_GATE_X, HALF_Z),
+            Gate::North => Vec2::new(N_GATE_X, -HALF_Z),
+        }
+    }
+    /// Unit vector pointing OUT of the castle through this gate.
+    pub fn outward(self) -> Vec2 {
+        match self {
+            Gate::West => Vec2::NEG_X,
+            Gate::South => Vec2::Y,
+            Gate::North => Vec2::NEG_Y,
+        }
+    }
+    /// A point `d` units INSIDE the gate gap, on its axis (the courtyard side).
+    pub fn interior(self, d: f32) -> Vec2 {
+        self.center() - self.outward() * d
+    }
+    /// Yaw of the gate structure (its local X runs along the wall).
+    fn yaw(self) -> f32 {
+        if self == Gate::West { HALF_PI } else { 0.0 }
+    }
+}
+
+/// Wall runs `(cx, cz, yaw, length)`: each side corner to corner, split around its gate (the east
+/// side is one solid run).
+fn wall_segments() -> Vec<(f32, f32, f32, f32)> {
+    let g = GATE_GAP / 2.0;
+    let mut v = Vec::new();
+    for (z, gx) in [(-HALF_Z, N_GATE_X), (HALF_Z, S_GATE_X)] {
+        for (a, b) in [(-HALF_X, gx - g), (gx + g, HALF_X)] {
+            v.push(((a + b) / 2.0, z, 0.0, b - a));
+        }
+    }
+    for (a, b) in [(-HALF_Z, W_GATE_Z - g), (W_GATE_Z + g, HALF_Z)] {
+        v.push((-HALF_X, (a + b) / 2.0, HALF_PI, b - a));
+    }
+    v.push((HALF_X, 0.0, HALF_PI, HALF_Z * 2.0)); // the solid east wall
+    v
+}
+fn gates() -> [(f32, f32, f32); 3] {
+    Gate::ALL.map(|g| (g.center().x, g.center().y, g.yaw()))
 }
 fn towers() -> [(f32, f32); 4] {
     [(-HALF_X, -HALF_Z), (HALF_X, -HALF_Z), (HALF_X, HALF_Z), (-HALF_X, HALF_Z)]
 }
-/// Twelve dwelling slots: two interior N/S rows (8) flanking the N/S gates, plus four E/W
-/// flanks tucked beside the side gates — all clear of the keep, the bell, and the gate lanes.
-/// The first `town.houses` reveal in order, so the early settlement uses the familiar 8 and the
-/// last four are room to grow into.
+/// Twelve dwelling slots ALONG THE WALLS (spec v2 §2 — the middle stays open): the south row
+/// either side of the south gate and the bell tower, then the west and east flanks. Clear of the
+/// keep, the reserved plots ([`TOWN_PLOTS`]), the market and every gate lane. The first
+/// `town.houses` reveal in order.
 fn houses() -> [(f32, f32); 12] {
-    let hz = HALF_Z - 3.0; // 9.0 — the two long N/S rows
-    let ex = HALF_X - 3.0; // 14.0 — the E/W flanks, off the side-gate lanes (z = ±4.5)
+    let sz = HALF_Z - 3.2; // the south row, backs to the wall
+    let ex = HALF_X - 3.2; // the west / east flanks
     [
-        (-13.0, -hz), (-7.0, -hz), (7.0, -hz), (13.0, -hz),
-        (-13.0, hz), (-7.0, hz), (7.0, hz), (13.0, hz),
-        (-ex, -4.5), (-ex, 4.5), (ex, -4.5), (ex, 4.5),
+        (-HALF_X * 0.36, sz), (HALF_X * 0.29, sz), (-HALF_X * 0.57, sz), (HALF_X * 0.5, sz),
+        (-HALF_X * 0.79, sz), (HALF_X * 0.71, sz),
+        (-ex, HALF_Z * 0.43), (ex, HALF_Z * 0.24), (-ex, HALF_Z * 0.67), (ex, HALF_Z * 0.52),
+        (-ex, -HALF_Z * 0.59), (ex, -HALF_Z * 0.55),
     ]
 }
+
+/// A reserved plot inside (or just outside) the walls: interim primitive placeholder + blocker
+/// until the town kit (`town_kit.glb`, spec v2 phase 3d) replaces it. `half` is in world axes.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TownPlot {
+    pub(crate) name: &'static str,
+    pub(crate) pos: Vec2,
+    pub(crate) half: Vec2,
+}
+
+const fn plot(name: &'static str, x: f32, z: f32, hx: f32, hz: f32) -> TownPlot {
+    TownPlot { name, pos: Vec2::new(x, z), half: Vec2::new(hx, hz) }
+}
+
+/// The zones of spec v2 §2 inside the walls: the north band (smithy + carpenter, barracks, the
+/// granary on stilts, Maud's house + edict board), the west side (the tavern above the market), the
+/// east side (infirmary + herb garden), and the fire pit + well at the courtyard's north edge.
+pub(crate) const TOWN_PLOTS: [TownPlot; 9] = [
+    plot("smithy", -HALF_X + 6.5, -HALF_Z + 4.0, 3.0, 2.5),
+    plot("barracks", -HALF_X * 0.41, -HALF_Z + 3.5, 4.0, 1.75),
+    plot("granary", HALF_X * 0.5, -HALF_Z + 4.0, 3.0, 2.0),
+    plot("maud_house", HALF_X - 5.5, -HALF_Z + 4.5, 2.5, 2.0),
+    plot("tavern", -HALF_X + 6.5, -HALF_Z * 0.36, 3.0, 2.5),
+    plot("infirmary", HALF_X - 5.5, -HALF_Z * 0.33, 3.0, 2.0),
+    plot("herb_garden", HALF_X - 5.5, -HALF_Z * 0.33 + 4.5, 2.2, 1.5),
+    plot("fire_pit", -5.5, KEEP_FRONT + 2.8, 0.8, 0.8),
+    plot("well", 5.5, KEEP_FRONT + 2.8, 0.6, 0.6),
+];
+
+/// OUTSIDE the west gate, by the King's Road (spec v2 §4): the Crown depot, the Crown gallows and
+/// the empty grave of "Wat's drowned squire" by the road from the bay.
+pub(crate) const OUTER_PLOTS: [TownPlot; 3] = [
+    plot("crown_depot", -HALF_X - 10.0, W_GATE_Z - 8.0, 3.0, 2.5),
+    plot("gallows", -HALF_X - 9.0, W_GATE_Z + 7.5, 1.3, 1.0),
+    plot("empty_grave", -HALF_X - 16.0, W_GATE_Z + 4.0, 1.1, 0.7),
+];
+
+/// A reserved plot by name (inside or outside the walls).
+pub(crate) fn town_plot(name: &str) -> Option<TownPlot> {
+    TOWN_PLOTS.iter().chain(OUTER_PLOTS.iter()).find(|p| p.name == name).copied()
+}
+
+/// Centre of the market square just inside the west gate (spec v2 §2: "W brama ══ RYNEK").
+pub(crate) const MARKET_CENTRE: Vec2 = Vec2::new(-HALF_X + 9.0, W_GATE_Z);
+
+/// The work-yard props `(x, z, yaw)`: the wood yard by the smithy, hay by the granary, the
+/// hand-cart by the west houses.
+pub(crate) const WOOD_YARD: (f32, f32, f32) = (-HALF_X * 0.59, -HALF_Z * 0.55, 0.6);
+pub(crate) const HAY_CORNER: (f32, f32, f32) = (HALF_X * 0.59, -HALF_Z * 0.55, -0.5);
+pub(crate) const CART_CORNER: (f32, f32, f32) = (-HALF_X * 0.52, HALF_Z * 0.38, 2.3);
 
 /// World-XZ of the dwelling slot the NEXT house will occupy (`houses()[built]`), or `None`
 /// once all twelve stand. The on-site "Raise house" interaction + its pad anchor here, so a
@@ -1599,9 +1735,29 @@ pub fn in_courtyard(wx: f32, wz: f32) -> bool {
     wx.abs() < HALF_X - WALL_THICK && wz.abs() < HALF_Z - WALL_THICK
 }
 
-/// The four gate-gap centres (world XZ) — town villagers spill in/out through these.
-pub fn gate_centers() -> [Vec2; 4] {
-    [Vec2::new(0.0, -HALF_Z), Vec2::new(0.0, HALF_Z), Vec2::new(-HALF_X, 0.0), Vec2::new(HALF_X, 0.0)]
+/// The keep's footprint half-extents (body, without the plinth) — for props that dress its walls.
+/// World Y of the keep's flat roof (the body top) — where the keep-roof archers stand.
+pub(crate) const KEEP_ROOF_Y: f32 = (KEEP_FOUND + KEEP_H) * KEEP_SCALE.y;
+/// World Y of a corner tower's fighting top — the tower defenders' muzzle height.
+pub(crate) const TOWER_TOP: f32 = TOWER_H * TOWER_SCALE.y;
+
+pub(crate) const KEEP_HALF: Vec2 = Vec2::new(KEEP_W * KEEP_SCALE.x / 2.0, KEEP_D * KEEP_SCALE.z / 2.0);
+
+/// The keep steps — the gather spot / muster mark just in front of the keep door.
+pub(crate) const KEEP_STEPS: Vec2 = Vec2::new(KEEP_POS.x, KEEP_FRONT + 1.6);
+
+/// The wandering merchant's roofed shop (`villagers::shop_parts`), on the market's north side,
+/// its open front facing south onto the west lane; `interaction::shop_anchor` browses here.
+pub(crate) const MERCHANT_SHOP: Vec2 = Vec2::new(MARKET_CENTRE.x + 4.8, W_GATE_Z - 4.4);
+
+/// Where the hero stands to ring the bell: inside the yard at the bell tower's door.
+pub(crate) const BELL_ROPE: Vec2 = Vec2::new(BELL_POS.x, BELL_POS.y - BELL_TOWER_HALF - 0.9);
+
+/// True in the OPEN yard in front of the keep (the courtyard plus a ring round the keep itself)
+/// — where nothing stands between an invader and the keep, so it may press it in a straight line.
+pub fn in_keep_yard(wx: f32, wz: f32) -> bool {
+    let (cx, cz, hx, hz) = COURTYARD;
+    ((wx - cx).abs() <= hx && (wz - cz).abs() <= hz + 0.6) || Vec2::new(wx, wz).distance(KEEP_POS) < 8.0
 }
 
 fn snap_cardinal(a: f32) -> f32 {
@@ -1609,6 +1765,21 @@ fn snap_cardinal(a: f32) -> f32 {
 }
 fn face_center(wx: f32, wz: f32) -> f32 {
     snap_cardinal((-wx).atan2(-wz))
+}
+/// Yaw for a building at `(wx, wz)`: inside the walls it turns its back to the NEAREST wall and its
+/// front to the yard (houses and plots line the walls, spec v2 §2); outside it faces the castle.
+fn face_yard(wx: f32, wz: f32) -> f32 {
+    let (dx, dz) = (HALF_X - wx.abs(), HALF_Z - wz.abs());
+    if dx <= 0.0 || dz <= 0.0 {
+        return face_center(wx, wz);
+    }
+    if dz < dx {
+        if wz > 0.0 { std::f32::consts::PI } else { 0.0 }
+    } else if wx > 0.0 {
+        -HALF_PI
+    } else {
+        HALF_PI
+    }
 }
 
 // ── Build ────────────────────────────────────────────────────────────────────────
@@ -1680,57 +1851,55 @@ pub fn build(
     // Keep (centre) — always present, then two grandeur tiers that reveal as you fortify (corner
     // turrets with the Walls, the grand spire + banners with the Reinforced Keep). Same transform as
     // the keep so the parts sit exactly on it.
-    spawn(keep_parts(), Vec3::ZERO, 0.0, KEEP_SCALE, CastleKind::Always);
-    spawn(keep_tier1_parts(), Vec3::ZERO, 0.0, KEEP_SCALE, CastleKind::KeepTier1);
-    spawn(keep_tier2_parts(), Vec3::ZERO, 0.0, KEEP_SCALE, CastleKind::KeepTier2);
+    let keep_at = Vec3::new(KEEP_POS.x, 0.0, KEEP_POS.y);
+    spawn(keep_parts(), keep_at, 0.0, KEEP_SCALE, CastleKind::Always);
+    spawn(keep_tier1_parts(), keep_at, 0.0, KEEP_SCALE, CastleKind::KeepTier1);
+    spawn(keep_tier2_parts(), keep_at, 0.0, KEEP_SCALE, CastleKind::KeepTier2);
     for (x, z, rot, len) in wall_segments() {
-        spawn(wall_parts(len), Vec3::new(x, 0.0, z), rot, Vec3::new(1.0, 0.78, 1.0), CastleKind::Walls);
+        spawn(wall_parts(len), Vec3::new(x, 0.0, z), rot, Vec3::ONE, CastleKind::Walls);
     }
     for (x, z) in towers() {
         spawn(tower_parts(), Vec3::new(x, 0.0, z), 0.0, TOWER_SCALE, CastleKind::Towers);
     }
     for (x, z, rot) in gates() {
-        spawn(gate_parts(GATE_GAP), Vec3::new(x, 0.0, z), rot, Vec3::new(1.0, 0.8, 1.0), CastleKind::Gate);
+        spawn(gate_parts(GATE_GAP), Vec3::new(x, 0.0, z), rot, Vec3::ONE, CastleKind::Gate);
     }
     for (i, (x, z)) in houses().into_iter().enumerate() {
-        spawn(house_parts_for(i), Vec3::new(x, 0.0, z), face_center(x, z), HOUSE_SCALE, CastleKind::House(i as u8));
+        spawn(house_parts_for(i), Vec3::new(x, 0.0, z), face_yard(x, z), HOUSE_SCALE, CastleKind::House(i as u8));
     }
     spawn(bell_frame_parts(), Vec3::new(BELL_POS.x, 0.0, BELL_POS.y), BELL_YAW, Vec3::ONE, CastleKind::Always);
 
     // Torches temporarily removed (read as unnatural) — only the war-braziers light the gates for now.
-    for (x, z, _rot) in gates() {
-        let half = GATE_GAP / 2.0 + 0.5;
-        // War-braziers flanking the gate APPROACH (outside the walls, clear of the gate lane):
-        // the night siege's melee happens right here, and on the moon-dark ground it filmed as
-        // black-on-black. `out` is the true outward axis (gates are axis-aligned on the
-        // perimeter, so the local +Z trick the torches use points inside on two of them).
-        let out = Vec3::new(x, 0.0, z).normalize();
-        let perp = Vec3::new(-out.z, 0.0, out.x);
-        for s in [-(half + 1.4), half + 1.4] {
-            let p = Vec3::new(x, 0.0, z) + out * 3.2 + perp * s;
+    for gate in Gate::ALL {
+        for p in brazier_spots(gate) {
             spawn(brazier_parts(), p, 0.0, Vec3::ONE, CastleKind::Gate);
         }
     }
-    // The settlement's working corners: woodpile, hay store, cart, draw-well. Permanent (`Always`)
-    // — the courtyard never goes blank, walls or no walls. Tucked into the four courtyard corners
-    // (±10, ±6), clear of the gates, the bell, the paths and every house slot.
-    spawn(wood_yard_parts(), Vec3::new(-10.0, 0.0, 6.0), 0.6, Vec3::ONE, CastleKind::Always);
-    spawn(hay_corner_parts(), Vec3::new(10.0, 0.0, 6.0), -0.5, Vec3::ONE, CastleKind::Always);
-    spawn(cart_corner_parts(), Vec3::new(-10.0, 0.0, -6.0), 2.3, Vec3::ONE, CastleKind::Always);
-    spawn(well_parts(), Vec3::new(10.0, 0.0, -6.0), 0.4, Vec3::ONE, CastleKind::Always);
+    // The settlement's working corners: woodpile, hay store, cart. Permanent (`Always`) — the
+    // courtyard never goes blank, walls or no walls. Beside the smithy / the granary / the west
+    // houses, OFF the open courtyard (spec v2 §2).
+    for (parts, (x, z, yaw)) in [
+        (wood_yard_parts(), WOOD_YARD),
+        (hay_corner_parts(), HAY_CORNER),
+        (cart_corner_parts(), CART_CORNER),
+    ] {
+        spawn(parts, Vec3::new(x, 0.0, z), yaw, Vec3::ONE, CastleKind::Always);
+    }
+    // The reserved plots (spec v2 §2/§4) as interim primitive placeholders.
+    for tp in TOWN_PLOTS.iter().chain(OUTER_PLOTS.iter()) {
+        let (parts, yaw) = plot_parts(tp);
+        spawn(parts, Vec3::new(tp.pos.x, 0.0, tp.pos.y), yaw, Vec3::ONE, CastleKind::Always);
+    }
 
     // The bell's live swinging half (bronze + clapper/rope) — separate hinged entities, after the
     // last `spawn` closure call so the `commands`/`meshes` borrows are free again.
     spawn_bell_swing(commands, meshes, &mats);
 
     // Pooled flicker-lights — only the war-braziers remain (gate/keep torches removed for now).
-    for (x, z, _rot) in gates() {
-        let half = GATE_GAP / 2.0 + 0.5;
+    for gate in Gate::ALL {
+        let (x, z) = (gate.center().x, gate.center().y);
         // The war-braziers' pools (same gate lifecycle; flame local y = 1.5).
-        let out = Vec3::new(x, 0.0, z).normalize();
-        let perp = Vec3::new(-out.z, 0.0, out.x);
-        for (k, s) in [-(half + 1.4), half + 1.4].into_iter().enumerate() {
-            let p = Vec3::new(x, 0.0, z) + out * 3.2 + perp * s;
+        for (k, p) in brazier_spots(gate).into_iter().enumerate() {
             commands.spawn((
                 Transform::from_translation(Vec3::new(p.x, 1.5, p.z)),
                 Visibility::Hidden,
@@ -1755,7 +1924,7 @@ pub fn build(
             mats.get(M::Wood),
             hx,
             hz,
-            face_center(hx, hz),
+            face_yard(hx, hz),
             CastleKind::House(i as u8),
             house_window(HOUSE_STYLES[i]),
         );
@@ -1767,7 +1936,7 @@ pub fn build(
     // Attach heights are the static flags' old local positions × the structures' Y scales.
     let keep_flag = crate::banner::spawn_flag(
         commands, meshes, std_mats,
-        Vec3::new(0.0, 4.88 * 0.7, 0.0), 0.85, 0.42, BANNER, Some(0xd9b34a),
+        Vec3::new(KEEP_POS.x, 4.88 * KEEP_SCALE.y, KEEP_POS.y), 0.85, 0.42, BANNER, Some(0xd9b34a),
     );
     commands
         .entity(keep_flag)
@@ -1775,7 +1944,7 @@ pub fn build(
     for (x, z) in towers() {
         let flag = crate::banner::spawn_flag(
             commands, meshes, std_mats,
-            Vec3::new(x, 4.75 * 0.74, z), 0.68, 0.36, BANNER, None,
+            Vec3::new(x, (TOWER_H + 2.25) * TOWER_SCALE.y, z), 0.68, 0.36, BANNER, None,
         );
         commands.entity(flag).insert((
             CastlePart { kind: CastleKind::Towers },
@@ -1828,8 +1997,8 @@ pub fn build(
             if r.f() < 0.5 { z = -z; }
             x += (r.f() - 0.5) * 3.4;
             z += (r.f() - 0.5) * 3.4;
-            let near_gate = (x.abs() < 2.4 && z.abs() > bz_ - 1.5) || (z.abs() < 2.4 && x.abs() > bx_ - 1.5);
-            if near_gate {
+            let near_gate = Gate::ALL.iter().any(|g| g.center().distance(Vec2::new(x, z)) < 3.6);
+            if near_gate || !plot_clear(x, z, 0.4) {
                 continue;
             }
             let mesh = if r.f() < 0.55 { pick(&tufts, &mut r) } else { pick(&clovers, &mut r) };
@@ -1841,7 +2010,7 @@ pub fn build(
         for _ in 0..14 {
             let x = (r.f() - 0.5) * 2.0 * (bx_ - 2.0);
             let z = (r.f() - 0.5) * 2.0 * (bz_ - 2.0);
-            if on_paving(x, z) {
+            if on_paving(x, z) || !plot_clear(x, z, 0.4) {
                 continue;
             }
             let mesh = if r.f() < 0.35 { pick(&tufts, &mut r) } else { pick(&clovers, &mut r) };
@@ -1861,7 +2030,7 @@ pub fn build(
     for (hi, (hx, hz)) in houses().into_iter().enumerate() {
         // Smoke rises from the archetype's own stack; huts have none (they vent through thatch).
         let Some((ch, ch_top)) = house_chimney(HOUSE_STYLES[hi]) else { continue };
-        let rot = face_center(hx, hz);
+        let rot = face_yard(hx, hz);
         let local = Quat::from_rotation_y(rot) * Vec3::new(ch.x * HOUSE_SCALE.x, 0.0, ch.y * HOUSE_SCALE.z);
         let (cx, cz) = (hx + local.x, hz + local.z);
         let base_y = ch_top * HOUSE_SCALE.y + 0.2;
@@ -1884,10 +2053,10 @@ pub fn build(
     let hen_meshes: Vec<(Handle<Mesh>, M)> =
         hen_parts().into_iter().map(|(m, slot)| (meshes.add(m), slot)).collect();
     for (i, (hx, hz, yaw, sp)) in [
-        (-10.6_f32, 5.2_f32, 0.7_f32, 1.6_f32),
-        (-9.2, 6.7, 2.2, 1.9),
-        (10.5, -6.6, -1.1, 1.7),
-        (10.9, -5.1, 2.6, 2.2),
+        (WOOD_YARD.0 + 0.6, WOOD_YARD.1 + 1.6, 0.7_f32, 1.6_f32),
+        (WOOD_YARD.0 + 1.8, WOOD_YARD.1 + 0.9, 2.2, 1.9),
+        (HAY_CORNER.0 - 0.5, HAY_CORNER.1 + 1.5, -1.1, 1.7),
+        (HAY_CORNER.0 - 1.7, HAY_CORNER.1 + 0.8, 2.6, 2.2),
     ]
     .into_iter()
     .enumerate()
@@ -1918,7 +2087,169 @@ pub fn build(
     // courtyard is open until you build the walls — no invisible barriers.
     register_keep_blocker();
     register_yard_blockers();
+    register_plot_blockers();
     mats
+}
+
+/// The two war-brazier spots flanking a gate's APPROACH (outside the walls, clear of the gate
+/// lane): the night siege's melee happens right here, and on the moon-dark ground it filmed as
+/// black-on-black.
+fn brazier_spots(gate: Gate) -> [Vec3; 2] {
+    let (c, out) = (gate.center(), gate.outward());
+    let perp = Vec2::new(-out.y, out.x);
+    let half = GATE_GAP / 2.0 + 1.9;
+    [-half, half].map(|s| {
+        let p = c + out * (WALL_THICK / 2.0 + 2.6) + perp * s;
+        Vec3::new(p.x, 0.0, p.y)
+    })
+}
+
+/// Is `(x, z)` clear (by `margin`) of every reserved plot, inside and outside the walls?
+pub(crate) fn plot_clear(x: f32, z: f32, margin: f32) -> bool {
+    TOWN_PLOTS.iter().chain(OUTER_PLOTS.iter()).all(|p| {
+        (x - p.pos.x).abs() > p.half.x + margin || (z - p.pos.y).abs() > p.half.y + margin
+    })
+}
+
+/// A plot building facing the courtyard: (yaw, local width, local depth) for world half-extents
+/// `half` — a quarter-turned building swaps its local width/depth.
+fn plot_frame(tp: &TownPlot) -> (f32, f32, f32) {
+    let yaw = face_yard(tp.pos.x, tp.pos.y);
+    let turned = (yaw.abs() - HALF_PI).abs() < 0.1;
+    let (w, d) = if turned { (tp.half.y * 2.0, tp.half.x * 2.0) } else { (tp.half.x * 2.0, tp.half.y * 2.0) };
+    (yaw, w, d)
+}
+
+/// Interim placeholder geometry for a reserved plot (spec v2 §2/§4) — honest primitive massing at
+/// the hero-relative scale (eaves ≈2.0u, doors ≈1.4u), so the layout and its sightlines can be
+/// judged before the town kit lands. Local +Z faces the courtyard.
+fn plot_parts(tp: &TownPlot) -> (Vec<(Mesh, M)>, f32) {
+    let (yaw, w, d) = plot_frame(tp);
+    let mut v: Vec<(Mesh, M)> = Vec::new();
+    // A plain hall: stone footing, plaster/timber body to the eaves, door, gable roof.
+    let hall = |v: &mut Vec<(Mesh, M)>, body: M, roof: M, eave: f32| {
+        v.push((bx(w + 0.2, 0.25, d + 0.2, 0.0, 0.125, 0.0), M::HouseStone));
+        v.push((bx(w, eave - 0.25, d, 0.0, 0.25 + (eave - 0.25) / 2.0, 0.0), body));
+        for sx in [-1.0_f32, 1.0] {
+            for sz in [-1.0_f32, 1.0] {
+                v.push((bx(0.2, eave - 0.25, 0.2, sx * w / 2.0, 0.25 + (eave - 0.25) / 2.0, sz * d / 2.0), M::Beam));
+            }
+        }
+        v.push((bx(0.8, 1.4, 0.08, 0.0, 0.25 + 0.7, d / 2.0 + 0.03), M::Wood)); // door ≈1.4u
+        v.push((gable(w + 0.5, d + 0.5, (d * 0.42).max(1.2), eave), roof));
+    };
+    match tp.name {
+        "granary" => {
+            // On stilts (rats, damp): nine posts, a raised plank floor, a thatched store.
+            for sx in [-1.0_f32, 0.0, 1.0] {
+                for sz in [-1.0_f32, 0.0, 1.0] {
+                    v.push((bx(0.22, 1.0, 0.22, sx * (w / 2.0 - 0.3), 0.5, sz * (d / 2.0 - 0.3)), M::Beam));
+                    v.push((cyl(0.24, 0.08, sx * (w / 2.0 - 0.3), 1.0, sz * (d / 2.0 - 0.3)), M::HouseStone)); // rat stone
+                }
+            }
+            v.push((bx(w, 0.15, d, 0.0, 1.1, 0.0), M::Wood));
+            v.push((bx(w - 0.3, 1.6, d - 0.3, 0.0, 1.95, 0.0), M::Wood));
+            v.push((bx(0.8, 1.3, 0.08, 0.0, 1.85, (d - 0.3) / 2.0 + 0.03), M::Beam));
+            v.push((gable(w + 0.4, d + 0.4, 1.4, 2.75), M::Thatch));
+            v.push((bake(bx(0.6, 0.08, 1.6, 0.0, 0.0, 0.0), Vec3::new(0.0, 0.55, d / 2.0 + 0.6), 0.0, Vec3::ONE)
+                .rotated_by(Quat::IDENTITY), M::Beam)); // ladder-plank up to the door
+        }
+        "smithy" => {
+            hall(&mut v, M::HouseStone, M::HouseRoof2, 2.2);
+            v.push((bx(0.9, 3.0, 0.9, -w / 2.0 + 0.6, 1.5, -d / 2.0 + 0.6), M::DarkStone)); // forge chimney
+            v.push((bx(0.7, 0.5, 0.4, w / 2.0 - 0.9, 0.5, d / 2.0 + 0.7), M::Iron)); // anvil
+            v.push((cyl(0.25, 0.5, w / 2.0 - 0.9, 0.25, d / 2.0 + 0.7), M::Wood)); // anvil block
+        }
+        "barracks" => {
+            hall(&mut v, M::Wood, M::HouseRoof, 2.2);
+            for k in 0..4 {
+                let x = -w / 2.0 + 0.8 + k as f32 * (w - 1.6) / 3.0;
+                v.push((cyl(0.35, 0.06, x, 1.4, d / 2.0 + 0.06).rotated_by(Quat::IDENTITY), M::Banner)); // shields on the front
+            }
+        }
+        "tavern" => {
+            hall(&mut v, M::Plaster, M::HouseRoof, 2.4);
+            v.push((bx(0.08, 1.2, 0.08, w / 2.0 - 0.3, 3.0, d / 2.0 + 0.5), M::Beam)); // sign post
+            v.push((bx(0.7, 0.5, 0.05, w / 2.0 - 0.3, 3.3, d / 2.0 + 0.5), M::Wood)); // sign board
+        }
+        "maud_house" => {
+            hall(&mut v, M::Plaster, M::HouseRoof2, 2.2);
+            // The edict board in front, on two posts.
+            for sx in [-0.7_f32, 0.7] {
+                v.push((bx(0.12, 1.9, 0.12, sx, 0.95, d / 2.0 + 1.3), M::Beam));
+            }
+            v.push((bx(1.6, 1.0, 0.08, 0.0, 1.45, d / 2.0 + 1.36), M::Wood));
+            for (px, py) in [(-0.4_f32, 1.55_f32), (0.15, 1.35), (0.5, 1.6)] {
+                v.push((bx(0.32, 0.4, 0.02, px, py, d / 2.0 + 1.41), M::Parchment));
+            }
+        }
+        "infirmary" => hall(&mut v, M::Plaster, M::Thatch, 2.1),
+        "herb_garden" => {
+            v.push((bx(w, 0.12, d, 0.0, 0.06, 0.0), M::Soil));
+            for k in 0..4 {
+                let x = -w / 2.0 + 0.45 + k as f32 * (w - 0.9) / 3.0;
+                v.push((bx(0.3, 0.22, d - 0.4, x, 0.17, 0.0), M::Crop));
+            }
+            for sz in [-1.0_f32, 1.0] {
+                v.push((bx(w + 0.2, 0.06, 0.06, 0.0, 0.5, sz * (d / 2.0 + 0.1)), M::Beam)); // wattle rails
+            }
+        }
+        "fire_pit" => {
+            for k in 0..9 {
+                let a = k as f32 / 9.0 * std::f32::consts::TAU;
+                v.push((bx(0.3, 0.22, 0.24, a.cos() * 0.62, 0.11, a.sin() * 0.62), M::DarkStone));
+            }
+            v.push((cyl(0.5, 0.04, 0.0, 0.02, 0.0), M::Slit)); // ash bed
+            for a in [0.3_f32, 1.4, 2.5] {
+                v.push((bake(bx(0.9, 0.12, 0.12, 0.0, 0.0, 0.0), Vec3::new(0.0, 0.12, 0.0), a, Vec3::ONE), M::Beam));
+            }
+            for sx in [-1.0_f32, 1.0] {
+                v.push((bx(1.6, 0.3, 0.35, 0.0, 0.15, sx * 1.4), M::Wood)); // log benches
+            }
+        }
+        "well" => v.extend(well_parts()),
+        "crown_depot" => {
+            // The Crown's store: a crimson-roofed shed, painted crates stacked before it.
+            hall(&mut v, M::Wood, M::Roof, 2.0);
+            for (cx, cy, cz) in [(-0.9_f32, 0.3_f32, d / 2.0 + 0.6), (-0.3, 0.3, d / 2.0 + 0.7), (-0.6, 0.85, d / 2.0 + 0.65), (0.8, 0.3, d / 2.0 + 0.6)] {
+                v.push((bx(0.55, 0.55, 0.55, cx, cy, cz), M::Roof));
+            }
+        }
+        "gallows" => {
+            v.push((bx(2.2, 0.3, 1.6, 0.0, 0.6, 0.0), M::Wood)); // platform
+            for sx in [-0.9_f32, 0.9] {
+                v.push((bx(0.3, 0.6, 1.3, sx, 0.3, 0.0), M::Beam));
+            }
+            v.push((bx(0.2, 3.0, 0.2, -0.8, 2.0, 0.0), M::Beam)); // upright
+            v.push((bx(1.8, 0.18, 0.18, 0.05, 3.4, 0.0), M::Beam)); // crossbeam
+            v.push((cyl(0.025, 0.8, 0.7, 2.95, 0.0), M::Straw)); // rope
+        }
+        "empty_grave" => {
+            // The empty grave: an open pit, its spoil heaped beside, a plain cross — no body.
+            v.push((bx(1.0, 0.04, 2.0, -0.4, 0.01, 0.0), M::Slit)); // the dark pit mouth
+            v.push((bx(0.7, 0.35, 1.8, 0.55, 0.17, 0.0), M::Soil)); // spoil heap
+            v.push((bx(0.1, 1.2, 0.1, -0.4, 0.6, -1.15), M::Beam)); // cross
+            v.push((bx(0.6, 0.1, 0.1, -0.4, 0.85, -1.15), M::Beam));
+        }
+        _ => hall(&mut v, M::Plaster, M::HouseRoof, 2.0),
+    }
+    (v, yaw)
+}
+
+/// Every reserved plot is solid from the start (open plots — garden, fire pit — only at their
+/// fixtures).
+fn register_plot_blockers() {
+    let p = COLLISION_PAD;
+    for tp in TOWN_PLOTS.iter().chain(OUTER_PLOTS.iter()) {
+        let (hx, hz) = match tp.name {
+            "herb_garden" | "fire_pit" | "empty_grave" => continue,
+            "well" => (0.55 + p, 0.55 + p),
+            _ => (tp.half.x + p, tp.half.y + p),
+        };
+        crate::blockers::add_box(tp.pos.x, tp.pos.y, hx, hz);
+    }
+    // The bell tower stands from the start (old-colony stone).
+    crate::blockers::add_box(BELL_POS.x, BELL_POS.y, BELL_TOWER_HALF + 0.25 + p, BELL_TOWER_HALF + 0.25 + p);
 }
 
 /// Player-body margin so movers stop just shy of a face instead of clipping into it.
@@ -1927,7 +2258,7 @@ const COLLISION_PAD: f32 = 0.12;
 /// The keep is solid from the start.
 fn register_keep_blocker() {
     let p = COLLISION_PAD;
-    crate::blockers::add_box(0.0, 0.0, KEEP_W * 0.88 / 2.0 + p, KEEP_D * 0.88 / 2.0 + p);
+    crate::blockers::add_box(KEEP_POS.x, KEEP_POS.y, KEEP_W * KEEP_SCALE.x / 2.0 + p, KEEP_D * KEEP_SCALE.z / 2.0 + p);
 }
 
 /// Match the permanent work-yard props' ground footprints, including their baked local offsets
@@ -1939,17 +2270,17 @@ fn register_yard_blockers() {
         crate::blockers::add_obb(pos.x + offset.x, pos.y + offset.z, hw, hd, yaw);
     };
 
-    let wood = Vec2::new(-10.0, 6.0);
+    let wood = Vec2::new(WOOD_YARD.0, WOOD_YARD.1);
     part(wood, 0.6, 0.0, 0.0, 0.30, 0.30); // chopping block
     part(wood, 0.6, 0.0, -0.9, 0.75, 0.37); // stacked logs
 
-    let hay = Vec2::new(10.0, 6.0);
+    let hay = Vec2::new(HAY_CORNER.0, HAY_CORNER.1);
     part(hay, -0.5, 0.0, 0.025, 0.71, 0.315); // bales and binding ropes
     for (x, z) in [(0.72, 0.24), (0.8, -0.22)] {
         part(hay, -0.5, x, z, 0.20, 0.20);
     }
 
-    let cart = Vec2::new(-10.0, -6.0);
+    let cart = Vec2::new(CART_CORNER.0, CART_CORNER.1);
     part(cart, 2.3, 0.0, 0.0, 0.65, 0.44); // bed, rails and wheels
     for z in [-0.28, 0.28] {
         part(cart, 2.3, 0.85, z, 0.45, 0.03); // handle shafts
@@ -1957,10 +2288,6 @@ fn register_yard_blockers() {
     for (x, z) in [(0.95, -0.6), (1.2, -0.35)] {
         part(cart, 2.3, x, z, 0.31, 0.31); // barrels and hoops
     }
-
-    let well = Vec2::new(10.0, -6.0);
-    part(well, 0.4, 0.0, 0.0, 0.55, 0.55); // stone curb and supporting posts
-    part(well, 0.4, 0.0, 0.62, 0.16, 0.16); // bucket beside the curb
 }
 
 /// Perimeter wall blockers — one box per segment (registered when Walls is built).
@@ -1978,7 +2305,7 @@ fn register_walls_blockers() {
 fn register_towers_blockers() {
     let p = COLLISION_PAD;
     for (x, z) in towers() {
-        crate::blockers::add_box(x, z, 0.95 + p, 0.95 + p);
+        crate::blockers::add_box(x, z, 0.9 * TOWER_SCALE.x + p, 0.9 * TOWER_SCALE.z + p);
     }
 }
 
@@ -1988,7 +2315,7 @@ fn register_house_blocker(i: usize) {
     let (x, z) = houses()[i];
     let (w, d) = house_dims(HOUSE_STYLES[i]);
     let (hx, hz) = (w * HOUSE_SCALE.x / 2.0 + p, d * HOUSE_SCALE.z / 2.0 + p);
-    let (hw, hd) = if (face_center(x, z).abs() - HALF_PI).abs() < 0.1 { (hz, hx) } else { (hx, hz) };
+    let (hw, hd) = if (face_yard(x, z).abs() - HALF_PI).abs() < 0.1 { (hz, hx) } else { (hx, hz) };
     crate::blockers::add_box(x, z, hw, hd);
 }
 
@@ -2215,18 +2542,60 @@ mod tests {
         let _guard = crate::blockers::TEST_LOCK.lock().unwrap();
         crate::blockers::reset();
         register_yard_blockers();
-        for (x, z) in [(-10.0, 6.0), (10.0, 6.0), (-10.0, -6.0), (10.0, -6.0)] {
+        register_plot_blockers();
+        for (x, z, _) in [WOOD_YARD, HAY_CORNER, CART_CORNER] {
             assert!(crate::blockers::is_blocked(x, z), "work-yard prop at ({x}, {z}) must be solid");
         }
-        let logs = Vec3::new(-10.0, 0.0, 6.0)
-            + Quat::from_rotation_y(0.6) * Vec3::new(0.6, 0.0, -0.9);
+        let logs = Vec3::new(WOOD_YARD.0, 0.0, WOOD_YARD.1)
+            + Quat::from_rotation_y(WOOD_YARD.2) * Vec3::new(0.6, 0.0, -0.9);
         assert!(crate::blockers::is_blocked(logs.x, logs.z), "rotated log pile must be solid");
-        let barrel = Vec3::new(-10.0, 0.0, -6.0)
-            + Quat::from_rotation_y(2.3) * Vec3::new(1.2, 0.0, -0.35);
+        let barrel = Vec3::new(CART_CORNER.0, 0.0, CART_CORNER.1)
+            + Quat::from_rotation_y(CART_CORNER.2) * Vec3::new(1.2, 0.0, -0.35);
         assert!(crate::blockers::is_blocked(barrel.x, barrel.z), "offset cart barrel must be solid");
-        for (x, z) in [(0.0, 10.0), (0.0, -10.0), (14.0, 0.0), (-14.0, 0.0), (-8.0, 6.0), (8.0, -6.0)] {
-            assert!(!crate::blockers::any_within(x, z, 0.35), "lane at ({x}, {z}) must stay clear");
+        // Every gate lane stays open from the gate to the courtyard.
+        for g in Gate::ALL {
+            for k in 1..8 {
+                let p = g.center() - g.outward() * k as f32;
+                assert!(!crate::blockers::any_within(p.x, p.y, 0.35), "{g:?} lane at {p} must stay clear");
+            }
         }
         crate::blockers::reset();
+    }
+
+    /// Spec v2 §2: a ≥24×16u open courtyard between the keep and the south gate — no plot, house,
+    /// yard prop, bell tower or keep inside it (the fire pit + well sit at its north edge).
+    #[test]
+    fn courtyard_stays_open() {
+        let (cx, cz, hx, hz) = COURTYARD;
+        assert!(hx * 2.0 >= 24.0 && hz * 2.0 >= 16.0, "courtyard {}x{} too small", hx * 2.0, hz * 2.0);
+        let inside = |x: f32, z: f32, r: f32| (x - cx).abs() < hx - r && (z - cz).abs() < hz - r;
+        for (x, z) in houses() {
+            assert!(!inside(x, z, -2.0), "house at ({x},{z}) intrudes on the courtyard");
+        }
+        for tp in TOWN_PLOTS.iter().filter(|p| !matches!(p.name, "fire_pit" | "well")) {
+            assert!(!inside(tp.pos.x, tp.pos.y, -tp.half.max_element()), "{} intrudes on the courtyard", tp.name);
+        }
+        for (x, z, _) in [WOOD_YARD, HAY_CORNER, CART_CORNER] {
+            assert!(!inside(x, z, -1.5), "yard prop at ({x},{z}) intrudes on the courtyard");
+        }
+        assert!(!inside(BELL_POS.x, BELL_POS.y, -BELL_TOWER_HALF));
+        assert!(KEEP_FRONT < cz - hz, "the keep must sit north of the courtyard");
+        // Houses and plots never overlap each other or the walls.
+        let mut boxes: Vec<(&str, Vec2, Vec2)> = TOWN_PLOTS.iter().map(|p| (p.name, p.pos, p.half)).collect();
+        for (i, (x, z)) in houses().into_iter().enumerate() {
+            let (w, d) = house_dims(HOUSE_STYLES[i]);
+            let (a, b) = (w * HOUSE_SCALE.x / 2.0, d * HOUSE_SCALE.z / 2.0);
+            let half = if (face_yard(x, z).abs() - HALF_PI).abs() < 0.1 { Vec2::new(b, a) } else { Vec2::new(a, b) };
+            assert!(x.abs() + half.x < HALF_X - WALL_THICK / 2.0 && z.abs() + half.y < HALF_Z - WALL_THICK / 2.0, "house {i} in the wall");
+            boxes.push(("house", Vec2::new(x, z), half));
+        }
+        for i in 0..boxes.len() {
+            for j in i + 1..boxes.len() {
+                let (n1, p1, h1) = boxes[i];
+                let (n2, p2, h2) = boxes[j];
+                let gap = (p1 - p2).abs() - h1 - h2;
+                assert!(gap.x > 0.1 || gap.y > 0.1, "{n1} at {p1} overlaps {n2} at {p2}");
+            }
+        }
     }
 }

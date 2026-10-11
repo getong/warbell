@@ -337,16 +337,20 @@ fn raid_building_goal(from: Vec2, plots: &[tileworld_core::town_store::Plot], sp
         .map(|(i, p, _)| (i, p))
 }
 
-/// Where a keep-marching invader actually paths: a standable point just inside the nearest gate.
-/// The keep origin sits inside the solid keep box, so A* straight to it fails and the invader
-/// wedges at the wall; stepping 4u in from the gate gap lands it in the courtyard, where the
-/// direct in-yard press (no more A*) closes the rest of the way to batter range.
+/// Where a keep-marching invader actually paths. Outside the walls: a standable point 4u inside
+/// the nearest gate (the keep centre sits inside the solid keep box, so A* straight to it fails
+/// and the invader wedges at the wall). Inside the walls but not yet in the open yard (the market
+/// lane, the postern lane behind the keep): the keep steps, so A* threads the stalls/plots. Once
+/// in the open yard ([`crate::castle::in_keep_yard`]) the direct press takes over.
 fn keep_march_goal(from: Vec2) -> Vec2 {
-    let gate = crate::castle::gate_centers()
+    if crate::castle::in_courtyard(from.x, from.y) {
+        return crate::castle::KEEP_STEPS;
+    }
+    let gate = crate::castle::Gate::ALL
         .into_iter()
-        .min_by(|a, b| from.distance_squared(*a).total_cmp(&from.distance_squared(*b)))
-        .unwrap_or(KEEP_POS);
-    gate + (KEEP_POS - gate).normalize_or_zero() * 4.0
+        .min_by(|a, b| from.distance_squared(a.center()).total_cmp(&from.distance_squared(b.center())))
+        .unwrap_or(crate::castle::Gate::South);
+    gate.interior(4.0)
 }
 
 /// Index of the nearest guard within `engage` of `from`, if any — the guard an invader diverts
@@ -402,10 +406,12 @@ pub fn stuck_step(closest: f32, progress_at: f32, dist_keep: f32, engaged: bool,
 // the phase HUD and the day/night binding lives in `scene.rs`.
 // ════════════════════════════════════════════════════════════════════════════════════
 
-/// The keep the horde marches on — the castle at the world origin.
-pub const KEEP_POS: Vec2 = Vec2::ZERO;
-/// Invaders enter from a ring this far out (golden-angle spread, on standable tiles).
-const SPAWN_RING: f32 = 30.0;
+/// The keep the horde marches on — the castle keep, north-centre of the yard (spec v2 §2).
+pub const KEEP_POS: Vec2 = crate::castle::KEEP_POS;
+/// Invaders enter from a ring this far out from the keep (golden-angle spread, on standable
+/// tiles). Sized past the v2 walls (S wall 32.5 from the keep, corners ≈40) so the southern horde
+/// still walks ~18u of open meadow before the S gate, as the old 30-ring did past the 17×12 walls.
+const SPAWN_RING: f32 = 50.0;
 /// An invader within this of the keep CENTRE (`KEEP_POS`) batters it — but ONLY from inside the
 /// courtyard (`castle::in_courtyard`): the walls fully shield the keep, so a horde bunched at the
 /// wall ring does nothing until it threads a gate. (The old 14.0 "generous" range predates the A*
@@ -418,7 +424,10 @@ const SPAWN_RING: f32 = 30.0;
 /// in), so a 9.0 range flipped `at_keep` true the instant an ork crossed the gate — it froze and
 /// hammered the keep from the gate mouth instead of closing on the wall. 4.5 is below every
 /// gate-interior goal (N/S 8u, E/W 13u), so the in-yard press always drives them to the wall first.
-const KEEP_ATTACK_RANGE: f32 = 4.5;
+///
+/// Castle v2: the keep box is ≈4.7×4.05 half (+ blocker pad), so its faces stop bodies ≈4.6–5.4u
+/// from centre — 6.3 keeps the same ~1u club-reach margin.
+const KEEP_ATTACK_RANGE: f32 = 6.3;
 /// Keep damage per invader hit (on the ork's normal strike cooldown).
 const KEEP_DAMAGE: f32 = 9.0;
 /// An invader spots + diverts onto a town-guard within this range (instead of marching the keep),
@@ -1180,7 +1189,7 @@ pub(crate) fn invader_brain(
             // (they're close and move every frame, so pathing them is churn).
             let step_target = if chase_direct {
                 target
-            } else if in_yard {
+            } else if in_yard && crate::castle::in_keep_yard(o.pos.x, o.pos.y) {
                 // Through the gate: the courtyard is open ground, so drop the A* and press the
                 // keep directly until inside batter range. EVERY gate-interior goal (N/S ~8u,
                 // E/W ~13u) sits beyond KEEP_ATTACK_RANGE, so without this press an ork would
@@ -1909,10 +1918,13 @@ mod tests {
         // the keep origin (a valid, standable A* goal).
         for i in 0..16 {
             let a = i as f32 * 0.4;
-            let from = Vec2::new(a.cos(), a.sin()) * SPAWN_RING;
+            let from = KEEP_POS + Vec2::new(a.cos(), a.sin()) * SPAWN_RING;
             let g = keep_march_goal(from);
             assert!(crate::castle::in_courtyard(g.x, g.y), "goal {g:?} outside the courtyard");
-            assert!(g.distance(KEEP_POS) > 2.0, "goal must clear the keep box");
+            assert!(g.distance(KEEP_POS) > KEEP_ATTACK_RANGE, "goal must clear the keep box");
+            // From inside the walls the goal is the keep steps, out in the open yard.
+            let inner = keep_march_goal(g);
+            assert!(crate::castle::in_keep_yard(inner.x, inner.y), "inner goal {inner:?} not in the open yard");
         }
     }
 
