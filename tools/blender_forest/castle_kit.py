@@ -9,7 +9,8 @@ Realism reference: KCD2 / Witcher 3 forts. Scale: hero ~1.17u, so 1u ~ 1.5 m.
 PIVOT CONVENTION: ground at y=0, each piece centred on its footprint (wall pieces on the wall
 line), +X runs along the wall, the OUTER (enemy) face looks toward -Z, the courtyard is +Z.
 Foundations sink to y=-0.3. Wall modules are 4u and tile at x = +-2 (palisade, timber gate,
-curtain; merlons period 1.0). The gatehouse is 6.4u on the wall line; its turrets project to -Z.
+curtain; merlons period 1.0, UVs whole every 2u). Corner pieces (corner tower, curtain corner) are
+centred on the crossing of two wall lines, outer faces -Z/-X; turn -90 deg about Y for the other end. The gatehouse is 6.4u on the wall line; its turrets project to -Z.
 The palisade's ditch is only implied (muddy berm at z -1.5..-2.2); cut it into the terrain at
 integration if a real ditch is wanted.
 
@@ -27,9 +28,13 @@ MANIFEST (bounding footprint x-range * z-range, top height; all in u):
   ck_timber_gate     x +-2.1, z -0.7..2.7                             4.3   2.8w x 2.7h opening, closed
                      leaves, fighting platform at 3.2, ladder +Z
   ck_watchtower      x +-1.65, z +-1.65                               5.5   platform 3.0, thatch cap
-  ck_curtain         x +-2.0, z -1.05..0.75 (body 1.4 thick)          3.93  walk 3.0, merlons 3.85+coping
+  ck_curtain         x +-2.0, z -1.2..0.84 (body 1.4 thick, batter)   3.96  walk 3.0, irregular merlons
+                     ~3.9 with copings, sloped batter, spouts + stains; UVs repeat every 2u (seamless)
   ck_curtain_corner  x -0.95..0.7, z -0.95..0.7                       3.93  outer faces -Z and -X
-  ck_stone_tower     x +-2.4, z +-2.4                                 6.38  walk 5.4, corbelled parapet
+  ck_stone_tower     x +-2.8, z -2.8..2.55 (batter + spouts)          6.41  mural tower 4.2: walk 5.4,
+                     corbelled crenellated parapet, spouts with stains, put-log holes
+  ck_corner_tower    x +-3.62, z +-3.62 (hoarding + roof eaves)       9.97  corner tower 4.6 on the
+                     wall-line crossing (curtains attach on +X/+Z), timber hoarding on beams, plank roof
   ck_gatehouse       x +-4.0, z -3.7..2.34 (body 6.4 x 4.6)           6.98  passage along Z 2.8w x 2.7h,
                      segmental arch, portcullis half down, turrets to 6.98, gate merlons 6.68
   ck_keep_t1         x -4.05..4.25, z -4.4..3.9                       8.06  ruin shell + timber infill,
@@ -66,7 +71,7 @@ OLD_TOP = (0.97, 0.99, 1.0)
 OLD_FOOT = (0.56, 0.62, 0.46)
 # Our fresh stone tier: the same ruin stone re-dressed — paler, warmer, barely any moss.
 NEW_TOP = (1.0, 0.96, 0.88)
-NEW_FOOT = (0.84, 0.8, 0.72)
+NEW_FOOT = (0.6, 0.58, 0.47)
 LOG = (0.92, 0.84, 0.72)        # fresh peeled bark_oak logs
 TIMBER = (0.95, 0.86, 0.72)     # fresh hewn timber
 OLD_TIMBER = (0.6, 0.58, 0.55)
@@ -81,7 +86,7 @@ def old_col(y):
 
 
 def new_col(y):
-    return mix(NEW_FOOT, NEW_TOP, smoothstep(-0.2, 1.4, y))
+    return mix(NEW_FOOT, NEW_TOP, smoothstep(-0.2, 1.6, y))
 
 
 def sbox(g, x0, x1, y0, y1, z0, z1, colf=old_col, mat=M_MASON, tile=1.6):
@@ -175,30 +180,41 @@ def charred_stub(g, rng, p0, p1):
     beam(g, [V(*p0), V(*p1)], 0.22, 0.22, mat=M_PLANK, col=charred(rng), rng=rng, jag=(0.0, 0.18), mode="timber")
 
 
-def merlons_x(g, x0, x1, z0, z1, y0, y1, colf, period=1.0, merlon=0.6, phase=0.0):
-    """Merlons along X between x0..x1 (centres every `period`, offset `phase`)."""
+def _merlon_jit(rng, colf):
+    """Hand-laid irregularity for one merlon: (height delta, width delta, colour fn)."""
+    if rng is None:
+        return 0.0, 0.0, colf
+    t = rng.uniform(0.9, 1.06)
+    return rng.uniform(-0.08, 0.04), rng.uniform(-0.05, 0.03), (lambda y, c=colf, t=t: scale(c(y), t))
+
+
+def merlons_x(g, x0, x1, z0, z1, y0, y1, colf, period=1.0, merlon=0.6, phase=0.0, rng=None, tile=1.6):
+    """Merlons along X between x0..x1 (centres every `period`, offset `phase`), each with a coping
+    stone; `rng` makes them irregular (worn, re-laid)."""
     k = math.floor((x0 - phase) / period) - 1
     while True:
         cxm = phase + k * period + period / 2
-        a, b = max(x0, cxm - merlon / 2), min(x1, cxm + merlon / 2)
+        dh, dw, cf = _merlon_jit(rng, colf)
+        a, b = max(x0, cxm - merlon / 2 - dw), min(x1, cxm + merlon / 2 + dw)
         if cxm - merlon / 2 > x1:
             break
         if b - a > 0.05:
-            sbox(g, a, b, y0, y1, z0, z1, colf)
-            sbox(g, a - 0.04, b + 0.04, y1, y1 + 0.08, z0 - 0.04, z1 + 0.04, colf, tile=1.2)  # coping
+            sbox(g, a, b, y0, y1 + dh, z0, z1, cf, tile=tile)
+            sbox(g, a - 0.04, b + 0.04, y1 + dh, y1 + dh + 0.08, z0 - 0.04, z1 + 0.04, cf, tile=1.2)  # coping
         k += 1
 
 
-def merlons_z(g, z0, z1, x0, x1, y0, y1, colf, period=1.0, merlon=0.6, phase=0.0):
+def merlons_z(g, z0, z1, x0, x1, y0, y1, colf, period=1.0, merlon=0.6, phase=0.0, rng=None, tile=1.6):
     k = math.floor((z0 - phase) / period) - 1
     while True:
         czm = phase + k * period + period / 2
-        a, b = max(z0, czm - merlon / 2), min(z1, czm + merlon / 2)
+        dh, dw, cf = _merlon_jit(rng, colf)
+        a, b = max(z0, czm - merlon / 2 - dw), min(z1, czm + merlon / 2 + dw)
         if czm - merlon / 2 > z1:
             break
         if b - a > 0.05:
-            sbox(g, x0, x1, y0, y1, a, b, colf)
-            sbox(g, x0 - 0.04, x1 + 0.04, y1, y1 + 0.08, a - 0.04, b + 0.04, colf, tile=1.2)  # coping
+            sbox(g, x0, x1, y0, y1 + dh, a, b, cf, tile=tile)
+            sbox(g, x0 - 0.04, x1 + 0.04, y1 + dh, y1 + dh + 0.08, a - 0.04, b + 0.04, cf, tile=1.2)  # coping
         k += 1
 
 
@@ -237,7 +253,7 @@ def face_stones(g, rng, axis, fixed, sgn, a0, a1, y0, y1, colf, n, holes=0.35):
             sbox(g, f0, f1, y - h / 2, y + h / 2, u - w / 2, u + w / 2, lambda q, c=col: c, tile=1.2)
 
 
-def joints(g, rng, cx, cz, hx, hz, y0, y1, colf, faces="nsew", course=0.42, unit=(0.55, 0.95)):
+def joints(g, rng, cx, cz, hx, hz, y0, y1, colf, faces="nsew", course=0.42, unit=(0.55, 0.95), rubble=False):
     """Mortar joints drawn on the faces of a block (cx, cz, half sizes hx, hz) between y0 and y1:
     a dark bed-joint strip every course and staggered head joints, so a plain box reads as coursed
     masonry. faces: n = +Z, s = -Z, e = +X, w = -X."""
@@ -255,7 +271,8 @@ def joints(g, rng, cx, cz, hx, hz, y0, y1, colf, faces="nsew", course=0.42, unit
                 sbox(g, a0, a1, y - t / 2, y + t / 2, f0, f1, lambda q, c=c: c, tile=2.0)
             else:
                 sbox(g, f0, f1, y - t / 2, y + t / 2, a0, a1, lambda q, c=c: c, tile=2.0)
-            yn = min(y + course, y1)
+            step = rng.uniform(0.2, 0.38) if rubble else course
+            yn = min(y + step, y1)
             u = a0 + rng.uniform(0.1, unit[1])
             while u < a1 - 0.15:
                 if along_x:
@@ -263,7 +280,55 @@ def joints(g, rng, cx, cz, hx, hz, y0, y1, colf, faces="nsew", course=0.42, unit
                 else:
                     sbox(g, f0, f1, y, yn, u - t / 2, u + t / 2, lambda q, c=c: c, tile=2.0)
                 u += rng.uniform(*unit)
-            y += course
+            y = yn
+
+
+def batter(g, x0, x1, z0, z1, y0, y1, colf, out=(0.4, 0.4, 0.4, 0.4), tile=2.0):
+    """A sloped (battered) plinth: the wall footprint x0..x1, z0..z1 at the top (y1), each side
+    flaring out at the foot (y0) by out = (-Z, +X, +Z, -X), with a projecting plinth course on top."""
+    oS, oE, oN, oW = out
+    bot = [V(x0 - oW, y0, z0 - oS), V(x1 + oE, y0, z0 - oS), V(x1 + oE, y0, z1 + oN), V(x0 - oW, y0, z1 + oN)]
+    top = [V(x0, y1, z0), V(x1, y1, z0), V(x1, y1, z1), V(x0, y1, z1)]
+    c = V((x0 + x1) / 2, 0, (z0 + z1) / 2)
+    for i in range(4):
+        j = (i + 1) % 4
+        q = [bot[i], bot[j], top[j], top[i]]
+        mid = (bot[i] + bot[j]) / 2
+        if (q[1] - q[0]).cross(q[3] - q[0]).dot(V(mid.x - c.x, 0, mid.z - c.z)) < 0:
+            q = q[::-1]
+        cols = [colf(p.y) for p in q]
+        g.flat(q, M_MASON, cols, tile)
+    # plinth course (not past an end with no flare, so wall modules butt cleanly)
+    ex = [0.05 if o > 0 else 0.0 for o in out]
+    sbox(g, x0 - ex[3], x1 + ex[1], y1 - 0.02, y1 + 0.12, z0 - ex[0], z1 + ex[2], colf, tile=tile)
+
+
+def streak(g, axis, fixed, sgn, u, y_top, length, colf, width=0.22, dark=0.45):
+    """A rain / damp streak running down a face from y_top (dark) fading into the wall below."""
+    d = 0.006
+    f0, f1 = sorted((fixed, fixed + sgn * d))
+    y0 = y_top - length
+    col = [colf(y0), None, scale(colf(y_top), dark)]
+    if axis == "z":
+        lbox(g, V(u, (y0 + y_top) / 2, (f0 + f1) / 2), (width, length, f1 - f0), Q0, M_MASON, col, tile=2.0)
+    else:
+        lbox(g, V((f0 + f1) / 2, (y0 + y_top) / 2, u), (f1 - f0, length, width), Q0, M_MASON, col, tile=2.0)
+
+
+def spout(g, axis, fixed, sgn, u, y, colf, reach=0.5, streak_len=1.6, wall=None):
+    """A stone drain spout (plain gargoyle) poking out of a face at height y, a dark channel in its
+    top, and the water stain it leaves down the wall."""
+    w = 0.2
+    f0, f1 = sorted((fixed, fixed + sgn * reach))
+    if axis == "z":
+        sbox(g, u - w / 2, u + w / 2, y - 0.1, y + 0.08, f0, f1, colf, tile=1.2)
+        sbox(g, u - w / 2 - 0.04, u + w / 2 + 0.04, y - 0.22, y - 0.1, *sorted((fixed, fixed + sgn * reach * 0.45)), colf, tile=1.2)
+        lbox(g, V(u, y + 0.081, (f0 + f1) / 2 + sgn * 0.05), (0.08, 0.004, reach - 0.1), Q0, M_STONE, DARK, tile=2.0)
+    else:
+        sbox(g, f0, f1, y - 0.1, y + 0.08, u - w / 2, u + w / 2, colf, tile=1.2)
+        sbox(g, *sorted((fixed, fixed + sgn * reach * 0.45)), y - 0.22, y - 0.1, u - w / 2 - 0.04, u + w / 2 + 0.04, colf, tile=1.2)
+        lbox(g, V((f0 + f1) / 2 + sgn * 0.05, y + 0.081, u), (reach - 0.1, 0.004, 0.08), Q0, M_STONE, DARK, tile=2.0)
+    streak(g, axis, fixed if wall is None else wall, sgn, u, y - 0.22, streak_len, colf, width=0.26)
 
 
 def dark_patch(g, c, size):
@@ -328,7 +393,11 @@ def ck_bell_tower(rng):
     sbox(g, -H, H, 1.1, 5.0, -H, H)
     sbox(g, -H - 0.06, H + 0.06, 2.85, 2.98, -H - 0.06, H + 0.06, tile=1.2)       # string course
     quoins(g, rng, 0.0, 0.0, H, H, 1.1, 5.0, old_col)
-    joints(g, rng, 0.0, 0.0, H, H, 1.1, 5.0, old_col)
+    joints(g, rng, 0.0, 0.0, H, H, 1.1, 5.0, old_col, unit=(0.28, 0.62), rubble=True)
+    for nx, nz in ((0, -1), (1, 0), (-1, 0)):  # damp streaks under the belfry sill
+        for u in (-0.9, 0.7):
+            streak(g, "z" if nz else "x", (nz or nx) * (H + 0.0), nz or nx, u + rng.uniform(-0.2, 0.2), 5.0,
+                   rng.uniform(1.0, 2.2), old_col, width=rng.uniform(0.18, 0.34), dark=0.55)
     for sgn in (-1, 1):
         face_stones(g, rng, "z", sgn * H, sgn, -H + 0.4, H - 0.4, 1.2, 4.9, old_col, 9)
         face_stones(g, rng, "x", sgn * H, sgn, -H + 0.4, H - 0.4, 1.2, 4.9, old_col, 9)
@@ -642,23 +711,29 @@ def putlogs_x(g, x0, x1, z, ys, step=1.0, phase=0.5):
 
 
 def ck_curtain(rng):
-    """Curtain module 4u along X: body 1.4 thick (z -0.7..+0.7) on a battered plinth, wall-walk at
-    3.0, an outer breastwork (-Z) to 3.35 and merlons (0.6 wide, period 1.0, tiling at x = +-2) to
-    3.85, put-log holes in rows on the outer face, a low inner kerb."""
+    """Curtain module 4u along X, tiling seamlessly on straight runs (UVs repeat whole every 2u,
+    merlons period 1.0 centred +-0.5 / +-1.5): body 1.4 thick (z -0.7..+0.7) on a sloped battered
+    plinth (outer flare 0.4), coursed ashlar, wall-walk at 3.0, an outer breastwork (-Z) to 3.35 and
+    irregular merlons with copings to ~3.9, a string course under the walk, two drain spouts with
+    their water stains, put-log holes, a low inner kerb."""
     b = Builder()
     g = G(b)
-    sbox(g, -2.0, 2.0, -0.3, 0.7, -0.95, 0.75, new_col)       # batter
-    sbox(g, -2.0, 2.0, 0.7, 3.0, -0.7, 0.7, new_col)
-    joints(g, rng, 0.0, 0.0, 2.0, 0.7, 0.7, 2.86, new_col, faces="ns")
-    sbox(g, -2.0, 2.0, 3.0, 3.35, -0.7, -0.25, new_col)       # breastwork
-    merlons_x(g, -2.0, 2.0, -0.7, -0.25, 3.35, 3.85, new_col)
-    sbox(g, -2.0, 2.0, 3.0, 3.18, 0.5, 0.7, new_col)          # inner kerb
-    sbox(g, -2.0, 2.0, 2.86, 3.0, -0.78, -0.7, new_col, tile=1.2)   # string course at the walk
-    putlogs_x(g, -2.0, 2.0, -0.705, (1.5, 2.3))
-    for x in (-1.0, 1.0):  # drain spouts through the breastwork
-        sbox(g, x - 0.09, x + 0.09, 3.0, 3.1, -1.05, -0.7, new_col, tile=1.2)
-    face_stones(g, rng, "z", -0.7, -1, -2.0, 2.0, 0.8, 2.8, new_col, 7, holes=0.0)
-    face_stones(g, rng, "z", 0.7, 1, -2.0, 2.0, 0.8, 2.8, new_col, 4, holes=0.0)
+    T = 2.0
+    batter(g, -2.0, 2.0, -0.7, 0.7, -0.3, 0.95, new_col, out=(0.4, 0.0, 0.14, 0.0), tile=T)
+    sbox(g, -2.0, 2.0, 0.95, 3.0, -0.7, 0.7, new_col, tile=T)
+    joints(g, rng, 0.0, 0.0, 2.0, 0.7, 1.07, 2.86, new_col, faces="ns")
+    sbox(g, -2.0, 2.0, 3.0, 3.35, -0.7, -0.25, new_col, tile=T)       # breastwork
+    merlons_x(g, -2.0, 2.0, -0.7, -0.25, 3.35, 3.85, new_col, rng=rng, tile=T)
+    sbox(g, -2.0, 2.0, 3.0, 3.18, 0.5, 0.7, new_col, tile=T)          # inner kerb
+    sbox(g, -2.0, 2.0, 2.86, 3.0, -0.78, -0.7, new_col, tile=1.0)     # string course at the walk
+    putlogs_x(g, -2.0, 2.0, -0.705, (1.6, 2.4))
+    for x in (-1.0, 1.0):  # drain spouts through the breastwork, stains down the outer face
+        spout(g, "z", -0.7, -1, x, 3.06, new_col, reach=0.5, streak_len=1.7)
+    for x in (-1.6, 0.3):
+        streak(g, "z", -0.7, -1, x + rng.uniform(-0.15, 0.15), 2.84, rng.uniform(0.6, 1.2), new_col,
+               width=rng.uniform(0.3, 0.5), dark=0.7)
+    face_stones(g, rng, "z", -0.7, -1, -1.9, 1.9, 1.1, 2.8, new_col, 6, holes=0.0)
+    face_stones(g, rng, "z", 0.7, 1, -1.9, 1.9, 1.1, 2.8, new_col, 4, holes=0.0)
     return b
 
 
@@ -679,6 +754,100 @@ def ck_curtain_corner(rng):
     return b
 
 
+def ck_corner_tower(rng):
+    """Corner tower 4.6 x 4.6 centred on the meeting point of two wall lines; the curtains abut its
+    +X and +Z faces (their outer faces -Z / -X run 1.6 inside the tower's), so it projects out of
+    both walls. Sloped batter, coursed ashlar with quoins, slits at two levels on the outer faces,
+    doors onto both wall-walks (3.0), a corbelled stone parapet at 6.2 carrying a TIMBER HOARDING
+    gallery: beams projecting through put-log holes, plank walls with drop slots, and a steep
+    weathered-plank pyramid roof to ~9.4."""
+    b = Builder()
+    g = G(b)
+    H = 2.3
+    batter(g, -H, H, -H, H, -0.3, 1.3, new_col, out=(0.5, 0.25, 0.25, 0.5))
+    sbox(g, -H, H, 1.3, 6.2, -H, H, new_col)
+    quoins(g, rng, 0.0, 0.0, H, H, 1.42, 6.2, new_col, h=0.38, long=0.66, short=0.38)
+    joints(g, rng, 0.0, 0.0, H, H, 1.42, 6.1, new_col, course=0.46, unit=(0.6, 1.05))
+    sbox(g, -H - 0.07, H + 0.07, 3.0, 3.16, -H - 0.07, H + 0.07, new_col, tile=1.0)
+    for f, axis, sgn in (("s", "z", -1), ("w", "x", -1)):
+        face_stones(g, rng, axis, sgn * H, sgn, -H + 0.5, H - 0.5, 1.5, 6.0, new_col, 7, holes=0.0)
+        for y in (2.1, 4.4):
+            for u in (-0.9, 0.9):
+                c = V(u, y, -H - 0.005) if axis == "z" else V(-H - 0.005, y, u)
+                dark_patch(g, c, (0.13, 0.85, 0.06) if axis == "z" else (0.06, 0.85, 0.13))
+        streak(g, axis, sgn * H, sgn, rng.uniform(-1.2, 1.2), 6.1, 2.8, new_col, width=0.5, dark=0.6)
+        streak(g, axis, sgn * H, sgn, rng.uniform(-1.2, 1.2), 6.1, 1.6, new_col, width=0.3, dark=0.65)
+    # Doors onto the two wall-walks (+X and +Z faces, on the wall lines where the walks arrive).
+    dark_patch(g, V(H + 0.005, 3.16 + 0.85, 0.12), (0.06, 1.7, 0.8))
+    arch_z(g, rng, 0.12, 3.16 + 1.25, 0.4, H - 0.06, H + 0.08, new_col, n=5, block=0.18)
+    dark_patch(g, V(0.12, 3.16 + 0.85, H + 0.005), (0.8, 1.7, 0.06))
+    arch_x(g, rng, 0.12, 3.16 + 1.25, 0.4, H - 0.06, H + 0.08, new_col, n=5, block=0.18)
+    # Corbel table + low stone parapet (the hoarding sits on it).
+    for side in range(4):
+        for k in range(6):
+            t = -H + 0.35 + k * (2 * H - 0.7) / 5
+            if side == 0:
+                sbox(g, t - 0.12, t + 0.12, 5.95, 6.2, -H - 0.22, -H, new_col, tile=1.2)
+            elif side == 1:
+                sbox(g, t - 0.12, t + 0.12, 5.95, 6.2, H, H + 0.22, new_col, tile=1.2)
+            elif side == 2:
+                sbox(g, -H - 0.22, -H, 5.95, 6.2, t - 0.12, t + 0.12, new_col, tile=1.2)
+            else:
+                sbox(g, H, H + 0.22, 5.95, 6.2, t - 0.12, t + 0.12, new_col, tile=1.2)
+    O = H + 0.22
+    sbox(g, -O, O, 6.2, 6.45, -O, O, new_col)
+    # Hoarding: beams cantilevered 0.75 out on every side, a plank floor ring, posts, plank walls
+    # with drop slots, a wall plate; weathered (not fresh) timber.
+    HT = mix(OLD_TIMBER, TIMBER, 0.45)
+    E = O + 0.75
+    for k in range(5):
+        t = -O + 0.25 + k * (2 * O - 0.5) / 4
+        for a, b2 in (((t, -E), (t, -O + 0.6)), ((t, O - 0.6), (t, E))):
+            beam(g, [V(a[0], 6.52, a[1]), V(b2[0], 6.52, b2[1])], 0.16, 0.16, mat=M_PLANK, col=HT, rng=rng)
+            beam(g, [V(a[1], 6.52, a[0]), V(b2[1], 6.52, b2[0])], 0.16, 0.16, mat=M_PLANK, col=HT, rng=rng)
+        putlogs_x(g, -H, H, -H - 0.006, (5.75,), step=10.0, phase=H + t)
+    for sgn in (-1, 1):
+        board(g, V(0, 6.62, sgn * (E - 0.36)), V(1, 0, 0), V(0, 1, 0), 2 * E, 0.7, 0.05, mat=M_PLANK, col=HT, rng=rng)
+        board(g, V(sgn * (E - 0.36), 6.625, 0), V(0, 0, 1), V(0, 1, 0), 2 * E - 1.4, 0.7, 0.05, mat=M_PLANK, col=HT,
+              rng=rng)
+    wall_top = 7.75
+    for sx in (-1, 1):
+        for sz in (-1, 1):
+            beam(g, [V(sx * (E - 0.06), 6.6, sz * (E - 0.06)), V(sx * (E - 0.06), wall_top, sz * (E - 0.06))], 0.14, 0.14,
+                 mat=M_PLANK, col=HT, rng=rng)
+    for side in range(4):
+        a = side * math.pi / 2
+        d, nrm = V(-math.sin(a), 0, math.cos(a)), V(math.cos(a), 0, math.sin(a))
+        n = 9
+        for k in range(n):
+            u = -E + 0.12 + (k + 0.5) * (2 * E - 0.24) / n
+            if k in (2, 6):
+                continue  # drop slots / loopholes between boards
+            board(g, nrm * (E - 0.03) + d * u + V(0, (6.65 + wall_top) / 2, 0), V(0, 1, 0), nrm, wall_top - 6.65,
+                  (2 * E - 0.24) / n * 0.96, 0.05, mat=M_PLANK, col=mix(HT, OLD_TIMBER, rng.uniform(0, 0.5)), rng=rng)
+        beam(g, [nrm * (E - 0.03) + d * (-E) + V(0, wall_top, 0), nrm * (E - 0.03) + d * E + V(0, wall_top, 0)], 0.14,
+             0.14, mat=M_PLANK, col=HT, rng=rng)
+    # Steep pyramid roof of weathered planks (two shells + eave band), a finial post.
+    ry, eo = 9.4, E + 0.35
+    for off, up in ((0.1, True), (0.0, False)):
+        apex = V(0, ry + off, 0)
+        cs = [V(-eo, wall_top - 0.25 + off, -eo), V(eo, wall_top - 0.25 + off, -eo), V(eo, wall_top - 0.25 + off, eo),
+              V(-eo, wall_top - 0.25 + off, eo)]
+        for i in range(4):
+            a, c = cs[i], cs[(i + 1) % 4]
+            tri = [a, apex, c] if ((apex - a).cross(c - a).y > 0) == up else [a, c, apex]
+            flat(g, tri, M_PLANK, scale(OLD_TIMBER, 0.95 if up else 0.5), tile=0.9)
+    for i in range(4):
+        a, c = cs[i], cs[(i + 1) % 4]
+        q = [a, c, c + V(0, 0.1, 0), a + V(0, 0.1, 0)]
+        mid = (a + c) / 2
+        if (q[1] - q[0]).cross(q[3] - q[0]).dot(V(mid.x, 0, mid.z)) < 0:
+            q = q[::-1]
+        flat(g, q, M_PLANK, scale(OLD_TIMBER, 0.6), tile=0.6)
+    pole(g, (0, ry - 0.1, 0), (0, ry + 0.55, 0), 0.07, 0.05, rng, mat=M_PLANK, col=OLD_TIMBER, sides=6, segs=1)
+    return b
+
+
 def ck_stone_tower(rng):
     """Square stone tower 4.2 x 4.2 (projects outward, -Z): battered base, string course, arrow
     slits, a walk at 5.4 behind a corbelled parapet with merlons to 6.3, a door at wall-walk level
@@ -686,9 +855,9 @@ def ck_stone_tower(rng):
     b = Builder()
     g = G(b)
     H = 2.1
-    sbox(g, -H - 0.3, H + 0.3, -0.3, 0.9, -H - 0.3, H + 0.3, new_col)
-    sbox(g, -H, H, 0.9, 5.2, -H, H, new_col)
-    quoins(g, rng, 0.0, 0.0, H, H, 0.9, 5.2, new_col)
+    batter(g, -H, H, -H, H, -0.3, 1.1, new_col, out=(0.45, 0.45, 0.45, 0.45))
+    sbox(g, -H, H, 1.1, 5.2, -H, H, new_col)
+    quoins(g, rng, 0.0, 0.0, H, H, 1.2, 5.2, new_col)
     joints(g, rng, 0.0, 0.0, H, H, 0.9, 4.95, new_col)
     for sgn in (-1, 1):
         face_stones(g, rng, "z", sgn * H, sgn, -H + 0.4, H - 0.4, 1.0, 5.0, new_col, 6, holes=0.0)
@@ -711,10 +880,14 @@ def ck_stone_tower(rng):
     for (x0, x1, z0, z1) in ((-O, O, -O, -O + 0.4), (-O, O, O - 0.4, O), (-O, -O + 0.4, -O + 0.4, O - 0.4),
                              (O - 0.4, O, -O + 0.4, O - 0.4)):
         sbox(g, x0, x1, 5.4, 5.8, z0, z1, new_col)
-    merlons_x(g, -O, O, -O, -O + 0.4, 5.8, 6.3, new_col, phase=0.0)
-    merlons_x(g, -O, O, O - 0.4, O, 5.8, 6.3, new_col, phase=0.0)
-    merlons_z(g, -O + 0.4, O - 0.4, -O, -O + 0.4, 5.8, 6.3, new_col, phase=0.0)
-    merlons_z(g, -O + 0.4, O - 0.4, O - 0.4, O, 5.8, 6.3, new_col, phase=0.0)
+    merlons_x(g, -O, O, -O, -O + 0.4, 5.8, 6.3, new_col, phase=0.0, rng=rng)
+    merlons_x(g, -O, O, O - 0.4, O, 5.8, 6.3, new_col, phase=0.0, rng=rng)
+    merlons_z(g, -O + 0.4, O - 0.4, -O, -O + 0.4, 5.8, 6.3, new_col, phase=0.0, rng=rng)
+    merlons_z(g, -O + 0.4, O - 0.4, O - 0.4, O, 5.8, 6.3, new_col, phase=0.0, rng=rng)
+    spout(g, "z", -O, -1, 1.2, 5.3, new_col, streak_len=2.4, wall=-H)
+    spout(g, "x", -O, -1, -1.0, 5.3, new_col, streak_len=2.0, wall=-H)
+    spout(g, "x", O, 1, 0.9, 5.3, new_col, streak_len=2.6, wall=H)
+    putlogs_x(g, -H, H, -H - 0.005, (2.6, 4.4), step=1.4, phase=0.7)
     for y in (1.8, 3.9):
         for c, s in ((V(0, y, -H - 0.005), (0.14, 0.8, 0.06)), (V(-H - 0.005, y, 0), (0.06, 0.8, 0.14)),
                      (V(H + 0.005, y, 0), (0.06, 0.8, 0.14))):
@@ -760,13 +933,15 @@ def ck_gatehouse(rng):
         joints(g, rng, (x0 + x1) / 2, -Z - 0.5, (x1 - x0) / 2, 0.7, 0.9, 6.0, new_col, faces="swe")
         sbox(g, x0, x1, 6.0, 6.4, -Z - 1.2, -Z - 0.85, new_col)
         sbox(g, (x0 if s < 0 else x1 - 0.35), (x0 + 0.35 if s < 0 else x1), 6.0, 6.4, -Z - 0.85, -Z + 0.2, new_col)
-        merlons_x(g, x0, x1, -Z - 1.2, -Z - 0.85, 6.4, 6.9, new_col, phase=0.0)
+        merlons_x(g, x0, x1, -Z - 1.2, -Z - 0.85, 6.4, 6.9, new_col, phase=0.0, rng=rng)
+        streak(g, "z", -Z - 1.2, -1, (x0 + x1) / 2 + 0.5, 6.0, 2.2, new_col, width=0.4, dark=0.6)
         for y in (2.0, 4.0):
             dark_patch(g, V((x0 + x1) / 2, y, -Z - 1.205), (0.14, 0.75, 0.06))
             dark_patch(g, V(x1 + 0.005 if s > 0 else x0 - 0.005, y + 0.6, -Z - 0.5), (0.06, 0.75, 0.14))
     # Parapet over the gate passage on the outer side.
     sbox(g, -ow - 0.2, ow + 0.2, 5.6, 6.05, -Z, -Z + 0.45, new_col)
-    merlons_x(g, -ow - 0.2, ow + 0.2, -Z, -Z + 0.45, 6.05, 6.6, new_col, phase=0.0)
+    merlons_x(g, -ow - 0.2, ow + 0.2, -Z, -Z + 0.45, 6.05, 6.6, new_col, phase=0.0, rng=rng)
+    spout(g, "z", -Z, -1, -0.8, 5.65, new_col, streak_len=1.4)
     # Portcullis: oak grid with iron-shod points, half lowered (points at 1.08) in its slot.
     zp = -Z + 0.62
     for k in range(7):
@@ -874,10 +1049,10 @@ def ck_keep_t2(rng):
     for (x0, x1, z0, z1) in ((-ex, ex, -ez, -ez + 0.4), (-ex, ex, ez - 0.4, ez), (-ex, -ex + 0.4, -ez + 0.4, ez - 0.4),
                              (ex - 0.4, ex, -ez + 0.4, ez - 0.4)):
         sbox(g, x0, x1, 8.6, 8.95, z0, z1, new_col)
-    merlons_x(g, -ex, ex, -ez, -ez + 0.4, 8.95, 9.4, new_col, phase=0.0)
-    merlons_x(g, -ex, ex, ez - 0.4, ez, 8.95, 9.4, new_col, phase=0.0)
-    merlons_z(g, -ez + 0.4, ez - 0.4, -ex, -ex + 0.4, 8.95, 9.4, new_col, phase=0.0)
-    merlons_z(g, -ez + 0.4, ez - 0.4, ex - 0.4, ex, 8.95, 9.4, new_col, phase=0.0)
+    merlons_x(g, -ex, ex, -ez, -ez + 0.4, 8.95, 9.4, new_col, phase=0.0, rng=rng)
+    merlons_x(g, -ex, ex, ez - 0.4, ez, 8.95, 9.4, new_col, phase=0.0, rng=rng)
+    merlons_z(g, -ez + 0.4, ez - 0.4, -ex, -ex + 0.4, 8.95, 9.4, new_col, phase=0.0, rng=rng)
+    merlons_z(g, -ez + 0.4, ez - 0.4, ex - 0.4, ex, 8.95, 9.4, new_col, phase=0.0, rng=rng)
     tc = (X - 0.2, Z - 0.2)
     frustum(g, 1.25, 1.05, -0.3, 10.2, 14, M_MASON, None, tile=1.6, centre=(tc[0], 0, tc[1]),
             col_fn=lambda t: new_col(-0.3 + 10.2 * t), segs=2)
@@ -929,6 +1104,7 @@ MODELS = {
     "ck_curtain": ck_curtain,
     "ck_curtain_corner": ck_curtain_corner,
     "ck_stone_tower": ck_stone_tower,
+    "ck_corner_tower": ck_corner_tower,
     "ck_gatehouse": ck_gatehouse,
     "ck_keep_t1": ck_keep_t1,
     "ck_keep_t2": ck_keep_t2,
