@@ -179,7 +179,8 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
         ..default()
     });
     let range = VisibilityRange { start_margin: 0.0..0.0, end_margin: 110.0..110.0, use_aabb: true };
-    let wisp_mesh = meshes.add(Sphere::new(0.07).mesh().ico(1).unwrap());
+    // A smooth little glow mote (an ico(1) read as a faceted gem up close).
+    let wisp_mesh = meshes.add(Sphere::new(0.06).mesh().ico(3).unwrap());
     let dead_tree = meshes.add(crate::biome_swamp::build_hollow_dead_tree_mesh());
     let mangroves: Vec<Handle<Mesh>> =
         (0..3).map(|v| meshes.add(crate::biome_swamp::build_mangrove_mesh(v))).collect();
@@ -243,7 +244,7 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
                     k.attach_tree(&mut e, lod0, true);
                 } else {
                     let name = ["knees_a", "knees_b"][var];
-                    if let Some(e) = k.spawn_static_with(commands, name, at.with_scale(Vec3::splat(scale * 0.9)), range.clone()) {
+                    if let Some(e) = k.spawn_static_with(commands, name, at.with_scale(Vec3::splat(scale * 0.6)), range.clone()) {
                         commands.entity(e).insert(BiomeEntity);
                     }
                 }
@@ -293,7 +294,9 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
             wisps += 1;
         }
 
-        // 3. Glow-mushroom clusters hugging the pool shores (on land, just outside the water).
+        // 3. Glow-mushroom clusters hugging the pool shores (on land, just outside the water) —
+        //    low-poly fantasy props: with the realistic swamp kit the shores are left to its
+        //    sedges / cattails / knees (the RNG walk still runs so nothing else moves).
         let mut placed_mush = 0;
         for _ in 0..1400 {
             if placed_mush >= 10 {
@@ -310,6 +313,11 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
             let tf = Transform::from_xyz(x, y, z)
                 .with_rotation(Quat::from_rotation_y(rng_next(&mut rng) * TAU))
                 .with_scale(Vec3::splat(0.9 + rng_next(&mut rng) * 0.6));
+            placed_mush += 1;
+            mush += 1;
+            if swamp_kit.is_some() {
+                continue;
+            }
             commands.spawn((Mesh3d(mush_stems.clone()), MeshMaterial3d(mat.clone()), tf, BiomeEntity, range.clone()));
             commands.spawn((
                 Mesh3d(mush_caps.clone()),
@@ -319,8 +327,6 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
                 BiomeEntity,
                 range.clone(),
             ));
-            placed_mush += 1;
-            mush += 1;
         }
     }
 
@@ -340,19 +346,35 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
         warn!("bog: NO spot deep enough for the drowned tower (pool_sd never < -1.1) — check POOL_T/sd scaling");
     }
     if let Some((_, x, z)) = best {
-        commands.spawn((
+        let rot = Quat::from_rotation_y(rng_next(&mut rng) * TAU);
+        // With the kit: the castle kit's roofless ruined-keep shell (scanned masonry, rubble
+        // spill), sunk to its sills and listing in the pool — instead of the faceted drum.
+        let kit_ruin = crate::realforest::get().and_then(|k| {
+            k.spawn_static(
+                commands,
+                "ck_ruin_keep",
+                Transform::from_xyz(x, WATER_Y - 0.9, z)
+                    .with_rotation(rot * Quat::from_rotation_z(0.07) * Quat::from_rotation_x(-0.05))
+                    .with_scale(Vec3::splat(0.55)),
+            )
+        });
+        if let Some(e) = kit_ruin {
+            commands.entity(e).insert(BiomeEntity);
+        } else {
+            commands.spawn((
             Mesh3d(meshes.add(drowned_tower())),
             MeshMaterial3d(mat.clone()),
-            Transform::from_xyz(x, WATER_Y - 1.7, z)
-                .with_rotation(Quat::from_rotation_y(rng_next(&mut rng) * TAU) * Quat::from_rotation_z(0.16))
-                .with_scale(Vec3::splat(1.15)),
+            Transform::from_xyz(x, WATER_Y - 1.7, z).with_rotation(rot * Quat::from_rotation_z(0.16)).with_scale(Vec3::splat(1.15)),
             BiomeEntity,
         ));
+        }
         crate::blockers::add_obb(x, z, 1.4, 1.4, 0.0);
         info!("bog: drowned tower at {x:.1},{z:.1}");
     }
 
-    // 5. One stilt hut at a pool shore of the S swamp (feet in the shallows, cabin over water).
+    // 5. One stilt hut at a pool shore of the S swamp (feet in the shallows, cabin over water) —
+    //    the low-poly box hut only without the kit; with it the swamp's hut is the realistic
+    //    collapsed stilt hut + sunken punt story site (`stories_warm`, `story_boat`).
     let mut hut: Option<(f32, f32, f32)> = None;
     for _ in 0..2500 {
         let a = rng_next(&mut rng) * TAU;
@@ -368,7 +390,7 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
     if hut.is_none() {
         warn!("bog: no shoreline spot for the stilt hut");
     }
-    if let Some((_, x, z)) = hut {
+    if let Some((_, x, z)) = hut.filter(|_| swamp_kit.is_none()) {
         commands.spawn((
             Mesh3d(meshes.add(stilt_hut())),
             MeshMaterial3d(mat),

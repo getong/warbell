@@ -16,8 +16,9 @@ pub enum KitTree {
     /// forest's.
     Tree(usize),
     /// A static kit model (rock spire, cactus) hung under the gameplay entity; `sway` = keep the
-    /// wind sway the low-poly prop had (a cactus flexes a hair, a rock pillar must not).
-    Static(&'static str, bool),
+    /// wind sway the low-poly prop had (a cactus flexes a hair, a rock pillar must not); the f32
+    /// scales the model under the slot (cypress knees / krummholz are far smaller than a tree).
+    Static(&'static str, bool, f32),
 }
 
 /// Does the kit take over the rocky biome? Needs `biome_props.glb` (else the low-poly scatter stays).
@@ -31,30 +32,32 @@ pub fn desert(kit: &Kit) -> bool {
 }
 
 /// Kit "tree" for rocky tree-class source variant `src` (0..1 hoodoos, 2..3 wind-bent pines, 4 snag).
+/// The rocky highland is harsh alpine rock, NOT the forest: no forest pines / snags here — only
+/// the alpine kit's wind-flagged timberline spruce and, where the old snag stood, a krummholz mat
+/// (wind-crippled dwarf conifer).
 pub fn rocky_tree(kit: &Kit, src: usize, x: f32, z: f32) -> Option<KitTree> {
     let (a, _) = super::rolls(x, z);
     match src {
-        0 => Some(KitTree::Static("rk_spire_a", false)),
-        1 => Some(KitTree::Static("rk_spire_b", false)),
-        // Timberline conifers: the wind-flagged spruce, the odd full pine (alpine_flora.glb optional).
-        2 | 3 => {
-            let name = if a < 0.6 { "spruce_flag_lod0" } else { ["pine_c_lod0", "pine_b_lod0"][(a * 9.0) as usize % 2] };
-            kit.pick_named(&[name], 0.0).or_else(|| kit.pick_named(&["pine_c_lod0"], 0.0)).map(KitTree::Tree)
-        }
-        _ => kit.pick_named(&["dead_a_lod0"], 0.0).map(KitTree::Tree),
+        0 => Some(KitTree::Static("rk_spire_a", false, 1.0)),
+        1 => Some(KitTree::Static("rk_spire_b", false, 1.0)),
+        // Sparse timberline: a wind-flagged spruce, every third slot a krummholz mat instead.
+        2 | 3 if a < 0.66 => kit.pick_named(&["spruce_flag_lod0"], 0.0).map(KitTree::Tree),
+        2 | 3 => kit.has("krummholz_a").then_some(KitTree::Static(["krummholz_a", "krummholz_b"][(a * 13.0) as usize % 2], true, 0.8)),
+        _ => kit.has("krummholz_b").then_some(KitTree::Static(["krummholz_b", "krummholz_a"][(a * 7.0) as usize % 2], true, 0.8)),
     }
 }
 
 /// Kit prop for rocky passive class `class` (0 = dry shrub, 1 = crags + cairn, 3 = scree), source
-/// variant `src`: (model, scale ×). `None` = leave the spot bare.
+/// variant `src`: (model, scale ×). `None` = leave the spot bare (never a forest bush).
 pub fn rocky_prop(kit: &Kit, class: usize, src: usize, x: f32, z: f32) -> Option<(usize, f32)> {
     let (a, b) = super::rolls(x, z);
     let pick = |names: &[&str], s: f32| kit.pick_named(names, b).map(|m| (m, s));
     match (class, src) {
-        // Dry highland scrub: creeping juniper / dwarf pine mats, a tussock; forest bush fallback.
-        (0, _) if a < 0.45 => pick(&["juniper_a"], 0.55).or_else(|| pick(&["bush_a", "bush_b"], 0.7)),
-        (0, _) if a < 0.75 => pick(&["krummholz_a", "krummholz_b"], 0.5).or_else(|| pick(&["bush_a"], 0.7)),
-        (0, _) => pick(&["tussock_a", "tussock_b"], 1.1).or_else(|| pick(&["grass_c"], 1.0)),
+        // Dry highland scrub: creeping juniper / krummholz mats, dry tussocks, loose scree.
+        (0, _) if a < 0.35 => pick(&["juniper_a"], 0.55),
+        (0, _) if a < 0.6 => pick(&["krummholz_a", "krummholz_b"], 0.5),
+        (0, _) if a < 0.85 => pick(&["tussock_a", "tussock_b"], 1.1),
+        (0, _) => pick(&["rk_scree_a", "rk_scree_b"], 0.8),
         (1, 0) => pick(&["rk_crag_a"], 1.0),
         (1, 1) => pick(&["rk_crag_b"], 1.0),
         (1, 2) => pick(&["rk_crag_c"], 1.0),
@@ -66,24 +69,25 @@ pub fn rocky_prop(kit: &Kit, class: usize, src: usize, x: f32, z: f32) -> Option
 }
 
 /// Kit ground cover for rocky cover class `class` (0 = pebbles, 1 = dry tufts, 2 = lichen
-/// litter / alpine flowers): (model, scale ×).
+/// litter): (model, scale ×). Wind-scoured alpine ground — pebbles, scree and dry tussocks, no
+/// lush meadow grass or flowers.
 pub fn rocky_cover(kit: &Kit, class: usize, x: f32, z: f32) -> Option<(usize, f32)> {
     let (a, b) = super::rolls(x, z);
     let pick = |names: &[&str], s: f32| kit.pick_named(names, b).map(|m| (m, s));
     match class {
         0 => pick(&["rk_pebbles"], 1.0),
-        1 if a < 0.55 => pick(&["tussock_a", "tussock_b"], 0.7).or_else(|| pick(&["grass_c", "grass_d"], 0.7)),
-        1 => pick(&["grass_c", "grass_d"], 0.6),
-        2 if a < 0.5 => pick(&["rk_pebbles"], 1.4),
-        2 if a < 0.8 => pick(&["flower_yellow", "flower_daisy"], 0.6),
-        2 => pick(&["stalks_a"], 0.7),
+        1 if a < 0.7 => pick(&["tussock_a", "tussock_b"], 0.65),
+        1 => pick(&["rk_pebbles"], 1.2),
+        2 if a < 0.55 => pick(&["rk_pebbles"], 1.4),
+        2 if a < 0.75 => pick(&["rk_scree_a", "rk_scree_b"], 0.45),
+        2 => pick(&["tussock_b"], 0.5),
         _ => None,
     }
 }
 
 /// Kit saguaro for desert tree-class source variant `src` (0 = single arm, 1 = two arms, 2 = young).
 pub fn saguaro(src: usize) -> KitTree {
-    KitTree::Static(["ds_saguaro_b", "ds_saguaro_a", "ds_saguaro_c"][src.min(2)], true)
+    KitTree::Static(["ds_saguaro_b", "ds_saguaro_a", "ds_saguaro_c"][src.min(2)], true, 1.0)
 }
 
 /// Does the kit take over the swamp? Needs `swamp_flora.glb` — the swamp draws ONLY its own
@@ -99,8 +103,8 @@ pub fn swamp(kit: &Kit) -> bool {
 pub fn swamp_tree(kit: &Kit, src: usize, x: f32, z: f32) -> Option<KitTree> {
     let (a, _) = super::rolls(x, z);
     let name = match src {
-        3 => return Some(KitTree::Static("knees_a", false)),
-        _ if src >= 4 => return Some(KitTree::Static("knees_b", false)),
+        3 => return Some(KitTree::Static("knees_a", false, 0.6)),
+        _ if src >= 4 => return Some(KitTree::Static("knees_b", false, 0.6)),
         _ if a < 0.22 => ["snag_a_lod0", "snag_b_lod0"][(a * 31.0) as usize % 2],
         0 => "cypress_a_lod0",
         1 => ["cypress_b_lod0", "willow_a_lod0"][(a * 7.0) as usize % 2],

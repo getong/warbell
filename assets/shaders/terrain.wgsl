@@ -543,9 +543,11 @@ fn fragment(
             smoothstep(0.0, 0.2, bank));
         fp_w = smoothstep(0.25, 0.75, fmask.r + edge_n * 0.45) * slope_gate * (1.0 - cliff);
         fp_forest = fp_w;
-        // Off the forest, a sandy bank (a desert brook) keeps its own wet sand: the scanned layer
-        // is woodland soil with leaf litter in it, which read as a forest path laid on the dunes.
-        let bank_scan = mix(1.0 - bank_sandy * 1.25, 1.0, smoothstep(0.1, 0.5, fmask.r));
+        // The scanned soil is woodland earth with leaf litter in it: only the forest / meadow banks
+        // (mask R) take it. Off them — swamp pools, the Blight, rocky / snow / desert brooks — the
+        // bank keeps its own procedural earth / wet sand (it used to coat every bank on the map
+        // with the forest path, which read as a forest trail laid round the bog pools).
+        let bank_scan = smoothstep(0.15, 0.55, fmask.r);
         bank_fp = bank_soil * smoothstep(0.40, 0.70, in.world_normal.y) * (1.0 - cliff) * bank_scan;
         fp_w = max(fp_w, bank_fp);
     }
@@ -880,10 +882,30 @@ fn fragment(
     //    sheet (the tile-square "kwadraty" a player saw where the swamp begins). Every terrain sheet
     //    runs this identically, so a shared boundary vertex resolves the SAME roughness from either
     //    side — no seam. A no-op (wet≈0) on all dry ground, so grass/sand/snow are unaffected.
-    let wet = clamp(pbr_input.material.base_color.a, 0.0, 1.0) * (1.0 - alp_k);
+    //    The swamp also gets its OWN floor here (not the forest's litter): dark peaty mud mottled
+    //    with wet moss, and shallow standing water in the low hollows — near-black, glassy, flat —
+    //    so only the water glints; the mud / moss stay a damp semi-matte (a uniform 0.40 sheen
+    //    over the micro-relief threw white specular speckles across the whole bog).
+    let wet = clamp(pbr_input.material.base_color.a, 0.0, 1.0) * (1.0 - alp_k) * (1.0 - fp_w);
     if wet > 0.001 {
+        let sp = in.world_position.xz;
+        let mott = ter_noise_rot(sp * 0.13, 0.81, 0.59) * 0.6 + ter_noise_rot(sp * 0.41, 0.29, 0.957) * 0.4;
+        let grain = ter_noise_rot(sp * 2.1, 0.60, 0.80);
+        let mud = vec3<f32>(0.060, 0.047, 0.034);
+        let wmoss = vec3<f32>(0.046, 0.066, 0.026);
+        let mossk = smoothstep(0.45, 0.66, mott);
+        let floor_c = mix(mud, wmoss, mossk) * (0.78 + 0.44 * grain);
+        let src = pbr_input.material.base_color.rgb;
+        // Keep a little of the vertex colour's own variation (and the bank / shore tints).
+        var swamp_rgb = mix(src, mix(floor_c, src * 0.5, 0.2), wet * 0.9);
+        let pool_n = ter_noise_rot(sp * 0.23, 0.95, 0.31) * 0.7 + ter_noise_rot(sp * 0.9, 0.47, 0.88) * 0.3;
+        let standing = (1.0 - smoothstep(0.24, 0.31, pool_n)) * smoothstep(0.55, 0.9, wet)
+            * smoothstep(0.90, 0.98, in.world_normal.y) * (1.0 - cliff);
+        swamp_rgb = mix(swamp_rgb, swamp_rgb * 0.22 + vec3<f32>(0.004, 0.006, 0.004), standing);
+        pbr_input.material.base_color = vec4<f32>(swamp_rgb, pbr_input.material.base_color.a);
         let rw = pbr_input.material.perceptual_roughness;
-        pbr_input.material.perceptual_roughness = mix(rw, 0.40, wet);
+        pbr_input.material.perceptual_roughness = mix(mix(rw, 0.66, wet), 0.05, standing);
+        pbr_input.N = normalize(mix(pbr_input.N, normalize(in.world_normal), standing));
     }
 
     // Damp bank soil just above the waterline: a soft wet sheen, glossiest at the water's edge.

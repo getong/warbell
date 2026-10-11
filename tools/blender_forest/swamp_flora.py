@@ -167,14 +167,15 @@ def spanish_moss(w=512, h=1024):
     """Spanish moss festoon: hundreds of thin, kinked, curly grey-green strands hanging from the
     limb (the card's base = the image bottom), thinning out toward ragged tips."""
     cv = Canvas(w, h)
-    # Dense, pale silver-grey-green beard: many thick-ish strands so the festoon reads as a solid
-    # hanging curtain from mid-distance (thin sparse strands vanished against the dark crown).
-    beards = crng.uniform(0.22, 0.78, 6)
-    for i in range(560):
-        x = w * (beards[i % 6] + crng.normal() * 0.07)
-        L = h * crng.uniform(0.45, 0.98) * (1.0 - abs(x / w - 0.5) * 1.1)
-        ang = crng.normal() * 0.10 + (x / w - 0.5) * 0.22
-        pts = walk((x, h * 0.995), ang, L, 9, 0.30, crng)
+    # Pale silver-grey-green beards: a few narrow tufts gripping the limb (the card's base), whose
+    # thick-ish strands fall nearly straight and fan out a little as they hang - long ragged
+    # curtains that read from mid-distance, never a rectangle filling the card.
+    tufts = crng.uniform(0.36, 0.64, 4)
+    for i in range(440):
+        x = w * (tufts[i % 4] + crng.normal() * 0.06)
+        L = h * crng.uniform(0.35, 0.98) ** 0.7
+        ang = crng.normal() * 0.05 + (x / w - 0.5) * 0.12
+        pts = walk((x, h * 0.995), ang, L, 9, 0.035, crng)
         g = crng.uniform(0, 1)
         base = np.array([0.62 + 0.10 * g, 0.66 + 0.09 * g, 0.56 + 0.07 * g]) * crng.uniform(0.78, 1.05)
         n = len(pts)
@@ -537,10 +538,10 @@ def knees(seed, stump):
     rng = np.random.default_rng(seed)
     b = Builder()
     mats = ["bark_cypress"]
-    tint = (0.78, 0.72, 0.64)
+    tint = (1.0, 0.93, 0.84)
     if stump:
         fluted_trunk(b, rng, 0.85, 0.7, 0.26, 14, [0.0, 0.06, 0.16, 0.32, 0.55, 0.85], 1.4,
-                     Vector((0, 0, 0)), tint, jagged=0.35)
+                     Vector((0, 0, 0)), tint, jagged=0.12)
     for i in range(int(rng.integers(6, 10))):
         a = rng.uniform(0, 2 * math.pi)
         d = rng.uniform(0.45, 1.25) if stump else math.sqrt(rng.uniform(0.0, 1.0)) * 0.9
