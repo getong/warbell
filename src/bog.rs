@@ -189,7 +189,10 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
     let mush_caps = meshes.add(crate::biome_swamp::build_glowmush_caps_mesh());
 
     // The two swamp interiors (world coords, mirrors worldmap REGIONS): S swamp + E marsh arm.
-    let zones: [(f32, f32, f32); 2] = [(0.0, 83.6, 52.0), (66.0, 52.8, 40.0)];
+    // Authored at MAP_SCALE 2.2 — centres AND radii track the current scale (`world22`).
+    let zk = crate::worldmap::MAP_SCALE / 2.2;
+    let (zs, ze) = (crate::worldmap::world22(0.0, 83.6), crate::worldmap::world22(66.0, 52.8));
+    let zones: [(f32, f32, f32); 2] = [(zs.x, zs.y, 52.0 * zk), (ze.x, ze.y, 40.0 * zk)];
     let mut rng: u32 = 0xb06_d12e5;
     let clear = |x: f32, z: f32| {
         !crate::bridges::near_bridge(x, z, 1.6)

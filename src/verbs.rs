@@ -1202,8 +1202,10 @@ fn seed_forage(
 /// origin), smoothly → 1 toward the rim. (Core's `frontier_factor` is anchored to its own
 /// enlarged tilemap; we recompute the gradient and reuse only core's pure loot picks.)
 pub(crate) fn forest_frontier(x: f32, z: f32) -> f64 {
-    const SAFE: f32 = 22.0;
-    const RIM: f32 = 92.0;
+    const SAFE: f32 = 22.0; // castle-local (world-fixed)
+    // Island-scale: 92u at MAP_SCALE 2.6 ≈ the biome centres — tracks the map so the frontier
+    // gradient still peaks out in the biomes, not halfway there.
+    const RIM: f32 = 92.0 * crate::worldmap::MAP_SCALE / 2.6;
     let d = (x * x + z * z).sqrt();
     let t = ((d - SAFE) / (RIM - SAFE)).clamp(0.0, 1.0) as f64;
     t * t * (3.0 - 2.0 * t) // smoothstep

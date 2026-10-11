@@ -481,12 +481,14 @@ fn drive_build(
         crate::blockers::reset();
         *castle_built = crate::castle::CastleBuilt::default();
         job.wiped = true;
+        info!("BUILD_ARMED t={:.3}", time.elapsed_secs());
     }
 
     // Run phases: one per frame normally (so the veil animates between them), all at once under a
     // capture (the harness wants a finished world to warm up on, not the veil).
     loop {
         let step = job.step;
+        let t0 = std::time::Instant::now();
         crate::worldmap::build_step(
             step,
             &mut commands,
@@ -498,6 +500,7 @@ fn drive_build(
             &mut creature_mats,
             &mut job.state,
         );
+        info!("BUILD_PHASE {step:>2} {:>8.1} ms", t0.elapsed().as_secs_f64() * 1000.0);
         job.step += 1;
         if job.step >= crate::worldmap::BUILD_STEPS || !capturing {
             break;
@@ -508,6 +511,7 @@ fn drive_build(
     if job.step >= crate::worldmap::BUILD_STEPS {
         job.building = false;
         progress.0 = 1.0;
+        info!("BUILD_DONE t={:.3}", time.elapsed_secs());
         world_ready.0 = true; // veil reveals; apply_world_atmosphere re-tints sky/sun/fog next frame
         info!("view → world map");
     }
@@ -811,9 +815,17 @@ fn spawn_chunks(
         end_margin: 62.0..62.0,   // abrupt cutoff at 62 world units — inside the fog ramp so it hides
         use_aabb: true,
     };
-    for (key, bucket) in chunks {
+    // Merge every bucket in parallel (pure vertex work), then spawn serially in bucket order.
+    let mut keyed: Vec<((i32, i32), Option<ChunkBucket>)> = chunks.into_iter().map(|(k, b)| (k, Some(b))).collect();
+    let buckets: Vec<std::sync::Mutex<Option<ChunkBucket>>> =
+        keyed.iter_mut().map(|(_, b)| std::sync::Mutex::new(b.take())).collect();
+    let merged = crate::par::par_map(buckets.len(), |i| {
+        let b = buckets[i].lock().expect("bucket").take().unwrap_or_default();
+        (merge_props(b.cover), merge_props(b.props))
+    });
+    for ((key, _), (cover, props)) in keyed.into_iter().zip(merged) {
         let center = chunk_center(key);
-        if let Some(mesh) = merge_props(bucket.cover).filter(|_| !no_grass()) {
+        if let Some(mesh) = cover.filter(|_| !no_grass()).map(gpu_only) {
             let mut e = commands.spawn((
                 Mesh3d(meshes.add(mesh)),
                 MeshMaterial3d(mat.clone()),
@@ -826,7 +838,7 @@ fn spawn_chunks(
                 e.insert(cover_range.clone());
             }
         }
-        if let Some(mesh) = merge_props(bucket.props) {
+        if let Some(mesh) = props.map(gpu_only) {
             let mut e = commands.spawn((
                 Mesh3d(meshes.add(mesh)),
                 MeshMaterial3d(mat.clone()),
@@ -853,6 +865,13 @@ fn spawn_chunks(
             }
         }
     }
+}
+
+/// Mark a build-time merged mesh GPU-only (`RENDER_WORLD`): nothing reads chunk geometry back on
+/// the CPU after upload, and keeping the main-world copy cost ~1.6 GiB of RAM at MAP_SCALE 3.9.
+pub(crate) fn gpu_only(mut m: Mesh) -> Mesh {
+    m.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
+    m
 }
 
 /// Bake each prop's transform into its vertices and merge the bucket into one mesh

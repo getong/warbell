@@ -133,8 +133,8 @@ $env:FOREST_CLIP="target/clips/desert"; $env:FOREST_CLIP_ORBIT="71,1.5,-46,22,14
 $env:FOREST_CLIP="target/clips/siege"; $env:FOREST_WAVE="1"; $env:FOREST_DEFEND="1"; $env:FOREST_TOWN="1"; $env:FOREST_CAM="0,15,30,0,2,-8"; cargo run
 # stitch (per-clip mp4 + gif): ffmpeg -framerate 30 -i frame_%05d.png -pix_fmt yuv420p out.mp4
 ```
-Biome region centres (world XZ, at `MAP_SCALE` 2.6): snow (-82,-53) · desert (71,-46) · rock (78,5) ·
-forest (-71,46) · swamp (0,67). These scale with `MAP_SCALE` — code with a hand-authored world coord
+Biome region centres (world XZ, at `MAP_SCALE` 3.9): snow (-123,-80) · desert (107,-69) · rock (117,8) ·
+forest (-107,69) · swamp (0,101) (×1.5 the 2.6-era numbers; the castle/village stay world-fixed). These scale with `MAP_SCALE` — code with a hand-authored world coord
 should route it through `worldmap::world22` (rescales 2.2-era coords) instead of baking the scale in.
 Clip knobs: `FOREST_CLIP_FRAMES` (150) · `FOREST_CLIP_FPS` (30) · `FOREST_CLIP_WARMUP` (30).
 
@@ -153,7 +153,7 @@ Env hooks that stage a scene for a shot (combine with `FOREST_SHOT` **or** `FORE
 | `FOREST_ARCHERS=<n>` | retrain the whole standing militia as **longbow archers** at boot (`villagers.rs::stage_archers`); numeric `n ≥ 2` also raises `town.population` to `n` so a whole squad grows in to retrain. Pair with `FOREST_MUSTER`+`FOREST_HERO` to park a volleying rank anywhere, `FOREST_ORKLINE` for live targets, or `FOREST_WAVE` for a defended siege. (`FOREST_VIEW=peasant:archer` + `FOREST_VIEW_ANIM=bow` previews the model / draw-loose clip in the viewer.) |
 | `FOREST_CAGETEST="x,z"` | park the prisoner-cage rescue's before/after states side by side at a world XZ: a CLOSED cage of real seated peasant captives + an OPENED emptied one 5.5u further +X (`camps::spawn_cage`); both doors face +X, so frame from the east. Film the actual door-swing + walk-out with `FOREST_DEMO=rescue` + `FOREST_CLIP` instead |
 | `FOREST_BREACH=1` | auto-break the Hold gate on the first sim frame so a shot/clip films the woken garrison + the Warlord boss without a keypress (`ork_fortress::stage_breach`); pair with `FOREST_HERO`/`FOREST_CAM` inside the walls |
-| `FOREST_RIVAL=<n>` | instantly raise `n` buildings in the **rival stronghold** (the desert AI opponent, `rival.rs`) so a shot frames a grown rival town instead of waiting out its economy (default: fill the bailey); the rival keep/walls/garrison spawn regardless. Frame it at `rival::RIVAL_CENTRE` ≈ world `(78, -104)` at MAP_SCALE 2.6 (NE desert) |
+| `FOREST_RIVAL=<n>` | instantly raise `n` buildings in the **rival stronghold** (the desert AI opponent, `rival.rs`) so a shot frames a grown rival town instead of waiting out its economy (default: fill the bailey); the rival keep/walls/garrison spawn regardless. Frame it at `rival::RIVAL_CENTRE` ≈ world `(117, -156)` at MAP_SCALE 3.9 (NE desert) |
 | `FOREST_TREELINE="x,z"` | park one of each `TreeKind` (broadleaf/birch/pine/poplar/autumn/dead/stump) in a 2× row at a world XZ (tree-model close-ups, `trees.rs`) |
 | `FOREST_FISHLINE="x,z"` | park one of each fish variety (silver/blue/gold) frozen mid-leap in a lit row at a world XZ (fish-model close-ups, `fish.rs`) |
 | `FOREST_MENU=1` | shoot the start screen |
@@ -172,6 +172,7 @@ Env hooks that stage a scene for a shot (combine with `FOREST_SHOT` **or** `FORE
 | `FOREST_BELLTEST=1` | re-toll the war bell on a ~12s loop (swing + clapper + SFX) so a shot/clip frames the ring without a keypress (`castle::swing_bell`); the bell stands at `castle::BELL_POS` (4.5, 7.5) |
 | `FOREST_ROLLTEST=1` | re-arm the hero's **Alt dodge-roll** (forward, along the facing) on a ~1.8s loop so a `FOREST_TPS` shot/clip frames the somersault without a keypress (`player/movement.rs::player_roll`); skips the pointer-lock/stamina gates |
 | `FOREST_SWINGTEST=1` | re-arm the hero's **attack chain** on a ~1.15s loop (inside the combo window, so it steps chop → slash → thrust; every 4th swing is the Heavy) with no keypress, skipping the pointer-lock gate, so a `FOREST_FP`/`FOREST_TPS` clip frames every swing variant (`player/combat.rs::swing_test`). |
+| `FOREST_NOSTREAM=1` / `FOREST_MEMREPORT=1` | spawn the kit undergrowth/clutter/props chunks for the WHOLE island at boot instead of streaming them within 95u of the camera (`realforest::stream_cover`; `FOREST_NOCULL=1` also bypasses it) / log one `MEM` breakdown 12 s after `WorldReady` — CPU-retained mesh bytes by owning component, top meshes/images (`perftest::mem_report`; always on under `FOREST_PERFTEST`) |
 | `FOREST_IMMORTAL=1` | the hero takes hits with full juice (floats/flash/shake) but can't drop below 1 HP, so a filmed melee never trips the **succession beat** — which slow-mos the world and swings the camera to the nearest townsperson, hijacking a combat clip's framing (`player/health.rs::apply_hero_damage`) |
 | `FOREST_HURT_ALL=<frac>` | wound every foe / townsfolk to `frac` of max HP, then step it down 9% every 1.3s (4 steps, per-entity phase) so a still frames the world HP bars mid-fight with fresh **damage trails**; holds the hero on a matching 72%→48% staircase for the HUD vitals (`combat_fx::hurt_all_test`). Calm ring shot: `FOREST_TPS=1 FOREST_HERO=-12,30 FOREST_ORKLINE=-12,34 FOREST_TPS_AZ=2.9 FOREST_TPS_PITCH=0.5 FOREST_HURT_ALL=0.6 FOREST_IMMORTAL=1 FOREST_NOBLUR=1` (the hero spawns facing +Z, so the line must sit at +Z for the soft-lock ring) |
 | `BEVY_ASSET_ROOT` | point at this dir if running the binary from elsewhere (WGSL loads from `assets/shaders/`) |
@@ -216,7 +217,7 @@ Two related map systems share the ground pipeline in `biome.rs`:
   (declarative ground/atmosphere/scatter/particles) + optional `landmarks()`. Keys **1–5** swap a
   single 32×32 biome patch at runtime (despawns everything tagged `BiomeEntity`, rebuilds).
 - **`worldmap.rs`** — the actual playable island: generated at base
-  resolution scaled up by `MAP_SCALE = 2.2` (→ `COLS 316 × ROWS 360`). Elliptical island, five
+  resolution scaled up by `MAP_SCALE = 3.9` (→ `COLS 561 × ROWS 639`). Elliptical island, five
   biome blobs, grass safe-zone (castle), four rivers + lake, coastal mountain ridges, rolling
   terraced knolls, plateaus. `classify` force-flattens grass under every town build plot (and
   chest/cover placement rejects `town::near_build_plot`) so nothing occupies a future building's

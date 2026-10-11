@@ -904,40 +904,213 @@ impl Chunks {
 
     pub fn spawn(self, kit: &Kit, commands: &mut Commands, meshes: &mut Assets<Mesh>, cull: bool) {
         SCATTER_DONE.store(true, std::sync::atomic::Ordering::Release);
-        for ((key, tier, slice, mat, snow), items) in self.groups {
-            let mut it = items.into_iter();
-            let Some((m0, p0, t0)) = it.next() else { continue };
-            let mut base = kit.models[m0].parts[p0].mesh.clone().transformed_by(t0);
-            for (m, p, t) in it {
-                let part = kit.models[m].parts[p].mesh.clone().transformed_by(t);
-                if base.merge(&part).is_err() {
-                    warn!("realforest: chunk merge failed (attribute mismatch) — part skipped");
-                }
+        // Streamed (the default): park the recipes; `stream_cover` merges + spawns only the chunks
+        // near the camera. Every tier is distance-culled at <= PROPS_FAR anyway, so a far chunk
+        // was RAM/VRAM and upload time that could never be seen (~39M vertices at MAP_SCALE 3.9).
+        if cull && cover_stream_enabled() {
+            let mut st = STREAM.lock().expect("cover stream poisoned");
+            for ((key, tier, slice, mat, snow), items) in self.groups {
+                st.chunks.entry(key).or_default().push(Recipe { tier, slice, mat, snow, items });
             }
-            let (near, far) = match tier {
-                Tier::Props => (0.0, PROPS_FAR),
-                Tier::Cover => (0.0, COVER_FAR),
-                Tier::Clutter => (0.0, CLUTTER_FAR),
-                Tier::LushNear => (0.0, LUSH_NEAR),
-                Tier::LushFar => (LUSH_NEAR, LUSH_FAR),
-            };
-            let mut e = commands.spawn((
-                Mesh3d(meshes.add(base)),
-                Transform::from_translation(chunk_center(key)),
-                bevy::light::NotShadowCaster,
-                crate::biome::BiomeEntity,
-                DensitySlice(slice),
-                Visibility::default(),
-            ));
-            kit.mat(mat, snow).insert(&mut e);
-            if tier != Tier::Props {
-                e.insert(crate::biome::GroundCoverChunk);
-            }
-            if cull || near > 0.0 {
-                let far = if cull { far } else { 1.0e6 };
-                e.insert(VisibilityRange { start_margin: near..near, end_margin: far..far, use_aabb: true });
+            st.dirty = true;
+            return;
+        }
+        // Merge every group in parallel (pure vertex work — this was most of each scatter phase),
+        // then spawn serially in the groups' iteration order.
+        let groups: Vec<_> = self.groups.into_iter().collect();
+        let merged = crate::par::par_map(groups.len(), |gi| merge_group(kit, &groups[gi].1));
+        for (((key, tier, slice, mat, snow), _), base) in groups.into_iter().zip(merged) {
+            if let Some(base) = base {
+                let r = Recipe { tier, slice, mat, snow, items: Vec::new() };
+                spawn_group(kit, commands, meshes, key, &r, base, cull);
             }
         }
+    }
+}
+
+/// Merge one group's queued kit parts into a single chunk-local mesh (`None` if empty).
+fn merge_group(kit: &Kit, items: &[(usize, usize, Transform)]) -> Option<Mesh> {
+    let mut it = items.iter();
+    let &(m0, p0, t0) = it.next()?;
+    let mut base = kit.models[m0].parts[p0].mesh.clone().transformed_by(t0);
+    for &(m, p, t) in it {
+        let part = kit.models[m].parts[p].mesh.clone().transformed_by(t);
+        if base.merge(&part).is_err() {
+            warn!("realforest: chunk merge failed (attribute mismatch) — part skipped");
+        }
+    }
+    Some(base)
+}
+
+/// Spawn one merged chunk group (mesh already merged). Returns the entity.
+fn spawn_group(
+    kit: &Kit,
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    key: (i32, i32),
+    r: &Recipe,
+    mut base: Mesh,
+    cull: bool,
+) -> Entity {
+    // GPU-only: the merged chunk is never read back on the CPU (the reskin pass inspects it in
+    // PostUpdate of its spawn frame, before extraction), so drop the main-world copy once
+    // it's uploaded. These merges were ~3 GiB of resident RAM at MAP_SCALE 3.9.
+    base.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
+    let (near, far) = match r.tier {
+        Tier::Props => (0.0, PROPS_FAR),
+        Tier::Cover => (0.0, COVER_FAR),
+        Tier::Clutter => (0.0, CLUTTER_FAR),
+        Tier::LushNear => (0.0, LUSH_NEAR),
+        Tier::LushFar => (LUSH_NEAR, LUSH_FAR),
+    };
+    let mut e = commands.spawn((
+        Mesh3d(meshes.add(base)),
+        Transform::from_translation(chunk_center(key)),
+        bevy::light::NotShadowCaster,
+        crate::biome::BiomeEntity,
+        DensitySlice(r.slice),
+        Visibility::default(),
+    ));
+    kit.mat(r.mat, r.snow).insert(&mut e);
+    if r.tier != Tier::Props {
+        e.insert(crate::biome::GroundCoverChunk);
+    }
+    if cull || near > 0.0 {
+        let far = if cull { far } else { 1.0e6 };
+        e.insert(VisibilityRange { start_margin: near..near, end_margin: far..far, use_aabb: true });
+    }
+    e.id()
+}
+
+// ── Cover streaming ───────────────────────────────────────────────────────────────────────────
+//
+// The kit undergrowth / clutter / props (every `Chunks` group) used to be merged and spawned for
+// the WHOLE island at boot — ~39M vertices at MAP_SCALE 3.9 — although each tier is culled past
+// <= PROPS_FAR (75u). Now `Chunks::spawn` parks compact recipes (model, part, transform) per 16u
+// chunk, and [`stream_cover`] merges + spawns only the chunks within [`STREAM_IN`] of the camera,
+// despawning those past [`STREAM_OUT`] (hysteresis). Placement is still decided once at build
+// time, so a chunk respawns identically. `FOREST_NOCULL=1` / `FOREST_NOSTREAM=1` restore the
+// spawn-everything path.
+
+/// One merge group's recipe: what to merge, and how to draw it.
+struct Recipe {
+    tier: Tier,
+    slice: u8,
+    mat: usize,
+    snow: bool,
+    items: Vec<(usize, usize, Transform)>,
+}
+
+#[derive(Default)]
+struct CoverStream {
+    /// Every chunk's recipes (resident, compact).
+    chunks: HashMap<(i32, i32), Vec<Recipe>>,
+    /// Chunks currently spawned -> their entities.
+    live: HashMap<(i32, i32), Vec<Entity>>,
+    /// Chunks whose merge is running on the async compute pool (one mesh per recipe, in order).
+    /// Merging off the main thread keeps a moving camera from ever stalling a frame on it.
+    pending: HashMap<(i32, i32), bevy::tasks::Task<Vec<Option<Mesh>>>>,
+    /// Recipes changed (or the last pass hit its per-frame budget) — re-evaluate even if the
+    /// camera hasn't moved.
+    dirty: bool,
+}
+
+static STREAM: std::sync::LazyLock<std::sync::Mutex<CoverStream>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(CoverStream::default()));
+
+/// Spawn radius (camera XZ -> chunk centre). The farthest tier culls at PROPS_FAR measured to the
+/// chunk AABB, so the centre test gets a chunk half-diagonal (~11.3u) plus slack.
+const STREAM_IN: f32 = PROPS_FAR + 20.0;
+/// Despawn radius — past `STREAM_IN` by enough that pacing along the boundary doesn't thrash.
+const STREAM_OUT: f32 = STREAM_IN + 24.0;
+/// Most chunk KEYS whose async merge is launched per frame (nearest first); the rest follow next
+/// frame. The boot radius (~110 keys) is queued within ~4 frames.
+const STREAM_BUDGET: usize = 32;
+
+/// Is cover streaming on? (`FOREST_NOSTREAM=1` turns it off; `FOREST_NOCULL` bypasses it too.)
+pub fn cover_stream_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("FOREST_NOSTREAM").is_err())
+}
+
+/// Forget every recipe + live chunk — the world build calls this at phase 0 (the old chunk
+/// entities are `BiomeEntity`s, already wiped by the rebuild).
+pub fn reset_cover_stream() {
+    let mut st = STREAM.lock().expect("cover stream poisoned");
+    st.chunks.clear();
+    st.live.clear();
+    st.pending.clear(); // dropping a Task cancels it
+    st.dirty = false;
+}
+
+fn stream_cover(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    cams: Query<&GlobalTransform, With<Camera3d>>,
+    ready: Res<crate::biome::WorldReady>,
+    mut last: Local<Option<Vec2>>,
+) {
+    // Idle while a world (re)build is in flight: an in-process rebuild clears `WorldReady` before
+    // it wipes the `BiomeEntity`s, so a chunk streamed in from the OLD recipes can never slip past
+    // that wipe as an orphan (the build resets the store at phase 0).
+    if !ready.0 {
+        return;
+    }
+    let Some(kit) = get() else { return };
+    let Some(cam) = cams.iter().next() else { return };
+    let t = cam.translation();
+    let p = Vec2::new(t.x, t.z);
+    let mut guard = STREAM.lock().expect("cover stream poisoned");
+    let CoverStream { chunks, live, pending, dirty } = &mut *guard;
+    if chunks.is_empty() && live.is_empty() {
+        return;
+    }
+    // Land finished merges (spawned whole-chunk at once, so a chunk never appears half-built).
+    pending.retain(|key, task| {
+        let Some(merged) = bevy::tasks::block_on(bevy::tasks::poll_once(task)) else { return true };
+        let ents = live.entry(*key).or_default();
+        if let Some(recipes) = chunks.get(key) {
+            for (r, mesh) in recipes.iter().zip(merged) {
+                if let Some(mesh) = mesh {
+                    ents.push(spawn_group(kit, &mut commands, &mut meshes, *key, r, mesh, true));
+                }
+            }
+        }
+        false
+    });
+    if !*dirty && pending.is_empty() && last.is_some_and(|l| l.distance(p) < 2.0) {
+        return;
+    }
+    *last = Some(p);
+    let centre = |k: &(i32, i32)| {
+        let c = chunk_center(*k);
+        Vec2::new(c.x, c.z)
+    };
+    live.retain(|k, ents| {
+        if centre(k).distance(p) <= STREAM_OUT {
+            return true;
+        }
+        for e in ents.drain(..) {
+            commands.entity(e).try_despawn();
+        }
+        false
+    });
+    // A merge for a chunk the camera already left is dropped (cancelled).
+    pending.retain(|k, _| centre(k).distance(p) <= STREAM_OUT);
+    let mut need: Vec<((i32, i32), f32)> = chunks
+        .keys()
+        .filter(|k| !live.contains_key(*k) && !pending.contains_key(*k))
+        .map(|k| (*k, centre(k).distance(p)))
+        .filter(|(_, d)| *d <= STREAM_IN)
+        .collect();
+    need.sort_by(|a, b| a.1.total_cmp(&b.1));
+    *dirty = need.len() > STREAM_BUDGET;
+    need.truncate(STREAM_BUDGET);
+    let pool = bevy::tasks::AsyncComputeTaskPool::get();
+    for (key, _) in need {
+        let items: Vec<Vec<(usize, usize, Transform)>> = chunks[&key].iter().map(|r| r.items.clone()).collect();
+        let task = pool.spawn(async move { items.iter().map(|it| merge_group(kit, it)).collect::<Vec<_>>() });
+        pending.insert(key, task);
     }
 }
 
@@ -949,6 +1122,8 @@ impl Plugin for RealForestPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ForestLook>();
         app.add_plugins((reskin::ReskinPlugin, foliage::FoliagePlugin));
+        // Cover streaming (see `stream_cover`): ungated — the camera can move under any modal.
+        app.add_systems(Update, stream_cover);
         if !enabled() {
             return;
         }

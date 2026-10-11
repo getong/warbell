@@ -121,7 +121,9 @@ fn reskin_new(
         {
             continue;
         }
-        if !meshes.get(&mesh.0).is_some_and(|me| me.contains_attribute(Mesh::ATTRIBUTE_COLOR)) {
+        // `try_attribute`: GPU-only (`RENDER_WORLD`) meshes have no main-world data once extracted;
+        // `contains_attribute` would panic on them.
+        if !meshes.get(&mesh.0).is_some_and(|me| me.try_attribute(Mesh::ATTRIBUTE_COLOR).is_ok()) {
             continue;
         }
         // Never characters (anything animated / a person), however they're built.

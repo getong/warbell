@@ -786,9 +786,10 @@ pub fn director_march(
         state.march = false;
         state.gate_open = true; // throw the gate so the column can path out through the gap
         if let Some(armory) = armory.as_ref() {
-            // Form the column INSIDE the hold (gate centre ≈ (12, 80.9); higher z = deeper in), so
+            // Form the column INSIDE the hold (`ork_fortress::GATE`; higher z = deeper in), so
             // they march out THROUGH the open gate. A 3-wide file stacked back from the threshold.
-            let gate = Vec2::new(12.0, 80.9);
+            // (Was a literal (12, 80.9) that had dropped the fortress's `BLIGHT_DZ` shift.)
+            let gate = crate::ork_fortress::GATE;
             let variants = [
                 orks::OrkVariant::Grunt, orks::OrkVariant::Scout, orks::OrkVariant::Berserker,
                 orks::OrkVariant::Grunt, orks::OrkVariant::Shaman, orks::OrkVariant::Grunt,

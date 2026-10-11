@@ -61,14 +61,19 @@ pub fn on_massif_corner(cx: i32, cz: i32) -> bool {
 /// the desert rival, jammed against the north coast) more room, then 2.0 → 2.2 (map-character
 /// overhaul pass 0) so the biomes keep real interior once the fixed-world-size claims (warden
 /// glade r16, rival plateau r30, fortress apron) are subtracted, then 2.2 → 2.6 (landmark
-/// overhaul, July 2026 — paid for by the terrain far-LOD, see `build_terrain_chunk_coarse`).
+/// overhaul, July 2026 — paid for by the terrain far-LOD, see `build_terrain_chunk_coarse`),
+/// then 2.6 → 3.9 (+50% linear, Oct 2026: the polygon enceinte + street village had grown into
+/// the biomes — the snow massif stood right behind the walls and the desert/pyramid read from the
+/// keep). The castle, village, siege ring and defenses are WORLD-authored and do not scale; the
+/// base-space castle margins (`SAFE_R`, `SAFE_PAD`) were deliberately NOT trimmed this time, so
+/// the open ring past the walls grew with the gap to the biomes (≈17 → ≈26u of flat grass).
 /// The world-coord-authored landmarks scale with it automatically: `ork_fortress::BLIGHT_DZ` and
 /// `rival::RIVAL_CENTRE` are derived from `MAP_SCALE`, and the remaining hand-authored world
 /// coords (warden `boss::region_center`, chest hoards, snowman field, the swamp pool keep-out)
 /// route through [`world22`] so they track scale bumps too. Per-bump manual checklist: trim
 /// `SAFE_R` (base-space, so it silently over-grows), re-size `navgrid::NAV_MAX_NODES` (A* budget
 /// ∝ tiles), and re-check CLAUDE.md's biome-centre table for capture framing.
-pub const MAP_SCALE: f32 = 2.6;
+pub const MAP_SCALE: f32 = 3.9;
 
 /// Rescale a world-XZ coordinate that was hand-authored (and playtested) at `MAP_SCALE` 2.2 to
 /// the CURRENT scale. Generation runs in base space, so a point that sat inside a biome at 2.2
@@ -2051,14 +2056,16 @@ fn tiles() -> Arc<Grid> {
 /// BASE space so the island silhouette is unchanged; `active_map()` (via `classify`/the noise
 /// phase/the regions) makes it the right world.
 fn build_grid() -> Arc<Grid> {
-    let mut v = Vec::with_capacity((COLS * ROWS) as usize);
-    for iz in 0..ROWS {
-        for ix in 0..COLS {
-            v.push(classify(ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE));
-        }
-    }
+    let t0 = std::time::Instant::now();
+    // `classify` is a pure function of (x, z, active map): rows classify in parallel, in order.
+    let rows = crate::par::par_map(ROWS as usize, |iz| {
+        (0..COLS).map(|ix| classify(ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE)).collect::<Vec<_>>()
+    });
+    let mut v: Grid = rows.into_iter().flatten().collect();
+    let t1 = t0.elapsed().as_secs_f64() * 1000.0;
     prune_stray_islets(&mut v);
     terrace_inland(&mut v);
+    info!("worldmap: tile grid {COLS}x{ROWS} classified in {t1:.0} ms, relaxed in {:.0} ms", t0.elapsed().as_secs_f64() * 1000.0 - t1);
     Arc::new(v)
 }
 
@@ -3298,10 +3305,17 @@ pub fn build_step(
         crate::vignettes::reset_plan();
         crate::wayside::reset_plan();
         crate::stories_cold::reset_plan();
+        crate::realforest::reset_cover_stream();
         // Warm the per-map sampling bakes ([`tiles`] → [`water_near`] → [`tile_centre_ground`])
         // behind the loading veil: the first caller would otherwise pay the one-time bake as a
         // mid-gameplay frame hitch (e.g. the first invader A* of the run).
+        let t0 = std::time::Instant::now();
+        let _ = tiles();
+        let t1 = t0.elapsed().as_secs_f64() * 1000.0;
+        let _ = water_near();
+        let t2 = t0.elapsed().as_secs_f64() * 1000.0;
         let _ = tile_centre_ground(0, 0);
+        info!("BUILD_BAKE tiles={t1:.0}ms water_near={:.0}ms centre_h={:.0}ms", t2 - t1, t0.elapsed().as_secs_f64() * 1000.0 - t2);
     }
     // The RTS arena runs a small, dedicated subset of the build: grass terrain, the sea, the
     // decorative fringe trees, ambiences and ground cover. EVERY campaign placement — castle, town
@@ -3895,16 +3909,32 @@ fn spawn_terrain_sheet(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     mat: Handle<TerrainMaterial>,
-    keep: impl Fn(TB) -> bool + Copy,
+    keep: impl Fn(TB) -> bool + Copy + Sync,
 ) {
     let lod = terrain_lod_enabled();
+    // Mesh every chunk (full-res + coarse drape) in parallel — pure functions of the tile caches —
+    // then spawn serially in the original row-major order.
+    let mut rects = Vec::new();
     let mut cz = 0;
     while cz < ROWS {
         let mut cx = 0;
         while cx < COLS {
-            let (x1, z1) = ((cx + TERRAIN_CHUNK).min(COLS), (cz + TERRAIN_CHUNK).min(ROWS));
-            let mut mesh = build_terrain_chunk(keep, cx, x1, cz, z1);
-            if mesh.count_vertices() > 0 {
+            rects.push((cx, (cx + TERRAIN_CHUNK).min(COLS), cz, (cz + TERRAIN_CHUNK).min(ROWS)));
+            cx += TERRAIN_CHUNK;
+        }
+        cz += TERRAIN_CHUNK;
+    }
+    let built = crate::par::par_map(rects.len(), |i| {
+        let (cx, x1, cz, z1) = rects[i];
+        let mesh = build_terrain_chunk(keep, cx, x1, cz, z1);
+        if mesh.count_vertices() == 0 {
+            return None;
+        }
+        let coarse = if lod { build_terrain_chunk_coarse(keep, cx, x1, cz, z1) } else { None };
+        Some((mesh, coarse))
+    });
+    for (mut mesh, mut coarse) in built.into_iter().flatten() {
+            {
                 // Attach the chunk's own AABB up front. The LOD `VisibilityRange` measures the
                 // camera→AABB-centre distance, and until Bevy's `calculate_bounds` fills the AABB in,
                 // the range check falls back to the entity *translation* — so a chunk under a player
@@ -3918,7 +3948,6 @@ fn spawn_terrain_sheet(
                 // vertices for the distant majority of the island. The band is a dithered
                 // crossfade (only the ring of chunks currently inside it pays the discard
                 // cost) so the swap doesn't pop; skirts on the coarse mesh hide the seam.
-                let mut coarse = if lod { build_terrain_chunk_coarse(keep, cx, x1, cz, z1) } else { None };
                 // ONE SHARED AABB (the union) for BOTH siblings. `VisibilityRange` with
                 // `use_aabb` measures the camera→AABB distance, and the dither crossfade
                 // is only COMPLEMENTARY (fine discards exactly the pixels the coarse
@@ -3956,8 +3985,10 @@ fn spawn_terrain_sheet(
                     center: (Vec3::from(b.center) - centre).into(),
                     half_extents: b.half_extents,
                 });
+                // GPU-only: terrain chunk geometry is never read back (ground queries use the
+                // tile caches), so don't keep a main-world copy of every chunk after upload.
                 let mut e = commands.spawn((
-                    Mesh3d(meshes.add(mesh)),
+                    Mesh3d(meshes.add(crate::biome::gpu_only(mesh))),
                     MeshMaterial3d(mat.clone()),
                     Transform::from_translation(centre),
                     crate::biome::BiomeEntity,
@@ -3975,7 +4006,7 @@ fn spawn_terrain_sheet(
                         use_aabb: true,
                     });
                     let mut ce = commands.spawn((
-                        Mesh3d(meshes.add(coarse)),
+                        Mesh3d(meshes.add(crate::biome::gpu_only(coarse))),
                         MeshMaterial3d(mat.clone()),
                         Transform::from_translation(centre),
                         crate::biome::BiomeEntity,
@@ -3993,9 +4024,6 @@ fn spawn_terrain_sheet(
                     }
                 }
             }
-            cx += TERRAIN_CHUNK;
-        }
-        cz += TERRAIN_CHUNK;
     }
 }
 

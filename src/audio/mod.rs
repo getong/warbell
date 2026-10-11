@@ -587,7 +587,7 @@ fn detect_hero_remarks(
         }
     }
     // Gnashfang Hold centre (world XZ) — fires when hero approaches the south blight.
-    const FORTRESS_CENTRE: Vec2 = Vec2::new(12.0, 103.0);
+    const FORTRESS_CENTRE: Vec2 = crate::ork_fortress::CENTRE;
     const FORTRESS_NEAR_R: f32 = 55.0;
     let near_fortress = hp.distance(FORTRESS_CENTRE) <= FORTRESS_NEAR_R;
     use crate::critters::Species;

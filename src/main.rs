@@ -15,6 +15,7 @@
 //! conventions and `docs/superpowers/specs/` for the parity roadmap.
 
 mod aftermath;
+mod par; // scoped data-parallel map for the world build
 mod alpine; // snow / meadow / scree / rock terrain layers + snow-dusted kit scatter (FOREST_ALPINE=0 disables)
 mod ambient_life;
 mod atmospherics;

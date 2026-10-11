@@ -56,8 +56,9 @@ const CELL: f32 = 0.6;
 /// handful nearest the network.
 const SPUR_CAP: usize = 12;
 /// A spur is only drawn if its camp sits within this distance of the existing network. Raised 36→70
-/// so an edge-of-map camp in the mountains still connects instead of being left roadless.
-const SPUR_MAX_LEN: f32 = 70.0;
+/// so an edge-of-map camp in the mountains still connects instead of being left roadless. An
+/// island-scale distance, so it tracks `MAP_SCALE` (70 at 2.6).
+const SPUR_MAX_LEN: f32 = 70.0 * crate::worldmap::MAP_SCALE / 2.6;
 
 // ── Capillary network (thin space-filling trails) ───────────────────────────────────
 /// Sprout a capillary off an artery roughly every N units of arc length (jittered). Raised 21→30
