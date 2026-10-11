@@ -177,14 +177,22 @@ fn write_wave(flag: &ClothFlag, t: f32, mesh: &mut Mesh) {
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, nrm);
 }
 
-/// Re-wave every flag's grid each frame (a handful of 55-vertex meshes — trivial).
+/// Re-wave the grid of every flag that is on screen and near the camera, each frame. Each wave
+/// is a mesh asset modification, which Bevy turns into a free + re-upload + re-specialization of
+/// that mesh, so flags off screen or past `FLUTTER_FAR` (too small to read the motion) stay put.
 fn flutter_flags(
     time: Res<Time>,
     mut meshes: ResMut<Assets<Mesh>>,
-    q: Query<(&ClothFlag, &Mesh3d)>,
+    cams: Query<&GlobalTransform, With<Camera3d>>,
+    q: Query<(&ClothFlag, &Mesh3d, &ViewVisibility, &GlobalTransform)>,
 ) {
+    const FLUTTER_FAR: f32 = 90.0;
     let t = time.elapsed_secs_wrapped();
-    for (flag, mesh3d) in &q {
+    let cam = cams.iter().next().map(|c| c.translation());
+    for (flag, mesh3d, vis, gt) in &q {
+        if !vis.get() || cam.is_some_and(|c| c.distance_squared(gt.translation()) > FLUTTER_FAR * FLUTTER_FAR) {
+            continue;
+        }
         if let Some(mut mesh) = meshes.get_mut(&mesh3d.0) {
             // 0.19: Assets::get_mut returns AssetMut<Mesh>; deref to &mut Mesh for write_wave.
             write_wave(flag, t, &mut mesh);

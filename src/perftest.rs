@@ -53,6 +53,13 @@ impl Plugin for PerftestPlugin {
         if std::env::var("FOREST_SPIKEWATCH").is_ok() {
             app.add_systems(Update, perf_spike_watch);
         }
+        // FOREST_MESHDIAG=1: once a second, log how many meshes (and vertex MB) went through Bevy's
+        // mesh upload — streaming churn shows up here as `allocate_and_free_meshes` time.
+        if std::env::var("FOREST_MESHDIAG").is_ok() {
+            if let Some(ra) = app.get_sub_app_mut(bevy::render::RenderApp) {
+                ra.add_systems(bevy::render::Render, mesh_upload_diag.in_set(bevy::render::RenderSystems::ExtractCommands));
+            }
+        }
         if std::env::var("FOREST_MEMREPORT").is_ok() || std::env::var("FOREST_PERFTEST").is_ok() {
             app.init_resource::<MemReportState>().add_systems(Update, mem_report);
         }
@@ -533,4 +540,27 @@ pub(crate) fn mem_report(world: &mut World) {
 pub(crate) struct MemReportState {
     ready_at: Option<f32>,
     done: bool,
+}
+
+/// `FOREST_MESHDIAG`: per-second totals of the meshes extracted (added/modified) and removed.
+fn mesh_upload_diag(
+    extracted: Res<bevy::render::render_asset::ExtractedAssets<bevy::render::mesh::RenderMesh>>,
+    mut acc: Local<Option<(std::time::Instant, u32, usize, usize, usize, usize)>>,
+) {
+    let (t0, frames, n, verts, bytes, removed) = acc.get_or_insert((std::time::Instant::now(), 0, 0, 0, 0, 0));
+    *frames += 1;
+    *n += extracted.extracted.len();
+    *removed += extracted.removed.len();
+    for (_, m) in &extracted.extracted {
+        *verts += m.count_vertices();
+        *bytes += m.get_vertex_buffer_size();
+    }
+    if t0.elapsed().as_secs_f32() >= 1.0 {
+        info!(
+            "MESHDIAG frames={frames} uploaded={n} verts={:.0}k vbuf={:.1}MB removed={removed}",
+            *verts as f32 / 1000.0,
+            *bytes as f32 / 1.0e6
+        );
+        *acc = None;
+    }
 }

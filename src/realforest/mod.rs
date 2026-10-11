@@ -1028,7 +1028,7 @@ const STREAM_OUT: f32 = STREAM_IN + 24.0;
 /// frame. The boot radius (~110 keys) is queued within ~4 frames.
 const STREAM_BUDGET: usize = 32;
 /// Vertices of finished chunk merges landed (spawned + uploaded) per frame — see `stream_cover`.
-const LAND_BUDGET_VERTS: usize = 150_000;
+const LAND_BUDGET_VERTS: usize = 80_000;
 
 /// Is cover streaming on? (`FOREST_NOSTREAM=1` turns it off; `FOREST_NOCULL` bypasses it too.)
 pub fn cover_stream_enabled() -> bool {
