@@ -127,6 +127,7 @@ mod verbs;
 mod vignettes;
 mod bog;
 mod poi;
+mod stories_cold;
 mod stories_warm;
 mod villagers;
 mod vista;
