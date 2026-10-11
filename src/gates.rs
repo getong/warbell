@@ -329,7 +329,12 @@ fn drive_gate_state(
     mut hp: Query<&mut GateHp>,
 ) {
     let night = siege.phase == crate::siege::GamePhase::Wave;
-    gates.set_night(night, GateKind::from_defenses(defenses.walls, defenses.gate));
+    let was = gates.night;
+    let kind = GateKind::from_defenses(defenses.walls, defenses.gate);
+    gates.set_night(night, kind);
+    if night != was {
+        info!("gates: {} ({kind:?})", if night { "dusk bell - shutting" } else { "dawn - open, repaired" });
+    }
     for mut h in &mut hp {
         let g = gates.g[h.gate];
         let (cur, max) = if g.max > 0.0 && g.closed && !g.broken { (g.hp, g.max) } else { (1.0, 1.0) };
@@ -352,11 +357,17 @@ fn drive_gate_visuals(
     mut cues: MessageWriter<crate::audio::AudioCue>,
 ) {
     let dt = time.delta_secs().min(0.1);
-    // A friend in (or right at) a gap → the watch swings that gate open for them.
+    // A friend at a gap → the watch swings that gate open for them: the hero from either side;
+    // townsfolk only from OUTSIDE (caught out at dusk, let in) or already in the passage — a guard
+    // or gate-folk loitering in the yard by the gate mustn't hold it open all night.
     let friend_at = |g: Gate| {
         let (cx, cz, hw, hd) = gap_box(g);
-        let near = |p: Vec2| (p.x - cx).abs() < hw + 2.2 && (p.y - cz).abs() < hd + 2.2;
-        (hero.alive && near(hero.pos)) || folk.iter().any(|t| near(Vec2::new(t.translation.x, t.translation.z)))
+        let within = |p: Vec2, m: f32| (p.x - cx).abs() < hw + m && (p.y - cz).abs() < hd + m;
+        (hero.alive && within(hero.pos, 2.2))
+            || folk.iter().any(|t| {
+                let p = Vec2::new(t.translation.x, t.translation.z);
+                within(p, 0.4) || (within(p, 2.2) && !crate::castle::in_courtyard(p.x, p.y))
+            })
     };
     let hero_near = |g: Gate| hero.pos.distance(g.center()) < 30.0;
     let mut let_in = [false; 3];
@@ -389,6 +400,7 @@ fn drive_gate_visuals(
         vis.set_if_neq(if show { Visibility::Inherited } else { Visibility::Hidden });
     }
     if let Some(i) = gates.just_broke.take() {
+        info!("gates: the {:?} gate is broken - open until dawn", Gate::ALL[i]);
         if hero_near(Gate::ALL[i]) {
             cues.write(crate::audio::AudioCue::TreeFall { cactus: false }); // timber crash
         }
