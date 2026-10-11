@@ -114,36 +114,52 @@ def walk(p, ang, length, step, wobble, rng):
 
 
 def cypress_frond(w=512, h=1024):
-    """Bald cypress: a twig carrying deciduous branchlets, each set with flat linear needles in
-    two ranks (the feathery look) - fresh yellow-green to sage."""
+    """Bald cypress spray: NOT one fern frond on a stiff midrib, but a soft cloud of many small
+    deciduous branchlets ("feathers") fanning loosely out of a hidden twig - each a hair-thin axis
+    set with short, fine, flat needles in two ranks. Overlapping feathers at different angles and
+    sizes give the soft, hazy, layered texture of a real cypress crown; the twigs are needle-
+    coloured so no dark "stem" lines read. Yellow-green to sage, a few rusty-bronze needles."""
     cv = Canvas(w, h)
-    main = walk((w * 0.5, h * 0.99), 0.0, h * 0.93, 24, 0.05, crng)
-    twigs = [(main, 1.0)]
-    for i, k in enumerate(np.linspace(3, len(main) - 3, 15).astype(int)):
-        side = -1 if i % 2 else 1
-        L = w * crng.uniform(0.34, 0.46) * (1.1 - 0.4 * k / len(main))
-        twigs.append((walk(main[k], side * crng.uniform(0.75, 1.1), L, 14, 0.06, crng), 0.7))
-    for tw, sc in twigs:
-        for a, b in zip(tw[:-1], tw[1:]):
-            stroke(cv, a, b, 5 * sc, 4 * sc, (0.30, 0.24, 0.16))
+    # No midrib: ~150 short feathers scattered through a fan-shaped oval, each pointing away from
+    # the card's foot (where the twig attaches) with a little scatter - overlapping, so the cell
+    # is one soft mass of needles rather than a frond with a readable stem and leaflet rhythm.
+    feathers = []
+    foot = np.array([w * 0.5, h * 0.97], np.float32)
+    for k in range(150):
+        r = math.sqrt(crng.uniform(0.02, 1.0))
+        th = crng.uniform(0, 2 * math.pi)
+        base = np.array([w * 0.5 + math.cos(th) * r * w * 0.36, h * 0.52 + math.sin(th) * r * h * 0.40], np.float32)
+        out = base - foot
+        ang = math.atan2(out[0], -out[1]) + crng.normal() * 0.45
+        L = h * crng.uniform(0.07, 0.14)
+        pts = walk(tuple(base), ang, L, 7, 0.08, crng)
+        pts = [np.clip(q, [20, 20], [w - 20, h - 6]).astype(np.float32) for q in pts]
+        feathers.append((pts, crng.uniform(0.75, 1.1)))
     needles = []
-    for tw, sc in twigs:
-        for a, b in zip(tw[:-1], tw[1:]):
+    for tw, sc in feathers:
+        n = len(tw)
+        for i, (a, b) in enumerate(zip(tw[:-1], tw[1:])):
+            stroke(cv, a, b, 1.6, 1.3, (0.27, 0.32, 0.14), 0.5)
             d = b - a
             seg = float(np.linalg.norm(d))
             dir_ang = math.atan2(d[0], -d[1])
-            for j in range(int(seg / 3.2)):
-                p = a + d * (j + 0.5) / int(seg / 3.2)
-                for side in (-1, 1):
-                    needles.append((p, dir_ang + side * crng.uniform(1.05, 1.35), crng.uniform(40, 56) * sc))
+            taper_k = 1.0 - 0.55 * (i / max(n - 1, 1)) ** 1.5  # shorter needles toward the tip
+            for j in range(max(int(seg / 2.0), 1)):
+                p = a + d * (j + 0.5) / max(int(seg / 2.0), 1)
+                for s2 in (-1, 1):
+                    needles.append((p, dir_ang + s2 * crng.uniform(1.0, 1.35), crng.uniform(12, 19) * sc * taper_k))
     crng.shuffle(needles)
     for idx, (p, ang, L) in enumerate(needles):
         g = crng.uniform(0, 1)
-        lit = 0.62 + 0.45 * idx / len(needles)
-        col = np.array([0.24 + 0.10 * g, 0.36 + 0.08 * g, 0.10 + 0.03 * g]) * lit
-        leaf(cv, tuple(p), ang, L, 6.0, col)
+        lit = 0.70 + 0.40 * idx / len(needles)
+        if crng.random() < 0.05:
+            col = np.array([0.46, 0.32, 0.14]) * lit  # an early-bronzing needle
+        else:
+            col = np.array([0.30 + 0.12 * g, 0.40 + 0.08 * g, 0.14 + 0.06 * g]) * lit
+        dx, dy = math.sin(ang), -math.cos(ang)
+        stroke(cv, tuple(p), (p[0] + dx * L, p[1] + dy * L), 2.0, 0.9, col, 0.55)
     rgba, nrm = cv.finish()
-    rgba[..., :3] = grade(rgba[..., :3], sat=1.1, gain=1.05)
+    rgba[..., :3] = grade(rgba[..., :3], sat=1.05, gain=1.08)
     return rgba, nrm
 
 
@@ -151,17 +167,21 @@ def spanish_moss(w=512, h=1024):
     """Spanish moss festoon: hundreds of thin, kinked, curly grey-green strands hanging from the
     limb (the card's base = the image bottom), thinning out toward ragged tips."""
     cv = Canvas(w, h)
-    for i in range(340):
-        x = w * (0.5 + crng.normal() * 0.16)
-        L = h * crng.uniform(0.25, 0.95) * (1.0 - abs(x / w - 0.5) * 1.1)
-        ang = crng.normal() * 0.12 + (x / w - 0.5) * 0.25
-        pts = walk((x, h * 0.995), ang, L, 9, 0.35, crng)
+    # Pale silver-grey-green beards: a few narrow tufts gripping the limb (the card's base), whose
+    # thick-ish strands fall nearly straight and fan out a little as they hang - long ragged
+    # curtains that read from mid-distance, never a rectangle filling the card.
+    tufts = crng.uniform(0.36, 0.64, 4)
+    for i in range(440):
+        x = w * (tufts[i % 4] + crng.normal() * 0.06)
+        L = h * crng.uniform(0.35, 0.98) ** 0.7
+        ang = crng.normal() * 0.05 + (x / w - 0.5) * 0.12
+        pts = walk((x, h * 0.995), ang, L, 9, 0.035, crng)
         g = crng.uniform(0, 1)
-        base = np.array([0.50 + 0.10 * g, 0.54 + 0.10 * g, 0.44 + 0.08 * g]) * crng.uniform(0.7, 1.05)
+        base = np.array([0.62 + 0.10 * g, 0.66 + 0.09 * g, 0.56 + 0.07 * g]) * crng.uniform(0.78, 1.05)
         n = len(pts)
         for k, (a, b) in enumerate(zip(pts[:-1], pts[1:])):
             f = k / n
-            stroke(cv, a, b, 3.6 - 1.8 * f, 3.4 - 1.8 * f, base * (0.85 + 0.25 * f), 0.8)
+            stroke(cv, a, b, 5.0 - 2.6 * f, 4.8 - 2.6 * f, base * (0.85 + 0.25 * f), 0.8)
             if k % 3 == 1 and crng.random() < 0.5:  # little curly side wisps
                 tw = walk(b, crng.normal() * 1.2, crng.uniform(12, 30), 5, 0.6, crng)
                 for c, e in zip(tw[:-1], tw[1:]):
@@ -338,10 +358,15 @@ def hang_moss(b, rng, p, length, crown_c, crown_r, lod, n_cross):
     """A Spanish-moss festoon: the card's base (image bottom) at the limb, hanging straight down."""
     down = Vector((rng.normal() * 0.08, rng.normal() * 0.08, -1)).normalized()
     a0 = rng.uniform(0, math.pi)
+    # The crown's self-occlusion darkening (inner + lower cards) would turn the pale beards into
+    # dark drapes under the canopy: shade them as outer, sky-lit foliage instead (a virtual crown
+    # centre far below the festoon -> full brightness, normals bent toward the sky).
+    sky_c = p + Vector((0, 0, -50.0))
+    sky_r = Vector((1.0, 1.0, 1.0))
     for k in range(n_cross):
         a = a0 + k * math.pi / n_cross
         nrm = Vector((math.cos(a), math.sin(a), 0))
-        card(b, p + Vector((0, 0, 0.03)), down, nrm, length, UV_MOSS, CARDS, crown_c, crown_r, MOSS_TINT, rng,
+        card(b, p + Vector((0, 0, 0.03)), down, nrm, length, UV_MOSS, CARDS, sky_c, sky_r, MOSS_TINT, rng,
              fold=0.12, bend_w=0.25)
 
 
@@ -415,14 +440,18 @@ def cypress(seed, lod, height, trunk_r, crown_w, tint, leaf_tint, mossy=1.0):
         s = size * rng.uniform(0.8, 1.2)
         p.z = min(p.z, height - s * max(up.z, 0) - 0.05)
         card(b, p - up * s * 0.2, up, nrm, s, UV_FROND, CARDS, crown_c, crown_r, leaf_tint, rng, fold=0.12, bend_w=0.55)
-    # Spanish moss off the limbs (more on the lower, older ones).
-    n_moss = int((32 if lod == 0 else 11) * mossy)
-    for _ in range(n_moss):
+    # Spanish moss: long grey-green curtains off the limbs, most of them out toward the crown's
+    # rim so they hang BELOW and outside the foliage layer and read from mid-distance, plus a few
+    # hung off the trunk under the crown.
+    n_moss = int((44 if lod == 0 else 16) * mossy)
+    for i in range(n_moss):
         lm = limbs[rng.integers(min(len(limbs), n_limbs))]
-        t = rng.uniform(0.2, 0.85)
+        t = rng.uniform(0.35, 0.98)
         k = min(int(t * (len(lm.pts) - 1)), len(lm.pts) - 2)
         p = lm.pts[k].lerp(lm.pts[k + 1], t * (len(lm.pts) - 1) - k)
-        hang_moss(b, rng, p, rng.uniform(0.9, 2.0) * (1.0 if lod == 0 else 1.25), crown_c, crown_r, lod, 2 if lod == 0 else 1)
+        L = min(rng.uniform(1.4, 2.9) * (1.0 if lod == 0 else 1.15), p.z - 0.6)
+        if L > 0.5:
+            hang_moss(b, rng, p, L, crown_c, crown_r, lod, 2)
     return b, mats
 
 
@@ -500,9 +529,13 @@ def snag(seed, lod, height, trunk_r, tint, stubs):
 
 
 def knee(b, rng, x, y, h, r, tint):
-    lm = Limb([Vector((x, y, -0.05)), Vector((x + rng.normal() * 0.02, y + rng.normal() * 0.02, h * 0.55)),
-               Vector((x + rng.normal() * 0.03, y + rng.normal() * 0.03, h))], [r, r * 0.65, r * 0.35], 1)
-    tube(b, lm, 7, 0, tint, uv_phase=rng.uniform(0, 1))
+    """A cypress knee: a swollen, knobby, ROUND-topped cone (never a sharp spike) - flared foot,
+    a bulge, then a blunt dome cap."""
+    dx, dy = rng.normal() * 0.02, rng.normal() * 0.02
+    zs = [-0.05, h * 0.25, h * 0.55, h * 0.80, h * 0.93, h]
+    rs = [r * 1.35, r * 1.0, r * 0.92, r * 0.78, r * 0.55, r * 0.18]
+    lm = Limb([Vector((x + dx * z / h, y + dy * z / h, z)) for z in zs], rs, 1)
+    tube(b, lm, 8, 0, tint, uv_phase=rng.uniform(0, 1))
 
 
 def knees(seed, stump):
@@ -510,14 +543,14 @@ def knees(seed, stump):
     rng = np.random.default_rng(seed)
     b = Builder()
     mats = ["bark_cypress"]
-    tint = (0.62, 0.56, 0.50)
+    tint = (1.0, 0.93, 0.84)
     if stump:
         fluted_trunk(b, rng, 0.85, 0.7, 0.26, 14, [0.0, 0.06, 0.16, 0.32, 0.55, 0.85], 1.4,
-                     Vector((0, 0, 0)), tint, jagged=0.35)
+                     Vector((0, 0, 0)), tint, jagged=0.12)
     for i in range(int(rng.integers(6, 10))):
         a = rng.uniform(0, 2 * math.pi)
         d = rng.uniform(0.45, 1.25) if stump else math.sqrt(rng.uniform(0.0, 1.0)) * 0.9
-        knee(b, rng, math.cos(a) * d, math.sin(a) * d, rng.uniform(0.18, 0.55), rng.uniform(0.05, 0.10), tint)
+        knee(b, rng, math.cos(a) * d, math.sin(a) * d, rng.uniform(0.18, 0.50), rng.uniform(0.07, 0.13), tint)
     return b, mats
 
 

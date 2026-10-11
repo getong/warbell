@@ -1319,7 +1319,7 @@ pub fn scatter_region(
                                     tree.insert(crate::wind::sway_for(cx, cz, base));
                                     k.attach_tree(&mut tree, lod0, scatter_cull_enabled());
                                 }
-                                bkit::KitTree::Static(name, sway) => {
+                                bkit::KitTree::Static(name, sway, sc) => {
                                     if sway {
                                         tree.insert(crate::wind::sway_for(cx, cz, base));
                                     }
@@ -1329,7 +1329,7 @@ pub fn scatter_region(
                                         end_margin: far..far,
                                         use_aabb: true,
                                     };
-                                    k.attach_static_with(&mut tree, name, Transform::IDENTITY, range);
+                                    k.attach_static_with(&mut tree, name, Transform::from_scale(Vec3::splat(sc)), range);
                                 }
                             }
                             if cfg.biome == Biome::Desert {

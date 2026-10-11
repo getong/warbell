@@ -1472,7 +1472,19 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
         }
         out
     };
-    let forest = blur(&blur(&forest, true), false);
+    // The feather lies INSIDE the forest / meadow edge, never past it: the plain symmetric blur
+    // left ~0.45 at the first texel beyond the tile border, and the shader's edge noise pushed
+    // that over threshold, so litter and moss crept 1-1.5u onto the swamp, Blight, desert and
+    // rock. Remapped, the mask is ~0 at the border and full ~1.2u in.
+    let inward = |v: Vec<f32>| -> Vec<f32> {
+        v.into_iter()
+            .map(|x| {
+                let t = ((x - 0.42) / 0.46).clamp(0.0, 1.0);
+                t * t * (3.0 - 2.0 * t)
+            })
+            .collect()
+    };
+    let forest = inward(blur(&blur(&forest, true), false));
     let woods = blur(&blur(&woods, true), false);
     let mut occl = vec![0.0f32; w * h];
     for sp in SPLATS.lock().expect("splats poisoned").iter() {

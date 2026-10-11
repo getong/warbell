@@ -589,9 +589,18 @@ pub fn build(
         for (i, local) in [v(1.25, 0.0, 0.5), v(-0.5, 0.0, 0.95), v(0.45, 0.0, -1.05)].into_iter().enumerate() {
             let w = place(local);
             let seed = site.seed.wrapping_add(i as u32 * 37).wrapping_add(7) | 1;
+            // The seat is the camp biome's own: a forest stump only where forests grow; a rotten
+            // cypress stump among its knees in the swamp, a sandstone boulder in the desert, a
+            // lichen-crusted bedrock slab on the rocky heights.
+            let (seat, seat_s) = match site.biome {
+                Biome::Swamp => ("knees_a", 0.45),
+                Biome::Desert => ("ds_rock_a", 1.4),
+                Biome::Rocky => ("rk_crag_c", 1.15),
+                _ => ("stump_a", 0.55),
+            };
             if let Some(e) = kit.and_then(|k| {
-                let tf = Transform { translation: w, rotation: ry((seed % 628) as f32 / 100.0), scale: Vec3::splat(0.55) };
-                k.spawn_static(commands, "stump_a", tf)
+                let tf = Transform { translation: w, rotation: ry((seed % 628) as f32 / 100.0), scale: Vec3::splat(seat_s) };
+                k.spawn_static(commands, seat, tf)
             }) {
                 commands.entity(e).insert(BiomeEntity);
                 continue;

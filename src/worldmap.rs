@@ -3085,7 +3085,9 @@ pub(crate) fn ground_color(x: f32, z: f32) -> [f32; 4] {
     if yard_s > 0.0 {
         col = mix3(col, lin3(0x52391f), yard_s * 0.92);
     }
-    [col[0], col[1], col[2], wet.clamp(0.0, 1.0)]
+    // The Blight is the hold's trampled mud, not bog: the swamp region's wetness (which drives
+    // the shader's swamp floor + standing water) fades out over the Blight's own blend band.
+    [col[0], col[1], col[2], (wet * (1.0 - blight_w)).clamp(0.0, 1.0)]
 }
 
 // ── Water field (water shader: depth stand-in, bog murk, river flow) ────────────────
@@ -3784,6 +3786,22 @@ fn desert_near_rock(x: f32, z: f32) -> bool {
     false
 }
 
+/// Is world `(x, z)` on a Blight tile (the ork hold's own ground, which `tile_biome_world`
+/// reports as [`Biome::Swamp`])?
+fn is_blight_tile_world(x: f32, z: f32) -> bool {
+    matches!(tile_at((x + GX).floor() as i32, (z + GZ).floor() as i32).map(|t| t.0), Some(TB::Blight))
+}
+
+/// Is a grass point within `r` of a swamp / desert / rocky (or Blight) tile? The home meadow's
+/// lush grass, flowers and shore fringe stop short of those biomes instead of running right up
+/// to their edge (the forest and snow edges stay soft — meadow grass suits them).
+fn near_harsh_biome(x: f32, z: f32, r: f32) -> bool {
+    let d = r * 0.707;
+    [(r, 0.0), (-r, 0.0), (0.0, r), (0.0, -r), (d, d), (-d, d), (d, -d), (-d, -d)]
+        .into_iter()
+        .any(|(dx, dz)| matches!(tile_biome_world(x + dx, z + dz), Some(Biome::Swamp | Biome::Desert | Biome::Rocky)))
+}
+
 fn bs_scatter_biome(biome: Biome, commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: &mut Assets<StandardMaterial>, state: &mut BuildState) {
     let lo = -GX;
     let hi = GX; // square covers the whole grid; off-map tiles mask out
@@ -3814,7 +3832,11 @@ fn bs_scatter_biome(biome: Biome, commands: &mut Commands, meshes: &mut Assets<M
                 && !crate::camps::in_clearing(x, z)
                 && !crate::bridges::near_bridge(x, z, 1.0)
                 && !crate::ork_fortress::on_gate_approach(x, z)
-                && !(crate::ork_fortress::in_blight_world(x, z) && z > 86.0)
+                // No swamp flora on the Blight: neither on its tiles (which overhang the
+                // precise shape by a tile) nor in a 2.5u rim round it (the old `z > 86` gate
+                // was always true down there, so the rim grew cypresses).
+                && !is_blight_tile_world(x, z)
+                && crate::ork_fortress::blight_edge_world(x, z) < -2.5
                 && !crate::rival::near_fort(x, z)
                 && !(biome == Biome::Desert && desert_near_rock(x, z))
         },
@@ -3932,6 +3954,7 @@ fn bs_grass_cover(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: 
                 && !crate::town::near_build_plot(x, z)
                 && !crate::bridges::near_bridge(x, z, 1.0)
                 && !crate::castle_ground::in_field(x, z) // ploughed soil, not meadow
+                && !near_harsh_biome(x, z, 2.0) // no lush meadow at the swamp/desert/rock edge
         },
         &|x, z| tile_top_y_world(x, z),
         meadow_affinity,
