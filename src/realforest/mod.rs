@@ -158,7 +158,10 @@ pub struct Kit {
 }
 
 /// Material sets by the names Blender exported: (name, PBR set file stem, foliage card?).
-const MATERIALS: [(&str, &str, bool); 23] = [
+/// Albedo multiplier of the castle masonry material (`s_masonry`): s_rock averages sRGB ~118.
+const MASONRY_LIFT: f32 = 2.1;
+
+const MATERIALS: [(&str, &str, bool); 24] = [
     ("bark_oak", "bark_oak", false),
     ("bark_beech", "bark_beech", false),
     ("bark_pine", "bark_pine", false),
@@ -189,6 +192,10 @@ const MATERIALS: [(&str, &str, bool); 23] = [
     // Cast bronze (the Crown convoy's war bell): untextured true metal, colour from the vertex
     // colours (aged bronze mottled with verdigris), a soft sun highlight.
     ("bronze", "bronze", false),
+    // Castle masonry (castle_kit.glb): the mossy_rock scan lifted to a pale weathered grey
+    // (`MASONRY_LIFT`) — vertex colours (stored normalized, max 1) can only darken a texture, and
+    // the plain scans read near-black on sun-side-on walls.
+    ("s_masonry", "s_rock", false),
     // Creature parts (creatures.glb, animals.glb, people.glb) — never drawn with this material
     // (recoloured CPU meshes on the creature material); the entry only lets the loader accept them.
     ("creature", "", false),
@@ -966,7 +973,10 @@ fn try_build(
     let mut mat_index = HashMap::new();
     for (name, set, card) in MATERIALS {
         mat_index.insert(name.to_string(), mats.len());
-        let m = pbr_material(images, set, card)?;
+        let mut m = pbr_material(images, set, card)?;
+        if name == "s_masonry" {
+            m.base_color = Color::linear_rgb(MASONRY_LIFT, MASONRY_LIFT, MASONRY_LIFT);
+        }
         // Snow-dusted twin for the snow biome (`alpine::snowkit`): same textures, crown tint kept.
         let tint = match name {
             "canopy" => 0.6,
@@ -988,11 +998,11 @@ fn try_build(
     let wind = [mat_index["canopy"], mat_index["undergrowth"]];
     let mut models = Vec::new();
     let mut by_name = HashMap::new();
-    for glb in ["forest_pbr/trees.glb", "forest_pbr/undergrowth.glb", "forest_pbr/props.glb", "forest_pbr/structures.glb", "forest_pbr/wayside.glb", "forest_pbr/stories_warm.glb", "forest_pbr/creatures.glb", "forest_pbr/animals.glb", "forest_pbr/people.glb", "forest_pbr/orks.glb", "forest_pbr/stories_cold.glb", "forest_pbr/snowmen.glb", "forest_pbr/alpine_flora.glb", "forest_pbr/market.glb"] {
+    for glb in ["forest_pbr/trees.glb", "forest_pbr/undergrowth.glb", "forest_pbr/props.glb", "forest_pbr/structures.glb", "forest_pbr/wayside.glb", "forest_pbr/stories_warm.glb", "forest_pbr/creatures.glb", "forest_pbr/animals.glb", "forest_pbr/people.glb", "forest_pbr/orks.glb", "forest_pbr/stories_cold.glb", "forest_pbr/snowmen.glb", "forest_pbr/alpine_flora.glb", "forest_pbr/market.glb", "forest_pbr/castle_kit.glb"] {
         // The townsfolk parts (people.glb) and the skinned ork bodies (orks.glb) are optional:
         // without them the villagers keep their box-built bodies (`peasant_model`) and the orks
         // their per-joint creatures.glb parts; the rest of the kit still loads.
-        if (glb.ends_with("people.glb") || glb.ends_with("orks.glb") || glb.contains("/stories_") || glb.ends_with("snowmen.glb") || glb.ends_with("alpine_flora.glb") || glb.ends_with("market.glb"))
+        if (glb.ends_with("people.glb") || glb.ends_with("orks.glb") || glb.contains("/stories_") || glb.ends_with("snowmen.glb") || glb.ends_with("alpine_flora.glb") || glb.ends_with("market.glb") || glb.ends_with("castle_kit.glb"))
             && !load::asset_path(glb).exists()
         {
             warn!("realforest: {glb} missing — falling back to the older bodies");
