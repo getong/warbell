@@ -33,11 +33,16 @@ tego klatki między fazami (upload ~5 GB wierzchołków na GPU) — pojedyncze k
    meshowanie chunków terenu, klasyfikacja siatki kafli, scalanie grup chunków. Faza 0
    7,7 → 1,3 s; ładowanie 26 → 21 s.
 3. **Streaming podszytu kitu** (`realforest::stream_cover`): `Chunks::spawn` odkłada kompaktowe
-   przepisy (model, część, transform) per chunk 16u, a system co klatkę scala i spawnuje tylko
-   chunki w promieniu `STREAM_IN` = 95u od kamery (XZ do środka chunka), despawnuje za
-   `STREAM_OUT` = 119u, budżet 96 kluczy/klatkę, najbliższe pierwsze. Każdy tier i tak jest
-   ucinany `VisibilityRange` ≤ 75u (`PROPS_FAR`), więc nic widocznego nie znika. Ładowanie
-   21 → ~10 s. `FOREST_NOSTREAM=1` / `FOREST_NOCULL=1` = stara ścieżka (wszystko naraz).
+   przepisy (model, część, transform) per chunk 16u, a system spawnuje tylko chunki w promieniu
+   `STREAM_IN` = 95u od kamery (XZ do środka chunka), despawnuje za `STREAM_OUT` = 119u.
+   Scalanie idzie **asynchronicznie** na `AsyncComputeTaskPool` (max 32 nowe klucze/klatkę,
+   najbliższe pierwsze), chunk pojawia się w całości, gdy jego zadanie skończy; zadanie dla
+   chunka, od którego kamera już odjechała, jest anulowane. (Wersja synchroniczna z `par_map`
+   w klatce dławiła się do 300 ms/klatkę, gdy maszynę obciążały równoległe buildy.) System stoi,
+   dopóki `WorldReady` jest fałszywe, więc przy przebudowie świata nie zostają sieroty. Każdy
+   tier i tak jest ucinany `VisibilityRange` ≤ 75u (`PROPS_FAR`), więc nic widocznego nie znika
+   (strzały porównawcze z `FOREST_NOSTREAM=1` identyczne). Ładowanie 21 → 10–13 s.
+   `FOREST_NOSTREAM=1` / `FOREST_NOCULL=1` = stara ścieżka (wszystko naraz).
 
 ## 2. Następny krok: streaming trawy `biome::spawn_chunks` (1,6 GiB VRAM, 41,9 mln wierzch.)
 
@@ -83,8 +88,8 @@ tego klatki między fazami (upload ~5 GB wierzchołków na GPU) — pojedyncze k
 ## 6. Harness i widok mapy
 
 - `FOREST_SHOT`/`FOREST_CLIP`: system streamingu działa w każdej klatce bez bramki modalnej;
-  rozgrzewka strzału (~90 klatek) z budżetem 96 kluczy/klatkę ładuje całe otoczenie kamery
-  w 1–2 klatki. Dla `FOREST_SHOT_CAMS` kamera jest przestawiana — streaming nadąża w tej samej
+  rozgrzewka strzału (≥240 klatek) z budżetem 32 kluczy/klatkę kolejkuje całe otoczenie
+  kamery w ~4 klatki, a zadania kończą się po kilkunastu klatkach. Dla `FOREST_SHOT_CAMS` kamera jest przestawiana — streaming nadąża w tej samej
   klatce. Docelowo: `capture` czeka na flagę „stream ustabilizowany” (brak `dirty`).
 - Mapa świata (widok z góry) nie pokazuje podszytu ani tak (cull ≤ 75u), więc nic nie traci.
 - Gameplay globalny bez zmian: wysokości gruntu (`ground_at_world`, cache kafli), navgrid,

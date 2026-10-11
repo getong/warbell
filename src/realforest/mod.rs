@@ -963,6 +963,9 @@ struct CoverStream {
     chunks: HashMap<(i32, i32), Vec<Recipe>>,
     /// Chunks currently spawned -> their entities.
     live: HashMap<(i32, i32), Vec<Entity>>,
+    /// Chunks whose merge is running on the async compute pool (one mesh per recipe, in order).
+    /// Merging off the main thread keeps a moving camera from ever stalling a frame on it.
+    pending: HashMap<(i32, i32), bevy::tasks::Task<Vec<Option<Mesh>>>>,
     /// Recipes changed (or the last pass hit its per-frame budget) — re-evaluate even if the
     /// camera hasn't moved.
     dirty: bool,
@@ -976,10 +979,9 @@ static STREAM: std::sync::LazyLock<std::sync::Mutex<CoverStream>> =
 const STREAM_IN: f32 = PROPS_FAR + 20.0;
 /// Despawn radius — past `STREAM_IN` by enough that pacing along the boundary doesn't thrash.
 const STREAM_OUT: f32 = STREAM_IN + 24.0;
-/// Most chunk KEYS merged + spawned per frame (nearest first); the rest follow next frame. At 96
-/// a fast-roaming camera (perf roam, ~18 u/s) took a 62 ms max frame; 24 still fills the whole
-/// boot radius (~110 keys) within ~5 frames, long before the veil lifts.
-const STREAM_BUDGET: usize = 24;
+/// Most chunk KEYS whose async merge is launched per frame (nearest first); the rest follow next
+/// frame. The boot radius (~110 keys) is queued within ~4 frames.
+const STREAM_BUDGET: usize = 32;
 
 /// Is cover streaming on? (`FOREST_NOSTREAM=1` turns it off; `FOREST_NOCULL` bypasses it too.)
 pub fn cover_stream_enabled() -> bool {
@@ -993,6 +995,7 @@ pub fn reset_cover_stream() {
     let mut st = STREAM.lock().expect("cover stream poisoned");
     st.chunks.clear();
     st.live.clear();
+    st.pending.clear(); // dropping a Task cancels it
     st.dirty = false;
 }
 
@@ -1000,18 +1003,38 @@ fn stream_cover(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     cams: Query<&GlobalTransform, With<Camera3d>>,
+    ready: Res<crate::biome::WorldReady>,
     mut last: Local<Option<Vec2>>,
 ) {
+    // Idle while a world (re)build is in flight: an in-process rebuild clears `WorldReady` before
+    // it wipes the `BiomeEntity`s, so a chunk streamed in from the OLD recipes can never slip past
+    // that wipe as an orphan (the build resets the store at phase 0).
+    if !ready.0 {
+        return;
+    }
     let Some(kit) = get() else { return };
     let Some(cam) = cams.iter().next() else { return };
     let t = cam.translation();
     let p = Vec2::new(t.x, t.z);
     let mut guard = STREAM.lock().expect("cover stream poisoned");
-    let CoverStream { chunks, live, dirty } = &mut *guard;
+    let CoverStream { chunks, live, pending, dirty } = &mut *guard;
     if chunks.is_empty() && live.is_empty() {
         return;
     }
-    if !*dirty && last.is_some_and(|l| l.distance(p) < 2.0) {
+    // Land finished merges (spawned whole-chunk at once, so a chunk never appears half-built).
+    pending.retain(|key, task| {
+        let Some(merged) = bevy::tasks::block_on(bevy::tasks::poll_once(task)) else { return true };
+        let ents = live.entry(*key).or_default();
+        if let Some(recipes) = chunks.get(key) {
+            for (r, mesh) in recipes.iter().zip(merged) {
+                if let Some(mesh) = mesh {
+                    ents.push(spawn_group(kit, &mut commands, &mut meshes, *key, r, mesh, true));
+                }
+            }
+        }
+        false
+    });
+    if !*dirty && pending.is_empty() && last.is_some_and(|l| l.distance(p) < 2.0) {
         return;
     }
     *last = Some(p);
@@ -1028,26 +1051,22 @@ fn stream_cover(
         }
         false
     });
+    // A merge for a chunk the camera already left is dropped (cancelled).
+    pending.retain(|k, _| centre(k).distance(p) <= STREAM_OUT);
     let mut need: Vec<((i32, i32), f32)> = chunks
         .keys()
-        .filter(|k| !live.contains_key(*k))
+        .filter(|k| !live.contains_key(*k) && !pending.contains_key(*k))
         .map(|k| (*k, centre(k).distance(p)))
         .filter(|(_, d)| *d <= STREAM_IN)
         .collect();
     need.sort_by(|a, b| a.1.total_cmp(&b.1));
     *dirty = need.len() > STREAM_BUDGET;
     need.truncate(STREAM_BUDGET);
-    if need.is_empty() {
-        return;
-    }
-    let jobs: Vec<((i32, i32), &Recipe)> =
-        need.iter().flat_map(|(k, _)| chunks[k].iter().map(move |r| (*k, r))).collect();
-    let merged = crate::par::par_map(jobs.len(), |i| merge_group(kit, &jobs[i].1.items));
-    for ((key, r), mesh) in jobs.iter().zip(merged) {
-        let ents = live.entry(*key).or_default();
-        if let Some(mesh) = mesh {
-            ents.push(spawn_group(kit, &mut commands, &mut meshes, *key, r, mesh, true));
-        }
+    let pool = bevy::tasks::AsyncComputeTaskPool::get();
+    for (key, _) in need {
+        let items: Vec<Vec<(usize, usize, Transform)>> = chunks[&key].iter().map(|r| r.items.clone()).collect();
+        let task = pool.spawn(async move { items.iter().map(|it| merge_group(kit, it)).collect::<Vec<_>>() });
+        pending.insert(key, task);
     }
 }
 
