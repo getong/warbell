@@ -99,7 +99,7 @@ const SCENES: [Scene; 10] = [
         trail: false },
     // The bell on its side, the broken bell wagon, the wagon on its side, the ox's drift.
     Scene { model: "story_wrecked_convoy", biome: Biome::Snow, foot: 3.5,
-        solids: &[(0.25, -1.4, 0.8, 0.62, -0.47), (1.6, 0.6, 1.25, 0.7, 0.05), (-1.75, 0.5, 1.3, 0.45, 0.12),
+        solids: &[(0.0, -1.45, 0.75, 0.7, 0.0), (1.95, 0.75, 1.25, 0.7, 0.05), (-2.05, 0.7, 1.3, 0.45, 0.12),
             (-0.1, 2.0, 0.9, 0.45, 0.0)],
         want: 1, names: &["The Crown Convoy"],
         lore: "A Crown war bell, hauled up the pass for the first colony; no one ever came back to dig it out.",
@@ -551,6 +551,19 @@ pub fn shot_cams() -> Vec<(String, Transform)> {
         let front = Vec3::new(-site.yaw.sin(), 0.0, -site.yaw.cos());
         let side = Vec3::new(front.z, 0.0, -front.x);
         let name = SCENES[site.scene].model.trim_start_matches("story_");
+        if SCENES[site.scene].trail {
+            // The convoy's bell (local 0, -1.45), seen side-on from the trail at eye height.
+            let rot = Quat::from_rotation_y(site.yaw);
+            let b = rot * Vec3::new(0.0, 0.0, -1.45);
+            let bell = Vec3::new(site.pos.x + b.x, y + 0.75, site.pos.y + b.z);
+            for d in [8.0f32, 20.0] {
+                let e = Vec2::new(bell.x + front.x * d, bell.z + front.z * d);
+                let gy = crate::worldmap::ground_at_world(e.x, e.y).unwrap_or(y);
+                let eye = Vec3::new(e.x, gy + 1.7, e.y);
+                info!("story cam {name}_eye{d}: {:.1},{:.1},{:.1} -> {:.1},{:.1},{:.1}", eye.x, eye.y, eye.z, bell.x, bell.y, bell.z);
+                out.push((format!("{name}_eye{d}"), Transform::from_translation(eye).looking_at(bell, Vec3::Y)));
+            }
+        }
         for (tag, off) in [("near", front * 7.5 + side * 3.0 + Vec3::Y * 3.2), ("high", -front * 4.0 + side * 5.0 + Vec3::Y * 11.0)] {
             let eye = aim + off;
             info!("story cam {name}_{k}_{tag}: {:.1},{:.1},{:.1} -> {:.1},{:.1},{:.1}", eye.x, eye.y, eye.z, aim.x, aim.y, aim.z);

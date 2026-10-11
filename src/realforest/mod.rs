@@ -158,7 +158,7 @@ pub struct Kit {
 }
 
 /// Material sets by the names Blender exported: (name, PBR set file stem, foliage card?).
-const MATERIALS: [(&str, &str, bool); 22] = [
+const MATERIALS: [(&str, &str, bool); 23] = [
     ("bark_oak", "bark_oak", false),
     ("bark_beech", "bark_beech", false),
     ("bark_pine", "bark_pine", false),
@@ -186,6 +186,9 @@ const MATERIALS: [(&str, &str, bool); 22] = [
     // Settled snow on the cold-biome story scenes (stories_cold.glb): the Poly Haven snow_02 scan
     // (tools/blender_forest/snow_set.sh); vertex colour adds the blue in the shaded drift folds.
     ("s_snow", "s_snow", false),
+    // Cast bronze (the Crown convoy's war bell): untextured true metal, colour from the vertex
+    // colours (warm bronze, verdigris in the recesses), smooth enough to catch a sun highlight.
+    ("bronze", "bronze", false),
     // Creature parts (creatures.glb, animals.glb, people.glb) — never drawn with this material
     // (recoloured CPU meshes on the creature material); the entry only lets the loader accept them.
     ("creature", "", false),
@@ -911,6 +914,9 @@ fn drive_forest_look(
 }
 
 fn pbr_material(images: &mut Assets<Image>, set: &str, card: bool) -> Result<StandardMaterial, String> {
+    if set == "bronze" {
+        return Ok(StandardMaterial { metallic: 1.0, perceptual_roughness: 0.4, reflectance: 0.5, ..default() });
+    }
     if set.is_empty() {
         // Waxy fruit skin: base colour comes from the vertex colours.
         return Ok(StandardMaterial { perceptual_roughness: 0.42, reflectance: 0.45, ..default() });

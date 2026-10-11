@@ -39,7 +39,8 @@ from wayside_models import (M_BARK, M_PLANK, M_STONE, M_HIDE, M_THATCH, M_CLOTH,
                             slab, smooth_mesh, smoothstep, stone, tube, Noise)
 
 M_SNOW = len(W.MATS)
-MATS = W.MATS + ["s_snow"]
+M_BRONZE = M_SNOW + 1
+MATS = W.MATS + ["s_snow", "bronze"]
 
 SNOW = (0.93, 0.95, 1.0)
 WOOD = (0.82, 0.72, 0.6)
@@ -402,15 +403,22 @@ def wagon_bed(g, rng, centre, rot, length=2.2, width=1.1, sides=True, broken_sid
                      0.06, 0.05, up=tuple(rot @ V(0, 0, 1)), mat=M_PLANK, col=OLD_WOOD, rng=rng)
 
 
-BRONZE = (0.42, 0.27, 0.13)
-VERDIGRIS = (0.27, 0.45, 0.37)
+BRONZE = (0.86, 0.6, 0.3)       # metallic tint (F0): warm, saturated bronze-gold
+VERDIGRIS = (0.36, 0.62, 0.52)
 
 
-def bronze_fn(nz):
-    """Old bronze: a dark warm body, verdigris bloom on the sky-facing and sheltered faces."""
+def bronze_fn(nz, c, axis, top):
+    """Polished-by-weather bronze: verdigris only in the recesses (under the shoulder band, the
+    crown's edge) and in streaks run down from the crown, fading toward the lip."""
     def f(p, n):
-        k = smoothstep(0.0, 0.85, n.y) * 0.7 + 0.3 * nz(p * 2.5)
-        return scale(mix(BRONZE, VERDIGRIS, min(1.0, max(0.0, k))), 0.9 + 0.1 * nz(p * 6.0))
+        rel = p - c
+        h = rel.dot(axis) / top                      # 0 at the lip .. 1 at the crown
+        radial = (rel - axis * rel.dot(axis))
+        ang = math.atan2(radial.dot(axis.orthogonal()), radial.dot(axis.cross(axis.orthogonal())))
+        streak = max(0.0, math.sin(ang * 5.0 + 2.0 * nz(p * 1.3))) ** 6 * smoothstep(0.2, 0.9, h)
+        recess = smoothstep(0.5, 0.15, abs(h - 0.72) * 6.0) * 0.6 + smoothstep(0.93, 1.0, h) * 0.5
+        k = min(1.0, streak * 0.85 + recess)
+        return scale(mix(BRONZE, VERDIGRIS, k), 0.92 + 0.08 * nz(p * 5.0))
     return f
 
 
@@ -463,11 +471,11 @@ def bell(g, rng, lip_centre, rot, h=1.3, r=0.62, seg=20):
              (r * 0.45, 1.15), (r * 0.22, 1.19), (0.0, 1.2)]
     outer = [(rr, y * h / 1.2) for rr, y in outer]
     v, t = lathe(outer, seg, c, rot)
-    smooth_mesh(g, v, orient(v, t, c, axis, True), M_IRON, bronze_fn(nz), 0.5)
+    smooth_mesh(g, v, orient(v, t, c, axis, True), M_BRONZE, bronze_fn(nz, c, axis, h), 0.5)
     inner = [(r * 0.9, -0.02), (r * 0.78, 0.25), (r * 0.62, 0.62), (r * 0.55, 0.95), (r * 0.3, 1.08), (0.0, 1.1)]
     inner = [(rr, y * h / 1.2) for rr, y in inner]
     v, t = lathe(inner, seg, c, rot)
-    smooth_mesh(g, v, orient(v, t, c, axis, False), M_IRON, lambda p, n: scale(BRONZE, 0.45), 0.5)
+    smooth_mesh(g, v, orient(v, t, c, axis, False), M_BRONZE, lambda p, n: scale(BRONZE, 0.35), 0.5)
     for i in range(seg):
         a, b2 = 2 * math.pi * i / seg, 2 * math.pi * (i + 1) / seg
         quad = [c + rot @ V(math.cos(a) * r, -0.02, math.sin(a) * r), c + rot @ V(math.cos(b2) * r, -0.02, math.sin(b2) * r),
@@ -476,13 +484,13 @@ def bell(g, rng, lip_centre, rot, h=1.3, r=0.62, seg=20):
         nn = -axis
         if (quad[1] - quad[0]).cross(quad[3] - quad[0]).dot(nn) < 0:
             quad = quad[::-1]
-        g.poly(quad, [(0, 0), (1, 0), (1, 1), (0, 1)], [nn] * 4, [scale(BRONZE, 0.8)] * 4, M_IRON)
+        g.poly(quad, [(0, 0), (1, 0), (1, 1), (0, 1)], [nn] * 4, [scale(BRONZE, 0.8)] * 4, M_BRONZE)
     # Canons: two crossed loops on the crown.
     top = c + axis * (h * 1.19 / 1.2)
     for ang in (0.0, math.pi / 2):
         sdir = rot @ V(math.cos(ang), 0, math.sin(ang))
         pts = [top + sdir * 0.13 * math.cos(u) + axis * 0.17 * math.sin(u) for u in np.linspace(0, math.pi, 7)]
-        tube(g, pts, [0.045] * 7, 6, M_IRON, scale(BRONZE, 0.9), tile=0.3, cap=False)
+        tube(g, pts, [0.045] * 7, 6, M_BRONZE, mix(BRONZE, VERDIGRIS, 0.35), tile=0.3, cap=False)
 
 
 def bell_crest(g, centre, normal, up, s=1.0):
@@ -491,51 +499,49 @@ def bell_crest(g, centre, normal, up, s=1.0):
     c, n, u = Vector(centre), Vector(normal).normalized(), Vector(up).normalized()
     r = u.cross(n).normalized()
     u = n.cross(r).normalized()
-    gold = (0.74, 0.54, 0.25)
+    gold = (1.0, 0.78, 0.42)
     ring = [c + n * 0.012 + (r * math.cos(a) + u * math.sin(a)) * 0.17 * s for a in np.linspace(0, 2 * math.pi, 15)]
-    tube(g, ring, [0.024 * s] * 15, 4, M_IRON, gold, tile=0.2, cap=False)
+    tube(g, ring, [0.024 * s] * 15, 4, M_BRONZE, gold, tile=0.2, cap=False)
     tube(g, [c + n * 0.016 - r * 0.1 * s - u * 0.04 * s, c + n * 0.016 + r * 0.1 * s - u * 0.04 * s], [0.024 * s] * 2, 4,
-         M_IRON, gold, tile=0.2)
+         M_BRONZE, gold, tile=0.2)
     for k in (-1, 0, 1):
         base = c + n * 0.018 - u * 0.03 * s + r * k * 0.075 * s
         tip = base + u * (0.14 if k == 0 else 0.1) * s + r * k * 0.015 * s
-        tube(g, [base, tip], [0.026 * s, 0.006 * s], 4, M_IRON, gold, tile=0.2, cap=False)
+        tube(g, [base, tip], [0.026 * s, 0.006 * s], 4, M_BRONZE, gold, tile=0.2, cap=False)
 
 
 def story_wrecked_convoy(rng):
     """Footprint r <= 3.6, long axis along local X (= the trail direction), the trail on local -Z.
     The Crown was hauling a war bell up the pass: the lead wagon's front axle broke under it, its
-    timber bell-cradle snapped, and the bronze bell rolled out and lies on its side in a drift, mouth
-    to the trail, the Crown cast on its flank, snow on top, haul ropes trailing, the clapper flung
+    timber bell-cradle snapped, and the bronze bell rolled off and stands upright on its lip in a drift,
+    leaning, its profile side-on to the trail, the Crown cast on its flank, snow on the crown, ropes trailing, the clapper flung
     clear. The second wagon lies thrown on its side behind it; the ox is under the snow.
-    Masses: the bell (0.25, -1.4), the bell wagon (1.55, 0.55), the overturned wagon (-1.75, 0.35),
+    Masses: the bell (0.0, -1.45), the bell wagon (1.95, 0.75), the overturned wagon (-2.05, 0.7),
     the ox's drift (-0.1, 1.95)."""
     b = Builder()
     g = G(b)
     drift(g, (0.0, 0.0, 0.0), 3.3, 2.0, 0.22, rng, power=0.7, rings=6, seg=20)
-    # ── the bell, tipped out on its side: axis nearly level, mouth turned toward the trail (-Z) and a
-    # little down the pass, the lip and flank sunk a hand into the snow.
-    rot_b = quat_y(1.1) @ quat_x(math.pi / 2 + 0.12)
+    # ── the bell: rolled off the broken wagon and come to rest UPRIGHT on its lip at the trail's
+    # edge, leaning ~20 degrees, its foot sunk in a drift: crown, shoulder, waist and flared lip read
+    # in profile from every side. Nothing of the wreck stands behind it from the trail.
+    rot_b = quat_y(0.3) @ quat_z(-0.35)
     axis = rot_b @ V(0, 1, 0)
-    lip = V(-0.4, 0.55, -1.7)
-    bell(g, rng, lip, rot_b, h=1.32, r=0.62)
-    side = axis.cross(V(0, 1, 0)).normalized()
-    up_side = side.cross(axis).normalized()
-    if up_side.y < 0:
-        up_side = -up_side
-    # The Crown in relief on the flank turned to the trail and the sky.
+    lip = V(-0.15, -0.1, -1.45)
+    BH, BR = 1.42, 0.66
+    bell(g, rng, lip, rot_b, h=BH, r=BR)
+    side = axis.cross(V(0, 0, 1)).normalized()
     to_trail = V(0, 0, -1) - axis * V(0, 0, -1).dot(axis)
-    cn = (to_trail.normalized() + up_side * 0.8).normalized()
-    crest_c = lip + axis * 0.62 + cn * (0.62 * 0.74)
-    bell_crest(g, crest_c, cn, axis, s=1.0)
-    # Snow lying along the bell's top and banked against its crown (the mouth and flank stay clear).
-    snow_cap(g, tuple(lip + axis * 0.95 + up_side * 0.42 - cn * 0.12), 0.24, 0.3, 0.07, rng)
-    drift(g, tuple(lip + axis * 1.8), 0.75, 0.7, 0.42, rng, power=1.0, rings=5, seg=14)
-    drift(g, tuple(V(lip.x, 0.0, lip.z) + axis * 0.7), 0.8, 0.6, 0.14, rng, power=0.8, rings=4, seg=14)
+    cn = to_trail.normalized()
+    crest_c = lip + axis * (BH * 0.6) + cn * (BR * 0.71)
+    bell_crest(g, crest_c, cn, axis, s=1.05)
+    # A thin cap of snow on the crown and the up-tilted shoulder; the drift round its foot.
+    snow_cap(g, tuple(lip + axis * (BH * 1.0) + V(0, 0.01, 0)), 0.3, 0.3, 0.05, rng)
+    snow_cap(g, tuple(lip + axis * (BH * 0.86) + side * (-0.32) + V(0, 0.02, 0)), 0.16, 0.24, 0.035, rng)
+    drift(g, (lip.x + 0.05, 0.0, lip.z + 0.1), 1.1, 0.95, 0.2, rng, power=0.9, rings=4, seg=16)
     # ── the bell wagon: a heavy flatbed, front axle snapped so its nose sits in the snow, tilted
     # toward the trail where the bell went over the side.
     qw = quat_y(0.05) @ quat_x(-0.16) @ quat_z(-0.17)
-    cw = V(1.6, 0.42, 0.6)
+    cw = V(1.95, 0.42, 0.75)
     wagon_bed(g, rng, cw, qw, length=2.3, width=1.2, sides=False)
     rear = cw + qw @ V(-0.85, -0.25, 0.0)
     beam(g, [rear + qw @ V(0, 0, -0.66), rear + qw @ V(0, 0, 0.66)], 0.1, 0.1, mat=M_PLANK, col=OLD_WOOD, rng=rng)
@@ -556,7 +562,7 @@ def story_wrecked_convoy(rng):
     for sz, ln in ((-0.52, 0.42), (0.52, 0.3)):
         beam(g, [fa + qw @ V(0, 0, sz), fa + qw @ V(0, ln, sz * (1 - ln / 1.35))], 0.12, 0.12, mat=M_PLANK, col=OLD_WOOD,
              rng=rng, jag=(0.0, 0.16))
-    head_end = V(1.55, 0.12, -0.7)
+    head_end = cw + V(1.0, -0.3, 0.5)
     beam(g, [apex_r + qw @ V(0.0, 0.05, 0.0), head_end], 0.16, 0.16, mat=M_PLANK, col=OLD_WOOD, rng=rng, jag=(0.0, 0.2))
     snow_cap(g, tuple(apex_r.lerp(head_end, 0.45) + V(0, 0.1, 0)), 0.16, 0.12, 0.04, rng)
     # The thrown front trestle leg in the snow.
@@ -566,11 +572,8 @@ def story_wrecked_convoy(rng):
     rope = (0.6, 0.52, 0.38)
     hp = apex_r.lerp(head_end, 0.35)
     tube(g, [hp, hp + V(0.02, -0.4, -0.05), hp + V(0.08, -0.7, -0.02)], [0.03, 0.028, 0.012], 5, M_HIDE, rope, tile=0.3)
-    crown_loop = lip + axis * 1.48
-    pts = [cw + qw @ V(-1.05, 0.02, -0.45), V(1.0, 0.06, -0.3), V(0.85, 0.05, -0.5), crown_loop + V(0, -0.05, 0)]
+    pts = [cw + qw @ V(-1.05, 0.02, -0.45), V(1.0, 0.06, -0.55), V(0.75, 0.05, -0.95), V(0.55, 0.05, -1.25)]
     tube(g, [Vector(p) for p in pts], [0.03] * 4, 5, M_HIDE, rope, tile=0.3, cap=False)
-    tube(g, [V(0.35, 0.05, -0.75), V(-0.2, 0.04, -0.55), V(-0.55, 0.05, -0.8)], [0.03, 0.03, 0.01], 5, M_HIDE, rope,
-         tile=0.3)
     # The iron clapper, flung clear, lying in the snow toward the trail.
     clc = (0.4, 0.38, 0.37)
     k0, k1 = V(-1.75, 0.09, -2.3), V(-1.05, 0.1, -2.75)
@@ -581,7 +584,7 @@ def story_wrecked_convoy(rng):
     # ── the second wagon, thrown on its side behind: bed vertical, floor toward the trail; the top
     # pair of wheels in the air (the bottom pair is under the drift), its tongue jutting at the sky.
     qa = quat_y(0.12) @ quat_x(math.pi / 2)
-    ca = V(-1.75, 0.56, 0.5)
+    ca = V(-2.05, 0.56, 0.7)
     wagon_bed(g, rng, ca, qa, broken_side=True)
     for k, x in enumerate((-0.75, 0.75)):
         beam(g, [ca + qa @ V(x, -0.2, -0.66), ca + qa @ V(x, -0.2, 0.3)], 0.08, 0.08, mat=M_PLANK, col=OLD_WOOD, rng=rng)
@@ -600,7 +603,7 @@ def story_wrecked_convoy(rng):
              tile=0.3)
     tube(g, [V(0.9, 0.3, 2.2), V(1.1, 0.48, 2.3), V(1.15, 0.65, 2.2)], [0.035, 0.025, 0.006], 5, M_ROCK, bone, tile=0.3)
     # Two crested Crown crates and a sack, spilled.
-    for (x, y, z), yaw, size in (((-1.0, 0.2, -0.8), 0.5, (0.5, 0.4, 0.42)), ((2.75, 0.17, -1.15), -0.3, (0.44, 0.34, 0.4))):
+    for (x, y, z), yaw, size in (((-2.75, 0.2, -1.0), 0.5, (0.5, 0.4, 0.42)), ((2.75, 0.17, -1.15), -0.3, (0.44, 0.34, 0.4))):
         q = quat_y(yaw)
         crate(g, (x, y, z), size, q, rng, col=(0.7, 0.6, 0.48))
         crest(g, V(x, y, z) + q @ V(0, 0.0, -size[2] / 2 - 0.012), q @ V(0, 0, -1), (0, 1, 0))
