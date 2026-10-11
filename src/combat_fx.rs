@@ -114,7 +114,12 @@ struct FloatText {
     born: f32,
     color: Color,
     scale: f32,
+    /// Longest line, in chars (horizontal centring) and the line count (vertical centring).
     len: usize,
+    lines: usize,
+    /// Seconds on screen: [`FLOAT_LIFE`] for a number / short word, longer for a sentence (a
+    /// landmark's lore line must stay up long enough to read).
+    life: f32,
 }
 
 fn spawn_floats(
@@ -127,7 +132,9 @@ fn spawn_floats(
     let now = time.elapsed_secs();
     let cam_pos = cam_q.single().map(|gt| gt.translation()).ok();
     for r in q.0.drain(..) {
-        let len = r.text.chars().count();
+        let len = r.text.lines().map(|l| l.chars().count()).max().unwrap_or(0);
+        let lines = r.text.lines().count().max(1);
+        let life = (FLOAT_LIFE + r.text.chars().count().saturating_sub(24) as f32 * 0.045).min(4.5);
         // Same close-range clamp as the HP bars: hit sites anchor numbers ~2.2u above the
         // target, which at FP melee range is far above the frame's top edge — every damage
         // number on a point-blank foe spawned invisible. Cap the anchor to a view cone above
@@ -154,7 +161,7 @@ fn spawn_floats(
             },
             UiTransform::IDENTITY,
             GlobalZIndex(20),
-            FloatText { anchor: world, born: now, color: r.color, scale: r.scale, len },
+            FloatText { anchor: world, born: now, color: r.color, scale: r.scale, len, lines, life },
         ));
     }
 }
@@ -169,7 +176,7 @@ fn drive_floats(
     let Ok((cam, cam_tf)) = cam_q.single() else { return };
     for (e, f, mut node, mut ui_tf, mut tc, mut shadow) in &mut q {
         let t = now - f.born;
-        let k = (t / FLOAT_LIFE).clamp(0.0, 1.0);
+        let k = (t / f.life).clamp(0.0, 1.0);
         if k >= 1.0 {
             commands.entity(e).despawn();
             continue;
@@ -199,7 +206,7 @@ fn drive_floats(
                 node.display = Display::Flex;
                 // Roughly centre the glyphs on the anchor point.
                 node.left = Val::Px(px.x - base_font * 0.3 * f.len as f32);
-                node.top = Val::Px(px.y - base_font * 0.5);
+                node.top = Val::Px(px.y - base_font * (0.5 + 0.6 * (f.lines as f32 - 1.0)));
             }
             Err(_) => node.display = Display::None,
         }

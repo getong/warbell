@@ -34,7 +34,7 @@ from common import OUT, clear_scene, export_glb  # noqa: E402
 from geo import G, frustum, quat_x, quat_y, quat_z, sheet  # noqa: E402
 from meshkit import Builder  # noqa: E402
 import wayside_models as W  # noqa: E402
-from wayside_models import (M_BARK, M_PLANK, M_STONE, M_HIDE, M_CLOTH, M_IRON, M_ROCK, M_EARTH,  # noqa: E402
+from wayside_models import (M_BARK, M_PLANK, M_STONE, M_HIDE, M_THATCH, M_CLOTH, M_IRON, M_ROCK, M_EARTH,  # noqa: E402
                             V, beam, board, bounds, charred, lashing, lbox, mix, mound, pole, rock_col, scale,
                             slab, smooth_mesh, smoothstep, stone, tube, Noise)
 
@@ -45,7 +45,7 @@ SNOW = (0.93, 0.95, 1.0)
 WOOD = (0.82, 0.72, 0.6)
 OLD_WOOD = (0.62, 0.6, 0.58)
 IRON = (0.42, 0.4, 0.38)
-CANVAS = (0.86, 0.8, 0.66)
+CANVAS = (0.68, 0.65, 0.58)
 ROCKY = (0.78, 0.74, 0.68)
 
 
@@ -279,6 +279,14 @@ def story_lost_camp(rng):
             k = 0.85 + 0.1 * math.sin(u * 7 + v * 11)
             return mix(scale(CANVAS, k), (0.55, 0.5, 0.42), smoothstep(0.7, 1.0, u) * 0.5)
         sheet(g, grid, M_CLOTH, col, tile=0.6, double=True)
+        # Thickness at the edges: a rolled hem along the foot and the loose front edge.
+        tube(g, [V(*grid[ni - 1][j]) + V(0, 0.03, 0) for j in range(nj)], [0.045] * nj, 6, M_CLOTH, scale(CANVAS, 0.7),
+             tile=0.4)
+        tube(g, [V(*grid[i][nj - 1]) for i in range(ni)], [0.03] * ni, 5, M_CLOTH, scale(CANVAS, 0.75), tile=0.4)
+        # Snow settled on the canvas: the windward slope is mostly buried, the lee one dusted at the top.
+        reach = 8 if sx < 0 else 4
+        sgrid = [[(p[0] - sx * 0.01, p[1] + 0.07 * (1 - 0.4 * i / reach), p[2]) for p in grid[i]] for i in range(reach)]
+        sheet(g, sgrid, M_SNOW, lambda u, v: mix((0.95, 0.96, 1.0), (0.8, 0.86, 1.0), 0.4 * u), tile=1.4)
     # Snow loaded on the windward slope, drifted over its foot.
     drift(g, (tx - 0.55, 0.15, tz - 0.1), 0.45, 0.9, 0.35, rng, skirt=0.25)
     snow_cap(g, (tx - 0.22, 0.55, tz - 0.4), 0.22, 0.45, 0.06, rng)
@@ -338,7 +346,370 @@ def story_lost_camp(rng):
         tube(g, [foot, top], [0.013, 0.012], 5, M_PLANK, (0.5, 0.4, 0.3), tile=0.3)
         disc(g, foot + V(0, 0.32, 0), quat_x(0.0), 0.07, 0.015, 8, M_HIDE, (0.4, 0.3, 0.22), tile=0.3)
     drift(g, (2.02, 0.0, 0.35), 0.4, 0.35, 0.16, rng)
+    # The party's marker: a tall pole with a rag of a pennant, so the camp shows from afar.
+    mp = V(-1.75, -0.3, -0.9)
+    mt = mp + V(0.12, 3.1, 0.05)
+    tube(g, [mp, mp.lerp(mt, 0.5), mt], [0.035, 0.03, 0.022], 6, M_PLANK, OLD_WOOD, tile=0.4)
+    sheet(g, [[tuple(mt + V(0.0, -0.05 - 0.38 * v, 0.0) + V(0.62 * u, -0.12 * u * u, 0.04 * math.sin(u * 5)))
+               for v in (0.0, 0.5, 1.0 - 0.4 * u)] for u in (0.0, 0.25, 0.5, 0.75, 1.0)],
+          M_CLOTH, lambda u, v: mix((0.45, 0.14, 0.1), (0.3, 0.24, 0.2), u), tile=0.5, double=True)
     return b
+
+
+def crest(g, centre, normal, up, s=1.0):
+    """The old royal crest painted on a crate face: a faded blue field, a gold ring and a crown of
+    three points (vertex colour on thin plates, no text)."""
+    c, n, u = Vector(centre), Vector(normal).normalized(), Vector(up).normalized()
+    r = u.cross(n).normalized()
+    field = (0.16, 0.22, 0.42)
+    gold = (0.78, 0.6, 0.26)
+    quad = [c - r * 0.16 * s - u * 0.13 * s, c + r * 0.16 * s - u * 0.13 * s, c + r * 0.16 * s + u * 0.13 * s,
+            c - r * 0.16 * s + u * 0.13 * s]
+    q2 = [p + n * 0.004 for p in quad]
+    if (q2[1] - q2[0]).cross(q2[3] - q2[0]).dot(n) < 0:
+        q2 = q2[::-1]
+    g.poly(q2, [(0, 0), (1, 0), (1, 1), (0, 1)], [n] * 4, [field] * 4, M_CLOTH)
+    ring = [c + n * 0.008 + (r * math.cos(a) + u * math.sin(a)) * 0.075 * s - u * 0.02 * s
+            for a in np.linspace(0, 2 * math.pi, 13)]
+    tube(g, ring, [0.01 * s] * 13, 4, M_IRON, gold, tile=0.2, cap=False)
+    for k in (-1, 0, 1):
+        base = c + n * 0.009 + u * 0.065 * s + r * k * 0.05 * s
+        tri = [base - r * 0.018 * s, base + r * 0.018 * s, base + u * (0.06 if k == 0 else 0.045) * s]
+        if (tri[1] - tri[0]).cross(tri[2] - tri[0]).dot(n) < 0:
+            tri = tri[::-1]
+        g.poly(tri, [(0, 0), (1, 0), (0.5, 1)], [n] * 3, [gold] * 3, M_IRON)
+
+
+def wagon_bed(g, rng, centre, rot, length=2.2, width=1.1, sides=True, broken_side=False, col=WOOD):
+    """A wagon's box: plank floor on two sills + side boards. Returns nothing; `rot` orients it."""
+    c = Vector(centre)
+    for k in range(8):
+        x = -length / 2 + (k + 0.5) * length / 8
+        board(g, c + rot @ V(x, 0.0, 0), rot @ V(0, 0, 1), rot @ V(0, 1, 0), width, length / 8 * 0.95, 0.04, mat=M_PLANK,
+              col=mix(col, (0.45, 0.4, 0.35), rng.uniform(0, 0.35)), rng=rng)
+    for z in (-width * 0.38, width * 0.38):
+        beam(g, [c + rot @ V(-length / 2 - 0.05, -0.07, z), c + rot @ V(length / 2 + 0.05, -0.07, z)], 0.1, 0.11,
+             up=tuple(rot @ V(0, 0, 1)), mat=M_PLANK, col=OLD_WOOD, rng=rng)
+    if sides:
+        for sz in (-1, 1):
+            if broken_side and sz > 0:
+                continue
+            for h in (0.14, 0.34):
+                board(g, c + rot @ V(0, h, sz * width / 2), rot @ V(1, 0, 0), rot @ V(0, 0, sz), length, 0.19, 0.035,
+                      mat=M_PLANK, col=col, rng=rng)
+            for x in (-length / 2 + 0.06, 0.0, length / 2 - 0.06):
+                beam(g, [c + rot @ V(x, -0.05, sz * (width / 2 + 0.03)), c + rot @ V(x, 0.46, sz * (width / 2 + 0.03))],
+                     0.06, 0.05, up=tuple(rot @ V(0, 0, 1)), mat=M_PLANK, col=OLD_WOOD, rng=rng)
+
+
+def story_wrecked_convoy(rng):
+    """Footprint r <= 3.6, long axis along local X (= the trail direction). Masses: the wagon on its
+    side (local -1.3, -0.3, 1.3 x 0.75), the nose-down wagon (1.5, 0.5, 1.3 x 0.7), the carcass drift
+    (0.2, 1.75). A Crown convoy caught on the pass a century ago: one wagon thrown on its side, its
+    top wheel turned to the sky; the other nose-down in a drift with a broken axle; the ox under the
+    snow; sacks and crested crates spilled, one split open on a bell clapper packed in straw."""
+    b = Builder()
+    g = G(b)
+    nz = Noise(rng, 4, 1.4)
+    drift(g, (0.0, 0.0, 0.0), 3.3, 2.0, 0.22, rng, power=0.7, rings=8, seg=26)
+    # Wagon A, on its side: bed vertical, floor facing -Z, open box facing +Z; the axles stand upright,
+    # the top pair of wheels flat in the air at ~1.2u, the bottom pair sunk in the snow.
+    qa = quat_y(0.12) @ quat_x(math.pi / 2)
+    ca = V(-1.3, 0.56, -0.35)
+    wagon_bed(g, rng, ca, qa, broken_side=True)
+    for k, x in enumerate((-0.75, 0.75)):
+        beam(g, [ca + qa @ V(x, -0.2, -0.66), ca + qa @ V(x, -0.2, 0.62)], 0.08, 0.08, mat=M_PLANK, col=OLD_WOOD, rng=rng)
+        wheel(g, ca + qa @ V(x, -0.2, -0.64), quat_y(0.12), 0.55, rng, broken=1 if k == 1 else 0)  # top, in the air
+        wheel(g, ca + qa @ V(x, -0.2, 0.6), quat_y(0.12), 0.55, rng)  # bottom, in the snow
+    # Its tongue, still pinned to the front axle, jutting at the sky and snapped at the tip: the
+    # tall mark of the wreck from down the trail.
+    t0 = ca + qa @ V(-0.75, -0.25, -0.2)
+    t1 = t0 + V(-0.95, 2.05, -0.55)
+    beam(g, [t0, t1], 0.09, 0.08, mat=M_PLANK, col=OLD_WOOD, rng=rng, jag=(0.0, 0.2))
+    beam(g, [t0.lerp(t1, 0.78) + V(0.0, 0.0, -0.32), t0.lerp(t1, 0.78) + V(0.0, 0.05, 0.32)], 0.06, 0.06, mat=M_PLANK,
+         col=OLD_WOOD, rng=rng, jag=(0.08, 0.0))  # the broken whippletree crossbar
+    snow_cap(g, t0.lerp(t1, 0.35) + V(0, 0.06, 0), 0.12, 0.1, 0.035, rng)
+    for z_off, rot in ((0.45, quat_y(0.6)), (0.9, quat_y(-0.4))):
+        sack(g, (ca.x + 0.4 + z_off, 0.12, ca.z + 0.9 + z_off * 0.3), rot @ quat_z(1.4), 1.0, rng)
+    # Wagon B, nose-down in the drift: front axle broken under it, the rear thrown up with its wheels
+    # and the canvas tilt's bows standing over it, one rag of canvas left on the last bow.
+    qb = quat_y(-0.08) @ quat_z(-0.6)
+    cb = V(1.5, 0.62, 0.45)
+    wagon_bed(g, rng, cb, qb)
+    rear = cb + qb @ V(-0.8, -0.25, 0.0)
+    beam(g, [rear + qb @ V(0, 0, -0.62), rear + qb @ V(0, 0, 0.62)], 0.08, 0.08, mat=M_PLANK, col=OLD_WOOD, rng=rng)
+    for sz in (-0.64, 0.64):
+        wheel(g, rear + qb @ V(0, 0, sz), quat_y(-0.08) @ quat_x(math.pi / 2), 0.55, rng)
+    for k, bx in enumerate((-0.95, -0.25, 0.45)):
+        rise = 1.15 if k == 0 else 1.05
+        pts = [cb + qb @ V(bx, 0.42 + rise * math.sin(t * math.pi), 0.57 * math.cos(t * math.pi))
+               for t in np.linspace(0, 1, 9)]
+        if k == 1:
+            pts = pts[:5]  # snapped at the crown
+        if k == 2:
+            pts = pts[:3]
+        tube(g, pts, [0.03] * len(pts), 5, M_PLANK, OLD_WOOD, tile=0.4)
+    rag = [[tuple(cb + qb @ V(-0.95 + 0.42 * v * (1 - 0.4 * u), 0.42 + 1.15 * math.sin(u * math.pi * 0.5 + 0.35) - 0.5 * v * v,
+                                0.57 * math.cos(u * math.pi * 0.5 + 0.35)))
+            for v in (0.0, 0.33, 0.66, 1.0)] for u in np.linspace(0, 1, 6)]
+    sheet(g, rag, M_CLOTH, lambda u, v: mix(CANVAS, (0.42, 0.4, 0.36), 0.6 * v), tile=0.6, double=True)
+    front = cb + qb @ V(0.85, -0.3, 0.0)
+    beam(g, [front + V(0, 0, -0.55), front + V(0.05, -0.05, 0.1)], 0.08, 0.08, mat=M_PLANK, col=OLD_WOOD, rng=rng,
+         jag=(0.0, 0.12))
+    wheel(g, front + V(0.35, 0.05, 0.85), quat_y(0.3) @ quat_x(0.15), 0.55, rng, broken=2)
+    drift(g, (cb.x + 0.95, 0.0, cb.z), 1.05, 1.05, 0.75, rng, power=1.1)
+    # Snapped drawbar + yoke lying out front.
+    beam(g, [V(2.9, 0.06, 0.2), V(3.3, 0.08, -0.6)], 0.09, 0.09, mat=M_PLANK, col=OLD_WOOD, rng=rng, jag=(0.15, 0.0))
+    beam(g, [V(2.3, 0.08, 0.95), V(2.85, 0.07, 0.3)], 0.09, 0.09, mat=M_PLANK, col=OLD_WOOD, rng=rng, jag=(0.0, 0.18))
+    # The ox, under the snow: a long drift with a horn and a few ribs breaking the surface.
+    drift(g, (0.2, 0.0, 1.75), 1.15, 0.55, 0.42, rng, power=1.0)
+    bone = (0.82, 0.78, 0.68)
+    for k in range(5):
+        x = -0.25 + k * 0.2
+        tube(g, [V(x, 0.18, 1.6), V(x + 0.03, 0.5, 1.75), V(x + 0.05, 0.42, 1.98)], [0.025, 0.022, 0.015], 5, M_ROCK, bone,
+             tile=0.3)
+    tube(g, [V(1.2, 0.3, 1.95), V(1.4, 0.48, 2.05), V(1.45, 0.65, 1.95)], [0.035, 0.025, 0.006], 6, M_ROCK, bone, tile=0.3)
+    tube(g, [V(1.18, 0.3, 1.6), V(1.38, 0.45, 1.45), V(1.48, 0.6, 1.5)], [0.035, 0.025, 0.006], 6, M_ROCK, bone, tile=0.3)
+    # Crested crates, spilled.
+    crates = [((-0.15, 0.2, -1.35), 0.4, (0.5, 0.4, 0.42)), ((0.45, 0.17, -1.15), -0.3, (0.44, 0.34, 0.4)),
+              ((-2.55, 0.2, 0.6), 0.9, (0.5, 0.4, 0.42))]
+    for (x, y, z), yaw, size in crates:
+        q = quat_y(yaw)
+        crate(g, (x, y, z), size, q, rng, col=(0.7, 0.6, 0.48))
+        crest(g, V(x, y, z) + q @ V(0, 0.0, size[2] / 2 + 0.012), q @ V(0, 0, 1), (0, 1, 0))
+        snow_cap(g, (x, y + size[1] / 2 + 0.02, z), size[0] * 0.45, size[2] * 0.45, 0.05, rng)
+    # The split crate: lid thrown off, a side burst, straw, and a bronze bell clapper laid in it like a relic.
+    oq = quat_y(-0.5)
+    oc = V(0.6, 0.18, -0.25)
+    for sx, sz, w, d in ((0, -0.24, 0.62, 0.035), (0, 0.24, 0.62, 0.035), (-0.3, 0, 0.035, 0.48)):
+        lbox(g, oc + oq @ V(sx, 0.0, sz), (w, 0.36, d), oq, M_PLANK, (0.68, 0.58, 0.46), tile=1.0, grain=0)
+    crest(g, oc + oq @ V(0.0, 0.0, 0.26), oq @ V(0, 0, 1), (0, 1, 0))
+    lbox(g, oc + oq @ V(0.0, -0.16, 0.0), (0.62, 0.035, 0.48), oq, M_PLANK, (0.6, 0.5, 0.4), tile=1.0, grain=0)
+    board(g, oc + oq @ V(0.55, -0.14, 0.15), oq @ V(0.3, 0.0, 1.0), oq @ V(0.2, 1, 0), 0.5, 0.3, 0.03, mat=M_PLANK,
+          col=(0.68, 0.58, 0.46), rng=rng, jag=(0.0, 0.12))
+    lbox(g, V(1.0, 0.03, 0.55), (0.62, 0.03, 0.5), quat_y(0.9) @ quat_z(0.08), M_PLANK, (0.66, 0.56, 0.45), tile=1.0, grain=0)
+    straw = (0.86, 0.72, 0.42)
+    lbox(g, oc + oq @ V(0.02, 0.03, 0.0), (0.55, 0.16, 0.42), oq, M_THATCH, straw, tile=0.6, grain=0)
+    for k in range(10):
+        a = rng.uniform(0, 6.28)
+        p = oc + oq @ V(rng.uniform(-0.45, 0.6), 0.12, rng.uniform(-0.3, 0.45))
+        tube(g, [p, p + V(math.cos(a) * 0.2, 0.02, math.sin(a) * 0.2)], [0.006, 0.004], 3, M_THATCH, straw, tile=0.2)
+    bronze = (0.72, 0.5, 0.26)
+    cl0 = oc + oq @ V(-0.22, 0.14, 0.0)
+    cl1 = oc + oq @ V(0.12, 0.14, 0.02)
+    tube(g, [cl0, cl1], [0.018, 0.022], 7, M_IRON, bronze, tile=0.2)
+    lashing(g, cl0 + (cl1 - cl0) * 0.15, tuple(cl1 - cl0), 0.024, rng, turns=1)
+    stone(g, tuple(cl1 + (cl1 - cl0).normalized() * 0.07), (0.075, 0.06, 0.06), rng, mat=M_IRON, detail=2, rough=0.02,
+          cuts=0, rot=oq, col_fn=lambda p, n: mix(bronze, (0.42, 0.55, 0.42), 0.25 * smoothstep(0.3, 0.9, n.y)), tile=0.2)
+    # Scattered sacks.
+    for x, z, a in ((-0.3, 0.75, 0.3), (2.6, -0.85, 1.9), (-2.9, -0.6, -0.8)):
+        sack(g, (x, 0.1, z), quat_y(a) @ quat_z(1.35), 1.0, rng)
+    return b
+
+
+FIELDSTONE = (0.88, 0.9, 0.93)  # light, cool, desaturated grey over s_rock
+
+
+def course_wall(g, rng, axis, fixed, a0, a1, top, depth=0.3, double=False, lean=0.0):
+    """A dry-stone wall laid in HORIZONTAL COURSES of individual fieldstones (one rough slab each,
+    the way `wayside_cairn` lays its stones), along X at z=`fixed` (`axis` 'x') or along Z at
+    x=`fixed`, from a0 to a1. Joints stagger course to course; `top(t)` (t = 0..1 along the wall)
+    is the ragged crown height — stones above it are left out, a few more go missing at random, and
+    every stone with nothing laid on it gets a snow cap. `double` = two stones thick (the gable);
+    `lean` shifts each course outward with height (+ along the wall's normal)."""
+    nz = Noise(rng, 4, 3.0)
+    y, ci = -0.1, 0
+    peak = max(top(t / 20) for t in range(21))
+    while y < peak:
+        h = rng.uniform(0.18, 0.28)
+        pos = a0 - (rng.uniform(0.12, 0.26) if ci % 2 else rng.uniform(0.0, 0.06))
+        shift = lean * max(y, 0.0)
+        while pos < a1 - 0.05:
+            ln = rng.uniform(0.3, 0.55)
+            s0, s1 = max(pos, a0), min(pos + ln, a1)
+            pos += ln
+            if s1 - s0 < 0.14:
+                continue
+            mid = (s0 + s1) / 2
+            crown = top((mid - a0) / (a1 - a0))
+            if y + h * 0.5 > crown or (y > 0.5 and rng.random() < 0.05):
+                continue
+            capped = y + h + 0.1 > crown
+            for lay in ((-0.5, 0.5) if double else (0.0,)):
+                d = depth * rng.uniform(0.85, 1.05)
+                across = fixed + lay * depth + shift + rng.uniform(-0.02, 0.02)
+                tint = scale(FIELDSTONE, rng.uniform(0.9, 1.04))
+                col = rock_col(tint, moss=0.08, ground=0.0, dark_below=0.85, noise=nz, var=0.08)
+                rot = quat_y(rng.uniform(-0.07, 0.07)) @ quat_z(rng.uniform(-0.04, 0.04)) @ quat_x(rng.uniform(-0.04, 0.04))
+                if axis == 'x':
+                    c, size = (mid, y + h / 2, across), (s1 - s0 - 0.02, h * rng.uniform(0.9, 1.0), d)
+                else:
+                    c, size = (across, y + h / 2, mid), (d, h * rng.uniform(0.9, 1.0), s1 - s0 - 0.02)
+                slab(g, c, size, rot, rng, res=(2, 1, 2), round_r=0.035, rough=0.08, cuts=int(rng.integers(1, 3)),
+                     col_fn=col, tile=0.5)
+                if capped:
+                    rx, rz = (size[0] * 0.42, size[2] * 0.4) if axis == 'x' else (size[0] * 0.4, size[2] * 0.42)
+                    mound(g, (c[0], y + h - 0.02, c[2]), rx, rz, 0.06, rng, mat=M_SNOW, col_fn=snow_fn(nz), tile=1.6,
+                          rings=2, seg=8, skirt=0.0, rough=0.08, edge=0.1, power=0.6)
+        y += h
+        ci += 1
+
+
+def story_hermitage(rng):
+    """Footprint r <= 3.4. Masses: the chapel walls (local 0, 0, 1.45 x 1.05 box), the graves
+    (-2.4, 1.15). Anselm's hermitage: a ruined dry-stone chapel cell of cool grey fieldstone, the
+    walls broken and stepped (1.0–2.1u), the north one leaning; the west gable rises into a bell-cote
+    whose open arch stands EMPTY against the sky (~4.1u, the tall mark), a stub of the bell beam in
+    it; the roof fallen in as charred beams over a drift in the nave; the writing slope and a shelf
+    inside; two snow-mounded graves with crude crosses; rubble at the wall feet."""
+    b = Builder()
+    g = G(b)
+    W2, D2, T = 1.4, 1.0, 0.34
+    grey = rock_col(FIELDSTONE, moss=0.08, ground=0.0, dark_below=0.85)
+    # South wall (still standing), north wall (broken down to a gap, leaning out), east wall with
+    # the door gap, west gable stepping up to the bell-cote.
+    gx = -W2 + 0.28  # the gable is two stones thick
+    jag = lambda t, k: 0.12 * math.sin(t * 17.0 + k) * math.sin(t * 7.3 + 2 * k)  # noqa: E731
+    # South wall, still standing, stepping down eastward; north wall broken to a gap and leaning out;
+    # east wall either side of the door; the west gable rising to the bell-cote.
+    course_wall(g, rng, 'x', -D2 + 0.16, gx + 0.28, W2, lambda t: 2.05 - 0.5 * t + jag(t, 0.0), depth=0.32)
+    course_wall(g, rng, 'x', D2 - 0.16, gx + 0.28, W2,
+                lambda t: 1.75 - 1.15 * math.exp(-((t - 0.55) / 0.2) ** 2) - 0.35 * t + jag(t, 1.0), depth=0.32,
+                lean=0.045)
+    course_wall(g, rng, 'z', W2 - 0.16, -D2 + 0.32, -0.38, lambda t: 1.72 - 0.15 * t + jag(t, 2.0), depth=0.32)
+    course_wall(g, rng, 'z', W2 - 0.16, 0.38, D2 - 0.32, lambda t: 1.2 + 0.2 * t + jag(t, 3.0), depth=0.32)
+    course_wall(g, rng, 'z', gx, -D2, D2, lambda t: 2.15 + 0.75 * (1.0 - abs(2 * t - 1.0)) + 0.6 * jag(t, 4.0),
+                depth=0.28, double=True)
+    # The door's lintel, fallen across the threshold.
+    slab(g, (W2 + 0.25, 0.1, 0.05), (0.34, 0.2, 1.0), quat_y(0.25), rng, res=(2, 1, 4), round_r=0.04, rough=0.05,
+         col_fn=grey, tile=0.6)
+    # Bell-cote: two piers and an arch of voussoirs, the opening EMPTY; a little pitched cap on top.
+    for z in (-0.36, 0.36):
+        slab(g, (gx, 2.98, z), (T, 1.02, 0.22), quat_y(0.0), rng, res=(2, 3, 2), round_r=0.03, rough=0.05,
+             col_fn=grey, tile=0.6)
+    ac, ar = V(gx, 3.47, 0.0), 0.36
+    for k in range(7):
+        t = math.pi * (k + 0.5) / 7
+        p = ac + V(0.0, math.sin(t) * ar, math.cos(t) * ar)
+        slab(g, tuple(p), (T, 0.15, 0.2), quat_x(-(t - math.pi / 2)), rng, res=(2, 1, 2), round_r=0.025,
+             rough=0.04, col_fn=grey, tile=0.5)
+    slab(g, (gx, 3.94, 0.0), (T + 0.06, 0.13, 1.0), quat_y(0.0), rng, res=(2, 1, 4), round_r=0.03, rough=0.04,
+         col_fn=grey, tile=0.6)
+    for sgn in (-1, 1):
+        slab(g, (gx, 4.07, sgn * 0.22), (T + 0.02, 0.08, 0.52), quat_x(sgn * 0.55), rng, res=(2, 1, 3), round_r=0.02,
+             rough=0.03, col_fn=grey, tile=0.6)
+    snow_cap(g, (gx, 4.12, 0.0), 0.2, 0.36, 0.05, rng)
+    snow_cap(g, (gx, 2.82, 0.0), 0.2, 0.46, 0.06, rng)
+    # A stub of the bell beam still in the north pier, its end broken off — nothing hangs from it.
+    beam(g, [V(gx, 3.36, 0.3), V(gx, 3.34, 0.07)], 0.09, 0.08, mat=M_PLANK, col=OLD_WOOD, rng=rng, jag=(0.0, 0.08))
+    # The roof, fallen in: charred grey beams down into the nave, one rafter still leaning on the
+    # south wall, a few boards; snow drifted in over it all.
+    char = lambda k: mix((0.24, 0.22, 0.21), (0.46, 0.45, 0.44), k)  # noqa: E731
+    for p0, p1, k in (((-1.15, 2.55, 0.05), (1.05, 0.12, 0.35), 0.2), ((-0.75, 1.95, -0.7), (0.55, 0.15, 0.5), 0.5),
+                      ((0.9, 1.6, -0.72), (0.15, 0.1, 0.55), 0.1), ((-0.9, 0.12, 0.6), (0.45, 0.62, -0.35), 0.35)):
+        beam(g, [V(*p0), V(*p1)], 0.11, 0.1, mat=M_PLANK, col=char(k), rng=rng, jag=(0.1, 0.12))
+    beam(g, [V(-0.35, 1.98, -0.72), V(-0.32, 2.55, -0.15)], 0.1, 0.09, mat=M_PLANK, col=char(0.4), rng=rng, jag=(0.0, 0.14))
+    for k in range(4):
+        x = -0.6 + k * 0.42
+        board(g, V(x, 0.2 + 0.05 * k, 0.1 - 0.12 * k), V(0.3, 0.0, 1.0), V(0.0, 1.0, 0.15), 0.9, 0.3, 0.035,
+              mat=M_PLANK, col=char(rng.uniform(0.1, 0.6)), rng=rng, jag=(0.0, 0.1))
+    drift(g, (0.15, 0.0, 0.3), 1.0, 0.6, 0.48, rng, rings=5, seg=16)
+    # Writing slope against the south wall + a shelf with a clay jar and a book block.
+    ls = V(-0.35, 0.0, -0.5)
+    beam(g, [ls + V(0, -0.1, 0), ls + V(0, 0.95, 0)], 0.08, 0.08, mat=M_PLANK, col=OLD_WOOD, rng=rng)
+    board(g, ls + V(0.0, 1.02, 0.05), V(1, 0, 0), V(0, 0.8, 0.6), 0.55, 0.42, 0.03, mat=M_PLANK, col=WOOD, rng=rng)
+    lbox(g, ls + V(0.0, 1.07, 0.04), (0.3, 0.04, 0.22), quat_x(-0.64), M_HIDE, (0.42, 0.28, 0.2), tile=0.3)
+    board(g, V(0.55, 1.15, -D2 + T + 0.12), V(1, 0, 0), V(0, 1, 0), 0.8, 0.24, 0.04, mat=M_PLANK, col=WOOD, rng=rng)
+    frustum(g, 0.06, 0.04, 1.17, 0.18, 9, M_EARTH, (0.62, 0.42, 0.3), tile=0.3, centre=(0.35, 0, -D2 + T + 0.12))
+    lbox(g, (0.7, 1.24, -D2 + T + 0.12), (0.2, 0.16, 0.14), quat_y(0.1), M_HIDE, (0.35, 0.22, 0.15), tile=0.3)
+    # Rubble at the wall feet — fallen courses, half in the snow.
+    for cx, cz, n in ((0.2, 1.45, 4), (-0.4, 1.35, 2), (1.85, 0.6, 2), (1.75, -0.8, 2), (-2.0, -0.75, 2)):
+        rubble(g, rng, n, cx, cz, 0.35, 0.12, 0.2, grey, y=-0.03)
+    # Drifts banked against the walls.
+    drift(g, (-1.95, 0.0, -0.3), 0.5, 1.1, 0.42, rng, rings=4, seg=14)
+    drift(g, (0.2, 0.0, -1.45), 1.45, 0.42, 0.4, rng, rings=4, seg=14)
+    drift(g, (1.85, 0.0, 0.55), 0.48, 0.6, 0.3, rng, rings=4, seg=14)
+    drift(g, (0.0, 0.0, 1.5), 1.2, 0.45, 0.32, rng, rings=4, seg=14)
+    # Two graves outside the west gable: low mounds under the snow, crude lashed crosses (one leaning).
+    for k, (x, z) in enumerate(((-2.35, 0.6), (-2.5, 1.75))):
+        drift(g, (x, 0.0, z), 0.4, 0.72, 0.26, rng, power=1.2, rings=4, seg=14)
+        foot = V(x, -0.25, z - 0.68)
+        lean = V(0.0, 0.0, 0.0) if k == 0 else V(0.32, 0.0, -0.18)
+        top = foot + V(0.03, 1.3, 0.0) + lean
+        beam(g, [foot, top], 0.07, 0.06, mat=M_PLANK, col=OLD_WOOD, rng=rng)
+        arm = foot.lerp(top, 0.78)
+        beam(g, [arm + V(0, 0, -0.26), arm + V(0, 0, 0.26)], 0.06, 0.05, mat=M_PLANK, col=OLD_WOOD, rng=rng)
+        lashing(g, arm, tuple(top - foot), 0.05, rng, turns=2)
+        snow_cap(g, top + V(0, 0.02, 0), 0.05, 0.05, 0.03, rng)
+    return b
+
+
+def story_old_ones_ring(rng):
+    """Footprint r <= 3.6. Masses: 6 stones on a 2.8 ring + the totem at the centre.
+    The Old Ones' ring: carved standing stones, each with concentric circles cut into its face (a
+    bell's voice, spreading), the tallest ~3.3u; the orks' offerings at the centre — a frozen
+    totem pole hung with tusks and bone fetishes, tusks laid on a flat stone."""
+    b = Builder()
+    g = G(b)
+    drift(g, (0.0, 0.0, 0.0), 3.4, 3.2, 0.2, rng, power=0.6, rings=8, seg=28)
+    heights = [3.3, 2.1, 2.6, 1.8, 2.4, 2.0]
+    for k, h in enumerate(heights):
+        a = k / 6 * 2 * math.pi + 0.2
+        c = V(math.cos(a) * 2.8, h / 2 - 0.3, math.sin(a) * 2.8)
+        face = -V(math.cos(a), 0, math.sin(a))  # carvings face the centre
+        rot = quat_y(-a + math.pi / 2) @ quat_z(rng.uniform(-0.05, 0.05))
+        w = 0.7 if k == 0 else rng.uniform(0.5, 0.65)
+        slab(g, tuple(c), (w, h + 0.6, 0.38), rot, rng, res=(3, 8, 2), round_r=0.08, taper=0.25, rough=0.05,
+             col_fn=dusted((0.58, 0.58, 0.6), 0.85), tile=1.0, crown=0.15)
+        snow_cap(g, tuple(c + V(0, (h + 0.6) / 2 - 0.05, 0)), w * 0.3, 0.14, 0.05, rng)
+        # Concentric rings, cut dark into the face.
+        cy = c.y + h * 0.18
+        right = V(0, 1, 0).cross(face).normalized()
+        for rr in (0.08, 0.15, 0.22):
+            ring = [V(c.x, cy, c.z) + face * 0.205 + (right * math.cos(t) + V(0, 1, 0) * math.sin(t)) * rr * (w / 0.6)
+                    for t in np.linspace(0, 2 * math.pi, 15)]
+            tube(g, ring, [0.012] * 15, 4, M_ROCK, (0.18, 0.18, 0.2), tile=0.2, cap=False)
+    # The centre: a flat offering stone, tusks and bones on it, the totem behind.
+    slab(g, (0.0, 0.05, 0.4), (1.0, 0.3, 0.7), quat_y(0.3), rng, res=(3, 1, 2), round_r=0.06, rough=0.04,
+         col_fn=dusted((0.5, 0.5, 0.52), 0.5), tile=0.8)
+    ivory = (0.86, 0.8, 0.66)
+    for k in range(4):
+        a = 0.3 + k * 0.5
+        p = V(-0.3 + k * 0.2, 0.24, 0.3 + (k % 2) * 0.2)
+        d = V(math.cos(a), 0, math.sin(a))
+        tube(g, [p, p + d * 0.2 + V(0, 0.05, 0), p + d * 0.32 + V(0, 0.14, 0)], [0.04, 0.03, 0.006], 6, M_ROCK, ivory, tile=0.2)
+    tc = V(0.0, -0.3, -0.35)
+    tube(g, [tc, tc + V(0.02, 1.4, 0.0), tc + V(0.0, 2.8, 0.02)], [0.16, 0.14, 0.12], 8, M_BARK, (0.45, 0.4, 0.36), tile=0.6)
+    for k, (y, s) in enumerate(((0.9, 0.24), (1.6, 0.22), (2.3, 0.2))):
+        lbox(g, tc + V(0, y, 0), (s * 1.6, s * 1.3, s * 1.6), quat_y(k * 0.7), M_PLANK, (0.42, 0.36, 0.3), tile=0.5)
+        snow_cap(g, tc + V(0, y + s * 0.67, 0), s * 0.7, s * 0.7, 0.04, rng)
+    for sgn in (-1, 1):  # tusks lashed to the top block, curving out
+        base = tc + V(sgn * 0.18, 2.35, 0.1)
+        tube(g, [base, base + V(sgn * 0.25, 0.2, 0.08), base + V(sgn * 0.32, 0.5, 0.0)], [0.05, 0.035, 0.006], 6, M_ROCK,
+             ivory, tile=0.2)
+    snow_cap(g, tc + V(0, 2.52, 0), 0.13, 0.13, 0.05, rng)
+    for k in range(5):  # bone fetishes hanging on cords
+        a = k / 5 * 2 * math.pi
+        top = tc + V(math.cos(a) * 0.2, 1.95, math.sin(a) * 0.2)
+        low = top + V(math.cos(a) * 0.08, -0.45, math.sin(a) * 0.08)
+        tube(g, [top, low], [0.005, 0.005], 3, M_CLOTH, W.ROPE, tile=0.2)
+        tube(g, [low, low + V(0, -0.16, 0)], [0.02, 0.014], 5, M_ROCK, ivory, tile=0.2)
+        lashing(g, low, (0, 1, 0), 0.025, rng, turns=1)
+    # A ring of small ork stakes with skull-white knobs, and frost-split bones at the stones' feet.
+    for k in range(7):
+        a = k / 7 * 2 * math.pi + 0.5
+        p = V(math.cos(a) * 1.35, -0.2, math.sin(a) * 1.35)
+        tube(g, [p, p + V(0, 0.75, 0)], [0.03, 0.025], 5, M_BARK, (0.4, 0.35, 0.3), tile=0.3)
+        stone(g, tuple(p + V(0, 0.82, 0)), (0.07, 0.07, 0.07), rng, mat=M_ROCK, detail=1, rough=0.05, cuts=0,
+              col_fn=lambda q, n: ivory, tile=0.2)
+    return b
+
+
+MODELS_EXTRA = {
+    "story_wrecked_convoy": story_wrecked_convoy,
+    "story_hermitage": story_hermitage,
+    "story_old_ones_ring": story_old_ones_ring,
+}
 
 
 def story_buried_cabin(rng):
@@ -641,6 +1012,7 @@ MODELS = {
     "story_mine_head": story_mine_head,
     "story_rockfall_wagon": story_rockfall_wagon,
     "story_quarry": story_quarry,
+    **MODELS_EXTRA,
 }
 
 if __name__ == "__main__":

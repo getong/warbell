@@ -1166,13 +1166,17 @@ fn pilgrim_brain(
             Without<crate::dying::Dying>,
         ),
     >,
-    marks: Query<&Transform, With<crate::landmarks::Landmark>>,
+    marks: Query<(&Transform, &crate::landmarks::Landmark)>,
 ) {
     let dt = time.delta_secs().min(0.05);
     let tw = time.elapsed_secs_wrapped();
-    // Candidate destinations: every landmark, plus a town point so they circle back home.
-    let mut dests: Vec<Vec2> =
-        marks.iter().map(|t| Vec2::new(t.translation.x, t.translation.z)).collect();
+    // Candidate destinations: every landmark (not the minor story sites up on the massif), plus a
+    // town point so they circle back home.
+    let mut dests: Vec<Vec2> = marks
+        .iter()
+        .filter(|(_, lm)| !lm.is_story())
+        .map(|(t, _)| Vec2::new(t.translation.x, t.translation.z))
+        .collect();
     dests.push(Vec2::new(0.0, 9.0));
 
     for (mut pil, mut v, mut tf) in &mut q {
@@ -1236,7 +1240,7 @@ fn pilgrim_hint(
         // Nearest landmark the hero hasn't discovered yet.
         let mut best: Option<(f32, Vec2, &'static str)> = None;
         for (t, lm) in &marks {
-            if lm.is_discovered() {
+            if lm.is_discovered() || lm.is_story() {
                 continue;
             }
             let lp = Vec2::new(t.translation.x, t.translation.z);
