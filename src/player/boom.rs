@@ -112,7 +112,7 @@ pub struct Occluders<'w, 's> {
     hits: Local<'s, Vec<f32>>,
 }
 
-/// What the boom hands back: the (possibly shoulder-shortened) look target and the resolved eye.
+/// What the boom hands back: the look target (shoulder-shortened, lifted when tight) and the eye.
 pub struct BoomPose {
     pub target: Vec3,
     pub eye: Vec3,
@@ -206,7 +206,10 @@ impl Occluders<'_, '_> {
         // 4. Tight framing: a short boom lifts to look over the shoulder.
         let tight = ((TIGHT_START - st.len) / (TIGHT_START - BOOM_MIN)).clamp(0.0, 1.0);
         let tight = tight * tight * (3.0 - 2.0 * tight);
-        let eye = target + dir * st.len + Vec3::Y * (tight * TIGHT_LIFT);
+        // Lift the look target with the eye so the view keeps the orbit pitch (a lifted eye aimed
+        // at the un-lifted target would stare down at the boots).
+        let lift = Vec3::Y * (tight * TIGHT_LIFT);
+        let eye = target + dir * st.len + lift;
 
         if flags().1 {
             st.dbg_us += t0.elapsed().as_secs_f32() * 1e6;
@@ -225,7 +228,7 @@ impl Occluders<'_, '_> {
                 (st.dbg_t, st.dbg_us, st.dbg_n) = (0.0, 0.0, 0);
             }
         }
-        BoomPose { target, eye }
+        BoomPose { target: target + lift, eye }
     }
 
     /// Flatten the visible occluders near `origin` into `scratch` for this frame's casts.
@@ -473,7 +476,7 @@ pub fn spawn_tall_test_walls(
     commands.spawn((
         Mesh3d(meshes.add(Cuboid::new(0.12, 3.5, 0.12).mesh().build())),
         MeshMaterial3d(stone),
-        Transform::from_xyz(-8.0, 1.75, -4.5),
+        Transform::from_xyz(9.0, 1.75, -3.0),
         CameraOccluder,
     ));
     info!("FOREST_TALLWALLS: 4u test curtain wall + 6u towers on the ±{hx}x±{hz} footprint");
