@@ -25,11 +25,17 @@ MANIFEST (bounding footprint x-range * z-range, top height; all in u):
   ck_rubble          x +-1.7, z +-1.3                                 0.6   rubble pile
   ck_palisade        x +-2.0, z +-2.2 (rampart)                       3.0   logs (z -0.2) on a 0.45 bank,
                      inner walkway at 1.65 (+Z), muddy ditch berm (-Z)
+  ck_palisade_2      x +-1.0 (6 logs)                                 3.0   palisade fillers
+  ck_palisade_1      x +-0.5 (3 logs)                                 3.0
+  ck_palisade_post   r 2.6 earth mound, 9 posts r 0.62 cluster        3.6   palisade corner on a vertex:
+                     hides two runs meeting at ANY angle (runs start 0.9u from the vertex)
   ck_timber_gate     x +-2.1, z -0.7..2.7                             4.3   2.8w x 2.7h opening, closed
                      leaves, fighting platform at 3.2, ladder +Z
   ck_watchtower      x +-1.65, z +-1.65                               5.5   platform 3.0, thatch cap
   ck_curtain         x +-2.0, z -1.2..0.84 (body 1.4 thick, batter)   3.96  walk 3.0, irregular merlons
                      ~3.9 with copings, sloped batter, spouts + stains; UVs repeat every 2u (seamless)
+  ck_curtain_2       x +-1.0 (same section, merlon rhythm, texture phase as ck_curtain)  3.9
+  ck_curtain_1       x +-0.5 (one merlon centred)                     3.9   fillers so runs land on a vertex
   ck_curtain_corner  x -0.95..0.7, z -0.95..0.7                       3.93  outer faces -Z and -X
   ck_stone_tower     x +-2.8, z -2.8..2.55 (batter + spouts)          6.41  mural tower 4.2: walk 5.4,
                      corbelled crenellated parapet, spouts with stains, put-log holes
@@ -45,6 +51,18 @@ MANIFEST (bounding footprint x-range * z-range, top height; all in u):
                      corbels under the crenellated parapet, steep hipped shingle roof behind it, round
                      stair turret with a shingle spire, garderobe on corbels, slits low / arched
                      shuttered windows high, raised first-floor door reached by a timber stair (+Z)
+
+  ck_round_tower     r 2.5 (batter r 2.95), centred ON a vertex      cone apex 10.2 (+finial 10.9)
+                     round flanking tower, corbelled wall-head 5.0-5.9, steep shingle cone roof,
+                     slits to the field (-Z), yard door +Z
+  ck_d_tower         x +-2.6 (batter 3.0), z -3.0..2.15, centred ON a vertex   6.5  D tower: round
+                     front to the field (-Z), flat back to the yard at z +2.0, open battlement (walk
+                     5.4, merlons ~6.5), spouts, yard doors at the foot and at walk level
+
+IRREGULAR ENCEINTE (corners 105-170 deg): runs of 4u / 2u / 1u modules land on each vertex; a
+ck_round_tower / ck_d_tower (stone) or ck_palisade_post (timber) centred on the vertex hides the
+joint at any angle. Stone runs start 2.0u from the vertex along each edge, palisade runs 0.9u. The
+D tower's flat back faces the yard: turn its -Z along the vertex's OUTWARD bisector.
 
     blender -b --factory-startup --python tools/blender_forest/castle_kit.py
 """
@@ -72,14 +90,17 @@ Q0 = quat_y(0.0)
 # Masonry is modelled with M_MASON everywhere; at export (`retexture`) every masonry face gets
 # world-projected UVs (courses level and continuous across boxes and modules) and the OLD COLONY
 # pieces are switched to the rubble scan:
-#   s_ashlar  coursed pale limestone (medieval_blocks_03): 5 courses per 4/3 u tile -> courses
-#             ~0.27u, blocks ~0.35-0.65u at hero scale; 3 tiles per 4u module, so runs tile clean
+#   s_ashlar  coursed pale limestone (medieval_blocks_03): one tile 1.0u wide x 1.5u high (5
+#             courses) -> blocks ~0.5 x 0.3u at hero scale; 4, 2 and 1u modules hold whole tiles
+#             (the 1u filler shifted half a tile, `U_OFF`), so mixed runs tile seamlessly
 #   s_rubble  grey rubble / fieldstone (broken_wall), 3u tile
 #   s_shingle weathered split shingles (roof_slates_02) on the keep, gatehouse and tower roofs
 M_MASON = len(SC.MATS)       # s_ashlar
 M_RUBBLE = len(SC.MATS) + 1  # s_rubble
 M_SHINGLE = len(SC.MATS) + 2  # s_shingle
-TILE = {M_MASON: 4.0 / 3.0, M_RUBBLE: 3.0, M_SHINGLE: 2.4}
+M_MASON_UV = 1000  # masonry built with its own ashlar UVs (round drums): retexture keeps them
+TILE = {M_MASON: (1.0, 1.5), M_RUBBLE: (3.0, 3.0), M_SHINGLE: (2.4, 2.4)}  # (u, v) units per repeat
+U_OFF = {"ck_curtain_1": 0.5}  # texture phase: module ends land on whole tiles
 OLD_PIECES = {"ck_bell_tower", "ck_ruin_keep", "ck_ruin_wall_a", "ck_ruin_wall_b", "ck_rubble", "ck_keep_t1"}
 SHINGLE = (0.9, 0.88, 0.85)
 # Layer 1: old colony stone (cool grey, mossy and damp at the foot).
@@ -622,35 +643,6 @@ def rampart(g, x0, x1, rng):
             g.flat(q, M_EARTH, scale(MUD, 0.8), 1.6)
 
 
-def ck_palisade(rng):
-    """Palisade module, 4u along X: sharpened oak logs (~2.4 above the crest, tops 2.85) set in an
-    earth rampart, two lashed inner rails, a plank walkway on posts on the inside (+Z) at 1.65."""
-    b = Builder()
-    g = G(b)
-    rampart(g, -2.0, 2.0, rng)
-    n = 13
-    for k in range(n):
-        x = -2.0 + (k + 0.5) * 4.0 / n
-        r = rng.uniform(0.13, 0.155)
-        top = 2.6 + rng.uniform(-0.1, 0.1)
-        z = -0.2 + rng.uniform(-0.02, 0.02)
-        pole(g, (x, 0.0, z), (x + rng.uniform(-0.02, 0.02), top, z), r, r * 0.92, rng, mat=M_BARK,
-             col_fn=lambda t: mix(scale(LOG, 0.6), LOG, smoothstep(0.05, 0.45, t)), sides=7, segs=2)
-        frustum(g, r * 0.92, 0.012, top, 0.32, 7, M_PLANK, TIMBER, tile=0.5, centre=(x, 0, z))
-    for y in (1.05, 2.15):
-        beam(g, [V(-2.0, y, 0.0), V(2.0, y, 0.0)], 0.14, 0.12, mat=M_PLANK, col=TIMBER, rng=rng)
-        for x in (-1.4, 0.6):
-            lashing(g, V(x, y, -0.06), (0, 1, 0), 0.17, rng, turns=2)
-    # Walkway: posts, joists, deck boards.
-    for x in (-1.5, 0.0, 1.5):
-        beam(g, [V(x, 0.0, 1.05), V(x, 1.6, 1.05)], 0.16, 0.16, mat=M_PLANK, col=TIMBER, rng=rng)
-        beam(g, [V(x, 1.58, 0.1), V(x, 1.58, 1.15)], 0.12, 0.14, mat=M_PLANK, col=TIMBER, rng=rng)
-    for k in range(3):
-        board(g, V(0.0, 1.68, 0.25 + k * 0.33), V(1, 0, 0), V(0, 1, 0), 4.0, 0.32, 0.05, mat=M_PLANK,
-              col=mix(TIMBER, OLD_TIMBER, rng.uniform(0, 0.25)), rng=rng)
-    return b
-
-
 def ck_timber_gate(rng):
     """Timber gate module (4u along X): two big oak gateposts, a lintel, closed double leaves of
     planks on Z-braces (opening 2.8 wide x 2.7 high), a fighting platform over the gate with a
@@ -759,32 +751,6 @@ def putlogs_x(g, x0, x1, z, ys, step=1.0, phase=0.5):
         for y in ys:
             dark_patch(g, V(x, y, z), (0.16, 0.16, 0.06))
         x += step
-
-
-def ck_curtain(rng):
-    """Curtain module 4u along X, tiling seamlessly on straight runs (UVs repeat whole every 2u,
-    merlons period 1.0 centred +-0.5 / +-1.5): body 1.4 thick (z -0.7..+0.7) on a sloped battered
-    plinth (outer flare 0.4), coursed ashlar, wall-walk at 3.0, an outer breastwork (-Z) to 3.35 and
-    irregular merlons with copings to ~3.9, a string course under the walk, two drain spouts with
-    their water stains, put-log holes, a low inner kerb."""
-    b = Builder()
-    g = G(b)
-    T = 2.0
-    batter(g, -2.0, 2.0, -0.7, 0.7, -0.3, 0.95, new_col, out=(0.4, 0.0, 0.14, 0.0), tile=T)
-    sbox(g, -2.0, 2.0, 0.95, 3.0, -0.7, 0.7, new_col, tile=T)
-    sbox(g, -2.0, 2.0, 3.0, 3.35, -0.7, -0.25, new_col, tile=T)       # breastwork
-    merlons_x(g, -2.0, 2.0, -0.7, -0.25, 3.35, 3.85, new_col, rng=rng, tile=T)
-    sbox(g, -2.0, 2.0, 3.0, 3.18, 0.5, 0.7, new_col, tile=T)          # inner kerb
-    sbox(g, -2.0, 2.0, 2.86, 3.0, -0.78, -0.7, new_col, tile=1.0)     # string course at the walk
-    putlogs_x(g, -2.0, 2.0, -0.705, (1.6, 2.4))
-    for x in (-1.0, 1.0):  # drain spouts through the breastwork, stains down the outer face
-        spout(g, "z", -0.7, -1, x, 3.06, new_col, reach=0.5, streak_len=1.7)
-    for x in (-1.6, 0.3):
-        streak(g, "z", -0.7, -1, x + rng.uniform(-0.15, 0.15), 2.84, rng.uniform(0.6, 1.2), new_col,
-               width=rng.uniform(0.3, 0.5), dark=0.7)
-    face_stones(g, rng, "z", -0.7, -1, -1.9, 1.9, 1.1, 2.8, new_col, 6, holes=0.0)
-    face_stones(g, rng, "z", 0.7, 1, -1.9, 1.9, 1.1, 2.8, new_col, 4, holes=0.0)
-    return b
 
 
 def ck_curtain_corner(rng):
@@ -1184,9 +1150,281 @@ def ck_keep_t2(rng):
     return b
 
 
-def planar_uvs(pts, tile):
+# ─────────────────────────────────────────────────────────────── 6. IRREGULAR ENCEINTE PIECES
+# The enceinte is an irregular polygon (corners 105-170 deg): runs of 4u / 2u / 1u modules land on
+# each vertex, and a round tower, a D tower (stone) or a post cluster (timber) centred ON the vertex
+# hides the joint at any angle. Wall runs start ATTACH_STONE (2.0u) / ATTACH_TIMBER (0.9u) from
+# the vertex along each edge.
+
+def drum(g, cx, cz, r0, r1, y0, y1, colf, sides=22, a0=0.0, a1=2 * math.pi, inward=False):
+    """A (tapered) cylindrical wall surface r0 at y0 -> r1 at y1 between angles a0..a1 (angle a is
+    at (cos a, sin a) in x, z), smooth radial normals, ashlar UVs laid round the drum (u = arc / TU,
+    v = y / TV; retexture keeps them). inward: faces the centre (a parapet's inner face)."""
+    n = max(1, int(round(sides * (a1 - a0) / (2 * math.pi))))
+    rm = (r0 + r1) / 2
+    tu, tv = TILE[M_MASON]
+    for k in range(n):
+        ta, tb = a0 + (a1 - a0) * k / n, a0 + (a1 - a0) * (k + 1) / n
+        pts, uvs, nrms, cols = [], [], [], []
+        for t, y, r in ((ta, y0, r0), (tb, y0, r0), (tb, y1, r1), (ta, y1, r1)):
+            d = V(math.cos(t), 0, math.sin(t))
+            pts.append(V(cx, 0, cz) + d * r + V(0, y, 0))
+            uvs.append((rm * t / tu, y / tv))
+            nrms.append(-d if inward else d)
+            cols.append(colf(y))
+        nf = (pts[1] - pts[0]).cross(pts[3] - pts[0])
+        if (nf.dot(nrms[0]) < 0):
+            pts, uvs, nrms, cols = pts[::-1], uvs[::-1], nrms[::-1], cols[::-1]
+        g.poly(pts, uvs, nrms, cols, M_MASON_UV)
+
+
+def annulus(g, cx, cz, r_in, r_out, y, colf, sides=22, a0=0.0, a1=2 * math.pi, down=False):
+    """A flat ring (or sector) at height y between r_in and r_out, facing up (or down)."""
+    n = max(1, int(round(sides * (a1 - a0) / (2 * math.pi))))
+    for k in range(n):
+        ta, tb = a0 + (a1 - a0) * k / n, a0 + (a1 - a0) * (k + 1) / n
+        q = [V(cx + math.cos(t) * r, y, cz + math.sin(t) * r) for t, r in ((ta, r_in), (tb, r_in), (tb, r_out), (ta, r_out))]
+        if r_in < 1e-3:
+            q = q[1:]
+        if ((q[1] - q[0]).cross(q[2] - q[0]).y < 0) != down:
+            q = q[::-1]
+        flat(g, q, M_MASON, colf(y))
+
+
+def rbox(g, a, r0, r1, y0, y1, w, colf, cx=0.0, cz=0.0, mat=M_MASON, col=None):
+    """A block standing radially at angle a between radii r0..r1, tangential width w."""
+    c = V(cx + math.cos(a) * (r0 + r1) / 2, (y0 + y1) / 2, cz + math.sin(a) * (r0 + r1) / 2)
+    lbox(g, c, (r1 - r0, y1 - y0, w), quat_y(-a), mat, col if col is not None else [colf(y0), None, colf(y1)],
+         tile=1.2, grain=1)
+
+
+def ring_merlons(g, cx, cz, r_in, r_out, y0, y1, a0, a1, n, colf, rng):
+    """n merlons (with copings) spread over the arc a0..a1."""
+    for k in range(n):
+        a = a0 + (a1 - a0) * (k + 0.5) / n
+        w = (a1 - a0) / n * (r_in + r_out) / 2 * 0.55
+        dh = rng.uniform(-0.07, 0.04)
+        rbox(g, a, r_in, r_out, y0, y1 + dh, w, colf, cx, cz)
+        rbox(g, a, r_in - 0.04, r_out + 0.04, y1 + dh, y1 + dh + 0.08, w + 0.08, colf, cx, cz)
+
+
+def ring_slit(g, a, r, y, h=0.75, cx=0.0, cz=0.0):
+    rbox(g, a, r - 0.03, r + 0.02, y - h / 2, y + h / 2, 0.14, None, cx, cz, mat=M_STONE, col=DARK)
+
+
+def curtain(rng, L):
+    """Curtain module L (4, 2 or 1) u along X — same section, merlon rhythm and texture phase as
+    every other length, so mixed runs tile seamlessly."""
+    b = Builder()
+    g = G(b)
+    x0, x1 = -L / 2, L / 2
+    batter(g, x0, x1, -0.7, 0.7, -0.3, 0.95, new_col, out=(0.4, 0.0, 0.14, 0.0))
+    sbox(g, x0, x1, 0.95, 3.0, -0.7, 0.7, new_col)
+    sbox(g, x0, x1, 3.0, 3.35, -0.7, -0.25, new_col)       # breastwork
+    merlons_x(g, x0, x1, -0.7, -0.25, 3.35, 3.85, new_col, phase=0.5 if L % 2 else 0.0, rng=rng)
+    sbox(g, x0, x1, 3.0, 3.18, 0.5, 0.7, new_col)          # inner kerb
+    sbox(g, x0, x1, 2.86, 3.0, -0.78, -0.7, new_col)       # string course at the walk
+    putlogs_x(g, x0, x1, -0.705, (1.6, 2.4))
+    for x in {4: (-1.0, 1.0), 2: (0.0,), 1: ()}[L]:  # drain spouts (under crenels), stains
+        spout(g, "z", -0.7, -1, x, 3.06, new_col, reach=0.5, streak_len=1.7)
+    for x in {4: (-1.6, 0.3), 2: (-0.6,), 1: ()}[L]:
+        streak(g, "z", -0.7, -1, x + rng.uniform(-0.15, 0.15), 2.84, rng.uniform(0.6, 1.2), new_col,
+               width=rng.uniform(0.3, 0.5), dark=0.7)
+    if L >= 2:
+        face_stones(g, rng, "z", -0.7, -1, x0 + 0.1, x1 - 0.1, 1.1, 2.8, new_col, 3 * L // 2, holes=0.0)
+        face_stones(g, rng, "z", 0.7, 1, x0 + 0.1, x1 - 0.1, 1.1, 2.8, new_col, L, holes=0.0)
+    return b
+
+
+def ck_curtain(rng):
+    """Curtain module 4u along X (see `curtain`): body 1.4 thick (z -0.7..+0.7) on a sloped battered
+    plinth (outer flare 0.4), coursed ashlar, wall-walk at 3.0, an outer breastwork (-Z) to 3.35 and
+    irregular merlons with copings to ~3.9 (period 1.0), a string course under the walk, two drain
+    spouts with their water stains, put-log holes, a low inner kerb."""
+    return curtain(rng, 4)
+
+
+def ck_curtain_2(rng):
+    """Curtain filler, 2u along X."""
+    return curtain(rng, 2)
+
+
+def ck_curtain_1(rng):
+    """Curtain filler, 1u along X (one merlon centred)."""
+    return curtain(rng, 1)
+
+
+def palisade(rng, L):
+    """Palisade module L (4, 2 or 1) u along X: sharpened oak logs set in an earth rampart, lashed
+    inner rails, a plank walkway on posts on the inside (+Z) at 1.65."""
+    b = Builder()
+    g = G(b)
+    x0, x1 = -L / 2, L / 2
+    rampart(g, x0, x1, rng)
+    n = {4: 13, 2: 6, 1: 3}[L]
+    for k in range(n):
+        x = x0 + (k + 0.5) * L / n
+        r = rng.uniform(0.13, 0.155)
+        top = 2.6 + rng.uniform(-0.1, 0.1)
+        z = -0.2 + rng.uniform(-0.02, 0.02)
+        pole(g, (x, 0.0, z), (x + rng.uniform(-0.02, 0.02), top, z), r, r * 0.92, rng, mat=M_BARK,
+             col_fn=lambda t: mix(scale(LOG, 0.6), LOG, smoothstep(0.05, 0.45, t)), sides=7, segs=2)
+        frustum(g, r * 0.92, 0.012, top, 0.32, 7, M_PLANK, TIMBER, tile=0.5, centre=(x, 0, z))
+    for y in (1.05, 2.15):
+        beam(g, [V(x0, y, 0.0), V(x1, y, 0.0)], 0.14, 0.12, mat=M_PLANK, col=TIMBER, rng=rng)
+        for x in {4: (-1.4, 0.6), 2: (-0.4,), 1: (0.0,)}[L]:
+            lashing(g, V(x, y, -0.06), (0, 1, 0), 0.17, rng, turns=2)
+    for x in {4: (-1.5, 0.0, 1.5), 2: (0.0,), 1: (0.0,)}[L]:
+        beam(g, [V(x, 0.0, 1.05), V(x, 1.6, 1.05)], 0.16, 0.16, mat=M_PLANK, col=TIMBER, rng=rng)
+        beam(g, [V(x, 1.58, 0.1), V(x, 1.58, 1.15)], 0.12, 0.14, mat=M_PLANK, col=TIMBER, rng=rng)
+    for k in range(3):
+        board(g, V(0.0, 1.68, 0.25 + k * 0.33), V(1, 0, 0), V(0, 1, 0), L, 0.32, 0.05, mat=M_PLANK,
+              col=mix(TIMBER, OLD_TIMBER, rng.uniform(0, 0.25)), rng=rng)
+    return b
+
+
+def ck_palisade(rng):
+    """Palisade module, 4u along X: sharpened oak logs (~2.4 above the crest, tops 2.85) set in an
+    earth rampart, two lashed inner rails, a plank walkway on posts on the inside (+Z) at 1.65."""
+    return palisade(rng, 4)
+
+
+def ck_palisade_2(rng):
+    """Palisade filler, 2u along X."""
+    return palisade(rng, 2)
+
+
+def ck_palisade_1(rng):
+    """Palisade filler, 1u along X."""
+    return palisade(rng, 1)
+
+
+def ck_palisade_post(rng):
+    """Palisade corner: a cluster of eight heavy sharpened posts (tops 3.1-3.6) round a ninth on a
+    round earth mound (r 2.6, crest 0.55), bound with rope lashings and a fighting step — centred on
+    the polygon vertex it hides the joint of two palisade runs at ANY angle (runs start 0.9u out)."""
+    b = Builder()
+    g = G(b)
+    mound(g, (0.0, -0.25, 0.0), 2.6, 2.6, 0.8, rng, mat=M_EARTH,
+          col_fn=lambda p, n: mix(scale(MUD, 0.7), mix(MUD, (0.55, 0.62, 0.4), 0.35), smoothstep(-0.1, 0.45, p.y)),
+          tile=1.6, rings=4, seg=16, skirt=0.2)
+    posts = [(0.0, 0.0)] + [(math.cos(k * math.pi / 4 + 0.2) * 0.62, math.sin(k * math.pi / 4 + 0.2) * 0.62)
+                            for k in range(8)]
+    for i, (x, z) in enumerate(posts):
+        r = rng.uniform(0.17, 0.21) if i else 0.24
+        top = (3.6 if i == 0 else 3.1 + rng.uniform(0.0, 0.35))
+        lean = (x * 0.04, z * 0.04)
+        pole(g, (x, -0.1, z), (x + lean[0], top, z + lean[1]), r, r * 0.92, rng, mat=M_BARK,
+             col_fn=lambda t: mix(scale(LOG, 0.6), LOG, smoothstep(0.05, 0.45, t)), sides=8, segs=2)
+        frustum(g, r * 0.92, 0.015, top, 0.4, 8, M_PLANK, TIMBER, tile=0.5, centre=(x + lean[0], 0, z + lean[1]))
+    for y in (1.0, 2.3):
+        lashing(g, V(0.0, y, 0.0), (0, 1, 0), 0.86, rng, turns=3)
+    # Fighting step on the yard side (+Z): two posts, a plank.
+    for x in (-0.6, 0.6):
+        beam(g, [V(x, 0.2, 1.25), V(x, 1.55, 1.15)], 0.14, 0.14, mat=M_PLANK, col=TIMBER, rng=rng)
+    board(g, V(0.0, 1.62, 1.1), V(1, 0, 0), V(0, 1, 0), 1.6, 0.34, 0.06, mat=M_PLANK, col=TIMBER, rng=rng)
+    return b
+
+
+def ck_round_tower(rng):
+    """Round flanking tower (r 2.5, 5.0 across) centred ON a polygon vertex — hides the curtain joint
+    at any corner angle (curtains start 2.0u out along each edge). Battered drum foot (r 2.95),
+    string course, slits on the field side (-Z), a corbelled wall-head at 5.0-5.4 with a low parapet,
+    and a steep SHINGLE CONE roof (eaves r 3.05, apex 10.2, finial); yard door on +Z."""
+    b = Builder()
+    g = G(b)
+    R = 2.5
+    drum(g, 0, 0, 2.95, R + 0.02, -0.3, 1.1, new_col)
+    drum(g, 0, 0, R + 0.08, R + 0.08, 1.1, 1.24, new_col)
+    annulus(g, 0, 0, R, R + 0.08, 1.24, new_col)
+    drum(g, 0, 0, R, R - 0.04, 1.1, 5.22, new_col)  # up behind the corbels to the wall-head
+    drum(g, 0, 0, R + 0.06, R + 0.06, 3.0, 3.16, new_col)
+    annulus(g, 0, 0, R - 0.02, R + 0.06, 3.16, new_col)
+    annulus(g, 0, 0, R - 0.02, R + 0.06, 3.0, new_col, down=True)
+    for k in range(16):  # two-tier corbels under the wall-head
+        a = (k + 0.5) * 2 * math.pi / 16
+        rbox(g, a, R - 0.1, R + 0.1, 4.75, 5.0, 0.26, new_col)
+        rbox(g, a, R - 0.1, R + 0.2, 5.0, 5.2, 0.26, new_col)
+    drum(g, 0, 0, R + 0.22, R + 0.22, 5.2, 5.9, new_col)
+    annulus(g, 0, 0, R - 0.06, R + 0.22, 5.2, new_col, down=True)
+    for a in (math.radians(d) for d in (200, 270, 340)):
+        ring_slit(g, a, R - 0.03, 2.1)
+    for a in (math.radians(d) for d in (235, 305)):
+        ring_slit(g, a, R - 0.04, 4.0)
+    for a in (math.radians(d) for d in (250, 320, 30, 150)):
+        ring_slit(g, a, R + 0.22, 5.55, h=0.4)
+    for k, a in enumerate(math.radians(d) for d in (215, 290, 330)):  # damp streaks under the wall-head
+        rbox(g, a, R - 0.03, R + 0.004, 4.75 - 1.6 - 0.4 * k, 4.75, 0.3, None, mat=M_MASON_UV,
+             col=[new_col(2.0), None, scale(new_col(4.7), 0.6)])
+    # Yard door (+Z) under a round arch.
+    rbox(g, math.pi / 2, R - 0.04, R + 0.02, 0.0, 1.9, 0.95, None, mat=M_STONE, col=DARK)
+    for k in range(3):
+        board(g, V(-0.28 + k * 0.28, 0.85, R + 0.03), V(0, 1, 0), V(0, 0, 1), 1.7, 0.27, 0.04, mat=M_PLANK,
+              col=mix(TIMBER, OLD_TIMBER, 0.3), rng=rng)
+    arch_x(g, rng, 0.0, 1.5, 0.48, R - 0.12, R + 0.1, new_col, n=5, block=0.18)
+    # The cone: steep shingles over the wall-head, plank underside, finial.
+    ry = 10.2
+    frustum(g, 3.05, 0.04, 5.75, ry - 5.75, 22, M_SHINGLE, SHINGLE, tile=2.4, segs=2)
+    frustum(g, 2.95, 0.04, 5.68, ry - 5.75, 22, M_PLANK, scale(OLD_TIMBER, 0.45), tile=1.2)
+    pole(g, (0, ry - 0.2, 0), (0, ry + 0.7, 0), 0.06, 0.02, rng, mat=M_IRON, col=IRON, sides=6, segs=1)
+    return b
+
+
+def ck_d_tower(rng):
+    """D-shaped flanking tower centred ON a polygon vertex: round front (r 2.6) to the field (-Z),
+    straight sides and a flat back to the yard at z +2.0 (5.2 wide, 4.6 deep) — hides the curtain
+    joint at any corner angle (curtains start 2.0u out). Battered foot, string course, slits, an
+    OPEN battlement: walk 5.4, parapet and irregular merlons to ~6.5 round the front and sides,
+    drain spouts with stains, put-log holes, yard doors at the foot and at walk level."""
+    b = Builder()
+    g = G(b)
+    R, ZB = 2.6, 2.0
+    front = (math.pi, 2 * math.pi)  # angles with z < 0
+    drum(g, 0, 0, 3.0, R, -0.3, 1.1, new_col, a0=front[0], a1=front[1])
+    batter(g, -R, R, 0.0, ZB, -0.3, 1.1, new_col, out=(0.0, 0.4, 0.15, 0.4))
+    drum(g, 0, 0, R, R, 1.1, 6.0, new_col, a0=front[0], a1=front[1])
+    sbox(g, -R, R, 1.1, 5.4, 0.0, ZB, new_col)
+    annulus(g, 0, 0, 0.0, R, 5.4, new_col, a0=front[0], a1=front[1])
+    # String course round the front and the sides.
+    drum(g, 0, 0, R + 0.07, R + 0.07, 3.2, 3.36, new_col, a0=front[0], a1=front[1])
+    annulus(g, 0, 0, R, R + 0.07, 3.36, new_col, a0=front[0], a1=front[1])
+    sbox(g, -R - 0.07, -R, 3.2, 3.36, 0.0, ZB, new_col)
+    sbox(g, R, R + 0.07, 3.2, 3.36, 0.0, ZB, new_col)
+    # Parapet: inner face + top round the front, straight parapets along the sides, merlons.
+    drum(g, 0, 0, R - 0.42, R - 0.42, 5.4, 6.0, new_col, a0=front[0], a1=front[1], inward=True)
+    annulus(g, 0, 0, R - 0.42, R, 6.0, new_col, a0=front[0], a1=front[1])
+    for s in (-1, 1):
+        x0, x1 = sorted((s * R, s * (R - 0.42)))
+        sbox(g, x0, x1, 5.4, 6.0, 0.0, ZB, new_col)
+        merlons_z(g, 0.0, ZB, x0, x1, 6.0, 6.5, new_col, period=1.0, phase=0.0, rng=rng)
+        spout(g, "x", s * R, s, 1.0, 5.45, new_col, streak_len=2.2)
+        putlogs = [(0.5, 2.0), (1.5, 4.3)]
+        for z, y in putlogs:
+            dark_patch(g, V(s * (R + 0.005), y, z), (0.06, 0.16, 0.16))
+        dark_patch(g, V(s * (R + 0.005), 2.4, 1.0), (0.06, 0.75, 0.14))
+    ring_merlons(g, 0, 0, R - 0.42, R, 6.0, 6.5, front[0], front[1], 5, new_col, rng)
+    sbox(g, -R + 0.42, R - 0.42, 5.4, 5.58, ZB - 0.18, ZB, new_col)  # yard-side kerb
+    for a in (math.radians(d) for d in (210, 270, 330)):
+        ring_slit(g, a, R - 0.03, 2.1)
+    for a in (math.radians(d) for d in (240, 300)):
+        ring_slit(g, a, R - 0.03, 4.2)
+    for k, a in enumerate(math.radians(d) for d in (225, 285)):  # stains under the merlons
+        rbox(g, a, R - 0.03, R + 0.004, 5.95 - 1.8 - 0.5 * k, 5.95, 0.32, None, mat=M_MASON_UV,
+             col=[new_col(2.0), None, scale(new_col(5.9), 0.6)])
+    # Yard doors: at the foot and at walk level (from the curtain walks), round-headed.
+    for y0, h in ((0.0, 1.9), (3.4, 1.55)):
+        dark_patch(g, V(0.0, y0 + h / 2, ZB + 0.005), (0.9, h, 0.06))
+        arch_x(g, rng, 0.0, y0 + h - 0.45, 0.45, ZB - 0.1, ZB + 0.1, new_col, n=5, block=0.18)
+    face_stones(g, rng, "z", ZB, 1, -R + 0.4, R - 0.4, 1.3, 5.0, new_col, 4, holes=0.0)
+    return b
+
+
+# ─────────────────────────────────────────────────────────────── EXPORT
+
+def planar_uvs(pts, tile, uoff=0.0):
     """World-projected UVs (Blender coords, Z up) for one planar face: u along the face's horizontal
-    tangent, v up the face — courses stay level and continuous across boxes, modules and slopes."""
+    tangent, v up the face — courses stay level and continuous across boxes, modules and slopes.
+    tile = (u, v) units per repeat; uoff shifts u (texture phase)."""
     n = Vector((0.0, 0.0, 0.0))
     for i in range(len(pts)):
         a, c = pts[i], pts[(i + 1) % len(pts)]
@@ -1201,7 +1439,7 @@ def planar_uvs(pts, tile):
     else:
         t = Vector((0.0, 0.0, 1.0)).cross(n).normalized()
         bt = n.cross(t)
-    return [(p.dot(t) / tile, p.dot(bt) / tile) for p in pts]
+    return [(p.dot(t) / tile[0] + uoff, p.dot(bt) / tile[1]) for p in pts]
 
 
 def retexture(b, name):
@@ -1210,10 +1448,12 @@ def retexture(b, name):
     old = name in OLD_PIECES
     out = []
     for idx, uvs, nrms, cols, mat in b.faces:
-        if mat in (M_MASON, M_SHINGLE):
+        if mat == M_MASON_UV:
+            mat = M_RUBBLE if old else M_MASON
+        elif mat in (M_MASON, M_SHINGLE):
             if mat == M_MASON and old:
                 mat = M_RUBBLE
-            uvs = planar_uvs([Vector(b.verts[i]) for i in idx], TILE[mat])
+            uvs = planar_uvs([Vector(b.verts[i]) for i in idx], TILE[mat], U_OFF.get(name, 0.0))
         elif mat == SC.M_BRONZE and name == "ck_bell_tower":
             cols = [tuple(min(1.0, c * 2.4) for c in col[:3]) + tuple(col[3:]) for col in cols]
         out.append((idx, uvs, nrms, cols, mat))
@@ -1227,15 +1467,22 @@ MODELS = {
     "ck_ruin_wall_b": ck_ruin_wall_b,
     "ck_rubble": ck_rubble,
     "ck_palisade": ck_palisade,
+    "ck_palisade_2": ck_palisade_2,
+    "ck_palisade_1": ck_palisade_1,
+    "ck_palisade_post": ck_palisade_post,
     "ck_timber_gate": ck_timber_gate,
     "ck_watchtower": ck_watchtower,
     "ck_curtain": ck_curtain,
+    "ck_curtain_2": ck_curtain_2,
+    "ck_curtain_1": ck_curtain_1,
     "ck_curtain_corner": ck_curtain_corner,
     "ck_stone_tower": ck_stone_tower,
     "ck_corner_tower": ck_corner_tower,
     "ck_gatehouse": ck_gatehouse,
     "ck_keep_t1": ck_keep_t1,
     "ck_keep_t2": ck_keep_t2,
+    "ck_round_tower": ck_round_tower,
+    "ck_d_tower": ck_d_tower,
 }
 
 if __name__ == "__main__":
