@@ -22,7 +22,12 @@ use std::time::Duration;
 pub struct CapturePlugin;
 
 #[derive(Resource)]
-struct ShotPath(String);
+pub(crate) struct ShotPath(pub(crate) String);
+
+/// Set `true` by a follow-up shot sequence (e.g. `player::boom`'s `FOREST_BOOMSHOTS`) to keep the
+/// app alive after the main `FOREST_SHOT` lands; `drive_shot` exits once it drops back to `false`.
+#[derive(Resource, Default)]
+pub(crate) struct ShotHold(pub(crate) bool);
 
 #[derive(Resource, Default)]
 struct ShotClock {
@@ -45,6 +50,7 @@ impl Plugin for CapturePlugin {
         if let Ok(path) = std::env::var("FOREST_SHOT") {
             app.insert_resource(ShotPath(path))
                 .init_resource::<ShotClock>()
+                .init_resource::<ShotHold>()
                 .add_systems(Update, drive_shot);
         } else if let Ok(dir) = std::env::var("FOREST_CLIP") {
             let cfg = clip_cfg(dir);
@@ -93,6 +99,7 @@ fn drive_shot(
     mut commands: Commands,
     mut exit: MessageWriter<AppExit>,
     mut cams: Query<(&mut Transform, Option<&mut crate::controls::FlyCam>), With<Camera3d>>,
+    hold: Res<ShotHold>,
 ) {
     clock.frame += 1;
     // Take the shot once the scene has actually WARMED: ≥240 rendered frames AND ≥10 s wall-clock
@@ -128,6 +135,9 @@ fn drive_shot(
     // readback and write no PNG.
     if clock.shot && (std::path::Path::new(&path.0).exists() || clock.frame > clock.shot_at + 1800) {
         if std::env::var("FOREST_SHOT_STORIES").is_ok() && drive_story_seq(&mut clock, &path.0, &mut commands, &mut cams) {
+            return;
+        }
+        if hold.0 {
             return;
         }
         exit.write(AppExit::Success);
