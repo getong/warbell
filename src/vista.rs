@@ -242,11 +242,14 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
     // 2. OVERLOOKS — ring-search a flat legal spot near each authored anchor, face the view.
     let prop = meshes.add(overlook_prop());
     let range = VisibilityRange { start_margin: 0.0..0.0, end_margin: 130.0..130.0, use_aabb: true };
+    // Authored at MAP_SCALE 2.2 (the summits are the region centres ×2.2) — `world22` keeps them
+    // on the summits / canyon mouth at the current scale (they had silently drifted off at 2.6).
+    use crate::worldmap::world22;
     let anchors: [(Vec2, Vec2, &str); 3] = [
         // (anchor, what the view looks AT, label)
-        (Vec2::new(96.8, 6.6), Vec2::ZERO, "rock summit → castle plain"),
-        (Vec2::new(-101.2, -66.0), Vec2::new(-150.0, -66.0), "snow summit → western sea"),
-        (Vec2::new(95.0, -66.0), Vec2::new(66.0, -88.0), "canyon mouth → rival dunes"),
+        (world22(96.8, 6.6), Vec2::ZERO, "rock summit → castle plain"),
+        (world22(-101.2, -66.0), world22(-150.0, -66.0), "snow summit → western sea"),
+        (world22(95.0, -66.0), world22(66.0, -88.0), "canyon mouth → rival dunes"),
     ];
     let spot_ok = |x: f32, z: f32| {
         let Some(y0) = crate::worldmap::ground_at_world(x, z) else { return false };

@@ -193,7 +193,8 @@ fn perf_roam(time: Res<Time>, mut hero_q: Query<&mut crate::player::Hero>) {
     let t = time.elapsed_secs();
     let a = t * 0.16; // ~40 s of game time per lap (×PERFSPEED faster in wall-clock)
     let prev_a = (t - time.delta_secs()) * 0.16;
-    let r = 78.0_f32;
+    // 78u at MAP_SCALE 2.6 (threads every biome's rim) — tracks the map scale so it still does.
+    let r = 78.0_f32 * crate::worldmap::MAP_SCALE / 2.6;
     let pos = Vec2::new(r * a.cos(), r * a.sin());
     let prev = Vec2::new(r * prev_a.cos(), r * prev_a.sin());
     let dir = (pos - prev).normalize_or_zero();

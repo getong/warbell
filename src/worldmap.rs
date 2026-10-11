@@ -61,14 +61,19 @@ pub fn on_massif_corner(cx: i32, cz: i32) -> bool {
 /// the desert rival, jammed against the north coast) more room, then 2.0 → 2.2 (map-character
 /// overhaul pass 0) so the biomes keep real interior once the fixed-world-size claims (warden
 /// glade r16, rival plateau r30, fortress apron) are subtracted, then 2.2 → 2.6 (landmark
-/// overhaul, July 2026 — paid for by the terrain far-LOD, see `build_terrain_chunk_coarse`).
+/// overhaul, July 2026 — paid for by the terrain far-LOD, see `build_terrain_chunk_coarse`),
+/// then 2.6 → 3.9 (+50% linear, Oct 2026: the polygon enceinte + street village had grown into
+/// the biomes — the snow massif stood right behind the walls and the desert/pyramid read from the
+/// keep). The castle, village, siege ring and defenses are WORLD-authored and do not scale; the
+/// base-space castle margins (`SAFE_R`, `SAFE_PAD`) were deliberately NOT trimmed this time, so
+/// the open ring past the walls grew with the gap to the biomes (≈17 → ≈26u of flat grass).
 /// The world-coord-authored landmarks scale with it automatically: `ork_fortress::BLIGHT_DZ` and
 /// `rival::RIVAL_CENTRE` are derived from `MAP_SCALE`, and the remaining hand-authored world
 /// coords (warden `boss::region_center`, chest hoards, snowman field, the swamp pool keep-out)
 /// route through [`world22`] so they track scale bumps too. Per-bump manual checklist: trim
 /// `SAFE_R` (base-space, so it silently over-grows), re-size `navgrid::NAV_MAX_NODES` (A* budget
 /// ∝ tiles), and re-check CLAUDE.md's biome-centre table for capture framing.
-pub const MAP_SCALE: f32 = 2.6;
+pub const MAP_SCALE: f32 = 3.9;
 
 /// Rescale a world-XZ coordinate that was hand-authored (and playtested) at `MAP_SCALE` 2.2 to
 /// the CURRENT scale. Generation runs in base space, so a point that sat inside a biome at 2.2

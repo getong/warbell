@@ -141,7 +141,8 @@ fn weapon_visibility(
 
 /// The fortress gate's shut-line OBB blocker (registered in `ork_fortress::build`); dropping it
 /// opens the wall gap to A*. Kept in sync with the leaf swing below.
-const GATE_BLOCKER: (f32, f32) = (12.0, 80.9);
+/// (`ork_fortress::GATE` — a literal (12, 80.9) here had dropped the fortress's `BLIGHT_DZ` shift.)
+const GATE_BLOCKER: (f32, f32) = (crate::ork_fortress::GATE.x, crate::ork_fortress::GATE.y);
 /// Fully-open leaf swing (radians) — ~95°, the leaves laid back against the wall.
 const GATE_OPEN_ANGLE: f32 = 1.65;
 

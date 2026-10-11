@@ -133,8 +133,8 @@ $env:FOREST_CLIP="target/clips/desert"; $env:FOREST_CLIP_ORBIT="71,1.5,-46,22,14
 $env:FOREST_CLIP="target/clips/siege"; $env:FOREST_WAVE="1"; $env:FOREST_DEFEND="1"; $env:FOREST_TOWN="1"; $env:FOREST_CAM="0,15,30,0,2,-8"; cargo run
 # stitch (per-clip mp4 + gif): ffmpeg -framerate 30 -i frame_%05d.png -pix_fmt yuv420p out.mp4
 ```
-Biome region centres (world XZ, at `MAP_SCALE` 2.6): snow (-82,-53) · desert (71,-46) · rock (78,5) ·
-forest (-71,46) · swamp (0,67). These scale with `MAP_SCALE` — code with a hand-authored world coord
+Biome region centres (world XZ, at `MAP_SCALE` 3.9): snow (-123,-80) · desert (107,-69) · rock (117,8) ·
+forest (-107,69) · swamp (0,101) (×1.5 the 2.6-era numbers; the castle/village stay world-fixed). These scale with `MAP_SCALE` — code with a hand-authored world coord
 should route it through `worldmap::world22` (rescales 2.2-era coords) instead of baking the scale in.
 Clip knobs: `FOREST_CLIP_FRAMES` (150) · `FOREST_CLIP_FPS` (30) · `FOREST_CLIP_WARMUP` (30).
 
@@ -153,7 +153,7 @@ Env hooks that stage a scene for a shot (combine with `FOREST_SHOT` **or** `FORE
 | `FOREST_ARCHERS=<n>` | retrain the whole standing militia as **longbow archers** at boot (`villagers.rs::stage_archers`); numeric `n ≥ 2` also raises `town.population` to `n` so a whole squad grows in to retrain. Pair with `FOREST_MUSTER`+`FOREST_HERO` to park a volleying rank anywhere, `FOREST_ORKLINE` for live targets, or `FOREST_WAVE` for a defended siege. (`FOREST_VIEW=peasant:archer` + `FOREST_VIEW_ANIM=bow` previews the model / draw-loose clip in the viewer.) |
 | `FOREST_CAGETEST="x,z"` | park the prisoner-cage rescue's before/after states side by side at a world XZ: a CLOSED cage of real seated peasant captives + an OPENED emptied one 5.5u further +X (`camps::spawn_cage`); both doors face +X, so frame from the east. Film the actual door-swing + walk-out with `FOREST_DEMO=rescue` + `FOREST_CLIP` instead |
 | `FOREST_BREACH=1` | auto-break the Hold gate on the first sim frame so a shot/clip films the woken garrison + the Warlord boss without a keypress (`ork_fortress::stage_breach`); pair with `FOREST_HERO`/`FOREST_CAM` inside the walls |
-| `FOREST_RIVAL=<n>` | instantly raise `n` buildings in the **rival stronghold** (the desert AI opponent, `rival.rs`) so a shot frames a grown rival town instead of waiting out its economy (default: fill the bailey); the rival keep/walls/garrison spawn regardless. Frame it at `rival::RIVAL_CENTRE` ≈ world `(78, -104)` at MAP_SCALE 2.6 (NE desert) |
+| `FOREST_RIVAL=<n>` | instantly raise `n` buildings in the **rival stronghold** (the desert AI opponent, `rival.rs`) so a shot frames a grown rival town instead of waiting out its economy (default: fill the bailey); the rival keep/walls/garrison spawn regardless. Frame it at `rival::RIVAL_CENTRE` ≈ world `(117, -156)` at MAP_SCALE 3.9 (NE desert) |
 | `FOREST_TREELINE="x,z"` | park one of each `TreeKind` (broadleaf/birch/pine/poplar/autumn/dead/stump) in a 2× row at a world XZ (tree-model close-ups, `trees.rs`) |
 | `FOREST_FISHLINE="x,z"` | park one of each fish variety (silver/blue/gold) frozen mid-leap in a lit row at a world XZ (fish-model close-ups, `fish.rs`) |
 | `FOREST_MENU=1` | shoot the start screen |
@@ -216,7 +216,7 @@ Two related map systems share the ground pipeline in `biome.rs`:
   (declarative ground/atmosphere/scatter/particles) + optional `landmarks()`. Keys **1–5** swap a
   single 32×32 biome patch at runtime (despawns everything tagged `BiomeEntity`, rebuilds).
 - **`worldmap.rs`** — the actual playable island: generated at base
-  resolution scaled up by `MAP_SCALE = 2.2` (→ `COLS 316 × ROWS 360`). Elliptical island, five
+  resolution scaled up by `MAP_SCALE = 3.9` (→ `COLS 561 × ROWS 639`). Elliptical island, five
   biome blobs, grass safe-zone (castle), four rivers + lake, coastal mountain ridges, rolling
   terraced knolls, plateaus. `classify` force-flattens grass under every town build plot (and
   chest/cover placement rejects `town::near_build_plot`) so nothing occupies a future building's

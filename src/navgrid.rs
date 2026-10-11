@@ -18,10 +18,12 @@ use crate::worldmap::{COLS, GROUND_STEP, GX, GZ, ROWS};
 /// map an invader spawned across one of the four rivers must detour to a bridge, so the explored
 /// set can far exceed the straight-line tile count. 1400 truncated those detours to an *empty*
 /// path (idle invader); 6000 covered the worst river detour at MAP_SCALE 2.2, re-sized to 8400
-/// for the 2.6 bump (budget ∝ tile count ∝ MAP_SCALE²). Since the keep is always reachable, A*
-/// terminates as soon as it's found — the larger budget only costs on a (never-occurring for
-/// invaders) unreachable goal, where the open set drains to the cap.
-pub const NAV_MAX_NODES: u32 = 8400;
+/// for the 2.6 bump (budget ∝ tile count ∝ MAP_SCALE²) — now DERIVED from `MAP_SCALE` (8400 at
+/// 2.6, ≈18 900 at 3.9) so a scale bump can't silently starve it again. Since the keep is always
+/// reachable, A* terminates as soon as it's found — the larger budget only costs on a
+/// (never-occurring for invaders) unreachable goal, where the open set drains to the cap.
+pub const NAV_MAX_NODES: u32 =
+    (8400.0 * (crate::worldmap::MAP_SCALE / 2.6) * (crate::worldmap::MAP_SCALE / 2.6)) as u32;
 
 /// World centre of tile `(ix, iz)` in forest world-space (castle at origin).
 #[inline]
