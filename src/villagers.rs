@@ -2802,7 +2802,7 @@ fn courtyard_spot(rng: &mut u32, half: (f32, f32), placed: &[Vec2]) -> Option<Ve
         let x = rng_range(rng, -(half.0 - 2.0), half.0 - 2.0);
         let z = rng_range(rng, -(half.1 - 2.0), half.1 - 2.0);
         let p = Vec2::new(x, z);
-        if crate::blockers::is_blocked(x, z) || p.distance(crate::castle::KEEP_POS) < 6.5 {
+        if crate::blockers::is_blocked(x, z) || !crate::castle::in_courtyard(x, z) || p.distance(crate::castle::KEEP_POS) < 6.5 {
             continue; // skip props/walls/houses and the keep
         }
         if placed.iter().any(|q| q.distance(p) < 2.0) {

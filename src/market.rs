@@ -81,8 +81,8 @@ const VENDOR_Z: f32 = -0.85;
 /// North row faces the lane southward (+Z), south row faces it northward. The west lane runs
 /// along z ≈ 0 (`castle_ground::LANES`), the stalls sit just off its trodden shoulder.
 ///
-/// Castle v2 (spec §2): the market square sits just inside the WEST main gate, centred on
-/// `castle::MARKET_CENTRE`; everything here is laid out relative to it.
+/// Layout v3 (spec §2): the market square sits just OUTSIDE the WEST main gate on the King's Road,
+/// centred on `castle::MARKET_CENTRE`; everything here is laid out relative to it.
 const MC: Vec2 = crate::castle::MARKET_CENTRE;
 const STALLS: [Stall; 4] = [
     Stall { model: "market_bread", pos: Vec2::new(MC.x + 1.6, MC.y - 2.9), yaw: 0.0, vendor_x: 0.35 },
@@ -145,17 +145,18 @@ fn spawn_market(
 mod tests {
     use super::*;
 
-    /// Stalls and their vendors stay off the west cart lane's trodden core and inside the walls.
+    /// Stalls and their vendors stay off the King's Road's trodden core, on the square outside the
+    /// W gate, clear of the walls and of the square's tavern / Maud's house.
     #[test]
-    fn market_sits_beside_the_lane_inside_the_walls() {
-        let (hx, hz) = crate::castle::courtyard_half();
+    fn market_sits_beside_the_road_outside_the_gate() {
         for s in &STALLS {
             let rot = Quat::from_rotation_y(s.yaw);
             let front = s.pos + (rot * Vec3::new(0.0, 0.0, 0.57)).xz();
-            assert!(front.y.abs() > 1.9, "{} counter front {front} crowds the lane", s.model);
-            assert!(s.pos.x.abs() < hx - 2.0 && s.pos.y.abs() < hz - 2.0, "{} outside the yard", s.model);
+            assert!(crate::castle::village_dist(front.x, front.y) > 1.4, "{} counter front {front} crowds the road", s.model);
+            assert!(s.pos.distance(MC) < 6.0 && crate::castle::outside_dist(s.pos.x, s.pos.y) > 6.0, "{} off the square", s.model);
+            assert!(crate::castle::plot_clear(s.pos.x, s.pos.y, 1.2), "{} hits a square building", s.model);
             let v = s.pos + (rot * Vec3::new(s.vendor_x, 0.0, VENDOR_Z)).xz();
-            assert!(v.y.abs() > s.pos.y.abs(), "{} vendor isn't behind the counter", s.model);
+            assert!((v.y - MC.y).abs() > (s.pos.y - MC.y).abs(), "{} vendor isn't behind the counter", s.model);
         }
     }
 }

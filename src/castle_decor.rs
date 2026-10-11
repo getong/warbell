@@ -24,12 +24,14 @@ use bevy::prelude::*;
 use crate::biome::BiomeEntity;
 use crate::castle::{bake, bx, cyl, flat, gable, log_x, taper, Mats, M};
 use crate::castle::{HALF_X, HALF_Z, KEEP_FRONT, KEEP_HALF, KEEP_POS, MERCHANT_SHOP, N_GATE_X, S_GATE_X, W_GATE_Z};
+// (HALF_X / HALF_Z = the W wall line and the N / S wall lines — exact where they're used here.)
 use crate::economy::{Defenses, EconomyState, Upgrades};
 
 const HALF_PI: f32 = std::f32::consts::FRAC_PI_2;
-/// Corner fire baskets: inside each wall corner, clear of the (1.5× scaled) corner tower.
-const BRAZIER_X: f32 = HALF_X - 2.6;
-const BRAZIER_Z: f32 = HALF_Z - 2.6;
+/// Corner fire baskets: inside each defender corner, clear of its tower (`castle::corner_inside`).
+fn corner_baskets() -> [Vec2; 4] {
+    crate::castle::DEFENDER_CORNERS.map(|v| crate::castle::corner_inside(v, 4.6))
+}
 
 /// What reveals a piece of set dressing.
 #[derive(Clone, Copy)]
@@ -254,11 +256,11 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
 
     // ── Filled in as the town grows (House(n): shown once houses > n) ───────────
     // Kitchen garden / woodpile / laundry sit among the houses along the walls, not in the yard.
-    set(garden_parts(), Vec3::new(-HALF_X * 0.63, 0.0, HALF_Z * 0.57), 0.15, DecorGate::House(1), Vec2::ZERO);
-    set(woodpile_parts(), Vec3::new(HALF_X * 0.62, 0.0, HALF_Z * 0.38), 0.4, DecorGate::House(2), Vec2::new(0.66, 0.37));
+    set(garden_parts(), Vec3::new(-17.6, 0.0, 13.2), 0.15, DecorGate::House(1), Vec2::ZERO);
+    set(woodpile_parts(), Vec3::new(17.4, 0.0, 9.1), 0.4, DecorGate::House(2), Vec2::new(0.66, 0.37));
     // Laundry line = cloth hung overhead on a string between two thin posts — you walk UNDER it.
     // No collision (a 2.6-wide box across the lane just walls off the courtyard for no reason).
-    set(laundry_parts(), Vec3::new(-HALF_X * 0.66, 0.0, HALF_Z * 0.66), 0.05, DecorGate::House(1), Vec2::ZERO);
+    set(laundry_parts(), Vec3::new(-21.5, 0.0, 11.0), 0.05, DecorGate::House(1), Vec2::ZERO);
     // (Far-side duplicate garden + laundry cut — the bailey was over-dressed with junk stands.)
 
     // ── Upgrade set pieces ───────────────────────────────────────────────────────
@@ -287,8 +289,8 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
     set(stone_pile_parts(), Vec3::new(kw - 1.3, 0.0, kn + 1.2), 0.3, DecorGate::Reinforced, Vec2::new(0.35, 0.65));
 
     // Tower Mastery: a standing fire basket inside each wall corner (the crews work all night).
-    for (sx, sz) in [(-1.0_f32, -1.0_f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
-        set(brazier_parts(), Vec3::new(sx * BRAZIER_X, 0.0, sz * BRAZIER_Z), sx * 0.4, DecorGate::TowerMastery, Vec2::new(0.2, 0.2));
+    for p in corner_baskets() {
+        set(brazier_parts(), Vec3::new(p.x, 0.0, p.y), p.x.signum() * 0.4, DecorGate::TowerMastery, Vec2::new(0.2, 0.2));
     }
 
     // Merchant Guild: banner + stacked goods dressing the wandering merchant's shop by the
@@ -301,9 +303,9 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
 
     // Firelight: flickering pools for the night-burning pieces (the meshes' emissive alone
     // reads flat in the dark). Same pooled flicker as the wall torches.
-    for (i, (sx, sz)) in [(-1.0_f32, -1.0_f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)].into_iter().enumerate() {
+    for (i, p) in corner_baskets().into_iter().enumerate() {
         commands.spawn((
-            Transform::from_xyz(sx * BRAZIER_X, 2.2, sz * BRAZIER_Z),
+            Transform::from_xyz(p.x, 2.2, p.y),
             Visibility::Hidden,
             Decor { gate: DecorGate::TowerMastery },
             BiomeEntity,

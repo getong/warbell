@@ -662,7 +662,7 @@ pub(crate) fn spawn_hero_meshes(
 pub fn spawn_point() -> (Vec2, f32) {
     // Castle v2: the same spot relative to the (now 28×21) walls — 9u west, 6u south of the SW
     // corner, beside the meadow campfire.
-    let pos = Vec2::new(-crate::castle::HALF_X - 9.0, crate::castle::HALF_Z + 6.0);
+    let pos = Vec2::new(-crate::castle::HALF_X - 9.0, 21.0 + 6.0);
     // Yaw 0 faces +Z; aim at the castle at the origin.
     let facing = (-pos.x).atan2(-pos.y);
     (pos, facing)

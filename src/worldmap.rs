@@ -120,13 +120,25 @@ const SAFE_PAD: f32 = 6.6;
 /// swings ±3.7 — clamped so the ring stays ≥15u and doesn't bite into the nearby mesas.
 const SAFE_FRAY: f32 = 0.8;
 
-/// Base-space distance from `(x, z)` to the castle's wall rectangle (`castle::HALF_X`×`HALF_Z`,
-/// world-centred on the origin = base `(CX, CZ)`); 0 inside the walls.
+/// Base-space distance from `(x, z)` to the castle's open ground (0 inside the walls): the
+/// enceinte polygon (`castle::outside_dist`, world-centred on the origin = base `(CX, CZ)`) — and
+/// the VILLAGE LOBE west of it: the street village along the King's Road out of the W gate
+/// (`castle::village_dist`) counts as "ring" up to [`VILLAGE_FLAT`] off its streets, so the forest
+/// is cut back and the burgage plots stand on the same level grass as the castle.
 fn castle_ring_dist(x: f32, z: f32) -> f32 {
-    let dx = ((x - CX).abs() - crate::castle::HALF_X / MAP_SCALE).max(0.0);
-    let dz = ((z - CZ).abs() - crate::castle::HALF_Z / MAP_SCALE).max(0.0);
-    dx.hypot(dz)
+    let (wx, wz) = ((x - CX) * MAP_SCALE, (z - CZ) * MAP_SCALE);
+    // ≥15u past every face and corner of the polygon — and never less open ground than the v2
+    // 28×21 rectangle had (its NW corner reached further toward the snow massif's pass mouth,
+    // whose ramp the ring has to meet without a lip; `mesa_passes_climb_to_the_summit`).
+    let rect = ((wx.abs() - 28.0).max(0.0)).hypot((wz.abs() - 21.0).max(0.0));
+    let ring = crate::castle::outside_dist(wx, wz).min(rect);
+    // The lobe reaches the ring's nominal edge (SAFE_PAD) at VILLAGE_FLAT off the streets.
+    let lobe = (crate::castle::village_dist(wx, wz) - VILLAGE_FLAT + SAFE_PAD * MAP_SCALE).max(0.0);
+    ring.min(lobe) / MAP_SCALE
 }
+/// World units of open flat ground either side of the village streets, nominal (the frayed edge
+/// swings ±2u): a house + its burgage yard reach ≈16u off the road.
+const VILLAGE_FLAT: f32 = 18.5;
 pub const GROUND_STEP: f32 = 0.5; // world-Y per height class
 pub const SEA_Y: f32 = -0.4;
 /// Cliff-face mesh knobs (`build_terrain_chunk`): a tile-edge wall whose mean drop is at
@@ -743,6 +755,7 @@ fn river_blocked(x: f32, z: f32) -> bool {
     let wob = 2.4 * (x * 0.4 + 1.1).sin() + 2.4 * (z * 0.36 - 0.7).cos();
     let near_peak = active_map().regions.iter().any(|r| r.peak > 0 && (x - r.x).hypot(z - r.z) + wob < r.r + 5.0);
     dist_from_castle(x, z) < SAFE_R
+        || crate::castle::village_dist((x - CX) * MAP_SCALE, (z - CZ) * MAP_SCALE) < VILLAGE_FLAT
         || near_peak
         || crate::ork_fortress::blight_class_base(x, z).is_some()
 }
@@ -3759,6 +3772,7 @@ fn bs_grass_cover(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: 
                 && !is_river_world(x, z) // keep cover off the (sub-tile) river surface
                 && !over_inland_water_world(x, z) // …and the lake / pool shallows
                 && !crate::castle::in_footprint(x, z)
+                && !crate::castle::village_keep_clear(x, z, 0.3)
                 && !crate::camps::in_clearing(x, z)
                 && !crate::town::near_build_plot(x, z)
                 && !crate::bridges::near_bridge(x, z, 1.0)

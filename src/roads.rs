@@ -444,6 +444,12 @@ fn build_curves() -> Vec<(Vec<Vec2>, f32)> {
     let biomes = biome_centres();
     let seed = 0x51ED_2A37u32;
     let mut curves: Vec<Vec<Vec2>> = Vec::new();
+    // The King's Road out of the W gate runs through the street village first (layout v3: the
+    // houses line it, `castle::houses`), so it's a FIXED curve; trunks leaving by the W gate set
+    // off from its far end (the fork).
+    let street_end = *crate::castle::STREET.last().unwrap();
+    curves.push(catmull(&crate::castle::STREET));
+    note_junction(street_end);
 
     // Trunks: each BIOME reached from whichever castle gate faces it. Cliffy mesas are
     // trunked to their castle-facing pass MOUTH, not the (summit) centre.
@@ -454,7 +460,8 @@ fn build_curves() -> Vec<(Vec<Vec2>, f32)> {
             .unwrap();
         let target = crate::worldmap::biome_road_target(i);
         note_junction(target);
-        curves.push(avoid_clearings(wander(gate, target, seed ^ (i as u32).wrapping_mul(0x9E37_79B9))));
+        let from = if gate == crate::castle::Gate::West.center() { street_end } else { gate };
+        curves.push(avoid_clearings(wander(from, target, seed ^ (i as u32).wrapping_mul(0x9E37_79B9))));
     }
 
     // Coast reaches: from each FLAT biome's road target, one artery out toward the nearest shore
@@ -549,6 +556,8 @@ fn build_curves() -> Vec<(Vec<Vec2>, f32)> {
     caps.retain(|c| !polyline_hits_clearing(c));
     let mut out: Vec<(Vec<Vec2>, f32)> = curves.into_iter().map(|c| (c, HALF_W)).collect();
     out.extend(caps.into_iter().map(|c| (c, CAP_HALF_W)));
+    // The village's side lane (narrow, like a capillary, but fixed with its cottages).
+    out.push((catmull(&crate::castle::LANE), CAP_HALF_W));
     // Pass trails LAST and deliberately outside the spur/capillary source net: the mesa ramp
     // corridors get a painted mid-width track (mouth → summit), but nothing may branch off one
     // sideways — a spur or capillary sprouting off a ramp would paint straight up a cliff face.

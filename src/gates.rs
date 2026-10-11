@@ -27,8 +27,8 @@ pub const WOOD_GATE_HP: f32 = 600.0;
 pub const BARRICADE_HP: f32 = 250.0;
 /// Seconds for the leaves to swing fully shut / open.
 const SWING_SECS: f32 = 3.0;
-/// Half the clear opening between the gate posts (posts are 0.9 wide, centred on ±GATE_GAP/2).
-pub const OPEN_HALF: f32 = GATE_GAP / 2.0 - 0.45;
+/// Half the clear opening of the kit gate pieces (`ck_timber_gate` / `ck_gatehouse`: 2.8u).
+pub const OPEN_HALF: f32 = GATE_GAP / 2.0 - 0.02;
 /// Half-depth of the gap box an ork may not enter while the gate is shut (wall half-thickness +
 /// a stride either side, so a body can't wedge into the passage).
 const GAP_DEPTH: f32 = WALL_THICK / 2.0 + 0.35;
