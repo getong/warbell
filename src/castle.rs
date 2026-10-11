@@ -1817,7 +1817,10 @@ pub fn build(
                 // (the mesh is baked in world space, the Transform stays identity).
                 crate::build_fx::RevealAt(pos),
                 BiomeEntity,
-            ));
+            ))
+            // Masonry + roofs are solid to the follow camera's boom (walls, towers, keep, gate posts,
+            // houses); wood/beam/metal/cloth/paving parts (braziers, lintel, props) are not.
+            .insert_if(crate::player::CameraOccluder, || matches!(slot, M::Stone | M::DarkStone | M::LightStone | M::HouseStone | M::Plaster | M::Roof | M::HouseRoof | M::HouseRoof2 | M::Thatch));
         }
     };
 
