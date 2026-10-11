@@ -1,15 +1,22 @@
-//! The snow massif as ONE continuous mountain surface (a `worldmap` child module — it reads the
-//! private tile grid and the region / pass definitions).
+//! The cliffy peak regions (snow massif, rock range) as ONE continuous mountain surface each (a
+//! `worldmap` child module — it reads the private tile grid and the region / pass definitions).
 //!
-//! The snow region used to be a tiered mesa: four flat shelves ringed by sheer walls, which from
-//! the meadow read as "three stacked discs" (player report). It is now a natural massif in the
-//! spirit of the Tatras: a continuous field [`massif_y`] (world Y) built from
+//! - SNOW: the procedural Tatra-like massif described below.
+//! - ROCK: the same machinery (footprint fade, pass valleys, corner bake) but its SHAPE comes
+//!   from a REAL heightmap — the Dolomites around Passo Sella (Sella group + Sassolungo, the heads
+//!   of Val Gardena / Val di Fassa; `assets/terrain/dolomites_sella_160.r16`, AWS Terrain Tiles,
+//!   see ATTRIBUTION.txt) laid over the footprint at roughly true proportions — the tallest,
+//!   most rugged summits on the island: walled limestone blocks and towers over valley heads.
+//!
+//! Both used to be tiered mesas: flat shelves ringed by sheer walls, which from the meadow read
+//! as "three stacked discs" (player report). The snow massif is in the spirit of the Tatras: a
+//! continuous field [`massif_y`] (world Y) built from
 //! - a broad dome over the region's irregular footprint ([`super::mesa_t`], so the silhouette,
 //!   the NW sea-cliff front and the biome edge stay where they were);
 //! - domain-warped RIDGED noise — ridgelines and spurs with valleys and couloirs between them,
 //!   sharpened toward the crests and growing with altitude;
-//! - three authored SUMMITS set off the trail lines (NW, W, NNE of the centre), so the skyline
-//!   has a dominant peak and two shoulders instead of one dome;
+//! - authored SUMMITS set off the trail lines (NW, W, NNE of the centre, + a SE outlier on the
+//!   grown flank), so the skyline has a dominant peak and shoulders instead of one dome;
 //! - the authored pass corridors carved in as smooth VALLEYS: the trail floor is the old pass
 //!   ramp made continuous (≤ 0.09 rise per tile, the same mouth → col line the roads paint),
 //!   blended into the flanks over a wide band, so the ascents read as valleys winding up to a
@@ -26,17 +33,66 @@
 
 use super::*;
 
-/// Lateral width (base units) over which a pass valley's floor blends into the flanks.
+/// Lateral width (base units) over which a pass valley's floor blends into the flanks, at the
+/// snow massif's authored r 42 (scaled with the region radius; the rock range's gorges run
+/// narrower — limestone walls close in on the trail).
 const VALLEY_W: f32 = 3.2;
+fn valley_band(reg: &Region) -> f32 {
+    if reg.biome == TB::Rock {
+        2.6
+    } else {
+        VALLEY_W * reg.r / 42.0
+    }
+}
 
-/// Authored summits: (base x, base z, extra height in world Y, radius in base units).
+/// Authored snow summits: (base x, base z, extra height in world Y, radius in base units),
+/// authored at r 42 — radii scale with the region (r 42→48 grew the massif; the summits keep
+/// their positions so the skyline and the NW sea-cliff front stay put, their bells broaden).
 /// Heights doubled from the first pass (summit 22.6 → ~35): over a ~110u footprint the old
 /// relief read as a low snowy dome only three trees tall from the meadow (player: "plamy").
-const SUMMITS: [(f32, f32, f32, f32); 3] = [
-    (17.5, 13.0, 11.0, 8.0), // main summit, NW of the col
-    (12.5, 31.5, 8.5, 7.0),  // western shoulder
-    (34.5, 10.5, 8.0, 6.5),  // NNE peak above the sea cliffs
+const SUMMITS: [(f32, f32, f32, f32); 4] = [
+    (17.5, 13.0, 11.5, 8.0), // main summit, NW of the col
+    (12.5, 31.5, 9.0, 7.0),  // western shoulder
+    (34.5, 10.5, 8.5, 6.5),  // NNE peak above the sea cliffs
+    (49.5, 28.0, 6.0, 6.0),  // E outlier on the grown flank, in the wedge between the two passes
 ];
+
+/// The real heightmap the rock range is shaped from: 160×160 little-endian u16, 0 = 1280 m
+/// (valley floors), 65535 = 3124 m (Piz Boè / Sassolungo), ≈84 m per sample, north up.
+static ROCK_DEM: &[u8] = include_bytes!("../../assets/terrain/dolomites_sella_160.r16");
+const DEM_N: i32 = 160;
+/// Half-extent (base units) of the DEM laid over the rock region — 13.5 km onto 2·44 base
+/// (≈343 world units): with [`DEM_RISE`] that keeps the real relief's proportions within ~10%.
+const DEM_HALF: f32 = 44.0;
+/// World Y the DEM's full 1844 m range maps to.
+const DEM_RISE: f32 = 40.0;
+
+fn dem_px(ix: i32, iz: i32) -> f32 {
+    let i = (iz.clamp(0, DEM_N - 1) * DEM_N + ix.clamp(0, DEM_N - 1)) as usize * 2;
+    u16::from_le_bytes([ROCK_DEM[i], ROCK_DEM[i + 1]]) as f32 / 65535.0
+}
+
+/// Catmull-Rom sample of the DEM at fractional pixel `(u, v)` (0..DEM_N) — C1 across the sample
+/// lattice, so the ~2-tile DEM cells don't print creases into the slope shading.
+fn dem(u: f32, v: f32) -> f32 {
+    let (fx, fz) = (u - 0.5, v - 0.5);
+    let (ix, iz) = (fx.floor() as i32, fz.floor() as i32);
+    let (tx, tz) = (fx - ix as f32, fz - iz as f32);
+    let w = |t: f32| {
+        let (t2, t3) = (t * t, t * t * t);
+        [-0.5 * t3 + t2 - 0.5 * t, 1.5 * t3 - 2.5 * t2 + 1.0, -1.5 * t3 + 2.0 * t2 + 0.5 * t, 0.5 * t3 - 0.5 * t2]
+    };
+    let (wx, wz) = (w(tx), w(tz));
+    let mut acc = 0.0;
+    for (j, wzj) in wz.iter().enumerate() {
+        let mut row = 0.0;
+        for (i, wxi) in wx.iter().enumerate() {
+            row += wxi * dem_px(ix - 1 + i as i32, iz - 1 + j as i32);
+        }
+        acc += wzj * row;
+    }
+    acc.clamp(0.0, 1.0)
+}
 
 fn smooth(e0: f32, e1: f32, x: f32) -> f32 {
     let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
@@ -51,8 +107,39 @@ fn ridged(x: f32, z: f32) -> f32 {
     1.0 - ((v - 0.5) * 2.6).abs().min(1.0)
 }
 
-fn is_massif_region(reg: &Region) -> bool {
-    reg.biome == TB::Snow && reg.cliffy && reg.peak > 0
+/// Every cliffy peak region is a continuous massif now (snow procedural, rock DEM-shaped).
+pub(super) fn is_massif_region(reg: &Region) -> bool {
+    reg.cliffy && reg.peak > 0 && matches!(reg.biome, TB::Snow | TB::Rock)
+}
+
+/// The shared footprint fade (0..1) of a massif at base `(x, z)`: the region's own wobbled rim
+/// (same wobble as `region_at`, so the biome edge meets the apron level), the BOUNDARY with any
+/// overlapping region (`region_at` hands contested ground to the deeper region — without this the
+/// grown snow massif stood a wall wherever the forest / desert won a tile), the sea (flanks still
+/// end in sea cliffs, partly) and the castle's forced-grass safe ring (the grown massif must not
+/// rise against the ring's edge).
+fn footprint(x: f32, z: f32, reg: &Region) -> f32 {
+    let wob = 2.4 * (x * 0.4 + 1.1).sin() + 2.4 * (z * 0.36 - 0.7).cos();
+    let own = (x - reg.x).hypot(z - reg.z) + wob - reg.r; // region_at's edge (negative inside)
+    let rim = smooth(0.0, 7.0, -own);
+    if rim <= 0.0 {
+        return 0.0;
+    }
+    let mut margin = f32::INFINITY;
+    for o in active_map().regions {
+        if std::ptr::eq(o, reg) {
+            continue;
+        }
+        let fray = if o.peak > 0 { 0.0 } else { edge_fray(x, z) };
+        let oe = (x - o.x).hypot(z - o.z) + wob + fray - o.r;
+        if oe < 0.0 {
+            margin = margin.min(oe - own);
+        }
+    }
+    let border = if margin.is_finite() { smooth(0.0, 6.0, margin) } else { 1.0 };
+    let coast = 0.25 + 0.75 * smooth(0.0, 9.0, sea_field(x, z));
+    let ring = smooth(SAFE_PAD + SAFE_FRAY, SAFE_PAD + SAFE_FRAY + 10.0, castle_ring_dist(x, z));
+    rim * border * coast * ring
 }
 
 /// The continuous pass-ramp floor at distance `dc` (base) from the centre — `pass_class` without
@@ -69,6 +156,7 @@ fn valley_w(x: f32, z: f32, reg: &Region) -> f32 {
     let dx = x - reg.x;
     let dz = z - reg.z;
     let dc = dx.hypot(dz);
+    let band = valley_band(reg);
     let mut w = 0.0f32;
     for p in reg.passes {
         // Same (serpentined) angular corridor as `pass_class`, measured as an arc length.
@@ -83,49 +171,79 @@ fn valley_w(x: f32, z: f32, reg: &Region) -> f32 {
         // V/U profile: only the trail's own strip (±1.6 base) is the exact ramp; the floor then
         // rises across the rest of the authored corridor into the flanks, so the ascent reads as
         // a valley rather than a flat-floored trench.
-        w = w.max(1.0 - smooth(1.6, p.half + VALLEY_W, lat));
+        w = w.max(1.0 - smooth(1.6, p.half + band, lat));
     }
     w
 }
 
-/// The raw mountain (world Y) before the pass valleys are cut in.
-fn mountain_y(x: f32, z: f32, reg: &Region) -> f32 {
-    let t = mesa_t(x, z, reg);
-    // Fade to the foot at the region's own (wobbled) rim, so the snow biome edge meets the
-    // surrounding apron level, and partly toward the sea (the NW flanks still end in sea cliffs).
-    let wob = 2.4 * (x * 0.4 + 1.1).sin() + 2.4 * (z * 0.36 - 0.7).cos();
-    let edge = reg.r - ((x - reg.x).hypot(z - reg.z) + wob);
-    let rim = smooth(0.0, 7.0, edge);
-    let coast = 0.25 + 0.75 * smooth(0.0, 9.0, sea_field(x, z));
-    let env = smooth(0.05, 0.92, t);
-    if env <= 0.0 || rim <= 0.0 {
-        return 0.0;
-    }
-    // Broad dome: gentle foothills, steepening toward the top.
-    let dome = 11.0 * env.powf(1.5);
-    // Domain-warped ridged octaves (rotated lattices so nothing lines up with the grid axes).
+/// Domain-warped, rotated ridged octaves (nothing lines up with the grid axes): the big ridge
+/// lines, spurs riding them, and fine crest detail.
+pub(super) fn ridges3(x: f32, z: f32) -> (f32, f32, f32) {
     let wx = x + (vnoise(x * 0.055 + 11.0, z * 0.055 - 4.0) - 0.5) * 10.0;
     let wz = z + (vnoise(x * 0.055 - 7.0, z * 0.055 + 13.0) - 0.5) * 10.0;
     let (ax, az) = (0.857 * wx - 0.515 * wz, 0.515 * wx + 0.857 * wz);
     let (bx, bz) = (0.602 * wx + 0.799 * wz, -0.799 * wx + 0.602 * wz);
-    let r1 = ridged(ax * 0.085 + 3.0, az * 0.085 - 9.0);
-    let r2 = ridged(bx * 0.18 - 5.0, bz * 0.18 + 2.0);
-    let r3 = ridged(ax * 0.38 + 17.0, az * 0.38 + 1.0);
+    (
+        ridged(ax * 0.085 + 3.0, az * 0.085 - 9.0),
+        ridged(bx * 0.18 - 5.0, bz * 0.18 + 2.0),
+        ridged(ax * 0.38 + 17.0, az * 0.38 + 1.0),
+    )
+}
+
+/// The raw mountain (world Y) before the pass valleys are cut in.
+fn mountain_y(x: f32, z: f32, reg: &Region) -> f32 {
+    let f = footprint(x, z, reg);
+    if f <= 0.0 {
+        return 0.0;
+    }
+    let t = mesa_t(x, z, reg);
+    let m = if reg.biome == TB::Rock { rock_y(x, z, t, reg) } else { snow_y(x, z, t, reg) };
+    m * f
+}
+
+/// The snow massif (Tatra-like): broad dome + ridged relief + authored summits.
+fn snow_y(x: f32, z: f32, t: f32, reg: &Region) -> f32 {
+    let env = smooth(0.05, 0.92, t);
+    if env <= 0.0 {
+        return 0.0;
+    }
+    // Broad dome: gentle foothills, steepening toward the top.
+    let dome = 11.0 * env.powf(1.5);
+    let (r1, r2, r3) = ridges3(x, z);
     // Sharp crests (squared), finer ridges riding on the big ones (spurs off the main ridges).
     let ridges = r1 * r1 * 0.62 + r2 * r1 * 0.26 + r3 * (0.4 + 0.6 * r1) * 0.12;
     // (env^0.9, not ^1.2: the lower flanks get their spurs and gullies too, instead of a
     // smooth dome skirt under ridged summits.)
     let relief = 12.0 * env.powf(0.9) * ridges;
+    let grow = reg.r / 42.0;
     let mut peaks = 0.0f32;
     for (sx, sz, h, rad) in SUMMITS {
-        let d = (x - sx).hypot(z - sz) / rad;
+        let d = (x - sx).hypot(z - sz) / (rad * grow);
         // Pointed bell (steeper than a Gaussian near the top, long tail).
         peaks += h * (-d * d).exp() * (1.0 + 0.35 * (1.0 - d).max(0.0));
     }
-    (dome + relief + peaks * env) * rim * coast
+    dome + relief + peaks * env
 }
 
-/// The massif surface (world Y) at base `(x, z)` inside the snow region: the mountain with the
+/// The rock range: the real Dolomites DEM over the footprint. A low dome lifts the range out of
+/// its apron; the DEM supplies everything else (the Sella's walled block, Sassolungo's towers,
+/// the valley heads between them); a fine ridged octave roughens the crags and scree below the
+/// DEM's ~84 m sample spacing.
+fn rock_y(x: f32, z: f32, t: f32, reg: &Region) -> f32 {
+    // Full DEM relief over the inner ~60% of the footprint, fading out over the outer flanks.
+    let env = smooth(0.0, 0.58, t);
+    if env <= 0.0 {
+        return 0.0;
+    }
+    let u = (0.5 + (x - reg.x) / (2.0 * DEM_HALF)) * DEM_N as f32;
+    let v = (0.5 + (z - reg.z) / (2.0 * DEM_HALF)) * DEM_N as f32;
+    let d = dem(u, v);
+    let (_, r2, r3) = ridges3(x * 1.3 + 40.0, z * 1.3 - 25.0);
+    let crag = (r3 * 1.6 + r2 * 0.9) * (0.35 + d) * env;
+    6.0 * env.powf(1.4) + DEM_RISE * d.powf(1.15) * env.powf(0.6) + crag
+}
+
+/// The massif surface (world Y) at base `(x, z)` inside a massif region: the mountain with the
 /// pass valleys carved in (a trail corridor's floor is exactly the continuous pass ramp).
 pub(super) fn massif_y(x: f32, z: f32, reg: &Region) -> f32 {
     let m = mountain_y(x, z, reg);
@@ -134,17 +252,16 @@ pub(super) fn massif_y(x: f32, z: f32, reg: &Region) -> f32 {
         return m;
     }
     let dc = (x - reg.x).hypot(z - reg.z);
-    m + (ramp_y(dc, reg) - m) * w
+    // The trail floor eases down to the castle ring's grass level where a pass mouth noses into
+    // the safe ring (the grown snow massif's SE ascent starts inside it): the ring forces class-1
+    // grass there, so an un-eased ramp left a 2-class lip at the foot of the main ascent.
+    let ring = smooth(SAFE_PAD + SAFE_FRAY, SAFE_PAD + SAFE_FRAY + 10.0, castle_ring_dist(x, z));
+    m + (ramp_y(dc, reg) * ring - m) * w
 }
 
 /// Height CLASS of a massif tile (the quantised field — the mesh / ground read [`corner_y`]).
 pub(super) fn massif_class(x: f32, z: f32, reg: &Region) -> i32 {
     ((massif_y(x, z, reg) / GROUND_STEP).round() as i32 + 1).max(1)
-}
-
-/// The snow massif region of the active map, if it has one.
-fn massif_region() -> Option<&'static Region> {
-    active_map().regions.iter().find(|r| is_massif_region(r))
 }
 
 static CORNERS: OnceLock<Mutex<HashMap<u8, Arc<Vec<f32>>>>> = OnceLock::new();
@@ -177,25 +294,63 @@ pub(super) fn corner_y(cx: i32, cz: i32) -> Option<f32> {
 fn build_corners() -> Arc<Vec<f32>> {
     let (cw, ch) = ((COLS + 1) as usize, (ROWS + 1) as usize);
     let mut out = vec![f32::NAN; cw * ch];
-    let Some(reg) = massif_region() else {
-        return Arc::new(out);
-    };
     // NO `water_near()` here: that mask's own bake reads corner heights (`bank_cell_active`), so
     // touching it from inside this bake re-locks its mutex on the same thread (a boot deadlock).
     // Rivers keep out of the peak regions (`river_blocked`) and sea tiles are `None`, so "all four
-    // tiles are snow land" already means dry massif ground.
+    // tiles are this massif's land" already means dry massif ground.
     let grid = tiles();
-    let massif_tile = |ix: i32, iz: i32| -> bool { matches!(tile_in(&grid, ix, iz), Some((TB::Snow, _))) };
-    // Only the region's bounding box can hold massif corners.
-    let pad = reg.r * 1.4 + 4.0;
-    let lo_x = (((reg.x - pad) * MAP_SCALE).floor() as i32).max(1);
-    let hi_x = (((reg.x + pad) * MAP_SCALE).ceil() as i32).min(COLS - 1);
-    let lo_z = (((reg.z - pad) * MAP_SCALE).floor() as i32).max(1);
-    let hi_z = (((reg.z + pad) * MAP_SCALE).ceil() as i32).min(ROWS - 1);
-    for cz in lo_z..=hi_z {
-        for cx in lo_x..=hi_x {
-            if massif_tile(cx - 1, cz - 1) && massif_tile(cx, cz - 1) && massif_tile(cx - 1, cz) && massif_tile(cx, cz) {
-                out[cz as usize * cw + cx as usize] = massif_y(cx as f32 / MAP_SCALE, cz as f32 / MAP_SCALE, reg);
+    for reg in active_map().regions.iter().filter(|r| is_massif_region(r)) {
+        // A tile of the massif's biome that the massif itself classified: inside its mountain
+        // footprint (`in_mountain`'s test — the coastal ridges, which also paint Rock, skip it)
+        // or on one of its pass corridors.
+        let massif_tile = |ix: i32, iz: i32| -> bool {
+            if !matches!(tile_in(&grid, ix, iz), Some((b, _)) if b == reg.biome) {
+                return false;
+            }
+            let (x, z) = (ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE);
+            let wob = 2.4 * (x * 0.4 + 1.1).sin() + 2.4 * (z * 0.36 - 0.7).cos();
+            (x - reg.x).hypot(z - reg.z) + wob < reg.r + 2.0 || pass_class(x, z, reg).is_some()
+        };
+        // Only the region's bounding box can hold massif corners.
+        let pad = reg.r * 1.4 + 4.0;
+        let lo_x = (((reg.x - pad) * MAP_SCALE).floor() as i32).max(1);
+        let hi_x = (((reg.x + pad) * MAP_SCALE).ceil() as i32).min(COLS - 1);
+        let lo_z = (((reg.z - pad) * MAP_SCALE).floor() as i32).max(1);
+        let hi_z = (((reg.z + pad) * MAP_SCALE).ceil() as i32).min(ROWS - 1);
+        for cz in lo_z..=hi_z {
+            for cx in lo_x..=hi_x {
+                if massif_tile(cx - 1, cz - 1) && massif_tile(cx, cz - 1) && massif_tile(cx - 1, cz) && massif_tile(cx, cz) {
+                    out[cz as usize * cw + cx as usize] = massif_y(cx as f32 / MAP_SCALE, cz as f32 / MAP_SCALE, reg);
+                }
+            }
+        }
+    }
+    // The NATURAL relief outside the massifs (coastal ridges, hills, knolls, dunes): `classify`
+    // computed each tile's continuous height before rounding it to a class, sampled exactly at
+    // the tile's own corner — so a corner whose four tiles are all natural-relief ground (none
+    // force-flat, beach, swamp or water) takes that exact value instead of the class-cluster mean,
+    // and the hills render as continuous rounded relief, not 0.5u terraces. The ±1-class guard
+    // falls back wherever `terrace_inland` relaxed a tile (the cluster logic then applies).
+    let exact = exact_heights();
+    if exact.len() == (COLS * ROWS) as usize {
+        let natural_tile = |ix: i32, iz: i32, c: i32| -> bool {
+            matches!(tile_in(&grid, ix, iz), Some((_, h)) if (h - c).abs() <= 1)
+                && !exact[(iz * COLS + ix) as usize].is_nan()
+        };
+        for cz in 1..ROWS {
+            for cx in 1..COLS {
+                let i = cz as usize * cw + cx as usize;
+                if !out[i].is_nan() {
+                    continue;
+                }
+                let y = exact[(cz * COLS + cx) as usize];
+                if y.is_nan() {
+                    continue;
+                }
+                let c = (y / GROUND_STEP).round() as i32 + 1;
+                if natural_tile(cx - 1, cz - 1, c) && natural_tile(cx, cz - 1, c) && natural_tile(cx - 1, cz, c) && natural_tile(cx, cz, c) {
+                    out[i] = y;
+                }
             }
         }
     }

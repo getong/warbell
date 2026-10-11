@@ -278,9 +278,10 @@ struct Pass {
 // Half-widths widened (3.0→4.5 / 2.4→3.2) when the massif grew (r 36→42): a longer ramp is
 // angularly narrower at its mouth, so at the old widths a tile centre could fall a hair outside
 // the corridor and read as a 1-class apron gap (`mesa_passes_climb_to_the_summit` regression).
+// r 42→48 (player: "the snow biome could be bigger"): half-widths scaled with the radius again.
 const SNOW_PASSES: [Pass; 2] = [
-    Pass { ang: 0.578, half: 4.5 },  // SE, toward the castle (main ascent)
-    Pass { ang: -0.184, half: 3.2 }, // E, toward the desert dunes
+    Pass { ang: 0.578, half: 5.1 },  // SE, toward the castle (main ascent)
+    Pass { ang: -0.184, half: 3.7 }, // E, toward the desert dunes
 ];
 /// Rock range passes: WNW main ascent (mouth at base ≈(86,39), a clear 20+ base units from the
 /// castle — due-west would run the ramp straight into the castle safe-zone's grass fray, which
@@ -307,7 +308,11 @@ const REGIONS: [Region; 6] = [
     // irregular): the massif now reaches the NW `nw_headland` coast, so its flanks run into the
     // sea as a jagged cliff front instead of tapering to a beach. Centre unchanged, so the SE/E
     // pass corridors keep their authored angles (their half-widths grew to match the longer ramp).
-    Region { x: 26.0, z: 24.0, r: 42.0, biome: TB::Snow, peak: 20, cliffy: true, passes: &SNOW_PASSES },
+    // r 42→48 (player: "I love how mountainous the snow biome is — it could be bigger"): centre
+    // unchanged (the summits / pass angles / NW sea front stay), the massif grows E/S into the
+    // desert / forest seam; `alpine_massif::footprint` fades it out at the castle safe ring and at
+    // every contested biome boundary, so the growth never stands a wall against the ring.
+    Region { x: 26.0, z: 24.0, r: 48.0, biome: TB::Snow, peak: 20, cliffy: true, passes: &SNOW_PASSES },
     // NE dunes — shifted NW (112,28 → 101,10), so the dune field grows toward the snow massif and
     // fills the grass corridor along the top coast. Radius 34→38 to close the empty grass seam
     // between snow and desert (players noted the wide bare strip there): with snow at r33 the seam
@@ -320,6 +325,8 @@ const REGIONS: [Region; 6] = [
     // biome is now a real tiered MESA — flat shelves, 2.5u sheer walls between them, climbable
     // only via ROCK_PASSES; `terrace_inland` exempts it (`cliff_exempt_base`).
     // r 34→38: the tallest biome grows down toward the shrunk SE marsh — more mountain, less bog.
+    // Now a continuous massif shaped by a REAL DEM (the Dolomites round Passo Sella,
+    // `alpine_massif::rock_y`) — the island's tallest summits; ROCK_PASSES are its pass valleys.
     Region { x: 116.0, z: 57.0, r: 38.0, biome: TB::Rock, peak: 22, cliffy: true, passes: &ROCK_PASSES },
     // SW forest + S swamp: r +2/+3 (pass 0, map-character overhaul) — the two most
     // "nothing left once you subtract the claims" biomes get extra interior on top of the
@@ -1000,19 +1007,33 @@ fn region_at(x: f32, z: f32) -> Option<usize> {
 /// inland — so the inland face is a climbable terraced ramp (≤1 class per step for the
 /// nav-grid) while the seaward face drops to the beach as a sheer cliff: the ridge tops are
 /// reachable from one side only.
-fn coast_hill_class(x: f32, z: f32) -> i32 {
+///
+/// NATURAL relief (mountains feedback round): the height is a CONTINUOUS field (returned as a
+/// fractional class; the tile class is its rounding and `alpine_massif` hands the exact value to
+/// the mesh corners), so the inland face reads as a ridged mountain flank — crests, spurs and
+/// gullies from the massif's ridged noise — instead of 0.5u terraces stepping with the integer
+/// coast distance. In the DESERT the ridges stay LOW (eroded sandstone, ≤ ~1.5u): no high
+/// mountains in a dune sea.
+fn coast_hill(x: f32, z: f32) -> Option<f32> {
     let d = dist_from_coast(x, z) as f32;
     if !(2.0..=7.0).contains(&d) {
-        return 0;
+        return None;
     }
     let mask = (x * 0.045 + 1.7).sin() + (z * 0.05 - 0.6).cos() + noise_a(x * 0.5, z * 0.5) * 0.25;
     if mask < 0.3 {
-        return 0;
+        return None;
     }
-    let band = ((7.0 - d) / 4.5).clamp(0.0, 1.0); // 0 inland (d=7) → 1 at the coast side
-    let h = 1.0 + mask.min(1.6) * 5.0 * band + noise_b(x * 1.1 + 5.0, z * 1.1) * 0.7;
-    let cls = h.round().clamp(1.0, 9.0) as i32;
-    if cls >= 2 { cls } else { 0 }
+    // Continuous coast distance (the integer ray-march distance stepped the old ramp into
+    // terraces), held within a unit of it so the ridge keeps its band.
+    let s = sea_field(x, z).clamp(d - 1.0, d + 1.0);
+    let band = ((7.5 - s) / 5.0).clamp(0.0, 1.0); // 0 inland → 1 at the coast side
+    let band = band * band * (3.0 - 2.0 * band);
+    let (r1, r2, _) = alpine_massif::ridges3(x * 1.6 + 7.0, z * 1.6 - 3.0);
+    let desert = matches!(region_at(x, z), Some(ri) if active_map().regions[ri].biome == TB::Desert);
+    let amp = if desert { 2.2 } else { 5.0 };
+    let h = 1.0 + mask.min(1.6) * amp * band * (0.62 + 0.5 * r1) + (r2 - 0.4) * band * if desert { 0.6 } else { 1.4 };
+    let h = h.clamp(1.0, if desert { 4.4 } else { 9.4 });
+    (h.round() >= 2.0).then_some(h)
 }
 
 /// Gentle terraced inland hills (height class 1..=`max`) layered over every flat part of the
@@ -1020,39 +1041,63 @@ fn coast_hill_class(x: f32, z: f32) -> i32 {
 /// so the middle of the map isn't one flat sheet. Nested thresholds mean a hill always climbs
 /// through each class ring in turn, keeping every face a 1-class step the nav-grid can walk;
 /// inside `SAFE_R + 8` it stays flat so the castle approaches and siege lanes stay open.
-fn inland_hills(x: f32, z: f32, dc: f32, max: i32) -> i32 {
+fn inland_hills_f(x: f32, z: f32, dc: f32, max: i32) -> f32 {
     if dc <= SAFE_R + 8.0 {
-        return 1;
+        return 1.0;
     }
     // Thresholds lowered + a 5th class added (map-character overhaul feedback: "musi być
     // więcej drobnych pagórków") — the frontier rolls noticeably now instead of reading as a
     // flat sheet with rare knolls. Still nested → every face stays a 1-class walkable step.
     let roll = noise_a(x * 0.3 + 9.0, z * 0.3 - 5.0) + noise_b(x * 0.16 - 4.0, z * 0.16 + 8.0) * 0.6;
-    let h = if roll > 2.05 {
-        5
-    } else if roll > 1.6 {
-        4
-    } else if roll > 1.15 {
-        3
-    } else if roll > 0.7 {
-        2
-    } else {
-        1
-    };
-    h.min(max.max(1))
+    // Continuous (mountains feedback round): the old nested thresholds (0.7 / 1.15 / 1.6 / 2.05
+    // → class 2..5) are exactly the roundings of this ramp, so every knoll keeps its footprint —
+    // but the exact value now reaches the mesh, so a knoll is a rounded natural rise instead of a
+    // stack of 0.5u terraces. A soft onset keeps the flats flat.
+    let e = (roll - 0.475) / 0.45;
+    let e = if e < 0.6 { (e.max(-0.6) + 0.6).powi(2) / 2.4 } else { e };
+    // Soft cap at the biome's max class (an asymptotic knee, not a clamp — a clamp would shear
+    // the tallest knolls into flat-topped tables).
+    let knee = max.max(1) as f32 - 1.35;
+    let e = if e > knee { knee + 0.8 * (1.0 - (-(e - knee) / 0.8).exp()) } else { e };
+    let ease = ((dc - SAFE_R - 8.0) / 6.0).clamp(0.0, 1.0);
+    1.0 + e * ease * ease * (3.0 - 2.0 * ease)
 }
 
-fn plateau_height(x: f32, z: f32) -> i32 {
+/// Desert DUNES (mountains feedback round: "the desert can't have high mountains — big natural
+/// dunes"): long transverse ridges across a NW wind, a gentle windward back and a steeper lee
+/// (kept under the nav-grid's step limit), their crests broken into barchan-like segments by a
+/// slow amplitude field, rising to ~2.7u. Fractional class like [`inland_hills_f`].
+fn dune_h(x: f32, z: f32, dc: f32) -> f32 {
+    if dc <= SAFE_R + 8.0 {
+        return 1.0;
+    }
+    // Wind-aligned coordinate (wind from the NW), crest lines warped so they meander.
+    let warp = noise_a(x * 0.07 + 3.0, z * 0.07 - 8.0) * 3.0;
+    let u = (x * 0.6 - z * 0.8) * 0.12 + warp * 0.3;
+    let p = u - u.floor();
+    // Asymmetric profile: windward ramp over 66% of the wavelength, lee over the rest.
+    let prof = if p < 0.66 { (p / 0.66).powf(1.4) } else { 1.0 - ((p - 0.66) / 0.34).powf(0.8) };
+    let prof = prof * prof * (3.0 - 2.0 * prof);
+    let amp = (0.55 + 0.45 * noise_b(x * 0.09 - 2.0, z * 0.09 + 6.0)).clamp(0.0, 1.0);
+    let amp = amp * (0.6 + 0.4 * vnoise(x * 0.21 + 5.0, z * 0.21));
+    let ease = ((dc - SAFE_R - 8.0) / 6.0).clamp(0.0, 1.0);
+    1.0 + 5.4 * amp * prof * ease * ease * (3.0 - 2.0 * ease)
+}
+
+/// Natural rounded hill on each authored plateau site (fractional class, `None` outside): a bell
+/// with ridged spurs — the old floor()-tiered cone read as a stepped wedding cake.
+fn plateau_h(x: f32, z: f32) -> Option<f32> {
     for p in &PLATEAUS {
-        let d = (x - p.x).hypot(z - p.z);
-        if d >= p.r {
+        let d = (x - p.x).hypot(z - p.z) / p.r;
+        if d >= 1.0 {
             continue;
         }
-        let tiers = (p.peak - 1) as f32;
-        let cls = 2 + ((1.0 - d / p.r) * tiers).floor() as i32;
-        return cls.clamp(2, p.peak);
+        let bell = (1.0 - d * d).powi(2);
+        let (r1, r2, _) = alpine_massif::ridges3(x * 2.2 - 11.0, z * 2.2 + 4.0);
+        let h = 1.0 + (p.peak as f32 - 0.5) * bell * (0.7 + 0.25 * r1 + 0.15 * r2);
+        return (h.round() >= 2.0).then_some(h.clamp(1.0, p.peak as f32 + 0.45));
     }
-    0
+    None
 }
 
 // Half-width of the castle-facing ramp corridor up each peak region (base tiles). Widened
@@ -1122,41 +1167,12 @@ fn mesa_t(x: f32, z: f32, reg: &Region) -> f32 {
     (1.0 - dc / reg.r).clamp(0.0, 1.0)
 }
 
-/// Fraction of the way up each tier begins (`mesa_height` ladder). Rock: 5 tiers — broad low
-/// shelves, a small summit cap. Snow: 4 (taller walls, a different stepping rhythm — the two
-/// massifs must not read as twins).
-const MESA_TIERS: [f32; 5] = [0.15, 0.34, 0.54, 0.74, 0.91];
-const SNOW_TIERS: [f32; 4] = [0.17, 0.44, 0.70, 0.90];
-
-/// Tiered mesa height for a `cliffy` region: flat shelves separated by multi-class SHEER walls
-/// (rock peak 22 → shelf classes 2/7/12/17/22 = 2.5u cliffs between shelves at `GROUND_STEP`
-/// 0.5). Both the nav-grid (`can_step`) and the hero (`hero_can_step`) refuse >1-class climbs,
-/// so the walls block everyone with zero new logic — downward ledges stay droppable (one-way
-/// descents off a shelf work). The authored pass corridors are the only ways UP; outside the
-/// lowest tier a 1–2-class apron ring meets the surrounding terrain smoothly.
+/// Height class of a `cliffy` peak region's tile. Both cliffy regions are continuous massifs
+/// now (`alpine_massif`: the snow massif procedural, the rock range shaped from a real Dolomites
+/// DEM) — the old tiered mesa (flat shelves + sheer walls) read as stacked discs. Steep ground is
+/// simply steep: `can_step` refuses it, and the pass valleys are the guaranteed ways up.
 fn mesa_height(x: f32, z: f32, reg: &Region) -> i32 {
-    // The snow massif is a continuous mountain now (`alpine_massif`), not tiered shelves.
-    if reg.biome == TB::Snow {
-        return alpine_massif::massif_class(x, z, reg);
-    }
-    if let Some(rc) = pass_class(x, z, reg) {
-        return rc;
-    }
-    let t = mesa_t(x, z, reg);
-    let tiers: &[f32] = if reg.biome == TB::Snow { &SNOW_TIERS } else { &MESA_TIERS };
-    if t < tiers[0] {
-        // Foot apron: low fringe so the mesa rises out of walkable ground, not a moat of cliff.
-        return if t > tiers[0] * 0.5 { 2 } else { 1 };
-    }
-    let span = (reg.peak - 2).max(1) as f32;
-    let n = tiers.len();
-    let mut tier = 0;
-    for (i, th) in tiers.iter().enumerate() {
-        if t >= *th {
-            tier = i;
-        }
-    }
-    2 + (span * tier as f32 / (n - 1) as f32).round() as i32
+    alpine_massif::massif_class(x, z, reg)
 }
 
 /// Lateral serpentine of a pass corridor's centreline: an angular offset at ring distance `dc`
@@ -1215,13 +1231,43 @@ fn cliff_exempt_base(x: f32, z: f32) -> bool {
 
 /// True near (within `pad` base tiles outside) a cliffy region's rim — the flat "contrast apron"
 /// band: tall only reads tall next to flat, so the rolling inland hills are suppressed there.
-fn near_cliffy_rim(x: f32, z: f32, pad: f32) -> bool {
-    active_map().regions.iter().any(|r| {
-        r.cliffy && r.peak > 0 && {
-            let d = (x - r.x).hypot(z - r.z);
-            (r.r - 2.0..r.r + pad).contains(&d)
+/// Returned as a 0..1 FADE on the hills' rise (0 in the band `r − 2 .. r + 8`, easing back to 1
+/// over the next 5 base units), so the apron meets the natural relief without a step.
+fn cliffy_apron(x: f32, z: f32) -> f32 {
+    let mut f = 1.0f32;
+    for r in active_map().regions.iter().filter(|r| r.cliffy && r.peak > 0) {
+        let d = (x - r.x).hypot(z - r.z) - r.r;
+        if d >= -2.0 {
+            let t = ((d - 8.0) / 5.0).clamp(0.0, 1.0);
+            f = f.min(t * t * (3.0 - 2.0 * t));
         }
-    })
+    }
+    f
+}
+
+thread_local! {
+    /// The EXACT (unquantised) world-Y of the last `classify` call on this thread when it took a
+    /// natural-relief branch (coastal ridge, hill, knoll, dune); NaN for force-flat / beach /
+    /// massif / swamp outcomes. `build_grid` reads it right after each call and bakes it into the
+    /// per-tile [`exact_heights`] grid, which `alpine_massif` turns into exact mesh corners.
+    static CLASSIFY_Y: std::cell::Cell<f32> = const { std::cell::Cell::new(f32::NAN) };
+}
+
+/// Record a natural-relief tile's exact height (fractional class `h`) and return its class.
+fn natural(h: f32) -> i32 {
+    CLASSIFY_Y.with(|c| c.set((h - 1.0) * GROUND_STEP));
+    (h.round() as i32).max(1)
+}
+
+static EXACT: OnceLock<Mutex<HashMap<u8, Arc<Vec<f32>>>>> = OnceLock::new();
+
+/// Per-tile exact natural-relief height (world Y, NaN where none) for the active map — the value
+/// `classify` computed before rounding to the tile class, sampled at the tile's own corner
+/// `(ix, iz)`. Built alongside the tile grid (boot-time only; not on any per-frame path).
+fn exact_heights() -> Arc<Vec<f32>> {
+    let _ = tiles();
+    let cache = EXACT.get_or_init(|| Mutex::new(HashMap::new()));
+    cache.lock().expect("exact cache poisoned").get(&active_id()).cloned().unwrap_or_default()
 }
 
 /// True inside (with margin) any cliffy region — plateaus skip these (a smooth plateau cone
@@ -1886,6 +1932,7 @@ fn ground_color_arena(x: f32, z: f32) -> [f32; 4] {
 }
 
 fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
+    CLASSIFY_Y.with(|c| c.set(f32::NAN));
     if is_arena() {
         return classify_arena(x, z);
     }
@@ -1919,7 +1966,7 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
         for reg in active_map().regions {
             if reg.cliffy && reg.peak > 0 {
                 if let Some(cls) = pass_class(x, z, reg) {
-                    let cls = if reg.biome == TB::Snow { alpine_massif::massif_class(x, z, reg) } else { cls };
+                    let cls = if alpine_massif::is_massif_region(reg) { alpine_massif::massif_class(x, z, reg) } else { cls };
                     if cls > 1 {
                         return Some((reg.biome, cls));
                     }
@@ -1952,8 +1999,8 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
     // rises keep the local flat-region biome (sandy bluffs in the desert, wooded coastal
     // hills in the forest, …) or grass.
     if !in_mountain(x, z) {
-        let ch = coast_hill_class(x, z);
-        if ch > 0 {
+        if let Some(chf) = coast_hill(x, z) {
+            let ch = natural(chf);
             let b = match region_at(x, z) {
                 Some(ri) if active_map().regions[ri].peak == 0 => active_map().regions[ri].biome,
                 _ if ch >= 4 => TB::Rock,
@@ -1963,15 +2010,15 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
         }
     }
     // Plateaus skip cliffy mesa regions (a smooth plateau cone would breach the tier walls).
-    let ph = if in_cliffy(x, z) { 0 } else { plateau_height(x, z) };
-    if ph > 0 {
-        // A plateau inside a flat biome blob keeps that biome (desert mesa, forest highland);
-        // out on the frontier it's a grass plateau.
+    let ph = if in_cliffy(x, z) { None } else { plateau_h(x, z) };
+    if let Some(phf) = ph {
+        // A plateau inside a flat biome blob keeps that biome (desert rise, forest highland);
+        // out on the frontier it's a grass hill.
         let b = match region_at(x, z) {
             Some(ri) if active_map().regions[ri].peak == 0 => active_map().regions[ri].biome,
             _ => TB::Grass,
         };
-        return Some((b, ph));
+        return Some((b, natural(phf)));
     }
     // Pass corridors claim their tiles INDEPENDENT of the wobbled region membership:
     // `region_at`'s wobble (±4.8) otherwise punches frontier-grass bays into a corridor's lower
@@ -1980,7 +2027,7 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
         if reg.cliffy && reg.peak > 0 {
             if let Some(cls) = pass_class(x, z, reg) {
                 // The snow massif's trail floors are its continuous valley ramps.
-                let cls = if reg.biome == TB::Snow { alpine_massif::massif_class(x, z, reg) } else { cls };
+                let cls = if alpine_massif::is_massif_region(reg) { alpine_massif::massif_class(x, z, reg) } else { cls };
                 return Some((reg.biome, cls));
             }
         }
@@ -2012,10 +2059,13 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
         }
         // Flat biomes get the inland-hills field: dunes in the desert, wooded rises in the forest.
         // Next to a mesa rim the hills flatten to a contrast APRON — tall reads tall beside flat.
-        let max = if near_cliffy_rim(x, z, 8.0) { 1 } else { 4 };
-        return Some((reg.biome, inland_hills(x, z, dc, max)));
+        // (The apron now EASES in over a few units instead of cutting the hills to class 1 at a
+        // hard band edge — the natural relief reaches the mesh exactly, so a cut would be a step.)
+        let apron = cliffy_apron(x, z);
+        let hf = if reg.biome == TB::Desert { dune_h(x, z, dc) } else { inland_hills_f(x, z, dc, 4) };
+        return Some((reg.biome, natural(1.0 + (hf - 1.0) * apron)));
     }
-    let h = if near_cliffy_rim(x, z, 8.0) { 1 } else { inland_hills(x, z, dc, 5) };
+    let h = natural(1.0 + (inland_hills_f(x, z, dc, 5) - 1.0) * cliffy_apron(x, z));
     let forest_n = noise_a(x, z) * noise_b(x + 7.0, z - 3.0);
     if forest_n > 0.35 {
         return Some((TB::Forest, h));
@@ -2058,10 +2108,19 @@ fn tiles() -> Arc<Grid> {
 fn build_grid() -> Arc<Grid> {
     let t0 = std::time::Instant::now();
     // `classify` is a pure function of (x, z, active map): rows classify in parallel, in order.
+    // Each tile also yields its exact natural-relief height (`CLASSIFY_Y`, same thread, read
+    // right after the call) for the continuous-relief corners (`exact_heights`).
     let rows = crate::par::par_map(ROWS as usize, |iz| {
-        (0..COLS).map(|ix| classify(ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE)).collect::<Vec<_>>()
+        (0..COLS)
+            .map(|ix| {
+                let t = classify(ix as f32 / MAP_SCALE, iz as f32 / MAP_SCALE);
+                (t, CLASSIFY_Y.with(|c| c.get()))
+            })
+            .collect::<Vec<_>>()
     });
-    let mut v: Grid = rows.into_iter().flatten().collect();
+    let (mut v, exact): (Grid, Vec<f32>) = rows.into_iter().flatten().unzip();
+    let ex = EXACT.get_or_init(|| Mutex::new(HashMap::new()));
+    ex.lock().expect("exact cache poisoned").insert(active_id(), Arc::new(exact));
     let t1 = t0.elapsed().as_secs_f64() * 1000.0;
     prune_stray_islets(&mut v);
     terrace_inland(&mut v);
@@ -5108,6 +5167,30 @@ mod tests {
                 reg.biome
             );
         }
+    }
+
+    /// Each biome its own character (mountains feedback round): the DEM-shaped rock range carries
+    /// the island's TALLEST summits, clearly above the snow massif's; the desert has NO high
+    /// mountains (dunes and low eroded ridges only).
+    #[test]
+    fn rock_range_tallest_desert_low() {
+        let mut top = [f32::MIN; 3]; // rock, snow, desert
+        for iz in 0..ROWS {
+            for ix in 0..COLS {
+                let k = match tile_at(ix, iz) {
+                    Some((TB::Rock, _)) => 0,
+                    Some((TB::Snow, _)) => 1,
+                    Some((TB::Desert, _)) => 2,
+                    _ => continue,
+                };
+                if let Some(c) = tile_centre_ground(ix, iz) {
+                    top[k] = top[k].max(c);
+                }
+            }
+        }
+        eprintln!("summits: rock {:.1}  snow {:.1}  desert {:.1}", top[0], top[1], top[2]);
+        assert!(top[0] > top[1] + 4.0, "rock range {:.1} not clearly above the snow massif {:.1}", top[0], top[1]);
+        assert!(top[2] < 3.5, "desert rises to {:.1} — no high mountains in the dune sea", top[2]);
     }
 
     /// The snow massif must read as a MOUNTAIN, not stacked mesa discs: tall summits well above
