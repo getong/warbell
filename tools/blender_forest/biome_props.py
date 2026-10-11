@@ -142,6 +142,72 @@ def rubble(g, rng, nz, n, rmin, rmax, dmin, dmax, tint=None):
                    noise=0.0)
 
 
+def column(g, rng, nz, beds, rx, rz, sides=10, y0=-0.08, drift=0.015, lip=0.02, slope=0.1, var=(0.84, 1.1),
+           step=(0.93, 1.05), lean=0.0, rise=0.05, moss=0.2, lichen=LICHEN_ORANGE, tile=0.7):
+    """ONE continuous bedded pillar (no stacked blobs): a jointed, irregular `sides`-face outline
+    swept up through horizontal beds `(h, s, tint, soft)`. A hard bed keeps planar vertical faces,
+    each face set back by its own fracture (so the faces step into small ledges bed to bed), its
+    bottom edge a sharp lip (`lip` chip) over the notch below, its top edge weathered back by
+    `slope`; a soft bed is a recessed groove (`s` = its own width), an erosion notch between hard
+    beds. A slow per-face wobble up the height keeps the beds from repeating. Flat-shaded per
+    facet. Returns (top y, top centre)."""
+    a0 = rng.uniform(0, 6.283)
+    angs = [a0 + (k + rng.uniform(-0.3, 0.3)) / sides * 6.283 for k in range(sides)]
+    base = [rng.uniform(*var) for _ in range(sides)]
+    dirv = Vector((rng.uniform(-1, 1), 0.0, rng.uniform(-1, 1))).normalized()
+    rot = quat_y(rng.uniform(0, 6.283)) @ quat_z(lean)
+    rings = []
+    off = Vector((0.0, 0.0, 0.0))
+
+    ph = [rng.uniform(0, 6.283) for _ in range(sides)]
+
+    def ring(yy, s, rs, tint, dark):
+        w = [base[k] * rs[k] * s * (1.0 + 0.07 * math.sin(yy * 3.1 + ph[k])) for k in range(sides)]
+        pts = [rot @ Vector((off.x + math.cos(angs[k]) * w[k] * rx, yy, off.z + math.sin(angs[k]) * w[k] * rz))
+               for k in range(sides)]
+        rings.append((pts, tint, dark))
+
+    y = y0
+    for h, s, tint, soft in beds:
+        if soft:
+            rs = [rng.uniform(0.95, 1.03) for _ in range(sides)]
+            ring(y + h * 0.3, s, rs, tint, 0.68)
+            ring(y + h * 0.75, s * rng.uniform(0.96, 1.02), rs, tint, 0.72)
+        else:
+            off += dirv * drift + Vector((rng.uniform(-1, 1), 0.0, rng.uniform(-1, 1))) * drift * 0.5
+            rs = [rng.uniform(*step) for _ in range(sides)]
+            tone = rng.uniform(0.9, 1.08)
+            ring(y, s, [r * (1.0 - lip * rng.uniform(0.0, 2.0)) for r in rs], tint, 0.86 * tone)
+            ring(y + min(0.03, h * 0.15), s, rs, tint, tone)
+            ring(y + h * rng.uniform(0.55, 0.75), s, [r * rng.uniform(0.97, 1.0) for r in rs], tint, tone)
+            ring(y + h, s, [r * (1.0 - slope * rng.uniform(0.3, 1.6)) for r in rs], tint, 0.95 * tone)
+        y += h
+
+    def face(pts, tints, darks, out_ref):
+        n = (pts[1] - pts[0]).cross(pts[2] - pts[0])
+        if n.length < 1e-10:
+            return
+        if n.dot(out_ref) < 0:
+            pts, tints, darks = pts[::-1], tints[::-1], darks[::-1]
+            n = -n
+        n.normalize()
+        cols = [scale(rk_col(t, nz, moss=moss, lichen=lichen, var=0.15)(p, n), dk) for p, t, dk in zip(pts, tints, darks)]
+        g.flat(pts, M_ROCK, cols, tile)
+
+    for j in range(len(rings) - 1):
+        lo, hi = rings[j], rings[j + 1]
+        for k in range(sides):
+            k2 = (k + 1) % sides
+            pts = [lo[0][k], lo[0][k2], hi[0][k2], hi[0][k]]
+            ctr = (sum(lo[0], Vector()) + sum(hi[0], Vector())) / (2 * sides)
+            face(pts, [lo[1], lo[1], hi[1], hi[1]], [lo[2], lo[2], hi[2], hi[2]], sum(pts, Vector()) / 4 - ctr)
+    top, tint, dark = rings[-1]
+    c = sum(top, Vector()) / sides + Vector((rng.uniform(-0.03, 0.03), rx * rise * rng.uniform(0.5, 1.5), rng.uniform(-0.03, 0.03)))
+    for k in range(sides):
+        face([top[k], top[(k + 1) % sides], c], [tint] * 3, [dark, dark, dark * 1.05], Vector((0.0, 1.0, 0.0)))
+    return y, c
+
+
 def rk_crag_a(rng):
     """Leaning slab crag (low-poly crag 0): two fractured bedded blocks, one tipped against the
     other over a crevice, broken chips shed at the foot. ~0.7 tall, inside r ~0.65."""
@@ -157,20 +223,21 @@ def rk_crag_a(rng):
 
 
 def rk_crag_b(rng):
-    """Tall split crag (low-poly crag 1): three bedded blocks stacked with offsets at the joints,
-    a flank slab propped at the foot. ~1.45 tall, inside r ~0.55."""
+    """Tall split crag (low-poly crag 1): ONE jointed outcrop of thick grey beds, parting planes
+    eroded in as thin notches, faces stepping back bed to bed, a flank slab fallen off it and
+    chips at the foot. ~1.4 tall, inside r ~0.55."""
     b = Builder()
     g = G(b)
     nz = Noise(rng, 5, 1.4)
-    frac_block(g, (0.0, 0.3, 0.0), (0.46, 0.38, 0.4), rng, rot=quat_y(0.3) @ quat_x(0.05), notch=0.025, band=0.12,
-               col_fn=rk_col(scale(STONE, 0.9), nz, moss=0.3))
-    frac_block(g, (0.09, 0.83, -0.04), (0.36, 0.28, 0.32), rng, rot=quat_y(-0.4) @ quat_z(-0.08), notch=0.022,
-               band=0.12, col_fn=rk_col(STONE, nz, moss=0.4))
-    frac_block(g, (0.04, 1.22, 0.02), (0.25, 0.22, 0.22), rng, nplanes=12, notch=0.018, band=0.12,
-               col_fn=rk_col(scale(STONE_COOL, 1.05), nz, moss=0.35))
-    frac_block(g, (-0.36, 0.15, 0.12), (0.32, 0.12, 0.22), rng, rot=quat_y(0.7) @ quat_z(0.55), detail=1,
+    dark = scale(STONE, 0.78)
+    column(g, rng, nz, [(0.5, 1.0, scale(STONE, 0.9), False), (0.1, 0.98, scale(STONE, 0.8), False),
+                        (0.38, 0.95, STONE, False), (0.09, 0.92, scale(STONE_COOL, 0.85), False),
+                        (0.32, 0.88, STONE_COOL, False), (0.08, 0.8, scale(STONE_COOL, 1.05), False)],
+           0.46, 0.4, sides=8, var=(0.66, 1.16), step=(0.86, 1.06), drift=0.035, lip=0.0, slope=0.06, lean=0.07,
+           rise=0.1, moss=0.35, tile=0.8)
+    frac_block(g, (-0.4, 0.13, 0.14), (0.3, 0.1, 0.2), rng, rot=quat_y(0.7) @ quat_z(0.5), detail=1,
                col_fn=rk_col(STONE, nz, moss=0.25, lichen=LICHEN_SAGE))
-    rubble(g, rng, nz, 3, 0.05, 0.09, 0.45, 0.55)
+    rubble(g, rng, nz, 4, 0.05, 0.09, 0.45, 0.55)
     return b
 
 
@@ -210,44 +277,41 @@ def rk_cairn(rng):
     return b
 
 
-def spire(rng, layers, cap=None):
-    """Layered sandstone pillar: horizontal beds, each a fractured block with its own outline,
-    soft beds eroded back into notches between the hard ones, the stack drifting a little."""
+def spire(rng, beds, rx, rz, cap=None):
+    """Layered sandstone pillar: ONE continuous column of horizontal beds (see `column`), hard
+    beds standing out as ledged bands, the soft beds between eroded back into deep notches; a
+    `cap` = (r, h, tint) is a separate harder caprock balanced on the neck."""
     b = Builder()
     g = G(b)
     nz = Noise(rng, 5, 2.0)
-    y = -0.06
-    drift = Vector((0.0, 0.0, 0.0))
-    dd = Vector((rng.uniform(0.6, 1.0), 0.0, rng.uniform(-0.4, 0.4))).normalized() * 0.025
-    for r, h, tint in layers:
-        drift += dd
-        frac_block(g, (drift.x, y + h * 0.5, drift.z), (r, h * 0.5, r * rng.uniform(0.85, 1.0)), rng, nplanes=4,
-                   sides=int(rng.integers(6, 9)), flat=(0.97, 0.97), detail=2 if r > 0.2 else 1, notch=0.012,
-                   band=h / 2.0, ground_y=y, col_fn=rk_col(tint, nz, moss=0.2, var=0.15), tile=0.7, noise=0.01)
-        y += h * 0.97
+    y, c = column(g, rng, nz, beds, rx, rz, sides=9, var=(0.8, 1.12), step=(0.92, 1.05), drift=0.018,
+                  lip=0.02, slope=0.12, rise=0.08, moss=0.12, lichen=LICHEN_ORANGE, tile=0.7)
     if cap:
         cr, ch, ct = cap
-        frac_block(g, (drift.x + 0.04, y + ch * 0.5, drift.z), (cr, ch * 0.5, cr * 0.85), rng, nplanes=5, sides=7,
+        frac_block(g, (c.x + 0.04, y + ch * 0.42, c.z), (cr, ch * 0.5, cr * 0.85), rng, nplanes=5, sides=7,
                    flat=(0.95, 0.95), notch=0.015, band=ch / 2.0, ground_y=y, col_fn=rk_col(ct, nz, moss=0.4))
-    rubble(g, rng, nz, 4, 0.04, 0.08, 0.32, 0.4, tint=layers[0][2])
+    rubble(g, rng, nz, 4, 0.04, 0.08, 0.32, 0.4, tint=beds[0][2])
     return b
 
 
 def rk_spire_a(rng):
-    """Slender banded spire (low-poly hoodoo 0): ~1.85 tall, foot r ~0.33; thin soft beds
-    (narrower) notch in between the hard ones."""
-    return spire(rng, [(0.33, 0.3, SAND_RUST), (0.27, 0.08, SAND_OCHRE), (0.3, 0.26, SAND_OCHRE),
-                       (0.24, 0.07, SAND_RUST), (0.26, 0.24, SAND_PALE), (0.19, 0.07, SAND_OCHRE),
-                       (0.21, 0.22, SAND_OCHRE), (0.15, 0.06, SAND_RUST), (0.16, 0.2, SAND_PALE),
-                       (0.1, 0.18, SAND_OCHRE)])
+    """Slender banded spire (low-poly hoodoo 0): ~1.6 tall, foot r ~0.33; thin soft beds
+    eroded into notches between the hard bands, the column tapering up."""
+    return spire(rng, [(0.34, 1.0, SAND_RUST, False), (0.12, 0.74, SAND_OCHRE, True),
+                       (0.16, 0.92, SAND_OCHRE, False), (0.1, 0.72, SAND_RUST, True),
+                       (0.3, 0.84, SAND_PALE, False), (0.11, 0.6, SAND_OCHRE, True),
+                       (0.2, 0.7, SAND_OCHRE, False), (0.09, 0.5, SAND_RUST, True),
+                       (0.24, 0.56, SAND_PALE, False), (0.06, 0.42, SAND_OCHRE, True),
+                       (0.12, 0.4, SAND_OCHRE, False)], 0.33, 0.3)
 
 
 def rk_spire_b(rng):
-    """Balanced rock (low-poly hoodoo 1): a bedded neck carrying a broad cap rock, ~1.6 tall."""
-    return spire(rng, [(0.29, 0.34, SAND_OCHRE), (0.22, 0.08, SAND_RUST), (0.24, 0.3, SAND_RUST),
-                       (0.16, 0.07, SAND_OCHRE), (0.18, 0.28, SAND_PALE), (0.12, 0.12, SAND_OCHRE)],
+    """Balanced rock (low-poly hoodoo 1): a bedded, notched neck carrying a broad cap rock, ~1.6 tall."""
+    return spire(rng, [(0.36, 1.0, SAND_OCHRE, False), (0.11, 0.7, SAND_RUST, True),
+                       (0.24, 0.8, SAND_RUST, False), (0.1, 0.55, SAND_OCHRE, True),
+                       (0.22, 0.62, SAND_PALE, False), (0.08, 0.42, SAND_OCHRE, True),
+                       (0.12, 0.46, SAND_OCHRE, False)], 0.29, 0.27,
                  cap=(0.36, 0.26, scale(STONE, 1.02)))
-
 
 
 def rk_scree(rng, n, spread):
@@ -356,21 +420,28 @@ def ribbed(g, pts, radii, ribs, rng, nz, depth=0.16, segs_per=1, tip=True, pal=N
     lookup = {id(v): c for v, c in zip(verts, cols)}
     # smooth_mesh calls col_fn(vert, normal) with the very Vector objects we pass.
     smooth_mesh(g, verts, tris, M_PLASTER, lambda p, nn: lookup[id(p)], 0.6)
-    # Areole spine tufts along the crests: small pale crosses (two crossed quads, double sided).
+    # Areole spine tufts along the crests: three needle-thin spines splayed out of each areole
+    # (double-sided slivers ~5 mm wide at the root, tapering to a point; never solid cards).
     for i in range(1, len(rings) - 1):
         ring, t, _ = rings[i]
         for s in range(0, n_s, 4):
             if rng.uniform() > spine_p:
                 continue
             p, d, _, _ = ring[s]
-            q = p + d * 0.012
-            for ax in (t, d.cross(t).normalized()):
-                ln = spine_len
-                quad = [q - ax * ln + d * 0.0, q + ax * ln, q + ax * ln + d * spine_len, q - ax * ln + d * spine_len]
-                nn = ax.cross(d).normalized()
-                uv = [(0.0, 0.0), (0.1, 0.0), (0.1, 0.1), (0.0, 0.1)]
-                g.poly(quad, uv, [nn] * 4, [spine or SPINE] * 4, M_PLASTER)
-                g.poly(quad[::-1], uv[::-1], [-nn] * 4, [spine or SPINE] * 4, M_PLASTER)
+            q = p + d * 0.006
+            b2 = d.cross(t).normalized()
+            for _k in range(3):
+                a = rng.uniform(0, 6.283)
+                side = t * math.cos(a) + b2 * math.sin(a)
+                tipv = (d * 0.8 + side * 0.6).normalized() * spine_len * rng.uniform(0.75, 1.3)
+                wdir = tipv.cross(d)
+                wdir = (wdir if wdir.length > 1e-9 else t).normalized() * 0.0025
+                tri = [q - wdir, q + wdir, q + tipv]
+                nn = (tri[1] - tri[0]).cross(tri[2] - tri[0]).normalized()
+                uv = [(0.0, 0.0), (0.05, 0.0), (0.025, 0.1)]
+                col = [spine or SPINE] * 3
+                g.poly(tri, uv, [nn] * 3, col, M_PLASTER)
+                g.poly(tri[::-1], uv[::-1], [-nn] * 3, col, M_PLASTER)
 
 
 def arm(base_y, side, out, up, r, phi):
