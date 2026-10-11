@@ -63,6 +63,40 @@ geometry.
                                                stack, shavings, an axe in a stump.
   town_archery         3.4 x 1.4         1.65  two straw butts on stands, painted rings, arrows.
 
+  Spec v3 §2 (only castle buildings inside the walls; the podgrodzie grows outside the W gate on
+  burgage plots). Street-gable houses: ridge along Z, the GABLE END + door to +Z = the road.
+  town_street_house_a  4.4 x 7.6         4.85  thatch, boarded front gable with a loft door, front
+                                               door + window, back door to the yard; bench, bucket.
+  town_street_house_b  4.8 x 7.0         4.65  SHOP: plaster front gable, plank roof; shop window
+                                               x 0.75..2.35 (from the left corner), its lower shutter
+                                               folded down into a counter (y 0.75, out to z 4.12, two
+                                               legs) with pots / cloth / loaves, the upper one
+                                               propped up as an awning; barrel on +X.
+  town_fence_wattle    3.0 (x -1.5..1.5) 1.1   woven hurdle between two stakes, along X.
+  town_fence_wattle_gate                       same module, gap x 0.25..1.45, rod gate hung on the
+                                               east post swung open into the plot (-Z).
+  town_fence_picket    3.0               1.1   three posts, two rails, pointed pickets on +Z.
+  town_fence_picket_gate                       ledged + braced picket gate, gap x 0.25..1.45, open -Z.
+  town_garden          3.2 x 2.6         1.85  three beds along Z: cabbages, onions, bean tepee; hoe.
+  town_woodpile        2.2 x 0.8         1.1   log stack under a plank pent, chopping block at +Z.
+  town_shed            2.4 x 1.8         2.05  open-front plank shed, mono-pitch, BACK FLAT at -Z.
+  town_coop            1.3 x 1.0         1.3   hen house on legs, ramp to +Z, two hens.
+  town_outhouse        1.0 x 1.0         2.15  the privy, door ajar to +Z.
+  town_dung            2.0 x 1.6         1.55  dung heap, straw on top, pitchfork stuck in.
+  town_hayrick         r 1.25            3.3   beehive rick round a pole, ladder on +X.
+
+  Lean-tos for INSIDE the walls: back face flat in the plane z = -D/2 (nothing behind it) to butt
+  onto the curtain, mono-pitch plank roof from the back (high, under the 3.4 wall-walk) down to the
+  front post line z = +D/2 (+0.45 eave), board side walls, open front toward +Z (the courtyard).
+  castle_stable        7.2 x 3.4         3.05  back 3.0 / front 2.15; three stalls, plank
+                                               partitions, hay racks + mangers, straw, a saddle.
+  castle_barracks      7.6 x 3.6         3.15  back 3.1 / front 2.25; half-open front (plank parapet
+                                               1.0, doorway x -1.3..0), three two-tier bunks, table +
+                                               bench, shields + helms; spear rack outside +X.
+  castle_store         5.6 x 3.2         2.95  back 2.9 / front 2.1; crates, sacks, barrels.
+  castle_cartshed      6.4 x 3.8         3.05  back 3.0 / front 2.3; two-wheeled cart (shafts down
+                                               to +Z), spare wheel, horse collar, sacks.
+
 Built with the wayside_models.py toolkit (game coordinates, Y up). Materials by name: the kit's
 scanned sets (s_timber framing, s_planks boards, s_thatch, s_stone plinths, s_cloth, s_hide,
 s_iron, s_earth) + the new s_plaster whitewash (tools/blender_forest/plaster_set.sh). Vertex colour
@@ -1419,6 +1453,583 @@ def town_archery(rng):
     return b
 
 
+# ─────────────────────────────────────────────────────────────── 9. podgrodzie: street-gable houses
+def street_house(g, rng, HX, HZ, ye, yr, front, east, back, west, gstyle="boards", loft=None, roof_style="thatch",
+                 stud=1.25):
+    """A narrow burgage house, ridge along Z, the GABLE END (+ door) to +Z, the street."""
+    pts = [(-HX, HZ), (HX, HZ), (HX, -HZ), (-HX, -HZ)]
+    plinth(g, rng, loop(pts))
+    for (a, b_), ops in zip(loop(pts), (front, east, back, west)):
+        wall(g, rng, a, b_, 0.25, ye, ops, stud=stud)
+    R = quat_y(math.pi / 2)
+    roof(g, rng, (0, 0, 0), R, 2 * HZ, 2 * HX, ye, yr, over=0.4, verge=0.38, style=roof_style)
+    gable(g, rng, (0, 0, 0), R, -HZ, -1, 2 * HX, ye, yr, style=gstyle, loft=loft)
+    gable(g, rng, (0, 0, 0), R, HZ, 1, 2 * HX, ye, yr, style="plaster")
+
+
+def town_street_house_a(rng):
+    """Street-gable cottage: boarded front gable with a loft door, thatch, back door to the yard."""
+    b = Builder()
+    g = G(b)
+    HX, HZ = 2.2, 3.8
+    street_house(g, rng, HX, HZ, 2.1, 4.35,
+                 [dict(s=1.25, w=0.9, y0=0.25, y1=1.65, kind="door", ajar=0.5), dict(s=3.25, w=0.72, y0=0.95, y1=1.55)],
+                 [dict(s=2.0, w=0.65, y0=1.0, y1=1.55), dict(s=5.4, w=0.65, y0=1.0, y1=1.55)],
+                 [dict(s=2.9, w=0.85, y0=0.25, y1=1.6, kind="door", ajar=0.0)],
+                 [dict(s=3.6, w=0.6, y0=1.0, y1=1.5)],
+                 loft=dict(z=0.0, w=0.7, y0=2.55, y1=3.2))
+    bench(g, rng, V(1.15, 0.0, HZ + 0.42), 0.0, L=1.0)
+    bucket(g, (-1.75, 0.0, HZ + 0.4))
+    return b
+
+
+def town_street_house_b(rng):
+    """Street-gable shop house: plaster front gable, a shop window whose lower shutter folds down
+    into a counter (on two legs) and whose upper shutter props up as an awning; plank roof."""
+    b = Builder()
+    g = G(b)
+    HX, HZ = 2.4, 3.5
+    s0, sw, y0, y1 = 3.15, 1.6, 0.78, 1.66
+    street_house(g, rng, HX, HZ, 2.15, 4.45,
+                 [dict(s=0.85, w=0.9, y0=0.25, y1=1.68, kind="door", ajar=0.9),
+                  dict(s=s0, w=sw, y0=y0, y1=y1, kind="open", shutters=False)],
+                 [dict(s=3.6, w=0.65, y0=1.0, y1=1.55)],
+                 [dict(s=1.6, w=0.85, y0=0.25, y1=1.6, kind="door", ajar=0.0), dict(s=3.6, w=0.6, y0=1.0, y1=1.5)],
+                 [dict(s=2.4, w=0.6, y0=1.0, y1=1.5), dict(s=5.2, w=0.6, y0=1.0, y1=1.5)],
+                 gstyle="plaster", roof_style="boards")
+    cx = -HX + s0
+    zf = HZ + 0.1
+    sc = (0.62, 0.52, 0.4)
+    # Counter: the lower leaf hinged at the sill, folded down flat, on two legs + knee braces.
+    cl = 0.52
+    lbox(g, V(cx, y0 - 0.03, zf + cl / 2), (sw + 0.04, 0.05, cl), quat_y(0.0), M_PLANK, scale(sc, 1.05), tile=0.8, grain=0)
+    for sx in (-1, 1):
+        x = cx + sx * (sw / 2 - 0.1)
+        beam(g, [V(x, -0.03, zf + cl - 0.06), V(x, y0 - 0.06, zf + cl - 0.06)], 0.06, 0.06, mat=M_TIMBER, col=scale(sc, 0.8),
+             rng=rng, chamfer=0.0)
+        beam(g, [V(x, y0 - 0.5, zf + 0.02), V(x, y0 - 0.07, zf + cl - 0.1)], 0.05, 0.05, mat=M_TIMBER, col=scale(sc, 0.75),
+             rng=rng, chamfer=0.0)
+    # Awning: the upper leaf hinged at the head, propped up and out on two sticks.
+    al, ang = 0.62, 1.05
+    hinge = V(cx, y1 + 0.03, zf)
+    d = V(0, math.cos(ang), math.sin(ang))
+    lbox(g, hinge + d * (al / 2) + V(0, 0, 0.02), (sw + 0.08, al, 0.05), quat_x(ang), M_PLANK, scale(sc, 0.95), tile=0.8,
+         grain=1)
+    tip = hinge + d * (al - 0.04)
+    for sx in (-1, 1):
+        pole(g, V(cx + sx * (sw / 2 - 0.08), y0, zf + cl - 0.12), tip + V(sx * (sw / 2 - 0.08), -0.03, 0), 0.018, 0.016,
+             rng, col=(0.7, 0.62, 0.5), sides=4, segs=1)
+    # Wares on the counter: pots, a bowl, a bolt of blue cloth, loaves.
+    top = y0 - 0.005
+    for k, x in enumerate((-0.6, -0.38, -0.15)):
+        lathe(g, (cx + x, top, zf + 0.25 + 0.08 * (k % 2)), (0, 1, 0), [(0.0, 0.06), (0.1, 0.09), (0.2, 0.06), (0.24, 0.07)],
+              7, M_FRUIT, [(0.6, 0.36, 0.22), (0.5, 0.3, 0.2), (0.62, 0.42, 0.26)][k], tile=0.3)
+    lathe(g, (cx + 0.12, top, zf + 0.32), (0, 1, 0), [(0.0, 0.05), (0.07, 0.13)], 8, M_TIMBER, (0.7, 0.58, 0.44), tile=0.3)
+    tube(g, [V(cx + 0.3, top + 0.07, zf + 0.15), V(cx + 0.68, top + 0.07, zf + 0.17)], [0.07, 0.07], 7, M_CLOTH,
+         (0.42, 0.52, 0.66), tile=0.4)
+    for k in range(3):
+        stone(g, (cx + 0.38 + 0.15 * k, top + 0.04, zf + 0.38), (0.07, 0.045, 0.055), rng, mat=M_FRUIT, detail=0, rough=0.1,
+              cuts=0, col_fn=lambda p, n: (0.78, 0.55, 0.3), tile=0.3)
+    barrel(g, rng, (HX + 0.4, 0.0, HZ - 0.4))
+    return b
+
+
+# ─────────────────────────────────────────────────────────────── 10. plot dressing
+POST_C = (0.68, 0.6, 0.5)
+
+
+def town_fence_wattle(rng, gate=False):
+    """3u wattle module along X (posts at +-1.5); the gate version hangs a rod gate (gap x 0.25..1.45)
+    swung open into the plot (-Z)."""
+    b = Builder()
+    g = G(b)
+    L = 3.0
+    for x in ([-L / 2, L / 2] if not gate else [-L / 2, 0.25, 1.45]):
+        pole(g, V(x, -0.15, 0), V(x, 1.02 + rng.uniform(0, 0.06), 0), 0.055, 0.045, rng, col=POST_C, sides=5, segs=1)
+    if not gate:
+        hurdle(g, rng, V(-L / 2 + 0.06, 0, 0), V(L / 2 - 0.06, 0, 0), h=0.9, gap=0.38, rods=11)
+        return b
+    hurdle(g, rng, V(-L / 2 + 0.06, 0, 0), V(0.19, 0, 0), h=0.9, gap=0.38, rods=11)
+    ang = 1.2
+    hinge = V(1.4, 0.0, -0.03)
+    d = V(-math.cos(ang), 0, -math.sin(ang))
+    w_, h_ = 1.08, 0.88
+    for f in (0.03, 0.97):
+        p = hinge + d * (w_ * f)
+        pole(g, p + V(0, 0.06, 0), p + V(0, h_, 0), 0.025, 0.022, rng, col=POST_C, sides=4, segs=1)
+    for y in (0.15, 0.5, 0.84):
+        pole(g, hinge + V(0, y, 0), hinge + d * w_ + V(0, y, 0), 0.022, 0.022, rng, col=POST_C, sides=4, segs=1)
+    pole(g, hinge + V(0, 0.15, 0), hinge + d * w_ + V(0, 0.84, 0), 0.02, 0.02, rng, col=POST_C, sides=4, segs=1)
+    for k in range(5):
+        p = hinge + d * (0.2 + 0.17 * k)
+        pole(g, p + V(0, 0.1, 0), p + V(0, 0.86, 0), 0.012, 0.012, rng, mat=M_BARK, col=(1.0, 0.92, 0.76), sides=3, segs=1,
+             wobble=0.0)
+    tube(g, [V(1.45, 0.92, 0.05), V(1.45, 0.82, 0.08), V(1.45, 0.72, 0.05)], [0.01] * 3, 3, M_CLOTH, ROPE, tile=0.2,
+         cap=False)
+    return b
+
+
+def town_fence_wattle_gate(rng):
+    return town_fence_wattle(rng, gate=True)
+
+
+def picket_run(g, rng, x0, x1, h=1.0, gap=0.17):
+    n = max(2, int((x1 - x0) / gap))
+    for k in range(n):
+        x = x0 + (k + 0.5) * (x1 - x0) / n
+        hh = h + rng.uniform(-0.05, 0.03)
+        beam(g, [V(x, -0.04, 0.05), V(x, hh, 0.05)], 0.1, 0.025, up=(0, 0, 1), mat=M_PLANK, mode="plank", chamfer=0.0,
+             point=0.07, col=scale((0.8, 0.72, 0.6), rng.uniform(0.75, 1.0)), rng=rng)
+
+
+def town_fence_picket(rng, gate=False):
+    """3u picket module along X (posts at +-1.5, pickets on the +Z face); the gate version swings a
+    ledged-and-braced picket gate (gap x 0.25..1.45) open into the plot (-Z)."""
+    b = Builder()
+    g = G(b)
+    L = 3.0
+    for x in ([-L / 2, 0.0, L / 2] if not gate else [-L / 2, 0.25, 1.45]):
+        beam(g, [V(x, -0.15, 0), V(x, 1.08, 0)], 0.11, 0.11, mat=M_TIMBER, col_fn=weathered((0.66, 0.58, 0.48), 0.65),
+             rng=rng, chamfer=0.0)
+    for a_, c_ in ([(-L / 2, L / 2)] if not gate else [(-L / 2, 0.25)]):
+        for y in (0.25, 0.78):
+            beam(g, [V(a_, y, 0.0), V(c_, y, 0.0)], 0.07, 0.05, up=(0, 0, 1), mat=M_TIMBER, col=(0.6, 0.53, 0.44), rng=rng,
+                 chamfer=0.0)
+        picket_run(g, rng, a_ + 0.06, c_ - 0.06)
+    if gate:
+        ang = 1.15
+        hinge = V(1.39, 0.0, -0.05)
+        d = V(-math.cos(ang), 0, -math.sin(ang))
+        n = d.cross(UP)
+        w_ = 1.06
+        for y in (0.22, 0.75):
+            beam(g, [hinge + V(0, y, 0), hinge + d * w_ + V(0, y, 0)], 0.08, 0.045, up=tuple(n), mat=M_TIMBER,
+                 col=(0.6, 0.53, 0.44), rng=rng, chamfer=0.0)
+        beam(g, [hinge + V(0, 0.22, 0), hinge + d * w_ + V(0, 0.75, 0)], 0.07, 0.045, up=tuple(n), mat=M_TIMBER,
+             col=(0.6, 0.53, 0.44), rng=rng, chamfer=0.0)
+        for k in range(6):
+            p = hinge + d * (0.09 + k * 0.176) + n * 0.04
+            beam(g, [p + V(0, 0.05, 0), p + V(0, 0.98, 0)], 0.1, 0.025, up=tuple(n), mat=M_PLANK, mode="plank", chamfer=0.0,
+                 point=0.07, col=scale((0.8, 0.72, 0.6), rng.uniform(0.8, 1.0)), rng=rng)
+    return b
+
+
+def town_fence_picket_gate(rng):
+    return town_fence_picket(rng, gate=True)
+
+
+def town_garden(rng):
+    """Kitchen garden, 3.2 x 2.6: three beds (cabbages, onions, a bean tepee), a hoe, a clay pot."""
+    b = Builder()
+    g = G(b)
+    beds = [(-1.05, (0.36, 0.5, 0.3)), (0.0, (0.46, 0.58, 0.32)), (1.05, (0.3, 0.46, 0.26))]
+    for k, (x, col) in enumerate(beds):
+        mound(g, (x, -0.04, 0.0), 0.42, 1.25, 0.16, rng, mat=M_EARTH, col_fn=lambda p, n: (0.42, 0.33, 0.25), rings=2, seg=10,
+              rough=0.05)
+        if k == 0:
+            for j in range(6):
+                for dx in (-0.16, 0.16):
+                    stone(g, (x + dx, 0.17, -0.95 + j * 0.38), (0.13, 0.1, 0.13), rng, mat=M_FRUIT, detail=0, rough=0.2,
+                          cuts=0, col_fn=lambda p, n, c=col: scale(c, 0.7 + 0.45 * max(n.y, 0.0)), tile=0.3)
+        elif k == 1:
+            for j in range(9):
+                for dx in (-0.15, 0.0, 0.15):
+                    p = V(x + dx, 0.12, -1.0 + j * 0.25)
+                    tri = [p + V(-0.03, 0, 0), p + V(0.03, 0, 0), p + V(rng.uniform(-0.04, 0.04), 0.26, 0.02)]
+                    for want in ((0, 0, 1), (0, 0, -1)):
+                        face(g, tri, want, M_FRUIT, col, tile=0.2)
+        else:
+            top = V(x, 1.85, 0.15)
+            for a in (0.4, 2.0, 3.6, 5.2):
+                pole(g, V(x + 0.38 * math.cos(a), -0.1, 0.15 + 0.38 * math.sin(a)), top, 0.02, 0.016, rng, col=POST_C, sides=4,
+                     segs=1)
+                for h in (0.45, 0.95, 1.4):
+                    f = h / 1.85
+                    stone(g, (x + 0.38 * math.cos(a) * (1 - f), h, 0.15 + 0.38 * math.sin(a) * (1 - f)), (0.12, 0.16, 0.12),
+                          rng, mat=M_FRUIT, detail=0, rough=0.25, cuts=0,
+                          col_fn=lambda p, n, c=col: scale(c, 0.65 + 0.4 * max(n.y, 0.0)), tile=0.3)
+            for j in range(3):
+                stone(g, (x + rng.uniform(-0.15, 0.15), 0.15, -0.65 - j * 0.3), (0.14, 0.09, 0.14), rng, mat=M_FRUIT, detail=0,
+                      rough=0.2, cuts=0, col_fn=lambda p, n: (0.4, 0.55, 0.28), tile=0.3)
+    pole(g, V(1.5, -0.02, -0.4), V(1.2, 1.35, 0.1), 0.018, 0.016, rng, col=(0.72, 0.62, 0.5), sides=4, segs=1)
+    lbox(g, V(1.52, 0.05, -0.45), (0.2, 0.1, 0.02), quat_y(0.4), M_IRON, IRON_D, tile=0.2)
+    lathe(g, (-1.6, 0.0, 1.1), (0, 1, 0), [(0.0, 0.1), (0.12, 0.15), (0.26, 0.11), (0.3, 0.06)], 8, M_FRUIT, (0.62, 0.36, 0.22),
+          tile=0.3)
+    return b
+
+
+def town_woodpile(rng):
+    b = Builder()
+    g = G(b)
+    woodpile(g, rng, (0.0, 0.0, 0.0), L=1.8, rows=4)
+    lbox(g, V(0, 1.02, 0.0), (2.2, 0.05, 0.8), quat_x(0.18), M_PLANK, (0.5, 0.45, 0.4), tile=1.0, grain=0)
+    chopping_block(g, rng, (0.4, 0.0, 0.95))
+    return b
+
+
+def mono_roof(g, rng, W, z0, z1, y0, y1, over=0.35, verge=0.2, t=0.07, col=(0.55, 0.49, 0.42), lips=True):
+    """Mono-pitch plank roof whose UNDERSIDE runs from (z0, y0) at the high back to (z1, y1) at the
+    front wall line, overhanging the front by `over`; nothing reaches behind z0."""
+    D = z1 - z0
+    th = math.atan2(y0 - y1, D)
+    Ls = (D + over) / math.cos(th)
+    zm = z0 + (D + over) / 2
+    ym = y0 - (zm - z0) * math.tan(th)
+    n = V(0, math.cos(th), math.sin(th))
+    s = V(0, -math.sin(th), math.cos(th))
+    c = V(0, ym, zm) + n * (t / 2)
+    q = quat_x(th)
+    Wx = W + 2 * verge
+    lbox(g, c, (Wx, t, Ls), q, M_PLANK, [scale(col, 0.75), None, col], tile=1.2, grain=0)
+    if lips:
+        k = int(Ls / 0.42)
+        for i in range(1, k + 1):
+            p = c - s * (Ls / 2) + s * (Ls * i / (k + 0.3)) + n * (t / 2 + 0.012)
+            lbox(g, p, (Wx, 0.03, 0.06), q, M_PLANK, scale(col, 0.82), tile=1.2, grain=0)
+    return th
+
+
+def board_side(g, rng, x, sx, z0, z1, ytop, k=None, col=(0.62, 0.55, 0.47), y0=-0.03):
+    """A side wall of vertical boards in the plane x, from z0 to z1, each board up to ytop(z)."""
+    k = k or max(3, int((z1 - z0) / 0.3))
+    for i in range(k):
+        z = z0 + (i + 0.5) * (z1 - z0) / k
+        yt = ytop(z)
+        board(g, V(x + sx * 0.02, (y0 + yt) / 2, z), (0, 1, 0), (sx, 0, 0), yt - y0, (z1 - z0) / k * 0.97, 0.035, mat=M_PLANK,
+              col=scale(col, rng.uniform(0.8, 1.02)), rng=rng, chamfer=0.0)
+
+
+def town_shed(rng):
+    """Garden shed: plank walls on three sides, open front, mono-pitch roof, back flat at -Z so it
+    can stand against a house or fence; tools, a barrel, a scythe."""
+    b = Builder()
+    g = G(b)
+    HX, HZ = 1.2, 0.9
+    yb, yf = 2.0, 1.6
+    th = mono_roof(g, rng, 2 * HX, -HZ, HZ, yb, yf, over=0.35, verge=0.18, lips=False)
+    ytop = lambda z: yb - (z + HZ) * math.tan(th)  # noqa: E731
+    lbox(g, V(0, yb / 2, -HZ + 0.03), (2 * HX, yb, 0.06), quat_y(0.0), M_PLANK, (0.55, 0.49, 0.41), tile=1.0)
+    for x, sx in ((-HX, -1), (HX, 1)):
+        board_side(g, rng, x, sx, -HZ + 0.06, HZ, ytop, k=5)
+        beam(g, [V(x, -0.05, HZ - 0.05), V(x, yf, HZ - 0.05)], 0.11, 0.11, mat=M_TIMBER, col_fn=weathered(TF, 0.7), rng=rng,
+             chamfer=0.0)
+    beam(g, [V(-HX - 0.1, yf - 0.06, HZ - 0.05), V(HX + 0.1, yf - 0.06, HZ - 0.05)], 0.11, 0.12, mat=M_TIMBER, col=TF, rng=rng,
+         chamfer=0.0)
+    lbox(g, V(0, 0.03, 0), (2 * HX - 0.1, 0.06, 2 * HZ - 0.1), quat_y(0.0), M_EARTH, (0.4, 0.34, 0.28), tile=0.8)
+    for x, top in ((-0.75, 1.55), (-0.5, 1.45)):
+        pole(g, V(x, 0.02, -HZ + 0.12), V(x + 0.05, top, -HZ + 0.1), 0.018, 0.016, rng, col=(0.72, 0.62, 0.5), sides=4, segs=1)
+    lbox(g, V(-0.75, 1.55, -HZ + 0.12), (0.36, 0.04, 0.05), quat_y(0.0), M_TIMBER, (0.6, 0.52, 0.42), tile=0.2)
+    lbox(g, V(-0.49, 0.12, -HZ + 0.14), (0.18, 0.24, 0.02), quat_y(0.0), M_IRON, IRON_D, tile=0.2)
+    pole(g, V(0.0, 1.5, -HZ + 0.1), V(0.9, 1.25, -HZ + 0.1), 0.02, 0.018, rng, col=(0.72, 0.62, 0.5), sides=4, segs=1)
+    face(g, [V(0.85, 1.25, -HZ + 0.11), V(0.3, 0.95, -HZ + 0.11), V(0.8, 1.15, -HZ + 0.11)], (0, 0, 1), M_IRON,
+         (0.5, 0.5, 0.52), tile=0.2)
+    barrel(g, rng, (0.7, 0.06, -0.3))
+    sack(g, rng, (0.15, 0.27, -0.45))
+    return b
+
+
+def hen(g, rng, c, yaw_a, col):
+    q = quat_y(yaw_a)
+    stone(g, c + V(0, 0.16, 0), (0.12, 0.1, 0.16), rng, mat=M_FRUIT, detail=1, rough=0.05, cuts=0, rot=q,
+          col_fn=lambda p, n: scale(col, 0.8 + 0.25 * max(n.y, 0.0)), tile=0.3)
+    stone(g, c + q @ V(0, 0.3, 0.13), (0.055, 0.065, 0.06), rng, mat=M_FRUIT, detail=0, rough=0.02, cuts=0,
+          col_fn=lambda p, n: col, tile=0.3)
+    lbox(g, c + q @ V(0, 0.37, 0.12), (0.015, 0.04, 0.05), q, M_FRUIT, (0.8, 0.1, 0.08), tile=0.1)
+    lbox(g, c + q @ V(0, 0.3, 0.19), (0.02, 0.02, 0.04), q, M_FRUIT, (0.9, 0.62, 0.15), tile=0.1)
+    face(g, [c + q @ V(0, 0.2, -0.12), c + q @ V(0, 0.36, -0.2), c + q @ V(0, 0.22, -0.2)], q @ V(1, 0, 0), M_FRUIT,
+         scale(col, 0.75), tile=0.1)
+
+
+def town_coop(rng):
+    """Hen house on legs: plank box, mono-pitch roof, a slatted ramp, two hens."""
+    b = Builder()
+    g = G(b)
+    HX, HZ = 0.65, 0.5
+    fl, yb, yf = 0.45, 1.25, 1.05
+    for x in (-HX + 0.05, HX - 0.05):
+        for z in (-HZ + 0.05, HZ - 0.05):
+            beam(g, [V(x, -0.05, z), V(x, fl, z)], 0.07, 0.07, mat=M_TIMBER, col=(0.55, 0.48, 0.4), rng=rng, chamfer=0.0)
+    lbox(g, V(0, fl + 0.02, 0), (2 * HX, 0.04, 2 * HZ), quat_y(0.0), M_PLANK, (0.55, 0.48, 0.4), tile=0.6)
+    ytop = lambda z: yb - (z + HZ) * (yb - yf) / (2 * HZ)  # noqa: E731
+    for x, sx in ((-HX, -1), (HX, 1)):
+        board_side(g, rng, x, sx, -HZ, HZ, ytop, k=3, y0=fl)
+    for z, sz, yt in ((HZ, 1, yf), (-HZ, -1, yb)):
+        lbox(g, V(0, (fl + yt) / 2, z + sz * 0.02), (2 * HX, yt - fl, 0.04), quat_y(0.0), M_PLANK, (0.6, 0.53, 0.44), tile=0.6)
+    lbox(g, V(0.25, fl + 0.2, HZ + 0.045), (0.22, 0.28, 0.01), quat_y(0.0), M_PLASTER, VOID, tile=0.3)
+    mono_roof(g, rng, 2 * HX, -HZ - 0.04, HZ, yb + 0.02, yf + 0.02, over=0.15, verge=0.1, t=0.05, lips=False)
+    a, c_ = V(0.25, fl + 0.06, HZ + 0.05), V(0.25, 0.0, HZ + 0.75)
+    lbox(g, a.lerp(c_, 0.5), (0.22, 0.03, (c_ - a).length), quat_x(math.atan2(a.y - c_.y, c_.z - a.z)), M_PLANK,
+         (0.6, 0.53, 0.44), tile=0.5)
+    for k in range(4):
+        p = a.lerp(c_, (k + 0.5) / 4) + V(0, 0.025, 0)
+        lbox(g, p, (0.22, 0.02, 0.025), quat_y(0.0), M_TIMBER, (0.5, 0.44, 0.36), tile=0.2)
+    for p, yaw_a, col in (((-0.55, 0.0, 0.75), 0.6, (0.95, 0.92, 0.85)), ((0.8, 0.0, 0.55), -1.2, (0.62, 0.4, 0.24))):
+        hen(g, rng, V(*p), yaw_a, col)
+    return b
+
+
+def town_outhouse(rng):
+    """The privy at the bottom of the plot: plank booth, mono-pitch roof, door ajar."""
+    b = Builder()
+    g = G(b)
+    H = 0.5
+    yb, yf = 1.85, 2.05
+    ytop = lambda z: yb + (z + H) * (yf - yb) / (2 * H)  # noqa: E731
+    for x, sx in ((-H, -1), (H, 1)):
+        board_side(g, rng, x, sx, -H, H, ytop, k=4)
+    lbox(g, V(0, yb / 2, -H - 0.02), (2 * H + 0.08, yb, 0.04), quat_y(0.0), M_PLANK, (0.58, 0.51, 0.43), tile=0.8)
+    for x in (-H, H):
+        beam(g, [V(x, -0.05, H), V(x, yf, H)], 0.09, 0.09, mat=M_TIMBER, col_fn=weathered(TF, 0.7), rng=rng, chamfer=0.0)
+    beam(g, [V(-H - 0.05, yf - 0.06, H), V(H + 0.05, yf - 0.06, H)], 0.09, 0.1, mat=M_TIMBER, col=TF, rng=rng, chamfer=0.0)
+    th = math.atan2(yf - yb, 2 * H)
+    lbox(g, V(0, (yf + yb) / 2 + 0.06, 0.1), (2 * H + 0.35, 0.05, 2 * H / math.cos(th) + 0.5), quat_x(-th), M_PLANK,
+         [(0.45, 0.4, 0.36), None, (0.55, 0.5, 0.43)], tile=0.8, grain=0)
+    lbox(g, V(0, 0.5, -0.15), (2 * H - 0.08, 0.06, 0.6), quat_y(0.0), M_PLANK, (0.6, 0.52, 0.42), tile=0.4)
+    lbox(g, V(0, 0.25, 0.14), (2 * H - 0.08, 0.5, 0.03), quat_y(0.0), M_PLANK, (0.55, 0.48, 0.4), tile=0.4)
+    lbox(g, V(0, 0.95, -0.4), (2 * H - 0.08, 1.9, 0.02), quat_y(0.0), M_PLASTER, VOID, tile=0.4)
+    door_leaf(g, rng, V(-H + 0.06, 0.0, H + 0.02), V(1, 0, 0), V(0, 0, 1), 2 * H - 0.12, 1.7, -0.7, col=(0.58, 0.5, 0.4))
+    return b
+
+
+def town_dung(rng):
+    """Dung heap behind the byre: dark mound, fresh straw on top, a pitchfork stuck in."""
+    b = Builder()
+    g = G(b)
+    mound(g, (0, -0.05, 0), 1.0, 0.8, 0.55, rng, mat=M_EARTH, col_fn=lambda p, n: (0.3, 0.24, 0.18), rings=4, seg=14,
+          rough=0.25)
+    mound(g, (0.15, 0.3, -0.1), 0.6, 0.45, 0.2, rng, mat=M_THATCH, col_fn=lambda p, n: (0.72, 0.6, 0.4), rings=3, seg=12,
+          rough=0.3)
+    p0, p1 = V(-0.35, 0.25, 0.2), V(-0.6, 1.55, 0.45)
+    pole(g, p0, p1, 0.02, 0.018, rng, col=(0.72, 0.62, 0.5), sides=4, segs=1)
+    d = (p1 - p0).normalized()
+    side = d.cross(V(0, 0, 1)).normalized()
+    for k in (-1, 0, 1):
+        tube(g, [p0 + side * (k * 0.07), p0 + side * (k * 0.07) - d * 0.3], [0.008, 0.006], 3, M_IRON, IRON_D, tile=0.2,
+             cap=False)
+    tube(g, [p0 - side * 0.08, p0 + side * 0.08], [0.012, 0.012], 3, M_IRON, IRON_D, tile=0.2, cap=False)
+    return b
+
+
+def town_hayrick(rng):
+    """A hay rick: a beehive stack round a central pole on a straw skirt, a ladder against it."""
+    b = Builder()
+    g = G(b)
+    pole(g, V(0, -0.1, 0), V(0.02, 3.3, 0.01), 0.06, 0.045, rng, col=(0.7, 0.62, 0.5), sides=5, segs=2)
+    prof = [(0.0, 1.05), (0.4, 1.2), (1.1, 1.22), (1.8, 1.02), (2.35, 0.62), (2.75, 0.22), (2.9, 0.05)]
+    lathe(g, (0, -0.05, 0), (0, 1, 0), prof, 12, M_THATCH, (0.92, 0.82, 0.55), tile=0.7)
+    mound(g, (0, -0.04, 0), 1.45, 1.45, 0.12, rng, mat=M_THATCH, col_fn=lambda p, n: (0.82, 0.72, 0.48), rings=2, seg=14)
+    ladder(g, rng, V(1.75, -0.03, 0.4), V(0.85, 2.1, 0.2), width=0.42)
+    return b
+
+
+# ─────────────────────────────────────────────────────────────── 11. lean-tos inside the walls
+def leanto(g, rng, W, D, yb, yf, posts, parapet=None, col=(0.6, 0.53, 0.45)):
+    """Lean-to against the curtain: back flat in the plane z = -D/2 (plank back panel, nothing
+    behind it), mono-pitch plank roof from yb at the back down to yf at the front post line z = D/2,
+    board side walls, front posts at `posts` (x) under a plate, open front (or a plank parapet up
+    to `parapet` with a doorway gap {x0, x1})."""
+    HX, HZ = W / 2, D / 2
+    th = mono_roof(g, rng, W, -HZ, HZ, yb, yf, over=0.45, verge=0.22)
+    ytop = lambda z: yb - (z + HZ) * math.tan(th)  # noqa: E731
+    lbox(g, V(0, yb / 2, -HZ + 0.03), (W + 0.1, yb, 0.06), quat_y(0.0), M_PLANK, scale(col, 0.85), tile=1.2)
+    for x, sx in ((-HX, -1), (HX, 1)):
+        board_side(g, rng, x, sx, -HZ + 0.06, HZ - 0.06, ytop, col=col)
+    for x in posts:
+        beam(g, [V(x, -0.05, HZ), V(x, yf - 0.2, HZ)], 0.17, 0.17, mat=M_TIMBER, col_fn=weathered(TF, 0.7), rng=rng,
+             chamfer=0.0)
+    beam(g, [V(-HX - 0.12, yf - 0.1, HZ), V(HX + 0.12, yf - 0.1, HZ)], 0.17, 0.2, mat=M_TIMBER, col=TF, rng=rng, chamfer=0.0)
+    beam(g, [V(-HX, yb - 0.12, -HZ + 0.14), V(HX, yb - 0.12, -HZ + 0.14)], 0.15, 0.16, mat=M_TIMBER, col=TF, rng=rng,
+         chamfer=0.0)
+    for x in posts:
+        beam(g, [V(x, yb - 0.24, -HZ + 0.15), V(x, yf - 0.14, HZ)], 0.12, 0.12, mat=M_TIMBER, col=scale(TF, 0.9), rng=rng,
+             chamfer=0.0)
+        for sx in (-1, 1):
+            if abs(x + sx * 0.5) < HX:
+                beam(g, [V(x, yf - 0.75, HZ), V(x + sx * 0.5, yf - 0.2, HZ)], 0.1, 0.1, mat=M_TIMBER, col=TF, rng=rng,
+                     chamfer=0.0)
+    if parapet:
+        h, gaps = parapet
+        xs = sorted(posts)
+        for a_, c_ in zip(xs, xs[1:]):
+            for g0, g1 in gaps:
+                if a_ >= g0 and c_ <= g1:
+                    break
+            else:
+                lbox(g, V((a_ + c_) / 2, h / 2, HZ - 0.03), (c_ - a_ - 0.17, h, 0.05), quat_y(0.0), M_PLANK, col, tile=1.0,
+                     grain=1)
+                beam(g, [V(a_, h, HZ), V(c_, h, HZ)], 0.1, 0.08, mat=M_TIMBER, col=TF, rng=rng, chamfer=0.0)
+    lbox(g, V(0, 0.015, 0.0), (W - 0.1, 0.03, D - 0.1), quat_y(0.0), M_EARTH, (0.42, 0.36, 0.3), tile=1.0)
+    return ytop
+
+
+def hay_rack(g, rng, x0, x1, z, y0=1.15, y1=1.75):
+    beam(g, [V(x0, y1, z + 0.4), V(x1, y1, z + 0.4)], 0.07, 0.07, mat=M_TIMBER, col=TF, rng=rng, chamfer=0.0)
+    beam(g, [V(x0, y0, z + 0.05), V(x1, y0, z + 0.05)], 0.07, 0.07, mat=M_TIMBER, col=TF, rng=rng, chamfer=0.0)
+    n = int((x1 - x0) / 0.16)
+    for k in range(n + 1):
+        x = x0 + (x1 - x0) * k / n
+        pole(g, V(x, y0, z + 0.05), V(x, y1, z + 0.4), 0.014, 0.014, rng, mat=M_TIMBER, col=(0.6, 0.52, 0.42), sides=3, segs=1,
+             wobble=0.0)
+    mound(g, ((x0 + x1) / 2, y0 + 0.05, z + 0.2), (x1 - x0) / 2 - 0.05, 0.2, 0.35, rng, mat=M_THATCH,
+          col_fn=lambda p, n: (0.8, 0.72, 0.48), rings=2, seg=10)
+
+
+def castle_stable(rng):
+    """Stable lean-to, three stalls open to the yard: plank partitions, hay racks + mangers on the
+    back wall, straw bedding, a bucket and a pitchfork, a saddle over a partition."""
+    b = Builder()
+    g = G(b)
+    W, D = 7.2, 3.4
+    HZ = D / 2
+    leanto(g, rng, W, D, 3.0, 2.15, (-3.6, -1.2, 1.2, 3.6))
+    for x in (-1.2, 1.2):
+        beam(g, [V(x, -0.05, -HZ + 0.1), V(x, 1.5, -HZ + 0.1)], 0.12, 0.12, mat=M_TIMBER, col=TF, rng=rng, chamfer=0.0)
+        for y in (0.35, 0.75, 1.15):
+            board(g, V(x, y, -0.05), (0, 0, 1), (1, 0, 0), D - 0.25, 0.32, 0.05, mat=M_PLANK,
+                  col=scale((0.6, 0.52, 0.42), rng.uniform(0.85, 1.0)), rng=rng, chamfer=0.0)
+    for k, x in enumerate((-2.4, 0.0, 2.4)):
+        hay_rack(g, rng, x - 0.85, x + 0.85, -HZ + 0.06)
+        lbox(g, V(x, 0.42, -HZ + 0.32), (1.5, 0.3, 0.42), quat_y(0.0), M_PLANK, (0.5, 0.43, 0.35), tile=0.6)
+        lbox(g, V(x, 0.575, -HZ + 0.32), (1.4, 0.01, 0.32), quat_y(0.0), M_THATCH, (0.78, 0.68, 0.45), tile=0.4)
+        mound(g, (x, -0.02, 0.1), 1.0, 1.3, 0.1, rng, mat=M_THATCH, col_fn=lambda p, n: (0.8, 0.7, 0.46), rings=2, seg=10)
+    bucket(g, (2.0, 0.0, 1.3))
+    pole(g, V(3.4, -0.02, 1.25), V(3.15, 1.6, 1.5), 0.02, 0.018, rng, col=(0.72, 0.62, 0.5), sides=4, segs=1)
+    # Saddle over the first partition.
+    lathe(g, (-1.2, 1.25, 0.6), (0, 0, 1), [(0.0, 0.18), (0.25, 0.2), (0.5, 0.17)], 8, M_HIDE, (0.48, 0.3, 0.18), tile=0.3)
+    return b
+
+
+def bunk(g, rng, c, L=1.6, Dp=0.75):
+    C = Vector(c)
+    for sx in (-1, 1):
+        for sz in (-1, 1):
+            beam(g, [C + V(sx * L / 2, -0.03, sz * Dp / 2), C + V(sx * L / 2, 1.85, sz * Dp / 2)], 0.08, 0.08, mat=M_TIMBER,
+                 col=(0.55, 0.47, 0.38), rng=rng, chamfer=0.0)
+    for y in (0.38, 1.3):
+        lbox(g, C + V(0, y, 0), (L, 0.06, Dp), quat_y(0.0), M_PLANK, (0.58, 0.5, 0.4), tile=0.6)
+        lbox(g, C + V(0, y + 0.08, 0), (L - 0.1, 0.1, Dp - 0.1), quat_y(0.0), M_CLOTH, scale(HESSIAN, 0.95), tile=0.5)
+        lbox(g, C + V(0.25, y + 0.14, 0.02), (L * 0.55, 0.03, Dp - 0.06), quat_y(0.0), M_CLOTH, (0.42, 0.4, 0.5), tile=0.5)
+
+
+def round_shield(g, c, n, r, col_a, col_b):
+    C, N = Vector(c), Vector(n).normalized()
+    u = N.cross(UP).normalized()
+    v = u.cross(N)
+    k = 12
+    ring = [C + (u * math.cos(2 * math.pi * i / k) + v * math.sin(2 * math.pi * i / k)) * r for i in range(k)]
+    face(g, ring, N, M_PLANK, col_a, tile=0.5)
+    face(g, [p - N * 0.03 for p in ring], -N, M_PLANK, (0.4, 0.33, 0.26), tile=0.5)
+    half = [C + N * 0.004 + (u * math.cos(math.pi * i / 6) + v * math.sin(math.pi * i / 6)) * (r * 0.98) for i in range(7)]
+    face(g, half, N, M_FRUIT, col_b, tile=0.5)
+    lathe(g, C, N, [(0.0, 0.07), (0.05, 0.05), (0.07, 0.0)], 6, M_IRON, IRON_D, tile=0.2)
+
+
+def castle_barracks(rng):
+    """Barracks lean-to, half-open front (plank parapet ~1.0 high, a doorway): three two-tier bunks
+    on the back wall, a table and bench, shields + helmets on pegs, a spear rack outside (+X end)."""
+    b = Builder()
+    g = G(b)
+    W, D = 7.6, 3.6
+    HX, HZ = W / 2, D / 2
+    leanto(g, rng, W, D, 3.1, 2.25, (-3.8, -2.6, -1.3, 0.0, 1.3, 2.6, 3.8), parapet=(1.0, [(-1.3, 0.0)]))
+    for x in (-2.6, 0.55, 2.65):
+        bunk(g, rng, (x, 0.0, -HZ + 0.45))
+    lbox(g, V(-1.8, 0.72, 0.6), (1.5, 0.06, 0.7), quat_y(0.05), M_PLANK, (0.62, 0.54, 0.44), tile=0.6)
+    for sx in (-1, 1):
+        for sz in (-1, 1):
+            beam(g, [V(-1.8 + sx * 0.62, -0.02, 0.6 + sz * 0.25), V(-1.8 + sx * 0.6, 0.7, 0.6 + sz * 0.25)], 0.06, 0.06,
+                 mat=M_TIMBER, col=(0.55, 0.47, 0.38), rng=rng, chamfer=0.0)
+    bench(g, rng, V(-1.8, 0.0, 1.2), 0.05, L=1.4)
+    tankard(g, (-1.6, 0.75, 0.55))
+    # Shields + kettle helms on the side walls (inside).
+    for z, ca, cb in ((-0.35, (0.2, 0.32, 0.6), (0.95, 0.92, 0.85)), (0.55, (0.95, 0.92, 0.85), (0.2, 0.32, 0.6))):
+        round_shield(g, (-HX + 0.12, 1.75, z), (1, 0, 0), 0.36, ca, cb)
+    for z in (-0.6, 0.2):
+        kettle_helm(g, rng, (HX - 0.25, 1.62, z), tilt=(0.0, 0.25), s=0.9)
+    # Spear rack outside the +X end.
+    x0 = HX + 0.55
+    for z in (-0.6, 0.9):
+        beam(g, [V(x0, -0.05, z), V(x0, 1.25, z)], 0.08, 0.08, mat=M_TIMBER, col=(0.55, 0.47, 0.38), rng=rng, chamfer=0.0)
+    for y in (0.25, 1.15):
+        beam(g, [V(x0, y, -0.7), V(x0, y, 1.0)], 0.06, 0.06, mat=M_TIMBER, col=(0.55, 0.47, 0.38), rng=rng, chamfer=0.0)
+    for k in range(5):
+        z = -0.45 + k * 0.3
+        p0, p1 = V(x0 - 0.06, 0.05, z), V(x0 + 0.12, 2.35, z + 0.05)
+        pole(g, p0, p1, 0.018, 0.016, rng, col=(0.7, 0.6, 0.46), sides=4, segs=1)
+        d = (p1 - p0).normalized()
+        face(g, [p1 - V(0, 0, 0.04), p1 + V(0, 0, 0.04), p1 + d * 0.22], (1, 0, 0), M_IRON, (0.6, 0.6, 0.62), tile=0.2)
+        face(g, [p1 - V(0, 0, 0.04), p1 + V(0, 0, 0.04), p1 + d * 0.22], (-1, 0, 0), M_IRON, (0.6, 0.6, 0.62), tile=0.2)
+    return b
+
+
+def castle_store(rng):
+    """Store shed lean-to, open front: stacked crates, sacks, barrels, a sack barrow."""
+    b = Builder()
+    g = G(b)
+    W, D = 5.6, 3.2
+    HZ = D / 2
+    leanto(g, rng, W, D, 2.9, 2.1, (-2.8, 0.0, 2.8))
+    for p, s_, a in (((-2.0, 0.3, -1.0), (0.7, 0.6, 0.6), 0.0), ((-1.25, 0.3, -1.05), (0.7, 0.6, 0.6), 0.04),
+                     ((-1.65, 0.88, -1.0), (0.66, 0.56, 0.56), -0.06), ((-2.1, 0.25, -0.2), (0.6, 0.5, 0.5), 0.3),
+                     ((1.9, 0.3, -1.05), (0.7, 0.6, 0.6), -0.03)):
+        lbox(g, V(*p), s_, quat_y(a), M_PLANK, scale((0.72, 0.62, 0.5), rng.uniform(0.85, 1.0)), tile=0.6)
+        for sy in (-1, 1):
+            lbox(g, V(*p) + V(0, sy * (s_[1] / 2 - 0.03), 0), (s_[0] + 0.02, 0.06, s_[2] + 0.02), quat_y(a), M_TIMBER,
+                 (0.42, 0.34, 0.26), tile=0.4)
+    for k in range(3):
+        barrel(g, rng, (0.0 + 0.55 * k, 0.03, -HZ + 0.4))
+    barrel(g, rng, (0.27, 0.62, -HZ + 0.4))
+    for p, lying in (((-0.5, 0.3, -0.3), False), ((-0.8, 0.3, 0.05), False), ((-0.55, 0.2, 0.4), True),
+                     ((1.9, 0.75, -1.05), True), ((2.1, 0.3, -0.2), False)):
+        sack(g, rng, p, lying)
+    return b
+
+
+def cart_wheel(g, rng, c, axis, r=0.55):
+    C, A = Vector(c), Vector(axis).normalized()
+    u = A.cross(UP).normalized() if abs(A.y) < 0.9 else V(1, 0, 0)
+    v = A.cross(u).normalized()
+    k = 14
+    ring = [C + (u * math.cos(2 * math.pi * i / k) + v * math.sin(2 * math.pi * i / k)) * r for i in range(k + 1)]
+    tube(g, ring, [0.045] * (k + 1), 4, M_TIMBER, (0.5, 0.42, 0.34), tile=0.5, cap=False)
+    for i in range(6):
+        a = 2 * math.pi * i / 6
+        pole(g, C, C + (u * math.cos(a) + v * math.sin(a)) * (r - 0.03), 0.02, 0.018, rng, mat=M_TIMBER,
+             col=(0.55, 0.46, 0.36), sides=4, segs=1, wobble=0.0)
+    lathe(g, C - A * 0.1, A, [(0.0, 0.06), (0.2, 0.07)], 6, M_TIMBER, (0.45, 0.38, 0.3), tile=0.2)
+
+
+def castle_cartshed(rng):
+    """Cart shed lean-to, two open bays: a two-wheeled cart with its shafts down, a spare wheel
+    against the side wall, a horse collar on a peg, a pile of sacks."""
+    b = Builder()
+    g = G(b)
+    W, D = 6.4, 3.8
+    HX, HZ = W / 2, D / 2
+    leanto(g, rng, W, D, 3.0, 2.3, (-3.2, 0.0, 3.2))
+    # Cart in the -X bay, tail to the back wall, shafts out to the yard and resting on the ground.
+    cx, cz = -1.55, -0.2
+    yb = 0.78
+    lbox(g, V(cx, yb, cz), (1.3, 0.06, 2.0), quat_y(0.0), M_PLANK, (0.62, 0.53, 0.42), tile=0.8)
+    for sx in (-1, 1):
+        lbox(g, V(cx + sx * 0.63, yb + 0.2, cz), (0.05, 0.36, 2.0), quat_y(0.0), M_PLANK, (0.58, 0.5, 0.4), tile=0.8)
+        beam(g, [V(cx + sx * 0.45, yb - 0.08, cz - 1.0), V(cx + sx * 0.45, 0.06, cz + 2.4)], 0.08, 0.1, mat=M_TIMBER,
+             col=(0.55, 0.47, 0.38), rng=rng, chamfer=0.0)
+        cart_wheel(g, rng, (cx + sx * 0.82, 0.55, cz + 0.1), (1, 0, 0))
+    beam(g, [V(cx - 0.9, 0.55, cz + 0.1), V(cx + 0.9, 0.55, cz + 0.1)], 0.08, 0.08, mat=M_TIMBER, col=(0.45, 0.38, 0.3),
+         rng=rng, chamfer=0.0)
+    sack(g, rng, (cx - 0.25, yb + 0.25, cz - 0.4))
+    sack(g, rng, (cx + 0.25, yb + 0.18, cz - 0.1), True)
+    # Spare wheel against the +X wall, collar on a peg, a stack of sacks + a barrel in the +X bay.
+    cart_wheel(g, rng, (HX - 0.18, 0.56, -0.4), (1, 0, 0.25))
+    tube(g, [V(HX - 0.12, 1.55, 0.6 + 0.25 * math.cos(a)) + V(0, 0.32 * math.sin(a), 0) for a in np.linspace(0, 2 * math.pi, 9)],
+         [0.06] * 9, 6, M_HIDE, (0.4, 0.27, 0.17), tile=0.3, cap=False)
+    for p, lying in (((1.2, 0.3, -1.25), False), ((1.6, 0.3, -1.3), False), ((1.4, 0.55, -1.25), True)):
+        sack(g, rng, p, lying)
+    barrel(g, rng, (0.7, 0.03, -1.3))
+    return b
+
+
 def bounds(builder):
     v = np.array(builder.verts) if builder.verts else np.zeros((1, 3))
     gx, gy, gz = v[:, 0], v[:, 2], -v[:, 1]
@@ -1446,6 +2057,24 @@ MODELS = {
     "town_house_d": town_house_d,
     "town_carpenter": town_carpenter,
     "town_archery": town_archery,
+    # v3 (spec §2): the podgrodzie outside the W gate + the lean-tos against the curtain.
+    "town_street_house_a": town_street_house_a,
+    "town_street_house_b": town_street_house_b,
+    "town_fence_wattle": town_fence_wattle,
+    "town_fence_wattle_gate": town_fence_wattle_gate,
+    "town_fence_picket": town_fence_picket,
+    "town_fence_picket_gate": town_fence_picket_gate,
+    "town_garden": town_garden,
+    "town_woodpile": town_woodpile,
+    "town_shed": town_shed,
+    "town_coop": town_coop,
+    "town_outhouse": town_outhouse,
+    "town_dung": town_dung,
+    "town_hayrick": town_hayrick,
+    "castle_stable": castle_stable,
+    "castle_barracks": castle_barracks,
+    "castle_store": castle_store,
+    "castle_cartshed": castle_cartshed,
 }
 
 ONLY = [a for a in sys.argv[sys.argv.index("--") + 1:]] if "--" in sys.argv else []
