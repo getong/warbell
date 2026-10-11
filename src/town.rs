@@ -604,7 +604,7 @@ pub struct PlotSpots(pub Vec<Vec2>);
 /// the gate lanes (W at z=0, S at x=0, N postern at x=6), the street village along the King's Road
 /// west of the W gate, and inside the forced-flat ring (`worldmap::castle_ring_dist`). The castle v2
 /// spots, nudged where the polygon's corner towers or the village now stand.
-const PLOT_OFFSETS: [Vec2; PLOT_COUNT] = [
+pub(crate) const PLOT_OFFSETS: [Vec2; PLOT_COUNT] = [
     Vec2::new(24.0, 27.5),   // S side, east of the south gate lane (off the SE tower)
     Vec2::new(-21.0, 24.5),  // S side, west of the south gate lane
     Vec2::new(21.0, -24.5),  // N side, east of the postern lane
