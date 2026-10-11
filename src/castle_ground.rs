@@ -232,14 +232,10 @@ const FIELDS: [Field; 6] = [
     Field { c: Vec2::new(41.0, 0.0), half: Vec2::new(2.2, 6.0), yaw: 0.0, plough: 0.8 },
 ];
 
-/// Furrow spacing (world units): ≥3 rut-mask texels (`roads::RUT_CELL` 0.35) per period, so the
-/// bilinear-filtered grooves stay parallel lines instead of aliasing into moiré.
-const FURROW: f32 = 1.1;
-
-/// A field at world `(wx, wz)`: `(weight, furrow groove 0..1, plough)` — `None` off every field.
+/// A field at world `(wx, wz)`: `(weight, plough)` — `None` off every field.
 /// The edge is frayed by noise (a headland, not a ruled rectangle) and the field yields to roads,
 /// yards and anything but the open grass.
-pub fn field_at(wx: f32, wz: f32) -> Option<(f32, f32, f32)> {
+pub fn field_at(wx: f32, wz: f32) -> Option<(f32, f32)> {
     let p = Vec2::new(wx, wz);
     for f in &FIELDS {
         let d = p - f.c;
@@ -257,22 +253,18 @@ pub fn field_at(wx: f32, wz: f32) -> Option<(f32, f32, f32)> {
         {
             return None;
         }
-        let w = smoothstep(-0.6, 0.6, edge);
-        // Furrows run along the strip's long axis.
-        let across = if f.half.x >= f.half.y { l.y } else { l.x };
-        let wave = 0.5 + 0.5 * (across * std::f32::consts::TAU / FURROW).cos();
-        let groove = smoothstep(0.15, 0.95, wave) * (0.8 + 0.2 * noise(wx, wz, 0.9, 61));
-        return Some((w, groove, f.plough));
+        // (The plough rows themselves are drawn by `terrain.wgsl`'s `field_sample`.)
+        return Some((smoothstep(-0.6, 0.6, edge), f.plough));
     }
     None
 }
 
 /// Is `(wx, wz)` on a field (cover / clutter keep off the ploughed soil)?
 pub fn in_field(wx: f32, wz: f32) -> bool {
-    field_at(wx, wz).is_some_and(|(w, _, _)| w > 0.05)
+    field_at(wx, wz).is_some_and(|(w, _)| w > 0.05)
 }
 
-/// The fields' rut-mask region (world XZ min, max), for `roads::bake_rut_mask`.
+/// The fields' world XZ bounds (min, max), for the realforest mask's field pass.
 pub fn field_bounds() -> (Vec2, Vec2) {
     let (mut lo, mut hi) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
     for f in &FIELDS {

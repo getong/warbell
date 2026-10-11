@@ -372,7 +372,7 @@ fn fragment(
     let gmask = textureSample(rut_tex, rut_samp, rut_uv).rg * rut_in;
     // The fields' own analytic rows replace the rut mask's soft furrow blobs.
     let fld = field_sample(wp);
-    let fld_on = fld.zone * f32(forest.pbr.x > 0.5) * rut_in;
+    let fld_on = fld.zone * f32(forest.pbr.x > 0.5) * f32(forest.rut_region.z > 0.0);
     let rut = gmask.r * (1.0 - fld_on);
     let rut_wear = 0.65 + 0.35 * ter_noise(wp * 0.9 + vec2<f32>(31.0, 7.0));
     // 0.55: tuned by A/B shots — 0.22 and even 0.38 drowned under the ±0.17 ground mottle +
@@ -744,7 +744,11 @@ fn fragment(
         // Tangent frame of the planar XZ mapping: u runs along +X, v along +Z, and an OpenGL
         // normal map's +Y (image up = decreasing v) therefore points toward -Z.
         let gn = normalize(in.world_normal);
-        let tx = normalize(vec3<f32>(1.0, 0.0, 0.0) - gn * gn.x);
+        // +X projected off the normal — degenerate (normalize(0) = NaN) on a face whose normal IS ±X
+        // (an X-facing bank / terrace wall), which drew those wall slivers as black stair-step lines;
+        // fall back to +Z there.
+        let tx = select(normalize(vec3<f32>(1.0, 0.0, 0.0) - gn * gn.x),
+                       normalize(cross(vec3<f32>(0.0, 0.0, 1.0), gn)), abs(gn.x) > 0.98);
         let bz = cross(gn, tx);
         let n_ts = vec3<f32>(nts.xy * 1.7, max(nts.z, 0.2));
         var rut_tilt = vec3<f32>(0.0);
@@ -896,6 +900,14 @@ fn fragment(
     }
 
     var out: FragmentOutput;
+    // NaN backstop: a degenerate normal (normalize of a zero blend) or albedo must never reach the
+    // lighting — one bad fragment draws as a crisp black hairline. Checked on the bits, so a
+    // fast-math compiler can't fold the test away.
+    let n_bad = any((bitcast<vec3<u32>>(pbr_input.N) & vec3<u32>(0x7fffffffu)) >= vec3<u32>(0x7f800000u))
+        || dot(pbr_input.N, pbr_input.N) < 0.25;
+    let c_bad = any((bitcast<vec4<u32>>(pbr_input.material.base_color) & vec4<u32>(0x7fffffffu)) >= vec4<u32>(0x7f800000u));
+    pbr_input.N = select(pbr_input.N, normalize(in.world_normal), n_bad);
+    pbr_input.material.base_color = select(pbr_input.material.base_color, vec4<f32>(0.25, 0.22, 0.16, 0.0), c_bad);
     if (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_UNLIT_BIT) == 0u {
         out.color = apply_pbr_lighting(pbr_input);
     } else {
