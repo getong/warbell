@@ -32,8 +32,10 @@ _src = (HERE / "wayside_models.py").read_text(encoding="utf-8")
 exec(compile(_src[:_src.index("\nMODELS = {")], str(HERE / "wayside_models.py"), "exec"))
 
 SAND = (1.0, 0.86, 0.64)
-BONE = (1.0, 0.96, 0.86)
-MUD = (0.3, 0.26, 0.2)
+BONE = (0.84, 0.78, 0.66)
+MUD = (0.13, 0.11, 0.08)
+# Bleached bone: the untextured vertex-colour material (s_rock read as grey stone, not bone).
+M_BONE = M_FRUIT
 CLAY = (0.95, 0.55, 0.36)
 WOOD = (0.82, 0.72, 0.58)
 GREY_WOOD = (0.78, 0.76, 0.72)
@@ -127,22 +129,22 @@ def skull(g, c, fwd, s, rng, horns=True, col=BONE):
             socket = max(socket, smoothstep(0.075 * s, 0.035 * s, (p - e).length))
         nose = smoothstep(0.06 * s, 0.025 * s, (p - (c + f * 0.55 * s + Vector((0, 0.02 * s, 0)))).length)
         return mix(scale(col, k), (0.12, 0.1, 0.08), max(socket, nose))
-    stone(g, tuple(c), (0.2 * s, 0.17 * s, 0.24 * s), rng, mat=M_ROCK, detail=2, rough=0.06, cuts=1, rot=quat_y(yaw),
+    stone(g, tuple(c), (0.2 * s, 0.17 * s, 0.24 * s), rng, mat=M_BONE, detail=2, rough=0.06, cuts=1, rot=quat_y(yaw),
           col_fn=bone, tile=0.4)
-    stone(g, tuple(c + f * 0.36 * s - Vector((0, 0.04 * s, 0))), (0.11 * s, 0.09 * s, 0.26 * s), rng, mat=M_ROCK,
+    stone(g, tuple(c + f * 0.36 * s - Vector((0, 0.04 * s, 0))), (0.11 * s, 0.09 * s, 0.26 * s), rng, mat=M_BONE,
           detail=1, rough=0.05, cuts=0, rot=quat_y(yaw), col_fn=bone, tile=0.4)
     if horns:
         for sg in (-1, 1):
             r0 = c + side * (sg * 0.16 * s) + Vector((0, 0.1 * s, 0)) - f * 0.05 * s
             pts = bez(r0, r0 + side * (sg * 0.28 * s) + Vector((0, 0.05 * s, 0)), r0 + side * (sg * 0.36 * s) + Vector((0, 0.3 * s, 0)) + f * 0.12 * s, 6)
-            tube(g, pts, [0.05 * s, 0.045 * s, 0.038 * s, 0.03 * s, 0.02 * s, 0.006 * s], 6, M_ROCK,
+            tube(g, pts, [0.05 * s, 0.045 * s, 0.038 * s, 0.03 * s, 0.02 * s, 0.006 * s], 6, M_BONE,
                  (0.55, 0.5, 0.42), tile=0.3)
 
 
 def long_bone(g, p0, p1, r, rng, col=BONE):
     p0, p1 = Vector(p0), Vector(p1)
     tube(g, [p0, p0.lerp(p1, 0.12), p0.lerp(p1, 0.5), p0.lerp(p1, 0.88), p1], [r * 1.7, r * 1.1, r, r * 1.1, r * 1.6],
-         6, M_ROCK, scale(col, rng.uniform(0.85, 1.0)), tile=0.3)
+         6, M_BONE, scale(col, rng.uniform(0.85, 1.0)), tile=0.3)
 
 
 # ─────────────────────────────────────────────────────────────── desert
@@ -225,7 +227,7 @@ def story_caravan(rng):
     crate(g, V(-0.2, 0.15, 1.6), quat_y(-0.35) @ quat_x(0.5), (0.4, 0.32, 0.34), rng)
     # Ox skeleton lying in front of the wagon (+X), still near the yoke.
     sp = bez(V(1.0, 0.1, 0.55), V(1.6, 0.16, 0.45), V(2.2, 0.08, 0.75), 7)
-    tube(g, sp, [0.045, 0.05, 0.05, 0.048, 0.042, 0.035, 0.03], 6, M_ROCK, BONE, tile=0.3)
+    tube(g, sp, [0.045, 0.05, 0.05, 0.048, 0.042, 0.035, 0.03], 6, M_BONE, BONE, tile=0.3)
     for k in range(6):
         s = sp[1] + (sp[4] - sp[1]) * (k / 5)
         h = 0.42 - abs(k - 2.5) * 0.05
@@ -233,10 +235,10 @@ def story_caravan(rng):
         pts = bez(s, s + V(0.0, h, 0.15), s + V(0.05 * k - 0.1, 0.05, 0.5), 6)
         if broken:
             pts = pts[:4]
-        tube(g, pts, [0.022, 0.02, 0.018, 0.016, 0.013, 0.01][:len(pts)], 5, M_ROCK, scale(BONE, rng.uniform(0.85, 1.0)),
+        tube(g, pts, [0.022, 0.02, 0.018, 0.016, 0.013, 0.01][:len(pts)], 5, M_BONE, scale(BONE, rng.uniform(0.85, 1.0)),
              tile=0.3)
     skull(g, V(2.25, 0.13, 0.92), (0.6, -0.1, 0.8), 0.95, rng)
-    stone(g, (0.92, 0.1, 0.62), (0.2, 0.08, 0.17), rng, mat=M_ROCK, detail=1, rough=0.1, col_fn=lambda p, n: BONE, tile=0.4)
+    stone(g, (0.92, 0.1, 0.62), (0.2, 0.08, 0.17), rng, mat=M_BONE, detail=1, rough=0.1, col_fn=lambda p, n: BONE, tile=0.4)
     long_bone(g, V(0.6, 0.03, 0.15), V(1.15, 0.04, -0.15), 0.028, rng)
     long_bone(g, V(1.8, 0.03, 0.05), V(2.15, 0.03, -0.35), 0.026, rng)
     long_bone(g, V(1.5, 0.04, 1.2), V(1.95, 0.03, 1.45), 0.025, rng)
@@ -256,11 +258,11 @@ def story_ribs(rng):
     mound(g, (-2.0, 0, 0.3), 1.0, 1.1, 0.55, rng, col_fn=sand_col(nz), tile=1.6, rings=5, seg=18, skirt=0.2)
     bone = scale(BONE, 0.95)
     spine = bez(V(-2.0, 0.0, 0.05), V(0.0, 0.42, 0.0), V(1.9, 0.12, -0.05), 9)
-    tube(g, spine, [0.12, 0.15, 0.17, 0.17, 0.16, 0.15, 0.14, 0.12, 0.1], 8, M_ROCK, bone, tile=0.5)
+    tube(g, spine, [0.12, 0.15, 0.17, 0.17, 0.16, 0.15, 0.14, 0.12, 0.1], 8, M_BONE, bone, tile=0.5)
     for k in range(9):
         p = spine[1] + (spine[7] - spine[1]) * (k / 8)
         p = bez(V(-2.0, 0.0, 0.05), V(0.0, 0.42, 0.0), V(1.9, 0.12, -0.05), 17)[2 + k * 1]
-        stone(g, tuple(p + V(0, 0.15, 0)), (0.07, 0.12, 0.06), rng, mat=M_ROCK, detail=1, rough=0.1,
+        stone(g, tuple(p + V(0, 0.15, 0)), (0.07, 0.12, 0.06), rng, mat=M_BONE, detail=1, rough=0.1,
               col_fn=lambda q, n: bone, tile=0.4)
     xs = [-1.45, -0.95, -0.42, 0.1, 0.6, 1.08]
     for i, x in enumerate(xs):
@@ -276,11 +278,11 @@ def story_ribs(rng):
                 pts = pts[:6 + (i % 3)]
             n = len(pts)
             radii = [0.12 - 0.075 * (k / 10) for k in range(n)]
-            tube(g, pts, radii, 7, M_ROCK, scale(bone, rng.uniform(0.88, 1.0)), tile=0.5,
+            tube(g, pts, radii, 7, M_BONE, scale(bone, rng.uniform(0.88, 1.0)), tile=0.5,
                  col_fn=lambda t: mix(scale(SAND, 0.8), bone, smoothstep(0.0, 0.25, t)))
     # A fallen rib half in the sand.
     tube(g, bez(V(1.4, 0.0, 1.0), V(1.9, 0.25, 1.4), V(2.3, 0.02, 0.9), 8), [0.08, 0.075, 0.07, 0.065, 0.06, 0.05, 0.045, 0.035],
-         6, M_ROCK, bone, tile=0.5)
+         6, M_BONE, bone, tile=0.5)
     # Skull, half buried, at the head end.
     skull(g, V(2.15, 0.2, -0.25), (0.8, -0.15, -0.5), 2.4, rng, horns=True)
     # The spear that didn't help: a broken shaft jammed between two ribs.
@@ -329,9 +331,9 @@ def story_oasis(rng):
     for p, yw in ((V(0.75, 0.05, 0.85), 0.4), (V(1.05, 0.05, 0.55), 1.7), (V(-0.2, 0.05, 1.25), 2.6)):
         rot = quat_y(yw)
         stone(g, tuple(p), (0.24, 0.07, 0.15), rng, mat=M_HIDE, detail=2, rough=0.18, cuts=1, rot=rot,
-              col_fn=lambda q, n: (0.55, 0.38, 0.26), tile=0.3)
+              col_fn=lambda q, n: (0.34, 0.24, 0.16), tile=0.3)
         neck = p + rot @ V(0.24, 0.02, 0)
-        tube(g, [neck, neck + rot @ V(0.1, 0.03, 0.02)], [0.035, 0.025], 6, M_HIDE, (0.45, 0.3, 0.2), tile=0.2)
+        tube(g, [neck, neck + rot @ V(0.1, 0.03, 0.02)], [0.035, 0.025], 6, M_HIDE, (0.3, 0.2, 0.14), tile=0.2)
     # Dead palm, standing: ringed grey trunk, a skirt of dead fronds hanging.
     def palm(base, top_off, h, rad, fronds, fallen=False):
         base = Vector(base)
@@ -558,7 +560,7 @@ def story_hunter(rng):
 
     def hidecol(u, v):
         patch = 0.5 + 0.5 * math.sin(v * 7.0 + u * 3.0)
-        return mix((0.55, 0.4, 0.28), (0.72, 0.58, 0.42), patch)
+        return mix((0.3, 0.22, 0.16), (0.36, 0.28, 0.2), patch)
     sheet(g, grid, M_HIDE, hidecol, tile=0.6, double=True)
     for k in range(6):
         x = rng.uniform(-0.8, 0.8)
@@ -566,7 +568,7 @@ def story_hunter(rng):
              col=(0.4, 0.42, 0.3), sides=4)
     # Bedding inside: a fur.
     stone(g, tuple(lc + V(0, 0.03, -0.05)), (0.6, 0.04, 0.3), rng, mat=M_HIDE, detail=2, rough=0.2, cuts=0,
-          col_fn=lambda q, n: (0.42, 0.32, 0.24), tile=0.4)
+          col_fn=lambda q, n: (0.26, 0.2, 0.15), tile=0.4)
     # Cold fire: ash, ring stones, charred ends.
     fc = V(0.15, 0, 0.55)
 
@@ -594,7 +596,7 @@ def story_hunter(rng):
         grid.append([tuple(rc + V(-0.45 + 0.9 * j / 6, 1.24 - 0.04 * math.sin(math.pi * j / 6), 0.0)
                            + V(0, -0.0, 0) + V(0, -u * 0.75, (0.12 if u < 0.5 else -0.1) * math.sin(math.pi * u)))
                      for j in range(7)])
-    sheet(g, grid, M_HIDE, lambda u, v: mix((0.62, 0.45, 0.3), (0.5, 0.36, 0.25), u), tile=0.6, double=True)
+    sheet(g, grid, M_HIDE, lambda u, v: mix((0.38, 0.28, 0.2), (0.3, 0.22, 0.16), u), tile=0.6, double=True)
     fq = quat_x(math.radians(-24))
     fo = rc + V(0.0, 0.52, 0.62)
     fr = [fo + fq @ V(sx * 0.42, sy * 0.5, 0) for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
@@ -602,7 +604,7 @@ def story_hunter(rng):
         pole(g, fr[k], fr[(k + 1) % 4], 0.022, 0.022, rng, col=pc, sides=5, segs=1)
     grid = [[tuple(fo + fq @ V(-0.36 + 0.72 * j / 4, -0.44 + 0.88 * i / 4, -0.01 + 0.015 * math.sin(math.pi * j / 4) * math.sin(math.pi * i / 4)))
              for j in range(5)] for i in range(5)]
-    sheet(g, grid, M_HIDE, lambda u, v: (0.78, 0.66, 0.5), tile=0.5, double=True)
+    sheet(g, grid, M_HIDE, lambda u, v: (0.5, 0.42, 0.32), tile=0.5, double=True)
     for k in range(4):
         lashing(g, fr[k], fr[(k + 1) % 4] - fr[k], 0.03, rng, turns=2)
     # Stump with a stag's skull + antlers on it.

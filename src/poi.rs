@@ -313,6 +313,7 @@ pub fn story_clearings() -> StoryClearings {
         STORY_SITES.lock().unwrap().iter().map(|site| (site.pos, STORY_FOOTPRINTS[site.kind])).collect();
     spots.extend(crate::wayside::planned_footprints());
     spots.extend(crate::vignettes::planned_footprint());
+    spots.extend(crate::stories_warm::planned_footprints());
     StoryClearings(spots)
 }
 /// Does a circle at `(x, z)` of radius `radius` overlap a planned story clearing (gallows
@@ -321,7 +322,7 @@ pub fn overlaps_planned_clearing(x: f32, z: f32, radius: f32) -> bool {
     let p = Vec2::new(x, z);
     STORY_SITES.lock().unwrap().iter().any(|site| {
         p.distance_squared(site.pos) < (STORY_FOOTPRINTS[site.kind] + radius + 0.35).powi(2)
-    })
+    }) || crate::stories_warm::overlaps_planned(x, z, radius)
 }
 
 fn rng_next(state: &mut u32) -> f32 {
@@ -340,7 +341,7 @@ fn spot_ok(x: f32, z: f32, probe: f32) -> bool {
 
 /// [`spot_ok`] minus the visual-reservation test: a planned clearing reserves its own footprint
 /// at plan time, so at spawn only the ground rules and later SOLIDS are re-checked.
-fn site_ok(x: f32, z: f32, probe: f32) -> bool {
+pub(crate) fn site_ok(x: f32, z: f32, probe: f32) -> bool {
     let Some(y0) = crate::worldmap::ground_at_world(x, z) else { return false };
     // An outer ring at the footprint edge (flatness + every keep-out) and an inner one at half
     // radius, so a river channel, pool or trail can't slip between the outer probes.
@@ -411,7 +412,7 @@ fn register_story_blockers(kind: usize, p: Vec2, yaw: f32) {
 /// Ground rules shared by every story kind on top of [`spot_ok`]: clear of the ork camps' tents
 /// and guy ropes (their flat clearing is smaller than what they draw), of the castle's town
 /// meadow, and of the landmarks' trial arenas.
-fn clear_of_settlements(q: Vec2, foot: f32) -> bool {
+pub(crate) fn clear_of_settlements(q: Vec2, foot: f32) -> bool {
     q.length() > crate::worldmap::SAFE_R * crate::worldmap::MAP_SCALE + TOWN_KEEP + foot
         && crate::camps::plan().iter().all(|c| c.centre.distance(q) > CAMP_KEEP + foot)
         && crate::ruins::landmark_sites().iter().all(|l| l.pos.distance(q) > LANDMARK_KEEP + foot)

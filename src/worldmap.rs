@@ -3321,7 +3321,11 @@ pub fn build_step(
         31 => crate::bog::populate(commands, meshes, std_mats),
         // Micro-POIs + flags (pass 4): story set-pieces along the arteries, the gallows on the
         // Gnashfang approach, smoke + crows over the Hold, farmland around the castle.
-        32 => crate::poi::populate(commands, meshes, std_mats),
+        32 => {
+            crate::poi::populate(commands, meshes, std_mats);
+            // Warm-biome story scenes (desert / swamp / forest interiors), planned at phase 4.
+            crate::stories_warm::populate(commands);
+        }
         // Vista pass (pass 5): the lake waterfall off the mesa wall + three framed overlooks.
         33 => crate::vista::populate(commands, meshes, std_mats),
         _ => {}
@@ -3527,6 +3531,7 @@ fn bs_sea_and_boats(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: 
 
     crate::camps::plan();
     crate::poi::plan_clearings();
+    crate::stories_warm::plan();
     // Before the scatter (phase 5) so the realistic forest's merged ground cover keeps clear of
     // the forest vignette and every wayside piece (`realforest::keep_clear`).
     crate::vignettes::plan();
