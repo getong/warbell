@@ -548,7 +548,7 @@ def seam(g, rng, pts, r=0.018):
 
 def golem_rock(g, rng, c, r, rot=None, mat=M_ROCK, lichen=0.6, cuts=3, rough=0.1, soot=None):
     """A fractured field boulder: many planar breaks (angular, not a ball), low-frequency roughness."""
-    lump(g, c, r, rng, mat, rock_col(rng, amt=lichen, soot=soot), rough=0.06, cuts=cuts + 4, detail=3,
+    lump(g, c, r, rng, mat, rock_col(rng, amt=lichen, soot=soot), rough=0.06, cuts=cuts + 4, detail=3 if max(r) >= 0.22 else 2,
          rot=rot or quat_y(rng.uniform(0, 6.28)) @ quat_x(rng.uniform(-0.2, 0.2)), tile=0.9, freq=1.6,
          cut=(0.5, 0.78))
 
