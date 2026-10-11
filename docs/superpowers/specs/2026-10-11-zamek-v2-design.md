@@ -26,24 +26,49 @@ Bohater ma w grze **1.49 u** (rig 2.35 × `HERO_SCALE 0.6345`, potwierdzone scre
 **Warunek:** wysokie mury zasłonią kamerę zza pleców → kamera musi się przybliżać przy
 przeszkodzie (spring-arm jak w Wiedźminie / KCD2), inaczej nie podnosimy murów.
 
-## 2. Przestrzeń (jak forty w Wiedźminie / KCD2: obszerny dziedziniec)
+## 2. Przestrzeń: zamek w murach, miasteczko pod murami (v3, uwaga autora 2026-10-11)
 
-- Obwód `HALF_X × HALF_Z`: **17×12 → 28×21** (wnętrze 56×42 u ≈ 84×63 m: małe miasteczko w murach).
-- **Otwarty dziedziniec ≥ 24×16 u** między keepem a bramą południową — bez budynków, tu toczy się
-  obrona, tu stoi ognisko i studnia.
-- Strefa płaska `SAFE_R` (base): rośnie tak, by **za każdym murem, także w narożnikach, było ≥ 15 u
-  otwartego terenu** (pola, łąka, skład Korony, szubienica, grób, fosa później). Szacunek: świat
-  ≈ 48 u → base ≈ 18.5. `MAP_SCALE` nie ruszać.
+> Autor: „domki są mega nierealistycznie poustawiane”, „część budynków może być poza murami”,
+> „zamek ma być modelowany w Blenderze, realistyczny, a nie przeskalowane byle co”.
+> Prymitywy z `castle.rs` były tylko szkicem układu. Docelowo **każda bryła to model z kitu**.
+
+**Zasada (jak w prawdziwych zamkach i w KCD2):** w murach stoi tylko to, co należy do zamku;
+miasteczko (**podgrodzie**) rośnie **za bramą, wzdłuż drogi**. Rząd identycznych domków plecami
+do muru wygląda jak gra, nie jak miejsce.
+
+**W murach (podzamcze, obwód 28×21 zostaje — zamki nizinne typu Malbork/Radzyń są prostokątne):**
+- keep, wieża dzwonu przy bramie S, **otwarty dziedziniec ≥ 24×16** z ogniskiem i studnią;
+- zabudowa gospodarcza **przyklejona do kurtyny** (przybudówki pod murem, dachy pulpitowe):
+  koszary, stajnia, kuźnia zamkowa (Armoury), spichlerz (płonie w Rozdz. 8 — musi być w środku),
+  izba chorych z ogrodem ziół (cicha strona wschodnia), składy, drewutnia, wozownia;
+- żadnych domów mieszkalnych w rzędach.
+
+**Za bramą W, wzdłuż King's Road (podgrodzie):**
+- **plac targowy przy bramie** (stragany z fazy 2 przenoszą się tutaj), studnia, **karczma „The
+  Drowned Squire”** przy placu, **dom Maud z tablicą edyktów** przy placu;
+- domy na **działkach siedliskowych**: wąski front szczytem do drogi, za domem podwórko, ogród,
+  szopa, płot z wikliny/sztachet, kurnik, stos drewna; **nieregularnie** — linia zabudowy idzie za
+  łukiem drogi, różne odstępy, lekkie skręty, różne warianty domów, uliczka w bok;
+- cieśla przy drodze (kozły, wióry), stodoły i pola dalej od murów;
+- **skład Korony** przy rozwidleniu na zatokę, **szubienica na wzniesieniu przy drodze poza
+  zabudową** (tak je stawiano), **pusty grób** przy trakcie dalej na zachód.
+- Teren: płaska strefa dostaje **płat wzdłuż drogi W** (lub drogi, gdzie jest miejsce — NW to
+  urwiska mesy), z wyciętym lasem; nadal ≥ 15 u wolnego pierścienia wokół reszty murów.
+
+**Fabuła i mechanika:** podgrodzie jest **bez osłony** — o zmierzchu ludzie schodzą za mury, brama
+się zamyka (§5). Tor **Podgrodzie** (§6) dokłada mu z czasem **palisadę z własną bramą**. Orki na
+razie nie palą domów podgrodzia (później: podpalenia jako stawka nocy).
 
 ```
-                         N furta (las, kamieniołom)
-     [kuźnia + cieśla]    [koszary, tarcze]     [spichlerz na palach]
-     [karczma]            ┌───────────┐         [dom Maud + tablica edyktów]
- W brama ══ RYNEK ════    │   KEEP    │         [izba chorych + ogród ziół]     ściana
- (za bramą: skład Korony  └───────────┘                                         wschodnia
-  + szubienica, pusty         ognisko · studnia                                 PEŁNA
-  grób przy trakcie)     DZIEDZINIEC (otwarty, ≥ 24×16)
-                         [WIEŻA DZWONU]══ S brama (stąd idą orki)
+                              N furta
+        [koszary][stajnia]  ┌────────┐  [spichlerz][skład]
+        [kuźnia zamkowa]    │  KEEP  │       [izba chorych + zioła]
+  ══ W brama                └────────┘                               ściana E pełna
+  ║        ognisko · studnia   DZIEDZINIEC (otwarty)
+  ║                     [WIEŻA DZWONU]══ S brama (orki)
+  ╚═ PLAC TARGOWY (stragany, studnia, karczma, dom Maud + edykty)
+       ╲ King's Road: domy szczytem do drogi, ogrody, płoty, szopy (nieregularnie)
+         ╲ skład Korony przy rozwidleniu · szubienica na wzgórku · pusty grób dalej
 ```
 
 ## 3. Trzy warstwy, czytane bez słów
