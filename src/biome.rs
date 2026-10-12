@@ -1261,7 +1261,8 @@ pub fn scatter_region(
                         // Realistic-forest tree: the same gameplay entity (transform / sway / chop),
                         // with the kit's two LOD meshes hung underneath as children.
                         let kit_tree = kit.and_then(|k| {
-                            k.tree_for(class_index(c), vi / PROP_TINTS.len()).map(|t| (k, t))
+                            k.tree_for(class_index(c), vi / PROP_TINTS.len())
+                                .map(|t| (k, if cfg.name == "Grass" { t } else { bkit::forest_tree_near_swamp(k, t, cx, cz) }))
                         });
                         if let Some((k, lod0)) = kit_tree {
                             // Collide on the kit trunk actually drawn, not the low-poly footprint.
@@ -1310,7 +1311,7 @@ pub fn scatter_region(
                         // gameplay entity (low-poly trunk blocker kept, like the snow kit).
                         let bk_tree = rocky_kit
                             .and_then(|k| bkit::rocky_tree(k, vi / PROP_TINTS.len(), cx, cz).map(|t| (k, t)))
-                            .or_else(|| desert_kit.map(|k| (k, bkit::saguaro(vi / PROP_TINTS.len()))))
+                            .or_else(|| desert_kit.map(|k| (k, bkit::desert_tree(vi / PROP_TINTS.len(), cx, cz))))
                             .or_else(|| swamp_kit.and_then(|k| bkit::swamp_tree(k, vi / PROP_TINTS.len(), cx, cz).map(|t| (k, t))));
                         if let Some((k, t)) = bk_tree {
                             // Open swamp marsh: no tree, no trunk blocker — a merged reed / sedge
@@ -1537,7 +1538,16 @@ pub fn scatter_region(
                                     let (a, b) = crate::realforest::rolls(x, z);
                                     // The open grass frontier is a meadow: its own grass / flower mapping
                                     // (its class order differs from the forest's, and no forest ferns).
-                                    let pick = if cfg.name == "Grass" { k.meadow_cover(i, a, b) } else { k.passive_for(i, true, a, b) };
+                                    let mut pick = if cfg.name == "Grass" { k.meadow_cover(i, a, b) } else { k.passive_for(i, true, a, b) };
+                                    // Meadow → sand / bog / rock ecotone: the lush clover, ferns and
+                                    // flowers stop where the ground turns; only thinning grass tufts
+                                    // reach into the transition (position-hashed: RNG stream untouched).
+                                    if cfg.name == "Grass" {
+                                        let hc = crate::worldmap::harsh_cover_world(x, z);
+                                        if hc > 0.06 && (i != 0 || (a * 7.31 + b * 3.17).fract() < hc * 1.4) {
+                                            pick = None;
+                                        }
+                                    }
                                     if let Some((m, sm)) = pick.filter(|_| !no_grass()) {
                                         kit_chunks.push(k, m, Vec3::new(x, py, z), rot, s * sm, crate::realforest::Tier::Cover);
                                     }
@@ -1554,7 +1564,7 @@ pub fn scatter_region(
                                     if let Some((m, sm)) = bkit::swamp_cover(k, i, x, z).filter(|_| !no_grass()) {
                                         bk_chunks.push(k, m, Vec3::new(x, py, z), rot, s * sm, crate::realforest::Tier::Cover);
                                     }
-                                } else {
+                                } else if cfg.biome != Biome::Desert || bkit::desert_cover_ok(i, x, z) {
                                     queue(true, c.variants[vi].clone(), Vec3::new(x, py, z), rot, s);
                                 }
                                 break;

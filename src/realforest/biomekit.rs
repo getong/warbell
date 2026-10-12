@@ -93,6 +93,55 @@ pub fn saguaro(src: usize) -> KitTree {
     KitTree::Static(["ds_saguaro_b", "ds_saguaro_a", "ds_saguaro_c"][src.min(2)], true, 1.0)
 }
 
+/// Forest tree slot near the bog: the pines thin out toward the swamp (a waterlogged edge suits
+/// alder / birch-like broadleaf, not conifers) and the last trees before the mire are the odd
+/// drowned snag. Position-hashed swap of the drawn model only — placement and RNG untouched.
+pub fn forest_tree_near_swamp(kit: &Kit, lod0: usize, x: f32, z: f32) -> usize {
+    let e = crate::worldmap::region_edge_world(x, z, crate::biome::Biome::Swamp);
+    if e < -26.0 {
+        return lod0;
+    }
+    let near = ((e + 26.0) / 22.0).clamp(0.0, 1.0); // 0 at 26u out → 1 at 4u from the bog edge
+    let (a, b) = crate::realforest::rolls(x, z);
+    let is_pine = ["pine_a_lod0", "pine_b_lod0", "pine_c_lod0"].iter().any(|n| kit.model(n) == Some(lod0));
+    if is_pine && a < near * 0.9 {
+        let alt = if b < 0.5 { "beech_a_lod0" } else { "beech_b_lod0" };
+        return kit.model(alt).unwrap_or(lod0);
+    }
+    if e > -6.0 && b < 0.16 {
+        return kit.model("dead_a_lod0").unwrap_or(lod0);
+    }
+    lod0
+}
+
+/// Desert tree slot at the biome border: a saguaro only where the ground already reads as sand
+/// (`worldmap::biome_cover_world` — the same ecotone cut the vertex colour paints), and only the odd
+/// one in the transition; further out the slot is dry scrub, and on ground that is still turf
+/// nothing at all. Position-hashed, so the scatter's RNG stream (and every later site) is untouched.
+pub fn desert_tree(src: usize, x: f32, z: f32) -> KitTree {
+    let c = crate::worldmap::biome_cover_world(x, z, crate::biome::Biome::Desert);
+    let (a, b) = crate::realforest::rolls(x, z);
+    if c > 0.9 || (c > 0.72 && a < 0.3) {
+        saguaro(src)
+    } else if c > 0.3 && b < 0.7 {
+        KitTree::Open(Some((if a < 0.5 { "ds_deadbush_a" } else { "ds_deadbush_b" }, 1.0)))
+    } else {
+        KitTree::Open(None)
+    }
+}
+
+/// Desert ground cover at the border (low-poly classes: 0 pebbles, 1 dry grass, 2 succulent,
+/// 3 brittlebush / poppy litter): on the transition only the dry grass tufts and the odd pebble
+/// reach out; the succulents and blooms keep to the real sand.
+pub fn desert_cover_ok(class: usize, x: f32, z: f32) -> bool {
+    let c = crate::worldmap::biome_cover_world(x, z, crate::biome::Biome::Desert);
+    match class {
+        1 => c > 0.15,
+        0 => c > 0.45,
+        _ => c > 0.8,
+    }
+}
+
 /// Does the kit take over the swamp? Needs `swamp_flora.glb` — the swamp draws ONLY its own
 /// species (never the forest's oaks / beeches / snag / stump); without the file the low-poly
 /// mangroves stay.
@@ -318,6 +367,12 @@ pub fn passive_prop(kit: &Kit, biome: crate::biome::Biome, class: usize, src: us
     if biome != crate::biome::Biome::Desert {
         return rocky_prop(kit, class, src, x, z);
     }
+    // Border ecotone: cacti only on real sand, dead scrub on the transition, nothing on turf.
+    let c = crate::worldmap::biome_cover_world(x, z, crate::biome::Biome::Desert);
+    if c < 0.3 {
+        return None;
+    }
+    let class = if matches!(class, 2 | 3) && c < 0.82 { 0 } else { class };
     let name = match (class, src) {
         (0, 0) => "ds_deadbush_a",
         (0, _) => "ds_deadbush_b",

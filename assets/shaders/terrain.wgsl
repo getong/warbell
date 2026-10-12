@@ -890,35 +890,89 @@ fn fragment(
     if wet > 0.001 {
         let sp = in.world_position.xz;
         let mott = ter_noise_rot(sp * 0.13, 0.81, 0.59) * 0.6 + ter_noise_rot(sp * 0.41, 0.29, 0.957) * 0.4;
-        let grain = ter_noise_rot(sp * 2.1, 0.60, 0.80);
-        // Blackwater peat: darker than the forest's leaf litter (it reads pale under the swamp's
-        // thick fog + lifted fill otherwise).
-        let mud = vec3<f32>(0.036, 0.028, 0.020);
-        let wmoss = vec3<f32>(0.030, 0.044, 0.017);
         let mossk = smoothstep(0.45, 0.66, mott);
-        let floor_c = mix(mud, wmoss, mossk) * (0.78 + 0.44 * grain);
         let src = pbr_input.material.base_color.rgb;
-        // Keep a little of the vertex colour's own variation (and the bank / shore tints).
-        var swamp_rgb = mix(src, mix(floor_c, src * 0.3, 0.15), smoothstep(0.0, 0.6, wet));
-        // Open-marsh blackwater: broad standing sheets between the reed beds (lower frequency +
-        // a higher cut than the "smaller, rarer" pass — the swamp proper is mostly water now).
-        // `wet` is already faded to 0 over the Blight, so its trampled mud stays dry.
-        // The fine octave only frays the shoreline (a strong one strewed tiny black puddle specks).
+        // Broad standing-water field: open blackwater sheets between the reed beds.
         let pool_n = ter_noise_rot(sp * 0.22, 0.95, 0.31) * 0.82 + ter_noise_rot(sp * 0.9, 0.47, 0.88) * 0.18;
-        let standing = (1.0 - smoothstep(0.37, 0.43, pool_n)) * smoothstep(0.55, 0.9, wet)
-            * smoothstep(0.90, 0.98, in.world_normal.y) * (1.0 - cliff);
+        let flat_top = smoothstep(0.90, 0.98, in.world_normal.y) * (1.0 - cliff);
+        var floor_c: vec3<f32>;
+        var cov: f32;
+        var standing: f32;
+        var sw_n = normalize(in.world_normal);
+        var sw_rough = 0.88;
+        if forest.pbr.x > 0.5 {
+            // ── Scanned bog floor (player: "why doesn't the high-res swamp texture load?" — the old
+            //    floor was two flat colours mottled by ~8u noise: a blurry olive smear with soft dark
+            //    blobs). Reuses the forest floor's arrays: the PATH layer (soil + pebbles) toned down
+            //    into black-brown wet peat, the MOSS layer into dark wet sphagnum, each on its own
+            //    repeat/offset so the bog never echoes the forest trail. Explicit gradients (legal
+            //    in this branch); 6 taps + 2 1x1-mip means, only on swamp fragments, where the
+            //    forest splat above is off.
+            let tp = 3.4;
+            let tm = 3.9;
+            let up = sp / tp + vec2<f32>(0.21, 0.47);
+            let um = sp / tm + vec2<f32>(0.63, 0.11);
+            let a_p = textureSampleGrad(fp_albedo, fp_samp, up, 2, wp_dx / tp, wp_dy / tp).rgb;
+            let o_p = textureSampleGrad(fp_ormh, fp_samp, up, 2, wp_dx / tp, wp_dy / tp);
+            let n_p = textureSampleGrad(fp_normal, fp_samp, up, 2, wp_dx / tp, wp_dy / tp).rgb * 2.0 - 1.0;
+            let a_m = textureSampleGrad(fp_albedo, fp_samp, um, 1, wp_dx / tm, wp_dy / tm).rgb;
+            let o_m = textureSampleGrad(fp_ormh, fp_samp, um, 1, wp_dx / tm, wp_dy / tm);
+            let n_m = textureSampleGrad(fp_normal, fp_samp, um, 1, wp_dx / tm, wp_dy / tm).rgb * 2.0 - 1.0;
+            let lw = vec3<f32>(0.2126, 0.7152, 0.0722);
+            let mean_p = max(dot(textureSampleLevel(fp_albedo, fp_samp, vec2<f32>(0.5), 2, 12.0).rgb, lw), 0.02);
+            let mean_m = max(dot(textureSampleLevel(fp_albedo, fp_samp, vec2<f32>(0.5), 1, 12.0).rgb, lw), 0.02);
+            // Keep each scan's own value detail (pebbles, crumbs, moss heads) but re-tone it: peat
+            // is near-black brown, the moss a deep wet olive. A touch of the scan's hue survives.
+            let rel_p = a_p / mean_p;
+            let rel_m = a_m / mean_m;
+            let peat = mix(vec3<f32>(dot(rel_p, lw)), rel_p, 0.35) * vec3<f32>(0.050, 0.039, 0.028);
+            let smoss = mix(vec3<f32>(dot(rel_m, lw)), rel_m, 0.55) * vec3<f32>(0.040, 0.056, 0.022);
+            // Moss sits on the hummocks: broad patches, its edge decided by the taller texel.
+            let km = clamp((mossk - 0.5) * 1.6 + (o_m.a - o_p.a) * 1.4 + 0.5, 0.0, 1.0);
+            let kms = smoothstep(0.35, 0.65, km);
+            floor_c = mix(peat, smoss, kms) * (0.86 + 0.28 * ter_noise_rot(sp * 0.06, 0.6, 0.8));
+            let hmix = mix(o_p.a, o_m.a, kms);
+            // Meadow -> bog edge: the bog creeps in through the low texels first, so the boundary is
+            // a crisp ragged line following the scan's relief, not a soft ramp (the old blurred ring).
+            let t = smoothstep(0.0, 0.75, wet);
+            cov = smoothstep(0.44, 0.56, t + (0.5 - hmix) * 0.55);
+            // Standing water fills the LOW texels below a noise-varied water line: shores follow
+            // every crumb of peat and moss head, sharp but natural (no soft blob, no halo).
+            let wline = (0.43 - pool_n) * 2.6 + 0.35;
+            standing = clamp((wline - hmix) * 9.0, 0.0, 1.0) * smoothstep(0.6, 0.92, wet) * flat_top;
+            let nt = mix(n_p, n_m, kms);
+            let gn = normalize(in.world_normal);
+            let tx = select(normalize(vec3<f32>(1.0, 0.0, 0.0) - gn * gn.x),
+                           normalize(cross(vec3<f32>(0.0, 0.0, 1.0), gn)), abs(gn.x) > 0.98);
+            let bz = cross(gn, tx);
+            let n_ts = vec3<f32>(nt.xy * 1.5, max(nt.z, 0.2));
+            sw_n = normalize(tx * n_ts.x + bz * n_ts.y + gn * n_ts.z);
+            // Wet peat a little glossier than the moss; both still matte enough not to mirror fog.
+            sw_rough = mix(mix(0.62, 0.86, kms), 0.80, smoothstep(0.55, 0.85, hmix));
+            pbr_input.diffuse_occlusion *= vec3<f32>(mix(1.0, mix(o_p.r, o_m.r, kms), cov * 0.6));
+        } else {
+            // Fallback (no scanned kit): the old procedural peat / moss mottle.
+            let grain = ter_noise_rot(sp * 2.1, 0.60, 0.80);
+            let mud = vec3<f32>(0.036, 0.028, 0.020);
+            let wmoss = vec3<f32>(0.030, 0.044, 0.017);
+            floor_c = mix(mud, wmoss, mossk) * (0.78 + 0.44 * grain);
+            cov = smoothstep(0.0, 0.6, wet);
+            standing = (1.0 - smoothstep(0.37, 0.43, pool_n)) * smoothstep(0.55, 0.9, wet) * flat_top;
+        }
+        // Keep a little of the vertex colour's own variation (and the bank / shore tints).
+        var swamp_rgb = mix(src, mix(floor_c, src * 0.3, 0.12), cov);
         // Darken FIRST, gloss LAST: with both on the same ramp the half-dark, half-glossy shoreline
         // band mirrored the bright sky as a white outline round every sheet.
         swamp_rgb = mix(swamp_rgb, swamp_rgb * 0.22 + vec3<f32>(0.004, 0.006, 0.004), sqrt(standing));
         pbr_input.material.base_color = vec4<f32>(swamp_rgb, pbr_input.material.base_color.a);
         let rw = pbr_input.material.perceptual_roughness;
         let gloss = smoothstep(0.6, 0.97, standing);
-        pbr_input.material.perceptual_roughness = mix(mix(rw, 0.88, wet), 0.05, gloss);
+        pbr_input.material.perceptual_roughness = mix(mix(rw, sw_rough, cov), 0.05, gloss);
         // The half-wet shoreline (dark, not yet mirror-flat) still caught the sun in a mid-roughness
         // lobe — a bright outline round every sheet seen from above. Only the flat interior reflects.
         let edge = standing * (1.0 - gloss);
         pbr_input.material.reflectance = pbr_input.material.reflectance * (1.0 - 0.85 * smoothstep(0.0, 0.25, edge));
-        pbr_input.N = normalize(mix(pbr_input.N, normalize(in.world_normal), gloss));
+        pbr_input.N = normalize(mix(mix(pbr_input.N, sw_n, cov * (1.0 - standing)), normalize(in.world_normal), gloss));
     }
 
     // Damp bank soil just above the waterline: a soft wet sheen, glossiest at the water's edge.

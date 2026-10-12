@@ -107,6 +107,7 @@ fn drive_shot(
     mut exit: MessageWriter<AppExit>,
     mut cams: Query<(&mut Transform, Option<&mut crate::controls::FlyCam>), With<Camera3d>>,
     hold: Res<ShotHold>,
+    mut sky: Option<ResMut<crate::scene::SkyClock>>,
 ) {
     clock.frame += 1;
     // Take the shot once the scene has actually WARMED: ≥240 rendered frames AND ≥10 s wall-clock
@@ -158,7 +159,7 @@ fn drive_shot(
     // readback and write no PNG.
     if clock.shot && (std::path::Path::new(&path.0).exists() || clock.frame > clock.shot_at + 1800) {
         let seq_wanted = std::env::var("FOREST_SHOT_STORIES").is_ok() || std::env::var("FOREST_SHOT_CAMS").is_ok();
-        if seq_wanted && drive_story_seq(&mut clock, &path.0, &mut commands, &mut cams) {
+        if seq_wanted && drive_story_seq(&mut clock, &path.0, &mut commands, &mut cams, sky.as_deref_mut()) {
             return;
         }
         if hold.0 {
@@ -191,6 +192,7 @@ fn drive_story_seq(
     main: &str,
     commands: &mut Commands,
     cams: &mut Query<(&mut Transform, Option<&mut crate::controls::FlyCam>), With<Camera3d>>,
+    sky: Option<&mut crate::scene::SkyClock>,
 ) -> bool {
     if clock.seq.is_none() {
         // Both set: the (filtered, see `stories_cold::shot_cams`) story cams first, then the fixed ones.
@@ -223,6 +225,11 @@ fn drive_story_seq(
     let out = dir.join(format!("{name}.png"));
     if clock.seq_frame == 0 {
         let _ = std::fs::remove_file(&out);
+        // `name@0.46` in FOREST_SHOT_CAMS: shoot this view at that time of day (one launch can
+        // cover noon and golden hour). The PNG keeps the full name.
+        if let (Some(t), Some(sky)) = (name.split_once('@').and_then(|(_, t)| t.parse::<f32>().ok()), sky) {
+            sky.t = t.rem_euclid(1.0);
+        }
         for (mut t, fly) in cams.iter_mut() {
             *t = *tf;
             if let Some(mut f) = fly {
