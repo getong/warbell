@@ -903,7 +903,12 @@ fn fragment(
         let mean_e = max(dot(textureSampleLevel(fp_albedo, fp_samp, vec2<f32>(0.5), 2, 12.0).rgb, lwe), 0.02);
         let rel_e = a_e / mean_e;
         let e_tint = sand_rgb0 * (1.0 + (ter_hue - 0.5) * variation * 0.40) * (0.90 + 0.20 * ter_big);
-        let e_col = mix(vec3<f32>(dot(rel_e, lwe)), rel_e, 0.35) * e_tint;
+        // Muted: the scan's own warm pebbles times an already warm earth tint read as orange
+        // speckle, so the tint is half-desaturated and the scan's value range compressed.
+        let e_tl = dot(e_tint, lwe);
+        let e_t2 = mix(vec3<f32>(e_tl), e_tint, 0.55) * 0.9;
+        let e_v = clamp(dot(rel_e, lwe), 0.55, 1.35);
+        let e_col = mix(vec3<f32>(e_v), rel_e, 0.2) * e_t2;
         let gn_e = normalize(in.world_normal);
         let tx_e = select(normalize(vec3<f32>(1.0, 0.0, 0.0) - gn_e * gn_e.x),
                          normalize(cross(vec3<f32>(0.0, 0.0, 1.0), gn_e)), abs(gn_e.x) > 0.98);

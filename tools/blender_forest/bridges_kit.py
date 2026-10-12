@@ -113,7 +113,7 @@ def bridge_end(rng):
                 stone(g, (x + rng.uniform(-0.06, 0.06), y, z), (r * 1.3, r * 0.75, r), rng, mat=M_STONE,
                       col_fn=lambda p, n_: (0.78, 0.76, 0.7) if p[1] < -0.6 else (0.88, 0.86, 0.8), detail=1, rough=0.18)
     # Earth ramp up onto the deck on the land side + scattered stones in the grass.
-    mound(g, (0.55, -0.12, 0.0), 1.1, 1.55, 0.2, rng, mat=M_EARTH, col_fn=lambda p, n_: (0.62, 0.55, 0.44), rings=4,
+    mound(g, (0.55, -0.2, 0.0), 1.1, 1.55, 0.2, rng, mat=M_EARTH, col_fn=lambda p, n_: (0.4, 0.36, 0.3), rings=4,
           seg=18, rough=0.15)
     for _ in range(6):
         r = rng.uniform(0.07, 0.15)
@@ -149,7 +149,7 @@ def boardwalk_end(rng):
         pole(g, V(-0.06, -1.3, sz), V(-0.06, 0.5, sz), 0.085, 0.07, rng, mat=M_BARK, col=(0.62, 0.56, 0.48), sides=8,
              segs=3, col_fn=lambda t: (0.32, 0.34, 0.24) if t < 0.5 else (0.7, 0.64, 0.54))
         lashing(g, V(-0.06, 0.36, sz), (0, 1, 0), 0.09, rng, turns=3)
-    mound(g, (0.45, -0.1, 0.0), 0.9, 1.15, 0.16, rng, mat=M_EARTH, col_fn=lambda p, n_: (0.42, 0.4, 0.32), rings=3,
+    mound(g, (0.45, -0.17, 0.0), 0.9, 1.15, 0.16, rng, mat=M_EARTH, col_fn=lambda p, n_: (0.34, 0.33, 0.27), rings=3,
           seg=16, rough=0.18)
     return b
 
