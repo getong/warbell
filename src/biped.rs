@@ -359,6 +359,29 @@ pub fn spawn_biped(
     rig_offset_y: f32,
     shield_xf: Option<Transform>,
 ) -> (Entity, Option<Entity>) {
+    spawn_biped_scaled(commands, root, mat, h, head_scale, foot_scale, hip_dx, shoulder_dx, rig_offset_y, shield_xf, Vec2::ONE)
+}
+
+/// [`spawn_biped`] with per-limb LENGTH scales (`limb_scale` = (legs, arms)): the hip / shoulder
+/// joints carry that uniform scale, so the whole limb below them (bone offsets, skinned flesh,
+/// hand / foot) is drawn that much smaller while the clips (which only write rotations there) play
+/// unchanged. The bind pose stays unscaled, so a skinned body deforms with the joints. A child is
+/// built this way (shorter legs + arms on a full-length spine); the caller lowers `rig_offset_y`
+/// by the legs' lost length so the feet stay on the ground.
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_biped_scaled(
+    commands: &mut Commands,
+    root: Entity,
+    mat: &Handle<crate::creature::CreatureMaterial>,
+    h: BipedHandles,
+    head_scale: f32,
+    foot_scale: f32,
+    hip_dx: f32,
+    shoulder_dx: f32,
+    rig_offset_y: f32,
+    shield_xf: Option<Transform>,
+    limb_scale: Vec2,
+) -> (Entity, Option<Entity>) {
     let p = |t: Vec3| Transform::from_translation(t);
     let ps = |t: Vec3, s: f32| Transform { translation: t, scale: Vec3::splat(s), ..default() };
     // Spawn a tagged joint (transform-only) under `parent`, with an optional mesh-leaf child.
@@ -387,7 +410,7 @@ pub fn spawn_biped(
     let head_e = joint(commands, neck, Some(Head), ps(Vec3::new(0.0, 0.08, 0.0), head_scale), h.head);
 
     // Left arm (+ optional shield/emblem on the hand).
-    let sh_l = joint(commands, torso, Some(ShoulderL), p(Vec3::new(-shoulder_dx, 0.27, 0.01)), h.shoulder_l);
+    let sh_l = joint(commands, torso, Some(ShoulderL), ps(Vec3::new(-shoulder_dx, 0.27, 0.01), limb_scale.y), h.shoulder_l);
     let el_l = joint(commands, sh_l, Some(ElbowL), p(Vec3::new(0.0, -0.30, 0.0)), h.elbow_l);
     let hand_l = joint(commands, el_l, None, p(Vec3::new(0.0, -0.25, 0.0)), None);
     let mut shield_out = None;
@@ -400,7 +423,7 @@ pub fn spawn_biped(
     }
 
     // Right arm (+ optional weapon on the Sword pivot).
-    let sh_r = joint(commands, torso, Some(ShoulderR), p(Vec3::new(shoulder_dx, 0.27, 0.01)), h.shoulder_r);
+    let sh_r = joint(commands, torso, Some(ShoulderR), ps(Vec3::new(shoulder_dx, 0.27, 0.01), limb_scale.y), h.shoulder_r);
     let el_r = joint(commands, sh_r, Some(ElbowR), p(Vec3::new(0.0, -0.30, 0.0)), h.elbow_r);
     let hand_r = joint(commands, el_r, None, p(Vec3::new(0.0, -0.25, 0.0)), None);
     if let Some(weapon) = h.weapon {
@@ -408,10 +431,10 @@ pub fn spawn_biped(
     }
 
     // Legs.
-    let hip_l = joint(commands, hips, Some(HipL), p(Vec3::new(-hip_dx, -0.05, 0.0)), h.hip_l);
+    let hip_l = joint(commands, hips, Some(HipL), ps(Vec3::new(-hip_dx, -0.05, 0.0), limb_scale.x), h.hip_l);
     let knee_l = joint(commands, hip_l, Some(KneeL), p(Vec3::new(0.0, -0.40, 0.0)), h.knee_l);
     let foot_l = joint(commands, knee_l, Some(FootL), ps(Vec3::new(0.0, -0.45, 0.0), foot_scale), h.foot_l);
-    let hip_r = joint(commands, hips, Some(HipR), p(Vec3::new(hip_dx, -0.05, 0.0)), h.hip_r);
+    let hip_r = joint(commands, hips, Some(HipR), ps(Vec3::new(hip_dx, -0.05, 0.0), limb_scale.x), h.hip_r);
     let knee_r = joint(commands, hip_r, Some(KneeR), p(Vec3::new(0.0, -0.40, 0.0)), h.knee_r);
     let foot_r = joint(commands, knee_r, Some(FootR), ps(Vec3::new(0.0, -0.45, 0.0), foot_scale), h.foot_r);
 

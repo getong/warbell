@@ -55,10 +55,10 @@ JOINTS = ("hips", "torso", "neck", "head", "sh_l", "el_l", "sh_r", "el_r", "hip_
           "hip_r", "knee_r", "foot_r")
 HIPS, TORSO, NECK, HEAD, SH_L, EL_L, SH_R, EL_R, HIP_L, KNEE_L, FOOT_L, HIP_R, KNEE_R, FOOT_R = range(14)
 
-SDX = 0.2  # shoulder joint half-span (`peasant_model::KIT_SHOULDER_DX`)
+SDX = 0.2  # authored shoulder joint half-span (`peasant_model::KIT_SHOULDER_DX`; the game reshapes per build)
 HDX = 0.1  # hip joint half-span (`peasant_model::KIT_HIP_DX`)
 HEAD_Y = 1.63  # head pivot in the rig (hips 1.05 + torso 0.15 + neck 0.35 + head 0.08)
-HEAD_SCALE = 1.06 * 1.1  # adult head scale the body is proportioned for (kids: 1.55 * 1.1)
+HEAD_SCALE = 1.06 * 1.1  # adult head scale the body is proportioned for (kids: per build, `peasant_model::kit_build`)
 HEAD_FRAME = ("hu_head", "hu_hair", "hu_beard", "hu_hat")
 
 

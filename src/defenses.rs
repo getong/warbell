@@ -499,6 +499,8 @@ pub fn populate_defenders(
     for (i, (ox, oz)) in [(0.0_f32, kz), (0.0, -kz), (kx, 0.0), (-kx, 0.0)].into_iter().enumerate() {
         let home_yaw = ox.atan2(oz); // villager facing convention: from_rotation_y(yaw), forward +Z
         let (x, z) = (crate::castle::KEEP_POS.x + ox, crate::castle::KEEP_POS.y + oz);
+        let look = i as u32 * 5;
+        let rig = crate::peasant_model::person_rig(false, look);
         let root = commands
             .spawn((
                 Transform {
@@ -519,7 +521,12 @@ pub fn populate_defenders(
                 KeepArcher { home_yaw, yaw: home_yaw, draw_started: -1.0, target: None, loosed: false },
                 // The shared biped animator idles/draws off this; `phase` desyncs the breathing.
                 // The bow rides the left fist at ease (`HeldTool::Bow`), so the draw starts from it.
-                crate::biped::BipedDrive { phase: i as f32 * 1.7, tool: crate::biped::HeldTool::Bow, ..default() },
+                crate::biped::BipedDrive {
+                    phase: i as f32 * 1.7,
+                    tool: crate::biped::HeldTool::Bow,
+                    limb_dx: Vec2::new(rig.hip_dx, rig.shoulder_dx),
+                    ..default()
+                },
                 crate::biome::BiomeEntity,
             ))
             .id();
@@ -531,7 +538,7 @@ pub fn populate_defenders(
             0x3a2a18,
             false,
             false,
-            i as u32 * 5, // a different face / beard per sentry (realistic kit body)
+            look, // a different face / beard / build per sentry (realistic kit body)
         )
         .upload(meshes);
         // Off-hand bow mount — same transform the townsfolk use (`villagers::build_biped_body`).
@@ -540,8 +547,7 @@ pub fn populate_defenders(
             rotation: Quat::from_euler(EulerRot::XYZ, 0.15, -0.45, 0.1),
             ..default()
         };
-        let (hip_dx, shoulder_dx, head_mul) = crate::peasant_model::rig_dims();
-        crate::biped::spawn_biped(commands, root, &sentry_mat, h, 1.06 * head_mul, 1.0, hip_dx, shoulder_dx, -0.06, Some(shield_xf));
+        crate::biped::spawn_biped(commands, root, &sentry_mat, h, rig.head_scale, 1.0, rig.hip_dx, rig.shoulder_dx, -0.06, Some(shield_xf));
     }
     // Ballista flanking the north gate (offset off the gate axis so it doesn't sit on the hero
     // spawn / follow-cam line — the hero spawns at the gate centre, `gate.y - 3.0`).

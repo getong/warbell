@@ -413,7 +413,22 @@ fn setup(
         return;
     }
 
-    commands.spawn((Camera3d::default(), Transform::from_translation(eye).looking_at(target, Vec3::Y)));
+    if view_name == "people:scale" {
+        // `FOREST_VIEW=people:scale`: hero + townsfolk at their real in-world scales, front-on
+        // through an ORTHOGRAPHIC camera (2.2 world units tall) so heights / widths can be
+        // measured straight off the image (1080 px / 2.2 u ≈ 491 px per world unit).
+        let (eye, target) = parse_cam().unwrap_or((Vec3::new(0.0, 0.8, 12.0), Vec3::new(0.0, 0.8, 0.0)));
+        commands.spawn((
+            Camera3d::default(),
+            Projection::Orthographic(OrthographicProjection {
+                scaling_mode: bevy::camera::ScalingMode::FixedVertical { viewport_height: 2.2 },
+                ..OrthographicProjection::default_3d()
+            }),
+            Transform::from_translation(eye).looking_at(target, Vec3::Y),
+        ));
+    } else {
+        commands.spawn((Camera3d::default(), Transform::from_translation(eye).looking_at(target, Vec3::Y)));
+    }
 
     spawn_stage_lights(&mut commands);
     spawn_ground(&mut commands, &mut meshes, &mut std_mats, 6.0);
@@ -515,6 +530,34 @@ fn spawn_model(
                 });
             }
         }
+        // The hero next to townsfolk at their real in-world scales (see the ortho camera above):
+        // average / stocky / lean / heavy men, then the youngest / middle / oldest child build.
+        "people:scale" => {
+            use crate::peasant_model::PeasantKind::*;
+            let step = 0.46;
+            commands.entity(root).insert(Transform {
+                translation: Vec3::new(-3.5 * step, 0.0, 0.0),
+                scale: Vec3::splat(crate::player::HERO_SCALE),
+                ..default()
+            });
+            crate::player::spawn_hero_meshes(commands, root, meshes, images, creature_mats);
+            let row: [(bool, u32, u32, u32); 7] = [
+                (false, 0, 0xd8a06a, 0x6a4a2a),
+                (false, 1, 0xc08866, 0x5a8fc8),
+                (false, 2, 0xe8c4a0, 0x4a6a3a),
+                (false, 4, 0xa36b4a, 0x7a3a26),
+                (true, 0, 0xdca78a, 0x3a7a72),
+                (true, 1, 0xe8c4a0, 0x8a6a3a),
+                (true, 7, 0xc89070, 0x6a4a6a),
+            ];
+            for (i, (kid, look, skin, tunic)) in row.into_iter().enumerate() {
+                let x = (i as f32 - 2.5) * step;
+                let e = commands
+                    .spawn((Transform::from_xyz(x, 0.0, 0.0).with_scale(Vec3::splat(crate::villagers::SCALE)), Visibility::Visible))
+                    .id();
+                spawn_viewer_peasant(commands, e, meshes, mat, Unemployed, false, kid, look, skin, tunic);
+            }
+        }
         // A row of townsfolk (every trade + desert + a kid, varied looks) for one-shot review of
         // the realistic kit bodies. Frame it with the default lineup camera or `FOREST_CAM`.
         "peasant:lineup" | "people" => {
@@ -613,7 +656,7 @@ fn spawn_model(
 }
 
 /// One previewed townsperson under `root`, built exactly like `villagers::build_biped_body`
-/// (same rig spacing via `peasant_model::rig_dims`, same off-hand mount, kid head + scale).
+/// (same per-person skeleton via `peasant_model::person_rig`, same off-hand mount, build root scale).
 #[allow(clippy::too_many_arguments)]
 fn spawn_viewer_peasant(
     commands: &mut Commands,
@@ -638,16 +681,23 @@ fn spawn_viewer_peasant(
         body.into_iter().map(tris).sum::<usize>() + skinned,
         if m.skin.is_some() { " (skinned)" } else { "" }
     );
+    // The person's skeleton + height (as `villagers::spawn` builds it): the build's root scale on
+    // its own biped root, under the caller's (adult) scale.
+    let rig = crate::peasant_model::person_rig(kid, look);
+    if let Some((_, hi)) = m.skin.as_ref().map(mesh_bounds) {
+        // Head top above the soles, in the caller's units (× the root scale it is spawned under).
+        info!(
+            "viewer person {kind:?} look {look} kid {kid}: {:.3} tall x root scale (build root {:.3}, head {:.3}, limbs {:?})",
+            (hi.y - 0.06 - rig.drop) * rig.root,
+            rig.root,
+            rig.head_scale,
+            rig.limbs
+        );
+    }
     let h = m.upload(meshes);
-    // A kid is the same body scaled down (villagers::KID_SCALE / SCALE) on its own biped root.
-    let body = if kid {
-        let k = commands.spawn((Transform::from_scale(Vec3::splat(0.55)), Visibility::Visible)).id();
-        commands.entity(root).add_child(k);
-        k
-    } else {
-        root
-    };
-    let (hip_dx, shoulder_dx, head_mul) = crate::peasant_model::rig_dims();
+    let body = commands.spawn((Transform::from_scale(Vec3::splat(rig.root)), Visibility::Visible)).id();
+    commands.entity(root).add_child(body);
+    let (hip_dx, shoulder_dx) = (rig.hip_dx, rig.shoulder_dx);
     // The trade's tool in hand, gripped by the tool clips exactly as in town.
     commands.entity(body).insert(crate::biped::BipedDrive {
         phase: look as f32 * 0.9,
@@ -662,8 +712,7 @@ fn spawn_viewer_peasant(
         rotation: Quat::from_euler(EulerRot::XYZ, 0.15, -0.45, 0.1),
         ..default()
     };
-    let head = (if kid { 1.55 } else { 1.06 }) * head_mul;
-    crate::biped::spawn_biped(commands, body, mat, h, head, 1.0, hip_dx, shoulder_dx, -0.06, Some(shield_xf));
+    crate::biped::spawn_biped_scaled(commands, body, mat, h, rig.head_scale, 1.0, hip_dx, shoulder_dx, -0.06 - rig.drop, Some(shield_xf), rig.limbs);
 }
 
 /// Three-point-ish lighting: a shadowed key, a soft fill from the opposite side, a back rim.
