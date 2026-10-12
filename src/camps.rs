@@ -41,7 +41,6 @@ impl Plugin for CampsPlugin {
         // swing_cage_doors + reconcile_cages_on_load are UNGATED: the door swing is cosmetic
         // (a mid-swing door finishing under a pause is harmless), and the load reconcile must
         // fire on the GameLoaded message whenever it lands.
-        app.add_systems(PreStartup, insert_flame_card_tex);
         app.add_systems(Update, (flicker_flames, drift_smoke, swing_cage_doors, reconcile_cages_on_load));
         app.add_systems(Update, reconcile_warbands_on_load
             .after(crate::savegame::RestoreRunSet)
@@ -744,11 +743,11 @@ pub fn build(
     // Emissive flame (bloom-lit, like the castle torches) + translucent smoke.
     // Fire: crossed alpha flame cards (a painted tongue-of-flame texture, HDR-bright so it blooms),
     // never a solid cone. Double-sided, unlit, no shadows; the `Flicker` scale wobble animates it.
-    if images.get(&FLAME_CARD_TEX).is_none() {
-        let _ = images.insert(&FLAME_CARD_TEX, flame_card_image());
+    if images.get(&crate::flame_fx::FLAME_CARD_TEX).is_none() {
+        let _ = images.insert(&crate::flame_fx::FLAME_CARD_TEX, crate::flame_fx::flame_card_image());
     }
-    let flame_mat = flame_card_material(materials);
-    let flame_cards = meshes.add(flame_card_mesh(1.0));
+    let flame_mat = crate::flame_fx::flame_card_material(materials);
+    let flame_cards = meshes.add(crate::flame_fx::flame_card_mesh(1.0));
     let smoke_mat = materials.add(StandardMaterial {
         base_color: Color::srgba(0.55, 0.55, 0.57, 0.4),
         alpha_mode: AlphaMode::Blend,
@@ -1131,101 +1130,6 @@ fn sit_stump_mesh(mut seed: u32) -> Mesh {
         cyl(0.235, 0.05, v(0.0, h, 0.0), Quat::IDENTITY, lin(LOG_LIGHT)), // sawn top (lighter heartwood)
         cyl(0.12, 0.055, v(0.0, h + 0.004, 0.0), Quat::IDENTITY, lin(LOG_DARK)), // inner growth ring
     ])
-}
-
-/// The shared painted flame texture of every flame card (camp fires, the meadow fire, ork torches,
-/// the trailer torches): a fixed-id handle, filled once at startup ([`insert_flame_card_tex`]), so
-/// any builder can make a flame material without an `Assets<Image>`.
-pub(crate) const FLAME_CARD_TEX: Handle<Image> = bevy::asset::uuid_handle!("6b1f0c52-3c8e-4d4f-9a51-2f7e0b9d4a11");
-
-fn insert_flame_card_tex(mut images: ResMut<Assets<Image>>) {
-    let _ = images.insert(&FLAME_CARD_TEX, flame_card_image());
-}
-
-/// The flame cards' material: the painted flame, HDR-bright (blooms), alpha-blended, unlit,
-/// double-sided, never a solid cone.
-pub(crate) fn flame_card_material(materials: &mut Assets<StandardMaterial>) -> Handle<StandardMaterial> {
-    materials.add(StandardMaterial {
-        base_color: Color::linear_rgb(5.0, 2.6, 1.1),
-        base_color_texture: Some(FLAME_CARD_TEX),
-        alpha_mode: AlphaMode::Blend,
-        unlit: true,
-        double_sided: true,
-        cull_mode: None,
-        ..default()
-    })
-}
-
-/// Flame cards: three vertical quads crossed at 60° plus a smaller inner set, `size` x (0.75 wide
-/// x 0.95 tall — a camp fire; ~0.3 is a torch), base at y=0, UV v=1 at the base (the flame root).
-/// Spawn with `bevy::light::NotShadowCaster`.
-pub(crate) fn flame_card_mesh(size: f32) -> Mesh {
-    use bevy::asset::RenderAssetUsages;
-    use bevy::mesh::{Indices, PrimitiveTopology};
-    let (mut pos, mut uv, mut nrm, mut idx) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    for (w, h, phase) in [(0.75 * size, 0.95 * size, 0.0_f32), (0.42 * size, 0.62 * size, 0.5)] {
-        for k in 0..3 {
-            let a = phase + k as f32 * std::f32::consts::FRAC_PI_3;
-            let d = Vec3::new(a.cos(), 0.0, a.sin()) * (w / 2.0);
-            let n = Vec3::new(-a.sin(), 0.0, a.cos());
-            let base = pos.len() as u32;
-            for (p, t) in [(-d, [0.0, 1.0]), (d, [1.0, 1.0]), (d + Vec3::Y * h, [1.0, 0.0]), (-d + Vec3::Y * h, [0.0, 0.0])] {
-                pos.push(p.to_array());
-                uv.push(t);
-                nrm.push(n.to_array());
-            }
-            idx.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
-        }
-    }
-    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, nrm)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
-        .with_inserted_indices(Indices::U32(idx))
-}
-
-/// A painted flame (64x128 RGBA): three licking tongues over a hot root, white-yellow at the core,
-/// orange then deep red at the ragged edges, soft alpha falloff — the card texture for the fire.
-fn flame_card_image() -> Image {
-    use bevy::asset::RenderAssetUsages;
-    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-    let (w, h) = (64u32, 128u32);
-    let mut data = Vec::with_capacity((w * h * 4) as usize);
-    let sstep = |a: f32, b: f32, x: f32| {
-        let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
-        t * t * (3.0 - 2.0 * t)
-    };
-    for y in 0..h {
-        let v = 1.0 - y as f32 / (h - 1) as f32; // 0 root .. 1 tip
-        for x in 0..w {
-            let u = x as f32 / (w - 1) as f32 * 2.0 - 1.0;
-            let mut heat = 0.0_f32;
-            for (off, tall, sway) in [(0.0_f32, 1.0_f32, 0.0_f32), (-0.42, 0.7, 0.9), (0.4, 0.78, -0.7), (0.18, 0.52, 1.7)] {
-                let vt = v / tall;
-                if vt >= 1.0 {
-                    continue;
-                }
-                let centre = off * (1.0 - vt * 0.6) + 0.12 * (vt * 6.0 + sway).sin() * vt;
-                let half = (0.42 - (off.abs() * 0.25)) * (1.0 - vt).powf(0.75) * (0.75 + 0.25 * (1.0 - vt * vt));
-                let d = ((u - centre).abs() / half.max(1e-3)).min(2.0);
-                heat = heat.max((1.0 - d) * (1.0 - vt * 0.55));
-            }
-            heat *= sstep(0.0, 0.08, v); // the root sits in the embers
-            let a = sstep(0.0, 0.35, heat);
-            let core = sstep(0.35, 0.85, heat);
-            let r = 1.0;
-            let g = 0.25 + 0.65 * sstep(0.1, 0.7, heat);
-            let b = 0.05 + 0.6 * core * core;
-            data.extend([(r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8, (a * 255.0) as u8]);
-        }
-    }
-    Image::new(
-        Extent3d { width: w, height: h, depth_or_array_layers: 1 },
-        TextureDimension::D2,
-        data,
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::default(),
-    )
 }
 
 // ── Mesh helpers ─────────────────────────────────────────────────────────────────

@@ -1,23 +1,21 @@
-//! **Flame cards** — a real-looking open flame for braziers and fire baskets.
+//! **Flame cards** — the ONE flame system for every open fire in the game: camp fires, the meadow
+//! rest fire, gate braziers and fire baskets, burning plots, ork and trailer torches.
 //!
-//! The old braziers capped their bowls with an emissive sphere/cone, which read as a glowing egg.
-//! A [`Flame`] is instead three crossed vertical cards (60° apart) carrying a procedurally painted
-//! flame image — ragged licking tongues, a white-yellow core fading through orange to a dark red
-//! rim — drawn additively and unlit so it blooms. Two nested flames (a tall outer one and a
-//! small hot inner one, rotated against each other) are spawned per fire by [`flame_children`].
+//! A flame is two nested sets of three crossed vertical cards (60° apart) carrying a painted flame
+//! image (four licking tongues over a hot root, white-yellow core, orange then deep red at the
+//! ragged edges), unlit and HDR-bright so it blooms, never a solid cone or egg. The texture is a
+//! fixed-id handle ([`FLAME_CARD_TEX`]) so any builder can call [`flame_card_material`] /
+//! [`flame_card_mesh`] without an `Assets<Image>`. For a simple fire, spawn [`flame_bundle`] (or
+//! [`flame_children`]) and the shared mesh + material + a lick/sway flicker are filled in here.
 //!
 //! Animation is transform-only (scale pulse, sway, slow turn) — no asset is mutated per frame.
 //! Spawn a child entity with [`flame_bundle`] (or [`flame_children`]); [`attach_flame_meshes`]
 //! fills in the shared mesh + material on the next frame, so callers need no extra resources.
 
-use bevy::asset::RenderAssetUsages;
-use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::light::NotShadowCaster;
-use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
-use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
-/// One flame (size = height in world units; base at the entity origin).
+/// One flame (`size` scales the 0.95 u-tall card set; base at the entity origin).
 #[derive(Component, Clone, Copy)]
 pub struct Flame {
     pub size: f32,
@@ -34,7 +32,8 @@ pub struct FlameFxPlugin;
 
 impl Plugin for FlameFxPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup_flame_assets).add_systems(Update, (attach_flame_meshes, flicker_flames));
+        app.add_systems(PreStartup, insert_flame_card_tex)
+            .add_systems(Startup, setup_flame_assets).add_systems(Update, (attach_flame_meshes, flicker_flames));
     }
 }
 
@@ -48,86 +47,57 @@ pub fn flame_bundle(at: Vec3, size: f32, phase: f32) -> impl Bundle {
     )
 }
 
-/// Spawn the two nested flames of one fire as children of `parent` (base at local `at`).
+/// Spawn one fire's flame cards as a child of `parent` (base at local `at`), so the flame shares
+/// the parent's visibility / reveal lifecycle.
 pub fn flame_children(commands: &mut Commands, parent: Entity, at: Vec3, size: f32, phase: f32) {
     commands.entity(parent).with_children(|c| {
         c.spawn(flame_bundle(at, size, phase));
-        c.spawn(flame_bundle(at + Vec3::Y * 0.02, size * 0.62, phase + 1.7));
     });
 }
 
-fn smooth(e0: f32, e1: f32, x: f32) -> f32 {
-    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
+/// The shared painted flame texture of every flame card (camp fires, the meadow fire, ork torches,
+/// the trailer torches): a fixed-id handle, filled once at startup ([`insert_flame_card_tex`], registered by [`FlameFxPlugin`]), so
+/// any builder can make a flame material without an `Assets<Image>`.
+pub(crate) const FLAME_CARD_TEX: Handle<Image> = bevy::asset::uuid_handle!("6b1f0c52-3c8e-4d4f-9a51-2f7e0b9d4a11");
+
+pub(crate) fn insert_flame_card_tex(mut images: ResMut<Assets<Image>>) {
+    let _ = images.insert(&FLAME_CARD_TEX, flame_card_image());
 }
 
-/// Paint the flame image: x across (−1..1), y up (0 bottom). Tongues from summed sines.
-fn flame_image() -> Image {
-    const W: usize = 64;
-    const H: usize = 128;
-    let mut px = vec![0u8; W * H * 4];
-    for j in 0..H {
-        let v = 1.0 - (j as f32 + 0.5) / H as f32; // image rows run top-down
-        for i in 0..W {
-            let u = (i as f32 + 0.5) / W as f32 * 2.0 - 1.0;
-            // Body: a teardrop that widens just above the base and licks to a point.
-            let body = (v * 3.2).min(1.0).powf(0.5) * (1.0 - v).powf(0.85) * 0.92;
-            // Tongues: the outline wobbles with height, more toward the top.
-            let wob = 0.18 * v * ((v * 13.0 + u * 2.0).sin() + 0.6 * (v * 23.0 - 1.3).sin());
-            let side = (u - wob * 0.6).abs();
-            let w = body * (1.0 + 0.35 * (v * 17.0 + u * 5.0).sin() * v);
-            let d = if w > 1e-3 { 1.0 - side / w } else { -1.0 };
-            // Split tips: a darker notch through the upper middle.
-            let notch = smooth(0.5, 0.9, v) * (1.0 - smooth(0.0, 0.25, (u - 0.25 * (v * 9.0).sin()).abs())) * 0.5;
-            let a = (smooth(0.0, 0.35, d) * (1.0 - smooth(0.82, 1.0, v)) * (1.0 - notch)).clamp(0.0, 1.0);
-            let core = smooth(0.45, 0.9, d) * (1.0 - smooth(0.25, 0.7, v));
-            let mid = smooth(0.1, 0.55, d);
-            let (r, g, b) = (
-                0.75 + 0.25 * mid,
-                0.16 + 0.42 * mid + 0.37 * core,
-                0.03 + 0.07 * mid + 0.55 * core,
-            );
-            let o = (j * W + i) * 4;
-            px[o] = (r * 255.0) as u8;
-            px[o + 1] = (g * 255.0) as u8;
-            px[o + 2] = (b * 255.0) as u8;
-            px[o + 3] = (a * 255.0) as u8;
-        }
-    }
-    let mut img = Image::new(
-        Extent3d { width: W as u32, height: H as u32, depth_or_array_layers: 1 },
-        TextureDimension::D2,
-        px,
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::default(),
-    );
-    img.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-        address_mode_u: ImageAddressMode::ClampToEdge,
-        address_mode_v: ImageAddressMode::ClampToEdge,
-        mag_filter: ImageFilterMode::Linear,
-        min_filter: ImageFilterMode::Linear,
+/// The flame cards' material: the painted flame, HDR-bright (blooms), alpha-blended, unlit,
+/// double-sided, never a solid cone.
+pub(crate) fn flame_card_material(materials: &mut Assets<StandardMaterial>) -> Handle<StandardMaterial> {
+    materials.add(StandardMaterial {
+        base_color: Color::linear_rgb(5.0, 2.6, 1.1),
+        base_color_texture: Some(FLAME_CARD_TEX),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        double_sided: true,
+        cull_mode: None,
         ..default()
-    });
-    img
+    })
 }
 
-/// Three crossed unit cards (height 1, width 0.62), base at y=0.
-fn flame_mesh() -> Mesh {
-    let mut pos = Vec::new();
-    let mut nrm = Vec::new();
-    let mut uv = Vec::new();
-    let mut idx: Vec<u32> = Vec::new();
-    for k in 0..3 {
-        let a = k as f32 * std::f32::consts::PI / 3.0;
-        let (s, c) = a.sin_cos();
-        let hw = 0.31;
-        let base = pos.len() as u32;
-        for (x, y, uu, vv) in [(-hw, 0.0, 0.0, 1.0), (hw, 0.0, 1.0, 1.0), (hw, 1.0, 1.0, 0.0), (-hw, 1.0, 0.0, 0.0)] {
-            pos.push([x * c, y, x * s]);
-            nrm.push([-s, 0.0, c]);
-            uv.push([uu, vv]);
+/// Flame cards: three vertical quads crossed at 60° plus a smaller inner set, `size` x (0.75 wide
+/// x 0.95 tall — a camp fire; ~0.3 is a torch), base at y=0, UV v=1 at the base (the flame root).
+/// Spawn with `bevy::light::NotShadowCaster`.
+pub(crate) fn flame_card_mesh(size: f32) -> Mesh {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::mesh::{Indices, PrimitiveTopology};
+    let (mut pos, mut uv, mut nrm, mut idx) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for (w, h, phase) in [(0.75 * size, 0.95 * size, 0.0_f32), (0.42 * size, 0.62 * size, 0.5)] {
+        for k in 0..3 {
+            let a = phase + k as f32 * std::f32::consts::FRAC_PI_3;
+            let d = Vec3::new(a.cos(), 0.0, a.sin()) * (w / 2.0);
+            let n = Vec3::new(-a.sin(), 0.0, a.cos());
+            let base = pos.len() as u32;
+            for (p, t) in [(-d, [0.0, 1.0]), (d, [1.0, 1.0]), (d + Vec3::Y * h, [1.0, 0.0]), (-d + Vec3::Y * h, [0.0, 0.0])] {
+                pos.push(p.to_array());
+                uv.push(t);
+                nrm.push(n.to_array());
+            }
+            idx.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
         }
-        idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
     Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
@@ -136,24 +106,53 @@ fn flame_mesh() -> Mesh {
         .with_inserted_indices(Indices::U32(idx))
 }
 
-fn setup_flame_assets(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut images: ResMut<Assets<Image>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    let tex = images.add(flame_image());
-    let mat = materials.add(StandardMaterial {
-        base_color: Color::LinearRgba(LinearRgba::rgb(3.2, 2.3, 1.6)),
-        base_color_texture: Some(tex),
-        unlit: true,
-        alpha_mode: AlphaMode::Add,
-        double_sided: true,
-        cull_mode: None,
-        fog_enabled: true,
-        ..default()
-    });
-    commands.insert_resource(FlameAssets { mesh: meshes.add(flame_mesh()), mat });
+/// A painted flame (64x128 RGBA): three licking tongues over a hot root, white-yellow at the core,
+/// orange then deep red at the ragged edges, soft alpha falloff — the card texture for the fire.
+pub(crate) fn flame_card_image() -> Image {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+    let (w, h) = (64u32, 128u32);
+    let mut data = Vec::with_capacity((w * h * 4) as usize);
+    let sstep = |a: f32, b: f32, x: f32| {
+        let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
+    for y in 0..h {
+        let v = 1.0 - y as f32 / (h - 1) as f32; // 0 root .. 1 tip
+        for x in 0..w {
+            let u = x as f32 / (w - 1) as f32 * 2.0 - 1.0;
+            let mut heat = 0.0_f32;
+            for (off, tall, sway) in [(0.0_f32, 1.0_f32, 0.0_f32), (-0.42, 0.7, 0.9), (0.4, 0.78, -0.7), (0.18, 0.52, 1.7)] {
+                let vt = v / tall;
+                if vt >= 1.0 {
+                    continue;
+                }
+                let centre = off * (1.0 - vt * 0.6) + 0.12 * (vt * 6.0 + sway).sin() * vt;
+                let half = (0.42 - (off.abs() * 0.25)) * (1.0 - vt).powf(0.75) * (0.75 + 0.25 * (1.0 - vt * vt));
+                let d = ((u - centre).abs() / half.max(1e-3)).min(2.0);
+                heat = heat.max((1.0 - d) * (1.0 - vt * 0.55));
+            }
+            heat *= sstep(0.0, 0.08, v); // the root sits in the embers
+            let a = sstep(0.0, 0.35, heat);
+            let core = sstep(0.35, 0.85, heat);
+            let r = 1.0;
+            let g = 0.25 + 0.65 * sstep(0.1, 0.7, heat);
+            let b = 0.05 + 0.6 * core * core;
+            data.extend([(r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8, (a * 255.0) as u8]);
+        }
+    }
+    Image::new(
+        Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::default(),
+    )
+}
+
+fn setup_flame_assets(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
+    let mat = flame_card_material(&mut materials);
+    commands.insert_resource(FlameAssets { mesh: meshes.add(flame_card_mesh(1.0)), mat });
 }
 
 fn attach_flame_meshes(mut commands: Commands, assets: Option<Res<FlameAssets>>, q: Query<Entity, Added<Flame>>) {

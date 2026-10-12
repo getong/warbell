@@ -174,8 +174,8 @@ fn setup_scene_assets(
         ..default()
     });
     let bolt_mesh = meshes.add(Sphere::new(0.18).mesh().ico(2).unwrap());
-    let flame_mat = crate::camps::flame_card_material(&mut materials);
-    let flame_mesh = meshes.add(crate::camps::flame_card_mesh(0.34));
+    let flame_mat = crate::flame_fx::flame_card_material(&mut materials);
+    let flame_mesh = meshes.add(crate::flame_fx::flame_card_mesh(0.34));
     commands.insert_resource(SceneAssets { prop_mat, bolt_mat, bolt_mesh, flame_mat, flame_mesh });
 }
 

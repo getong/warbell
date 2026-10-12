@@ -157,7 +157,7 @@ def arch_door(g, rng, c, nrm, w, h, studs=True, ring=True):
         x = -r + (i + 0.5) * w / n_pl
         top = spring + math.sqrt(max(0.0, r * r - x * x)) - 0.03
         board(g, c + tng * x + UP * (top / 2) + nrm * 0.02, (0, 1, 0), tuple(nrm), top, w / n_pl - 0.012, 0.06,
-              mat=M_TIMBER, col=scale((0.95, 0.68, 0.45), rng.uniform(0.7, 0.88)), rng=rng)
+              mat=M_TIMBER, col=scale((1.0, 0.7, 0.44), rng.uniform(0.9, 1.0)), rng=rng)
     for y in (0.35, spring * 0.55, spring - 0.05):
         lbox(g, c + UP * y + nrm * 0.065, (w - 0.1, 0.11, 0.035), yaw_q(tng), M_TIMBER, scale(BEAMC, 0.6), tile=0.5)
         if studs:
@@ -547,7 +547,7 @@ def rival_walls(rng):
             xa = hs - d
             ya = cy + math.sqrt(max(0.0, R * R - xa * xa)) - 0.08
             board(g, V(hx, ya / 2 + 0.04, zh - d), (0, 1, 0), (-sx, 0, 0), ya - 0.04, lw / n_pl - 0.01, 0.07,
-                  mat=M_TIMBER, col=scale((0.95, 0.68, 0.45), rng.uniform(0.7, 0.88)), rng=rng)
+                  mat=M_TIMBER, col=scale((1.0, 0.7, 0.44), rng.uniform(0.9, 1.0)), rng=rng)
         for y in (0.5, 1.45, 2.35):
             lbox(g, V(hx - sx * 0.07, y, zh - lw / 2), (0.04, 0.13, lw - 0.15), quat_y(0.0), M_TIMBER,
                  scale(BEAMC, 0.55), tile=0.5)
@@ -604,15 +604,15 @@ def desert_house(rng, variant):
          sides=6, segs=1)
     # Door: dark arched opening with a plank leaf ajar; a small high window.
     dx = -0.45 if variant else 0.35
-    arched_opening(g, V(dx, 0.08, D / 2 + 0.01), V(0, 0, 1), 0.7, 1.3)
-    hinge = V(dx - 0.33, 0.1, D / 2 - 0.06)
-    dd = V(math.cos(1.2), 0, -math.sin(1.2))
-    for k in range(3):
-        board(g, hinge + dd * (0.11 + k * 0.22) + UP * 0.55, (0, 1, 0), dd.cross(UP), 1.1, 0.21, 0.04, mat=M_PLANK,
-              col=scale(BEAMC, rng.uniform(0.8, 1.0)), rng=rng)
-    board(g, V(dx, 1.28, D / 2 + 0.06), (1, 0, 0), (0, 0, 1), 0.95, 0.12, 0.1, mat=M_PLANK, col=BEAMC, rng=rng)
-    arched_opening(g, V(-dx * 1.6, 1.15, D / 2 + 0.01), V(0, 0, 1), 0.3, 0.42)
-    arched_opening(g, V(W / 2 + 0.01, 1.2, 0.3), V(1, 0, 0), 0.28, 0.4)
+    # A shallow rendered door surround standing proud of the wall, the round-headed plank door with
+    # its studs and ring, sandstone voussoirs and threshold; a palm-trunk lintel over it all.
+    slab(g, V(dx, 0.72, D / 2 + 0.06), (1.25, 1.6, 0.16), quat_y(0.0), rng, mat=M_PLASTER, res=(2, 3, 1),
+         round_r=0.04, rough=0.08, col_fn=col, tile=1.3)
+    arch_door(g, rng, V(dx, 0.08, D / 2 + 0.145), V(0, 0, 1), 0.7, 1.3)
+    pole(g, V(dx - 0.62, 1.66, D / 2 + 0.2), V(dx + 0.62, 1.66, D / 2 + 0.2), 0.06, 0.055, rng, mat=M_BARK, col=PALM,
+         sides=7, segs=1)
+    deep_opening(g, rng, V(-dx * 1.6, 1.1, D / 2 - 0.02), V(0, 0, 1), 0.3, 0.46, depth=0.1, grille=True)
+    deep_opening(g, rng, V(W / 2 - 0.02, 1.15, 0.3), V(1, 0, 0), 0.28, 0.44, depth=0.1, lintel=False)
     if not variant:
         # Reed awning on four poles over the door.
         for x in (dx - 0.7, dx + 0.7):
