@@ -50,6 +50,10 @@ enum Seat {
     Shore,
     /// At a brink: the ground in front (local -Z) falls away at least this far.
     Brink(f32),
+    /// Across a gap: a far rim [`GAP_SPANS`] ahead (local -Z) at about the same height, the ground
+    /// between them at least this far below both (a gully / the gorge); the far anchor
+    /// (`<model>_far`) is spawned there facing back.
+    Gap(f32),
     /// Backed into a slope: the ground behind (local +Z) rises at least this far.
     Backed(f32),
 }
@@ -98,7 +102,7 @@ const SCENES: [Scene; 10] = [
         solids: &[(0.0, 0.3, 1.4, 1.4, 0.0), (1.75, 1.15, 0.9, 0.8, 0.0)],
         name: "Anselm's Journal \u{2014} The Dusk Charter",
         lore: "Under a stone at the stair: \"We hung the bell and read the charter, and rang at dusk. That night iron answered iron in the hills.\"" },
-    Scene { model: "site_rope_bridge", biome: Biome::Rocky, foot: 2.6, seat: Seat::Brink(3.0),
+    Scene { model: "site_rope_bridge", biome: Biome::Rocky, foot: 2.2, seat: Seat::Gap(6.0),
         solids: &[(0.0, 0.3, 1.25, 0.5, 0.0)],
         name: "The Cut Rope Bridge",
         lore: "The colony's road to the east, cut from this side with an axe; no one came back across." },
@@ -137,12 +141,25 @@ const SIGHTLINE: f32 = 4.0;
 const BIOME_MARGIN: f32 = 6.0;
 /// Shore seat: the water probes in front sit this deep in a pool (base-unit signed distance).
 const SHORE_WET: f32 = -0.25;
+/// Gap seat: the spans tried (centre of the near anchor to the far anchor), shortest first.
+const GAP_SPANS: [f32; 5] = [9.0, 10.0, 11.0, 12.5, 14.0];
+/// Footprint of the far anchor (posts + cairn) of a gap scene.
+const FAR_FOOT: f32 = 1.6;
 
 #[derive(Clone, Debug, PartialEq)]
 struct Site {
     scene: usize,
     pos: Vec2,
     yaw: f32,
+    /// Gap scenes: distance ahead (local -Z) to the far anchor; 0 otherwise.
+    span: f32,
+}
+
+impl Site {
+    /// The far anchor of a gap scene.
+    fn far(&self) -> Option<Vec2> {
+        (self.span > 0.0).then(|| self.pos + front(self.yaw) * self.span)
+    }
 }
 
 static SITES: Mutex<Vec<Site>> = Mutex::new(Vec::new());
@@ -155,13 +172,19 @@ pub fn reset_plan() {
 /// footprint plus [`SIGHTLINE`], so the bog's cypresses / willows and the rocky scrub stand back and
 /// the scene reads from a distance instead of through a curtain of moss.
 pub fn planned_footprints() -> Vec<(Vec2, f32)> {
-    SITES.lock().unwrap().iter().map(|s| (s.pos, SCENES[s.scene].foot + SIGHTLINE)).collect()
+    let sites = SITES.lock().unwrap();
+    let mut out: Vec<(Vec2, f32)> = sites.iter().map(|s| (s.pos, SCENES[s.scene].foot + SIGHTLINE)).collect();
+    out.extend(sites.iter().filter_map(|s| s.far()).map(|f| (f, FAR_FOOT + SIGHTLINE * 0.5)));
+    out
 }
 
 /// Does a circle at `(x, z)` of radius `r` overlap a planned site?
 pub fn overlaps_planned(x: f32, z: f32, r: f32) -> bool {
     let p = Vec2::new(x, z);
-    SITES.lock().unwrap().iter().any(|s| p.distance_squared(s.pos) < (SCENES[s.scene].foot + r + 0.35).powi(2))
+    SITES.lock().unwrap().iter().any(|s| {
+        p.distance_squared(s.pos) < (SCENES[s.scene].foot + r + 0.35).powi(2)
+            || s.far().is_some_and(|f| p.distance_squared(f) < (FAR_FOOT + r + 0.35).powi(2))
+    })
 }
 
 fn rng_next(state: &mut u32) -> f32 {
@@ -190,6 +213,9 @@ fn seated_probe(seat: Seat, d: Vec2, yaw: f32, foot: f32) -> bool {
     match seat {
         Seat::Shore => along < -0.15,
         Seat::Brink(_) => along < -0.2,
+        // A gap anchor (two posts on a slate footing) only needs its inner back half level: rims
+        // are rough, and the footing's buried courses take the rest.
+        Seat::Gap(_) => along < -0.2 && d.length() < foot * 0.7,
         Seat::Backed(_) => along > -0.35,
         _ => true,
     }
@@ -218,8 +244,11 @@ fn ground_ok(scene: usize, q: Vec2, yaw: f32, flat: f32, trails: &[Vec<Vec2>]) -
     let rb = foot + if s.seat == Seat::High { BIOME_MARGIN * 0.5 } else { BIOME_MARGIN };
     if (0..12).any(|k| {
         let a = k as f32 * (TAU / 12.0);
-        let (px, pz) = (x + a.cos() * rb, z + a.sin() * rb);
-        !crate::worldmap::is_pool_world(px, pz) && crate::worldmap::tile_biome_world(px, pz) != Some(s.biome)
+        let d = Vec2::new(a.cos(), a.sin());
+        let (px, pz) = (x + d.x * rb, z + d.y * rb);
+        // A gap scene's front is the gap: whatever lies down there (a stream, a sea inlet) is fine.
+        let gap_side = matches!(s.seat, Seat::Gap(_)) && d.dot(front(yaw)) > -0.2;
+        !gap_side && !crate::worldmap::is_pool_world(px, pz) && crate::worldmap::tile_biome_world(px, pz) != Some(s.biome)
     }) {
         return false;
     }
@@ -273,7 +302,7 @@ fn ground_ok(scene: usize, q: Vec2, yaw: f32, flat: f32, trails: &[Vec<Vec2>]) -
 /// High / brink / backed sites may stand up on a cliffy shelf: they are planned beside a pass trail
 /// (high, brink) or against the rise itself (backed), so the climb is the trail's.
 fn shelf_ok(seat: Seat) -> bool {
-    matches!(seat, Seat::High | Seat::Brink(_) | Seat::Backed(_))
+    matches!(seat, Seat::High | Seat::Brink(_) | Seat::Gap(_) | Seat::Backed(_))
 }
 
 /// The terrain shape a seat asks for: water in front of a shore scene (and dry land behind), a drop
@@ -300,8 +329,62 @@ fn seat_shape_ok(seat: Seat, q: Vec2, yaw: f32, foot: f32, y0: f32) -> bool {
             let p = q - f * (foot * a + 1.0) + side * b * foot;
             h(p).is_some_and(|y| y > y0 + rise)
         }),
+        Seat::Gap(drop) => gap_span(q, yaw, y0, drop).is_some(),
         _ => true,
     }
+}
+
+/// A gap seat's span: the shortest of [`GAP_SPANS`] whose far end is legal rim ground within 1.5u
+/// of this one's height, with real edges on both sides (the ground 2.4u in from each anchor already
+/// 2u down) and the floor between them `drop` below the lower rim across the bridge's width.
+fn gap_span(q: Vec2, yaw: f32, y0: f32, drop: f32) -> Option<f32> {
+    let f = front(yaw);
+    let side = Vec2::new(-f.y, f.x);
+    let h = |p: Vec2| crate::worldmap::ground_at_world(p.x, p.y);
+    GAP_SPANS.into_iter().find(|&span| {
+        let far = q + f * span;
+        let Some(y1) = h(far) else { return false };
+        if (y1 - y0).abs() > 1.5 || !far_anchor_ok(far, f, y1) {
+            return false;
+        }
+        let rim = y0.min(y1);
+        let edges = h(q + f * 2.4).is_some_and(|y| y < y0 - 2.0) && h(far - f * 2.4).is_some_and(|y| y < y1 - 2.0);
+        edges
+            && [0.35f32, 0.5, 0.65].iter().all(|&t| {
+                [-0.9f32, 0.0, 0.9].iter().all(|&b| {
+                    // Over the stream / a sea inlet the floor is the water.
+                    let p = q + f * span * t + side * b;
+                    h(p).unwrap_or(crate::worldmap::SEA_Y) < rim - drop
+                })
+            })
+    })
+}
+
+/// The far anchor's ground: rock-biome rim, off roads / rivers / pools / plots / camps / landmarks,
+/// its back half (away from the gap, `+f`) within 0.9u of its centre height.
+fn far_anchor_ok(far: Vec2, f: Vec2, y1: f32) -> bool {
+    let bad = |p: Vec2| {
+        crate::worldmap::tile_biome_world(p.x, p.y) != Some(Biome::Rocky)
+            || crate::worldmap::is_pool_world(p.x, p.y)
+            || crate::worldmap::is_river_world(p.x, p.y)
+            || crate::roads::on_road(p.x, p.y)
+            || crate::town::near_build_plot(p.x, p.y)
+            || crate::castle::in_footprint(p.x, p.y)
+            || crate::camps::in_clearing(p.x, p.y)
+            || crate::ruins::near_landmark_visual_footprint(p.x, p.y)
+    };
+    if bad(far) {
+        return false;
+    }
+    (0..8).all(|k| {
+        let a = k as f32 * (TAU / 8.0);
+        let d = Vec2::new(a.cos(), a.sin()) * FAR_FOOT * 0.75;
+        if d.dot(f) < -0.3 * FAR_FOOT {
+            return true; // the gap side
+        }
+        let p = far + d;
+        !bad(p) && crate::worldmap::ground_at_world(p.x, p.y).is_some_and(|y| (y - y1).abs() < 1.3)
+    })
 }
 
 /// Clear of every other planned piece (this plan's own sites, the other story layers, and
@@ -324,6 +407,7 @@ fn candidates(scene: usize, trails: &[Vec<Vec2>]) -> Vec<Vec2> {
         return trail_candidates(scene, trails);
     }
     let step = match s.seat {
+        Seat::Gap(_) => 1.0,
         Seat::Shore => 2.0,
         _ if s.biome == Biome::Swamp => 4.0,
         _ => 6.0,
@@ -337,9 +421,11 @@ fn candidates(scene: usize, trails: &[Vec<Vec2>]) -> Vec<Vec2> {
     while z < rows - gz {
         let mut x = -gx + step * 0.5;
         while x < cols - gx {
-            let p = Vec2::new(x + (rng_next(&mut rng) - 0.5) * step * 0.8, z + (rng_next(&mut rng) - 0.5) * step * 0.8);
+            // (A gap is a narrow thing: its anchors sit on an exact fine grid, unjittered.)
+            let jit = if matches!(s.seat, Seat::Gap(_)) { 0.0 } else { step * 0.8 };
+            let p = Vec2::new(x + (rng_next(&mut rng) - 0.5) * jit, z + (rng_next(&mut rng) - 0.5) * jit);
             let key = rng_next(&mut rng);
-            if crate::worldmap::tile_biome_world(p.x, p.y) == Some(s.biome) {
+            if crate::worldmap::tile_biome_world(p.x, p.y) == Some(s.biome) && (!matches!(s.seat, Seat::Gap(_)) || at_edge(p)) {
                 let key = match s.seat {
                     Seat::High => -crate::worldmap::ground_at_world(p.x, p.y).unwrap_or(-1e3),
                     Seat::Rim => {
@@ -360,6 +446,15 @@ fn candidates(scene: usize, trails: &[Vec<Vec2>]) -> Vec<Vec2> {
     }
     out.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.x.total_cmp(&b.1.x)).then(a.1.y.total_cmp(&b.1.y)));
     out.into_iter().map(|(_, p)| p).collect()
+}
+
+/// Cheap gap prefilter: does the ground fall 2u within 2.4u of `p` in some direction (an edge)?
+fn at_edge(p: Vec2) -> bool {
+    let Some(y0) = crate::worldmap::ground_at_world(p.x, p.y) else { return false };
+    (0..12).any(|k| {
+        let a = k as f32 * (TAU / 12.0);
+        crate::worldmap::ground_at_world(p.x + a.cos() * 2.4, p.y + a.sin() * 2.4).unwrap_or(crate::worldmap::SEA_Y) < y0 - 2.0
+    })
 }
 
 /// Spots beside the pass trails (every ~3u down each trail, both sides, a few offsets past the
@@ -420,8 +515,22 @@ fn seat(scene: usize, planned: &mut Vec<Site>, trails: &[Vec<Vec2>], visual: boo
             if !clear_of_others(q, scene, planned, visual) {
                 continue;
             }
-            if let Some(yaw) = yaws(scene, q).find(|&yaw| ground_ok(scene, q, yaw, flat, trails)) {
-                planned.push(Site { scene, pos: q, yaw });
+            let seat_at = |yaw: f32| {
+                if !ground_ok(scene, q, yaw, flat, trails) {
+                    return None;
+                }
+                let Seat::Gap(drop) = SCENES[scene].seat else { return Some(0.0) };
+                let y0 = crate::worldmap::ground_at_world(q.x, q.y)?;
+                let span = gap_span(q, yaw, y0, drop)?;
+                let far = q + front(yaw) * span;
+                let free = !crate::poi::story_clearings().overlaps(far.x, far.y, FAR_FOOT + 1.0)
+                    && !crate::blockers::any_within(far.x, far.y, FAR_FOOT + 0.3)
+                    && !(visual && crate::blockers::any_visual_within(far.x, far.y, FAR_FOOT + 0.3))
+                    && planned.iter().all(|o| o.pos.distance(far) > FAR_FOOT + SCENES[o.scene].foot + MIN_GAP * 0.5);
+                free.then_some(span)
+            };
+            if let Some((yaw, span)) = yaws(scene, q).find_map(|yaw| seat_at(yaw).map(|span| (yaw, span))) {
+                planned.push(Site { scene, pos: q, yaw, span });
                 return true;
             }
         }
@@ -441,7 +550,11 @@ pub fn plan() {
     }
     for site in &planned {
         crate::blockers::reserve_visual(site.pos.x, site.pos.y, SCENES[site.scene].foot);
-        info!("wild_sites: planned {} at {:.1},{:.1} yaw {:.2}", SCENES[site.scene].model, site.pos.x, site.pos.y, site.yaw);
+        if let Some(far) = site.far() {
+            crate::blockers::reserve_visual(far.x, far.y, FAR_FOOT);
+        }
+        info!("wild_sites: planned {} at {:.1},{:.1} yaw {:.2} span {:.1}", SCENES[site.scene].model, site.pos.x, site.pos.y,
+            site.yaw, site.span);
     }
     *SITES.lock().unwrap() = planned;
 }
@@ -454,6 +567,25 @@ fn seat_y(site: &Site) -> f32 {
     let (mut lo, mut hi) = (y0, y0);
     for d in probes(s.foot).filter(|&d| seated_probe(s.seat, d, site.yaw, s.foot)) {
         if let Some(y) = crate::worldmap::ground_at_world(site.pos.x + d.x, site.pos.y + d.y) {
+            lo = lo.min(y);
+            hi = hi.max(y);
+        }
+    }
+    (y0 - 0.6 * (hi - lo)).max(lo) - 0.04
+}
+
+/// Base height of a gap scene's far anchor: its back-half ground, sunk like [`seat_y`].
+fn far_seat_y(far: Vec2, yaw: f32) -> f32 {
+    let f = front(yaw);
+    let Some(y0) = crate::worldmap::ground_at_world(far.x, far.y) else { return 0.0 };
+    let (mut lo, mut hi) = (y0, y0);
+    for k in 0..8 {
+        let a = k as f32 * (TAU / 8.0);
+        let d = Vec2::new(a.cos(), a.sin()) * FAR_FOOT;
+        if d.dot(f) < -0.3 * FAR_FOOT {
+            continue;
+        }
+        if let Some(y) = crate::worldmap::ground_at_world(far.x + d.x, far.y + d.y) {
             lo = lo.min(y);
             hi = hi.max(y);
         }
@@ -520,6 +652,18 @@ pub fn populate(commands: &mut Commands) {
         }
         register_blockers(site.scene, site.pos, site.yaw);
         crate::blockers::reserve_visual(site.pos.x, site.pos.y, s.foot);
+        if let Some(far) = site.far() {
+            // The far anchor, turned to face back across the gap.
+            let yf = far_seat_y(far, site.yaw);
+            let far_model = format!("{}_far", s.model);
+            let tf = Transform::from_xyz(far.x, yf, far.y).with_rotation(Quat::from_rotation_y(site.yaw + std::f32::consts::PI));
+            if let Some(e) = kit.spawn_static_with(commands, &far_model, tf, range.clone()) {
+                commands.entity(e).insert(BiomeEntity);
+            }
+            crate::blockers::add_obb(far.x, far.y, 1.1, 0.45, site.yaw);
+            crate::blockers::reserve_visual(far.x, far.y, FAR_FOOT);
+            info!("wild_sites: {far_model} at {:.1},{:.1},{:.1} (span {:.1})", far.x, yf, far.y, site.span);
+        }
         info!("wild_sites: {} at {:.1},{:.1},{:.1} yaw {:.2}", s.model, site.pos.x, y, site.pos.y, site.yaw);
         placed.push(site);
     }
@@ -539,7 +683,27 @@ pub fn shot_cams() -> Vec<(String, Transform)> {
         let f = front(site.yaw);
         let (fw, side) = (Vec3::new(f.x, 0.0, f.y), Vec3::new(-f.y, 0.0, f.x));
         let name = s.model.trim_start_matches("site_");
-        for (tag, off, lift) in [("near", fw * 8.0 + side * 3.5, 2.2), ("high", -fw * 6.0 + side * 7.0, 9.0)] {
+        if let Some(far) = site.far() {
+            // Across a gap: from behind the near anchor over to the far one, and from the gap's
+            // side looking down the drop at the cut ropes on the far wall.
+            let yf = far_seat_y(far, site.yaw);
+            let mid = (site.pos + far) * 0.5;
+            let side = Vec2::new(-f.y, f.x);
+            let back = site.pos - f * 3.5 + side * 2.0;
+            let eye = Vec3::new(back.x, y + 2.6, back.y);
+            let aim_far = Vec3::new(far.x, yf + 0.3, far.y);
+            out.push((format!("wild_{name}_near"), Transform::from_translation(eye).looking_at(aim_far, Vec3::Y)));
+            let e = mid + side * 12.0;
+            let eye = Vec3::new(e.x, y.max(yf) + 3.5, e.y);
+            let aim = Vec3::new(mid.x, y.min(yf) - 2.5, mid.y);
+            out.push((format!("wild_{name}_high"), Transform::from_translation(eye).looking_at(aim, Vec3::Y)));
+            info!("wild cam {name}: gap span {:.1} near {:.1},{:.1} far {:.1},{:.1}", site.span, site.pos.x, site.pos.y, far.x, far.y);
+            continue;
+        }
+        // The medium shot looks at the scene's story side (a shore scene's from the bank, out over
+        // the water; every other from its front quarter).
+        let high = if s.seat == Seat::Shore { -fw * 6.0 + side * 7.0 } else { fw * 7.0 + side * 6.0 };
+        for (tag, off, lift) in [("near", fw * 8.0 + side * 3.5, 2.2), ("high", high, 8.0)] {
             let e = aim + off;
             let gy = crate::worldmap::ground_at_world(e.x, e.z).unwrap_or(y).max(crate::worldmap::SEA_Y);
             let eye = Vec3::new(e.x, gy.max(y) + lift, e.z);
@@ -598,6 +762,10 @@ mod tests {
                 && !crate::stories_warm::overlaps_planned(a.pos.x, a.pos.y, s.foot)
                 && !crate::wayside::overlaps_planned(a.pos.x, a.pos.y, s.foot),
                 "{} on another story clearing at {}", s.model, a.pos);
+            if let Seat::Gap(drop) = s.seat {
+                let y0 = crate::worldmap::ground_at_world(a.pos.x, a.pos.y).unwrap();
+                assert!(a.span >= 8.0 && gap_span(a.pos, a.yaw, y0, drop) == Some(a.span), "{} not across a real gap", s.model);
+            }
             for b in &first[i + 1..] {
                 assert!(a.pos.distance(b.pos) > s.foot + SCENES[b.scene].foot + MIN_GAP, "{} crowds {}", s.model, SCENES[b.scene].model);
             }
