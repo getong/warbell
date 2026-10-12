@@ -744,7 +744,9 @@ pub fn spawn_cage_captive(
     let pose = crate::biped::PoseOverride(life.first_pose());
     let root = commands
         .spawn((
-            Transform { translation: berth.seat, rotation: Quat::from_rotation_y(berth.seat_yaw), scale: Vec3::splat(SCALE) },
+            // A shade under townsfolk scale: the fuller adult frame would push elbows and knees
+            // through the bars of the cage berths sized for the old slim body.
+            Transform { translation: berth.seat, rotation: Quat::from_rotation_y(berth.seat_yaw), scale: Vec3::splat(SCALE * 0.94) },
             Visibility::Visible,
             BipedDrive { sitting: true, phase: (seed % 628) as f32 / 100.0, ..default() },
             Captive { key, seed },
@@ -2673,7 +2675,8 @@ pub fn populate(
                     info!("FOREST_VILLINE ground y {y:.2} at {x:.1},{:.1}", p[1]); // for FOREST_CAM framing
                 }
                 let kid = scale < SCALE * 0.9;
-                let root = SCALE * crate::peasant_model::person_rig(kid, seed % crate::peasant_model::LOOKS).root;
+                let pk = vil_biped_key(k, seed, kid, false).kind;
+                let root = SCALE * crate::peasant_model::person_rig(pk, kid, seed % crate::peasant_model::LOOKS).root;
                 commands.entity(e).insert((
                     crate::scenes::SceneActor,
                     Transform { translation: Vec3::new(x, y, p[1]), rotation: Quat::IDENTITY, scale: Vec3::splat(root) },
@@ -2844,7 +2847,7 @@ fn spawn(
     let y = worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
     // A kid's height comes from its build (by look); a grown-up's frame shifts it a few percent.
     let kid = scale < SCALE * 0.9;
-    let rig = crate::peasant_model::person_rig(kid, seed % crate::peasant_model::LOOKS);
+    let rig = crate::peasant_model::person_rig(vil_biped_key(kind, seed, kid, desert).kind, kid, seed % crate::peasant_model::LOOKS);
     let scale = if kid { SCALE } else { scale } * rig.root;
     // A kid runs (the studio run clip) at a cadence matched to its short legs, so the feet keep
     // up with the ground instead of skating; it also bobs less.
@@ -3090,7 +3093,7 @@ fn build_biped_body(
 ) {
     // The skeleton follows the person's build (`peasant_model::person_rig`, same look as the
     // mesh): the adult's frame spacing, or a child's narrow frame, short limbs and big head.
-    let rig = crate::peasant_model::person_rig(kid, seed % crate::peasant_model::LOOKS);
+    let rig = crate::peasant_model::person_rig(vil_biped_key(kind, seed, kid, desert).kind, kid, seed % crate::peasant_model::LOOKS);
     let (hip_dx, shoulder_dx) = (rig.hip_dx, rig.shoulder_dx);
     // Off-hand mount: only the GUARD mesh set carries a shield (peasant_model returns None for
     // workers/peasants, and spawn_biped mounts nothing then), so this stays a no-op for civilians.

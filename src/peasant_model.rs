@@ -313,8 +313,24 @@ const ADULT: KitBuild = KitBuild {
 /// narrow shoulders + hips, slim limbs, shorter legs and arms on the full spine, small hands +
 /// feet, a big head on a slim neck (~1/5–1/5.8 of its height, against an adult's ~1/6.6), and a
 /// height of ~0.66–0.75 of an adult's by look.
-pub fn kit_build(kid: bool, look: u32) -> KitBuild {
+pub fn kit_build(kid: bool, woman: bool, look: u32) -> KitBuild {
     let look = look % LOOKS;
+    if woman && !kid {
+        // ~0.93 of a man's height, narrower shoulders + slimmer arms, a little wider in the hip;
+        // the grey-haired look is a stouter older woman.
+        let elder = look == 11;
+        return KitBuild {
+            chest: ADULT.chest * 0.9,
+            depth: ADULT.depth * if elder { 1.08 } else { 0.95 },
+            hips: ADULT.hips * 1.04,
+            arm: ADULT.arm * 0.87,
+            leg: ADULT.leg * 0.93,
+            hand: ADULT.hand * 0.88,
+            foot: ADULT.foot * 0.92,
+            root: if elder { 0.915 } else { 0.93 },
+            ..ADULT
+        };
+    }
     if kid {
         // 6–11 years old, spread over the looks (not in step with the face cycle).
         let age = ((look * 5) % LOOKS) as f32 / (LOOKS - 1) as f32;
@@ -323,8 +339,9 @@ pub fn kit_build(kid: bool, look: u32) -> KitBuild {
             chest: 0.88 + 0.04 * age,
             depth: 0.9 + 0.03 * age,
             hips: 0.9,
-            arm: 0.9 + 0.04 * age,
-            leg: 0.97 + 0.04 * age,
+            // (The child parts are already slim and smooth: these only fill them out with age.)
+            arm: 0.98 + 0.04 * age,
+            leg: 1.0 + 0.04 * age,
             hand: 0.86,
             foot: 0.86,
             leg_len: 0.85 + 0.03 * age,
@@ -353,6 +370,13 @@ pub fn kit_build(kid: bool, look: u32) -> KitBuild {
     }
 }
 
+/// Whether this townsperson is a WOMAN (kirtle + coif + her own face and frame): a third of the
+/// unemployed grown-ups, by look (the lean-faced looks), so the crowd keeps both. Workers, the
+/// militia and children stay on their own bodies.
+pub fn is_woman(kind: PeasantKind, kid: bool, look: u32) -> bool {
+    kind == PeasantKind::Unemployed && !kid && matches!(look % LOOKS, 2 | 5 | 8 | 11)
+}
+
 /// How one person's skeleton is laid out. Every peasant / villager spawn site passes these to
 /// `biped::spawn_biped_scaled` (and `limb_dx` to the drive) so the meshes and the joints agree.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -378,8 +402,8 @@ fn kit_people() -> Option<&'static crate::realforest::Kit> {
 /// The skeleton for one person (`kid`, `look` exactly as passed to [`peasant_biped_meshes`]): the
 /// kit body's per-build joint spacing / head / limb lengths, or the box peasant's fixed spacing
 /// (which still gets a child's limb lengths, root scale and big head).
-pub fn person_rig(kid: bool, look: u32) -> PersonRig {
-    let b = kit_build(kid, look);
+pub fn person_rig(kind: PeasantKind, kid: bool, look: u32) -> PersonRig {
+    let b = kit_build(kid, is_woman(kind, kid, look), look);
     let drop = HIP_TO_SOLE * (1.0 - b.leg_len);
     let (limbs, leg) = (Vec2::new(b.leg_len, b.arm_len), HIP_TO_SOLE * b.leg_len);
     if kit_people().is_some() {
@@ -555,6 +579,9 @@ fn kit_peasant_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u32, ki
     use PeasantKind::*;
     let kit = kit_people()?;
     let (face, hair_style, beard, tone, everyday_hat) = LOOK_TABLE[(look % LOOKS) as usize];
+    // The dedicated child / woman bodies (an older people.glb without them keeps the adult parts).
+    let kid_body = kid && kit.has("hu_kid_trunk");
+    let woman = is_woman(kind, kid, look) && kit.has("hu_dress");
     let skin = if desert { tan_skin(skin) } else { skin };
     let trouser = if desert { DESERT_PANT } else { trouser };
     let worker = matches!(kind, Woodcutter | Farmer | Miner | Unemployed);
@@ -572,12 +599,13 @@ fn kit_peasant_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u32, ki
         Archer => Some("archer"),
         Woodcutter => Some(if look % 2 == 0 { "cap" } else { "hood" }),
         Unemployed if kid => None,
+        Unemployed if woman => Some("coif"),
         Unemployed => [None, Some("hood"), Some("cap")][everyday_hat as usize],
     };
     // Hoods / wraps hide the hair; kids are never bald or bearded; woodcutters and desert men
     // always wear a beard (the box peasant's woodcutter beard + the rival's look).
     // (The steel helm counts: hair under it would be hidden tris on every soldier.)
-    let covered = matches!(hat, Some("hood" | "archer" | "turban" | "headwrap" | "warhelm" | "helm"));
+    let covered = matches!(hat, Some("hood" | "archer" | "turban" | "headwrap" | "warhelm" | "helm" | "coif"));
     // Under a cap / helmet / brim only the crop (or the bald fringe) — a fringe or a long mane
     // would poke through the headgear's front.
     let hair_style = match hair_style {
@@ -587,12 +615,18 @@ fn kit_peasant_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u32, ki
         s => s,
     };
     let beard = match () {
-        _ if kid => None,
+        _ if kid || woman => None,
         _ if kind == Woodcutter => beard.or(Some("full")),
         _ if desert => beard.or(Some("short")),
         _ => beard,
     };
-    let face = if kid { "kid" } else { face };
+    let face = if kid {
+        "kid"
+    } else if woman {
+        "w"
+    } else {
+        face
+    };
 
     // Region palette (order = people.py: SKIN, LIP, EYE, HAIR, TUNIC, TRIM, TROUSER, LEATHER, BOOT,
     // METAL, HEADCLOTH, BAND, TABARD, FLETCH, CLOAK, HELM).
@@ -603,6 +637,8 @@ fn kit_peasant_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u32, ki
     };
     let headcloth = match hat {
         Some("straw") => STRAW,
+        // Undyed / bleached linen kerchiefs.
+        Some("coif") => [0xd9d1bd, 0xcfc4a8, 0xe2dccb][(look as usize / 4) % 3],
         Some("turban" | "warhelm" | "headwrap") => DESERT_CLOTH,
         Some("archer") => LEATHER,
         _ => hood,
@@ -644,19 +680,29 @@ fn kit_peasant_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u32, ki
     ];
 
     // The pieces this person wears (any missing piece → no kit body).
-    let mut names: Vec<String> = vec!["hu_trunk".into()];
+    let trunk = match () {
+        _ if kid_body => "hu_kid_trunk",
+        _ if woman => "hu_dress",
+        _ => "hu_trunk",
+    };
+    let mut names: Vec<String> = vec![trunk.into()];
     // Workers roll their sleeves up; soldiers and the desert folk keep them down; the idle vary.
     let fore = match kind {
         Guard => "sleeve",
         Archer => "bare",
-        Unemployed if look % 2 == 1 => "sleeve",
+        Unemployed if woman || look % 2 == 1 => "sleeve",
         _ if desert => "sleeve",
         _ => "bare",
     };
     let legs = if desert { "hu_leg_wrap" } else { "hu_leg" };
     for s in ["l", "r"] {
-        names.push(format!("hu_arm_{fore}_{s}"));
-        names.push(format!("{legs}_{s}"));
+        if kid_body {
+            names.push(format!("hu_kid_arm_{s}"));
+            names.push(format!("hu_kid_leg_{s}"));
+        } else {
+            names.push(format!("hu_arm_{fore}_{s}"));
+            names.push(format!("{legs}_{s}"));
+        }
     }
     names.push(format!("hu_head_{face}"));
     if !covered {
@@ -671,6 +717,8 @@ fn kit_peasant_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u32, ki
     match kind {
         // The farmer's apron is his trade mark (a desert farmer's thobe + turban do that job).
         Farmer if !desert => names.push("hu_apron".into()),
+        // Some of the women work in an apron over the kirtle.
+        Unemployed if woman && look % LOOKS == 5 => names.push("hu_apron".into()),
         Guard => {
             names.push("hu_guard".into());
             // Steel pauldrons on our militia; the rival's sandy lamellar goes without (its
@@ -698,7 +746,7 @@ fn kit_peasant_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u32, ki
         .iter()
         .map(|n| Some((kit.people_part(n, &palette, &KIT_WEATHER)?, head_frame(n))))
         .collect::<Option<Vec<_>>>()?;
-    let body = skinned_body(parts, &kit_build(kid, look))?;
+    let body = skinned_body(parts, &kit_build(kid, woman, look))?;
     let (weapon, shield) = kit_tools(kit, kind, desert);
     let empty = || Mesh::new(bevy::mesh::PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default());
     Some(BipedMeshes {
@@ -1180,12 +1228,14 @@ mod kit_skin_tests {
 
     #[test]
     fn builds_stay_in_their_ranges() {
-        let adult_head = kit_build(false, 0).head;
+        let adult_head = kit_build(false, false, 0).head;
         for look in 0..LOOKS {
-            let a = kit_build(false, look);
+            let a = kit_build(false, false, look);
+            let w = kit_build(false, true, look);
+            assert!(w.root < a.root && w.chest < a.chest, "a woman is smaller and narrower than a man");
             assert!((0.97..=1.02).contains(&a.root) && a.leg_len == 1.0 && a.arm_len == 1.0, "adult {look}: {a:?}");
             assert!(a.chest >= 1.0 && a.arm >= 1.0, "adults are never slighter than the authored body");
-            let k = kit_build(true, look);
+            let k = kit_build(true, false, look);
             // ~0.66–0.75 of an adult's height (root), a head ~0.85 of an adult's, short legs.
             assert!((0.65..=0.79).contains(&k.root), "kid {look}: {k:?}");
             assert!((k.head * k.root / adult_head - KID_HEAD_ABS).abs() < 1e-4);

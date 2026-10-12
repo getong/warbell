@@ -683,7 +683,7 @@ fn spawn_viewer_peasant(
     );
     // The person's skeleton + height (as `villagers::spawn` builds it): the build's root scale on
     // its own biped root, under the caller's (adult) scale.
-    let rig = crate::peasant_model::person_rig(kid, look);
+    let rig = crate::peasant_model::person_rig(kind, kid, look);
     if let Some((_, hi)) = m.skin.as_ref().map(mesh_bounds) {
         // Head top above the soles, in the caller's units (× the root scale it is spawned under).
         info!(

@@ -500,7 +500,7 @@ pub fn populate_defenders(
         let home_yaw = ox.atan2(oz); // villager facing convention: from_rotation_y(yaw), forward +Z
         let (x, z) = (crate::castle::KEEP_POS.x + ox, crate::castle::KEEP_POS.y + oz);
         let look = i as u32 * 5;
-        let rig = crate::peasant_model::person_rig(false, look);
+        let rig = crate::peasant_model::person_rig(crate::peasant_model::PeasantKind::Archer, false, look);
         let root = commands
             .spawn((
                 Transform {
