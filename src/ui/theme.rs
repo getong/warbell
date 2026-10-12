@@ -1,6 +1,14 @@
-//! **UI design system** — the palette, radii, and chrome presets ported from the original
-//! three.js game's `hud.css`. Every panel/HUD element pulls its colours and shapes from here so the
-//! look stays coherent (and is tuned in one place). CSS hex values are converted to sRGB floats.
+//! **UI design system** — the ONE place the game's UI look is defined: palette (incl. semantic
+//! good / warn / bad / info tones), type scale, spacing scale, radii, shadows. Every HUD element,
+//! panel and menu pulls its colours, sizes and gaps from here so the look stays coherent and is
+//! tuned in one place. Paint bundles built on these tokens live in [`super::widgets`].
+//!
+//! **Design language — "iron & parchment".** Grounded, muted, medieval: warm dark-iron translucent
+//! panels with a thin bronze hairline; warm parchment-white text (never cool screen-white); ONE
+//! restrained antique-gold accent for titles/currency/focus; state colours desaturated toward the
+//! world's earth tones (sage, ochre, brick, steel) — nothing neon. Cinzel for headings, Inter for
+//! body/numerals, EB Garamond for parchment prose (all OFL, bundled in `assets/fonts`). Spacing on
+//! a 4px grid ([`SP_XS`]..[`SP_XXL`]). Motion is subtle: short fades/slides (`super::anim`).
 //!
 //! Construction note: colours are `const` via the [`Color::Srgba`] struct-literal form (the
 //! `Color::srgb*` helpers aren't all `const`), so they can live as associated constants.
@@ -24,15 +32,28 @@ pub const fn rgb(r: u8, g: u8, b: u8) -> Color {
 }
 
 // ── Palette (from hud.css) ───────────────────────────────────────────────────────────────
-pub const GOLD: Color = rgb(255, 213, 140); // #ffd58c — currency, titles, accents
-pub const GOLD_DEEP: Color = rgb(224, 168, 74); // #e0a84a — button gradient base
-pub const STONE: Color = rgb(205, 211, 218); // #cdd3da — stone tally
-pub const GREEN: Color = rgb(155, 232, 138); // #9be88a — buffs / success / toast accent
-pub const GREY: Color = rgb(138, 142, 152); // #8a8e98 — labels, disabled, hints
-pub const RED: Color = rgb(214, 58, 58); // #d63a3a — HP / danger
-pub const TEXT: Color = rgb(243, 243, 245); // #f3f3f5 — body
-pub const TEXT_DIM: Color = rgb(185, 194, 212); // #b9c2d4 — secondary
-pub const TEXT_FAINT: Color = rgba(147, 161, 184, 1.0); // #93a1b8 — tertiary
+pub const GOLD: Color = rgb(226, 196, 138); // antique gold — currency, titles, the one accent
+pub const GOLD_DEEP: Color = rgb(190, 146, 76); // tarnished bronze-gold — button gradient base
+pub const STONE: Color = rgb(196, 196, 190); // stone tally
+pub const WOOD: Color = rgb(184, 148, 102); // wood tally
+pub const GREEN: Color = rgb(146, 178, 118); // dry sage — buffs / success / toast accent
+pub const GREY: Color = rgb(140, 135, 126); // warm ash — labels, disabled, hints
+pub const RED: Color = rgb(176, 64, 50); // brick — danger
+pub const TEXT: Color = rgb(236, 229, 214); // warm parchment-white — body
+pub const TEXT_DIM: Color = rgb(190, 181, 164); // secondary
+pub const TEXT_FAINT: Color = rgb(146, 138, 124); // tertiary
+
+// ── Semantic tones — use these for state, not raw RGB (all desaturated earth tones) ───────
+/// Positive / gain / ready (sage).
+pub const GOOD: Color = GREEN;
+/// Caution / blocked-but-not-bad / attention (ochre).
+pub const WARN: Color = rgb(204, 160, 84);
+/// Loss / danger / damage taken (brick).
+pub const BAD: Color = rgb(196, 92, 72);
+/// Neutral information / defensive (pale steel).
+pub const INFO: Color = rgb(170, 182, 194);
+/// Drop shadow behind HUD text drawn straight over the world (subtitles, floats, prompts).
+pub const TEXT_SHADOW: Color = rgba(8, 6, 4, 0.85);
 
 // Panels / chrome — warm iron/charcoal-brown, not web blue-grey. The signature frame is
 // outer 2px IRON_EDGE + inner 1px GOLD_HAIRLINE + 6px corner notches (see `widgets::chrome_layers`).
@@ -77,16 +98,16 @@ pub const BAR_RIM: Color = rgba(6, 5, 4, 0.92);
 // Primary action button (Play / Resume) — bronze-gold, dark text (`INK`).
 pub const PRIMARY: Color = rgb(196, 144, 62); // bronze base
 pub const PRIMARY_HI: Color = rgb(222, 170, 84); // hover
-pub const PRIMARY_BORDER: Color = rgb(244, 204, 132);
+pub const PRIMARY_BORDER: Color = rgb(222, 186, 124);
 
-// XP bar blue (was also the old primary-button blue; the button is bronze now).
-pub const BLUE: Color = rgb(74, 111, 200); // #4a6fc8
-pub const BLUE_HI: Color = rgb(98, 134, 219); // #6286db
-pub const BLUE_BORDER: Color = rgb(130, 162, 234); // #82a2ea
+// Cool accent — muted steel (was a web-blue #4a6fc8; nothing in the world is that blue).
+pub const BLUE: Color = rgb(92, 112, 138);
+pub const BLUE_HI: Color = rgb(114, 134, 160);
+pub const BLUE_BORDER: Color = rgb(146, 162, 184);
 
 // Danger action button (Overwrite save / destructive confirms)
-pub const RED_HI: Color = rgb(232, 82, 82); // hover
-pub const RED_BORDER: Color = rgb(240, 120, 120);
+pub const RED_HI: Color = rgb(196, 84, 66); // hover
+pub const RED_BORDER: Color = rgb(214, 124, 102);
 
 // Start-screen warm accent
 pub const KICKER: Color = rgb(199, 155, 106); // #c79b6a
@@ -99,6 +120,24 @@ pub const BRANCH_ECON: Color = rgb(92, 122, 52); // #5c7a34
 pub const BRANCH_DEF: Color = rgb(76, 100, 126); // #4c647e
 pub const BRANCH_HERO: Color = rgb(142, 55, 44); // #8e372c
 pub const BRANCH_ARSENAL: Color = rgb(138, 94, 42); // #8a5e2a
+
+// ── Type scale (re-exported from `fonts`, so one `use theme::*` brings every token) ───────
+#[allow(unused_imports)]
+pub use super::fonts::{FONT_BODY, FONT_CAPTION, FONT_DISPLAY, FONT_LABEL};
+/// Panel / card headings (Cinzel).
+pub const FONT_TITLE: f32 = 20.0;
+/// Large on-world numerals (resource counters, big stat values).
+pub const FONT_STAT: f32 = 15.0;
+
+// ── Spacing scale (4px grid) — paddings, gaps, margins ──────────────────────────────────
+pub const SP_XS: f32 = 4.0;
+pub const SP_S: f32 = 8.0;
+pub const SP_M: f32 = 12.0;
+pub const SP_L: f32 = 16.0;
+pub const SP_XL: f32 = 24.0;
+pub const SP_XXL: f32 = 32.0;
+/// Inset of every persistent HUD cluster from the screen edge.
+pub const HUD_EDGE: f32 = 16.0;
 
 // ── Shapes ───────────────────────────────────────────────────────────────────────────────
 pub const R_PANEL: f32 = 10.0;

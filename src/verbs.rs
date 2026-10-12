@@ -192,7 +192,7 @@ fn mine_ore(
                 floats.0.push(crate::combat_fx::FloatReq {
                     world: head,
                     text: format!("+{} stone", node.ore.stone_reward as i64),
-                    color: Color::srgb(0.82, 0.82, 0.88),
+                    color: crate::ui::theme::STONE,
                     scale: 1.1,
                 });
                 if let Some(fx) = &fx {
@@ -525,7 +525,7 @@ pub fn fell_tree(
     floats.0.push(crate::combat_fx::FloatReq {
         world: Vec3::new(at.x, at.y + 1.6, at.z),
         text: format!("+{} wood", TREE_WOOD as i64),
-        color: Color::srgb(0.78, 0.62, 0.36),
+        color: crate::ui::theme::WARN,
         scale: 1.1,
     });
     topple_tree(commands, e, at, dir, now);
@@ -1144,7 +1144,7 @@ fn apple_harvest(
         floats.0.push(FloatReq {
             world: Vec3::new(tp.x, tp.y + 1.7, tp.z),
             text: format!("+{} apples", tree.apples),
-            color: Color::srgb(0.95, 0.45, 0.30),
+            color: crate::ui::theme::BAD,
             scale: 1.2,
         });
         // The old game's forage (apples/herbs) played `playGold()` — the bright two-blip pickup
@@ -1505,17 +1505,17 @@ fn setup_drop_assets(
     });
     commands.insert_resource(DropAssets { mesh, mat });
 
-    // Chop-burst chips: one tiny cuboid, unlit (NO emissive — debris must not bloom like sparks),
-    // tinted pale split-wood / canopy green by two shared materials.
-    let chip_mesh = meshes.add(Cuboid::new(0.09, 0.09, 0.09).mesh().build());
+    // Chop-burst chips: one tiny splinter (a thin sliver, not a dice cube), PBR-lit matte (NO
+    // emissive — debris must not bloom like sparks), pale split-wood / dull leaf by two shared mats.
+    let chip_mesh = meshes.add(Cuboid::new(0.035, 0.03, 0.12).mesh().build());
     let wood_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.78, 0.60, 0.36),
-        unlit: true,
+        base_color: Color::srgb(0.70, 0.56, 0.38),
+        perceptual_roughness: 0.95,
         ..default()
     });
     let leaf_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.31, 0.61, 0.23),
-        unlit: true,
+        base_color: Color::srgb(0.26, 0.38, 0.17),
+        perceptual_roughness: 0.9,
         ..default()
     });
     commands.insert_resource(TreeFx { chip_mesh, wood_mat, leaf_mat });

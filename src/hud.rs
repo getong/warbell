@@ -145,8 +145,8 @@ fn setup_hud(mut commands: Commands, fonts: Res<UiFonts>) {
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                left: Val::Px(18.0),
-                bottom: Val::Px(18.0),
+                left: Val::Px(HUD_EDGE),
+                bottom: Val::Px(HUD_EDGE),
                 flex_direction: FlexDirection::Row,
                 align_items: AlignItems::Center,
                 column_gap: Val::Px(8.0),
@@ -182,8 +182,8 @@ fn setup_hud(mut commands: Commands, fonts: Res<UiFonts>) {
                         let fill = t.spawn(vitals::fill(HP_TOP, HP_BOT, 1.0, HpFill)).id();
                         t.spawn(vitals::trail(fill));
                         t.spawn((
-                            label(&fonts.bold, "100", 10.0, rgb(236, 226, 208)),
-                            TextShadow { offset: Vec2::new(0.0, 1.0), color: rgba(0, 0, 0, 0.85) },
+                            label(&fonts.bold, "100", 10.0, TEXT),
+                            TextShadow { offset: Vec2::new(0.0, 1.0), color: TEXT_SHADOW },
                             ZIndex(2),
                             HpText,
                         ));
@@ -207,23 +207,25 @@ fn setup_stat_bar(mut done: Local<bool>, atlas: Res<IconAtlas>, fonts: Res<UiFon
         return; // wait until the Twemoji atlas has loaded the stat icons
     }
     *done = true;
-    let food_grey = rgb(170, 178, 190);
+    let food_grey = TEXT_DIM;
     commands
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                top: Val::Px(14.0),
-                left: Val::Px(14.0),
+                top: Val::Px(HUD_EDGE),
+                left: Val::Px(HUD_EDGE),
                 flex_direction: FlexDirection::Row,
                 align_items: AlignItems::Center,
-                column_gap: Val::Px(16.0),
-                padding: UiRect::axes(Val::Px(14.0), Val::Px(7.0)),
-                border: border(2.0),
-                border_radius: radius(R_BTN),
+                column_gap: Val::Px(SP_L),
+                padding: UiRect::axes(Val::Px(SP_M), Val::Px(SP_XS + 2.0)),
+                border: border(1.0),
+                border_radius: radius(R_SLOT),
                 ..default()
             },
-            BackgroundColor(rgb(27, 22, 16)), // 100% opacity (warm iron)
-            BorderColor::all(rgba(224, 168, 74, 0.3)),
+            // The shared HUD chrome: translucent warm iron + a thin bronze hairline.
+            BackgroundColor(PANEL_HUD),
+            BorderColor::all(GOLD_HAIRLINE),
+            Outline::new(Val::Px(1.0), Val::ZERO, BAR_RIM),
             shadow_hud(),
             bevy::ui::FocusPolicy::Pass,
             // Kept `in_campaign`-gated (it self-spawns when campaign is live), but tagged so a
@@ -252,16 +254,16 @@ fn setup_stat_bar(mut done: Local<bool>, atlas: Res<IconAtlas>, fonts: Res<UiFon
             });
             let w = atlas.get_tintable("stat:wood");
             row.spawn(cell(5.0)).with_children(|c| {
-                if let Some(e) = w { c.spawn(widgets::icon_tinted(e, 17.0, rgb(190, 150, 100))); }
-                c.spawn((label(&fonts.bold, "0", 14.0, rgb(190, 150, 100)), WoodText));
+                if let Some(e) = w { c.spawn(widgets::icon_tinted(e, 17.0, WOOD)); }
+                c.spawn((label(&fonts.bold, "0", FONT_STAT - 1.0, WOOD), WoodText));
             });
             let p = atlas.get_tintable("stat:pop");
             row.spawn(cell(5.0)).with_children(|c| {
-                if let Some(e) = p { c.spawn((widgets::icon_tinted(e, 17.0, rgb(235, 224, 180)), PopIcon)); }
-                c.spawn((label(&fonts.bold, "4/4", 14.0, rgb(235, 224, 180)), PopText));
+                if let Some(e) = p { c.spawn((widgets::icon_tinted(e, 17.0, TEXT), PopIcon)); }
+                c.spawn((label(&fonts.bold, "4/4", FONT_STAT - 1.0, TEXT), PopText));
                 // Progress of the settle/starve meter toward the next ±1 peasant: green +% when a
                 // settler is incoming, red -% when one is starving away (colour set in update).
-                c.spawn((label(&fonts.bold, "", 12.0, rgb(150, 156, 164)), PopGrowthText));
+                c.spawn((label(&fonts.bold, "", 12.0, GREY), PopGrowthText));
             });
             let f = atlas.get_tintable("stat:food");
             row.spawn(cell(5.0)).with_children(|c| {
@@ -375,7 +377,7 @@ fn setup_inv_hud(mut commands: Commands, fonts: Res<UiFonts>) {
                         // Count (bottom-right).
                         slot.spawn((
                             Node { position_type: PositionType::Absolute, right: Val::Px(3.0), bottom: Val::Px(1.0), ..default() },
-                            label(&fonts.bold, "", 13.0, Color::WHITE),
+                            label(&fonts.bold, "", 13.0, TEXT),
                             TextShadow { offset: Vec2::ZERO, color: rgba(0, 0, 0, 0.9) },
                             QuickSlotCount(kind),
                         ));
@@ -417,9 +419,9 @@ fn buff_icon_key(kind: BuffKind) -> &'static str {
 /// speed, so the buff reads at a glance even before the label.
 fn buff_color(kind: BuffKind) -> Color {
     match kind {
-        BuffKind::Power => rgb(255, 150, 90),
-        BuffKind::Resist => rgb(120, 180, 255),
-        BuffKind::Haste => rgb(150, 230, 140),
+        BuffKind::Power => rgb(212, 136, 92), // ember
+        BuffKind::Resist => INFO,
+        BuffKind::Haste => GOOD,
     }
 }
 
@@ -591,7 +593,7 @@ fn update_town_stats(
     mut next_toast: Local<f64>,
 ) {
     /// Stat-bar pop colour when the town has room.
-    const POP_OK: Color = rgb(235, 224, 180);
+    const POP_OK: Color = TEXT;
     let t = &town.0;
     // Capped *and* a settler is ready to move in but has no bed — the actionable "build houses"
     // moment (same condition the amber "full" growth readout uses below). The headcount + icon go
@@ -600,10 +602,10 @@ fn update_town_stats(
 
     if let Ok((mut text, mut col)) = q_pop.single_mut() {
         **text = format!("{}/{}", t.population, t.pop_cap());
-        col.0 = if blocked_full { RED_HI } else { POP_OK };
+        col.0 = if blocked_full { BAD } else { POP_OK };
     }
     if let Ok(mut img) = pop_icon.single_mut() {
-        img.color = if blocked_full { RED_HI } else { POP_OK };
+        img.color = if blocked_full { BAD } else { POP_OK };
     }
     // Edge-triggered nudge the first time the cap bites, with a re-trigger floor so loitering at
     // the cap doesn't spam — the red icon is the persistent reminder, the notice is the heads-up.
@@ -620,13 +622,13 @@ fn update_town_stats(
         let pct = (frac.abs() * 100.0).round() as i32;
         if frac > 0.005 && t.population >= t.pop_cap() {
             **text = "full".into();
-            col.0 = Color::srgb(0.95, 0.78, 0.35); // amber: food's there, build a house
+            col.0 = WARN; // ochre: food's there, build a house
         } else if frac > 0.005 {
             **text = format!("+{pct}%");
-            col.0 = Color::srgb(0.45, 0.92, 0.5);
+            col.0 = GOOD;
         } else if frac < -0.005 {
             **text = format!("-{pct}%");
-            col.0 = Color::srgb(1.0, 0.46, 0.38);
+            col.0 = BAD;
         } else {
             **text = String::new();
         }
@@ -635,13 +637,13 @@ fn update_town_stats(
         let net = t.net_food();
         if net.abs() < 0.01 {
             **text = "0/s".into();
-            col.0 = Color::srgb(0.66, 0.70, 0.75);
+            col.0 = GREY;
         } else if net > 0.0 {
             **text = format!("+{:.2}/s", net);
-            col.0 = Color::srgb(0.45, 0.92, 0.5);
+            col.0 = GOOD;
         } else {
             **text = format!("{:.2}/s", net);
-            col.0 = Color::srgb(1.0, 0.46, 0.38);
+            col.0 = BAD;
         }
     }
 }

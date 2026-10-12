@@ -109,6 +109,25 @@ pub fn btn_primary_paint() -> impl Bundle {
     )
 }
 
+/// Secondary button paint — the quiet one: a faint warm wash behind a bronze hairline, gold label
+/// (`GOLD` text). Use for every action that isn't THE primary action of its screen.
+pub fn btn_secondary_paint() -> impl Bundle {
+    (
+        Button,
+        Interaction::default(),
+        BackgroundColor(BTN_BG),
+        BorderColor::all(GOLD_HAIRLINE),
+        UiTransform::IDENTITY,
+        Hoverable {
+            rest_bg: BTN_BG,
+            hover_bg: BTN_BG_HOVER,
+            rest_border: GOLD_HAIRLINE,
+            hover_border: GOLD_NOTCH,
+            lift: 2.0,
+        },
+    )
+}
+
 /// Danger button paint (solid red — destructive confirms like Overwrite save).
 pub fn btn_danger_paint() -> impl Bundle {
     (

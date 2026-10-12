@@ -1028,10 +1028,10 @@ pub(crate) fn run_director(
                         floats.0.push(crate::combat_fx::FloatReq {
                             world: Vec3::new(0.0, 6.5, 0.0),
                             text: format!(
-                                "\u{1f4b0} Dawn tithe: +{tithe}g from {} villagers",
+                                "Dawn tithe: +{tithe}g from {} villagers",
                                 town.0.population
                             ),
-                            color: Color::srgb(1.0, 0.85, 0.4),
+                            color: crate::ui::theme::GOLD,
                             scale: 1.25,
                         });
                     }

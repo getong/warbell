@@ -148,10 +148,10 @@ fn setup_bolt_gfx(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let mesh = meshes.add(Sphere::new(0.14).mesh().ico(2).unwrap());
+    let mesh = meshes.add(Sphere::new(0.08).mesh().ico(2).unwrap());
+    // A small hot-iron ember (HDR base colour — unlit ignores `emissive`), not a cyan plasma ball.
     let mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.5, 0.95, 1.0),
-        emissive: LinearRgba::rgb(0.6, 2.4, 3.2), // cyan defender bolt
+        base_color: Color::LinearRgba(LinearRgba::rgb(1.8, 0.75, 0.28)),
         unlit: true,
         ..default()
     });

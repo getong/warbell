@@ -463,8 +463,8 @@ fn population_system(
             // (Heirs need no bump: `Lives.heirs` mirrors `town.population` — one headcount.)
             floats.0.push(crate::combat_fx::FloatReq {
                 world: Vec3::new(0.0, 6.5, 5.0),
-                text: "\u{1f331} A peasant settles in your town!".into(),
-                color: Color::srgb(0.55, 1.0, 0.6),
+                text: "A peasant settles in your town".into(),
+                color: crate::ui::theme::GOOD,
                 scale: 1.25,
             });
             speak.write(crate::audio::Speak::at(crate::audio::Concept::VillagerBorn, Vec3::new(0.0, 2.0, 5.0)));
@@ -472,8 +472,8 @@ fn population_system(
         PopEvent::Starved => {
             floats.0.push(crate::combat_fx::FloatReq {
                 world: Vec3::new(0.0, 6.5, 5.0),
-                text: "\u{1f342} A peasant left \u{2014} not enough food".into(),
-                color: Color::srgb(1.0, 0.5, 0.4),
+                text: "A peasant left \u{2014} not enough food".into(),
+                color: crate::ui::theme::BAD,
                 scale: 1.25,
             });
         }
@@ -1198,7 +1198,7 @@ fn spawn_build_strip(commands: &mut Commands, fonts: &UiFonts, icons: &crate::ui
                         if let Some(entry) = icons.get_tintable(item.icon_id()) {
                             cd.spawn(widgets::icon_tinted(entry, 40.0, GOLD));
                         }
-                        cd.spawn(label(&fonts.semibold, item.label(), 16.0, Color::WHITE));
+                        cd.spawn(label(&fonts.semibold, item.label(), 16.0, TEXT));
                         cd.spawn((
                             Node { max_width: Val::Px(132.0), ..default() },
                             label(&fonts.regular, item.desc(), 10.5, GREY),
@@ -1216,9 +1216,9 @@ fn spawn_build_strip(commands: &mut Commands, fonts: &UiFonts, icons: &crate::ui
                                     continue;
                                 }
                                 if let Some(entry) = icons.get_tintable(key) {
-                                    costrow.spawn(widgets::icon_tinted(entry, 13.0, Color::WHITE));
+                                    costrow.spawn(widgets::icon_tinted(entry, 13.0, TEXT));
                                 }
-                                costrow.spawn(label(&fonts.semibold, format!("{}", amount as i64), 13.0, Color::WHITE));
+                                costrow.spawn(label(&fonts.semibold, format!("{}", amount as i64), 13.0, TEXT));
                             }
                         });
                     });
@@ -1450,8 +1450,8 @@ fn build_place(
                 speak.write(crate::audio::Speak::at(crate::audio::Concept::BuildRaised, Vec3::new(site.x, y + 1.0, site.y)));
                 floats.0.push(FloatReq {
                     world: Vec3::new(site.x, y + 3.0, site.y),
-                    text: format!("\u{1f3e0} House raised \u{2014} beds for {POP_PER_HOUSE} more"),
-                    color: Color::srgb(0.55, 1.0, 0.6),
+                    text: format!("House raised \u{2014} beds for {POP_PER_HOUSE} more"),
+                    color: crate::ui::theme::GOOD,
                     scale: 1.25,
                 });
             } else {
@@ -1501,7 +1501,7 @@ fn push_cant_afford(
     floats.0.push(FloatReq {
         world: Vec3::new(at.x, y + 3.0, at.y),
         text: format!("Can't raise {label} \u{2014} {why}"),
-        color: Color::srgb(1.0, 0.4, 0.35),
+        color: crate::ui::theme::BAD,
         scale: 1.1,
     });
 }
@@ -1536,34 +1536,25 @@ fn sync_build_rings(
     modal: Option<Res<State<Modal>>>,
     town: Res<TownRes>,
     spots: Res<PlotSpots>,
-    time: Res<Time>,
+    marks: Option<Res<crate::combat_marks::MarkAssets>>,
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut rings: Query<(&BuildRing, &mut Transform, &mut Visibility)>,
+    mut rings: Query<(&BuildRing, &mut Transform, &mut Visibility, &mut bevy::mesh::MeshTag)>,
     mut spawned: Local<bool>,
     mut prev_shown: Local<bool>,
 ) {
-    // One-time lazy spawn once the plots exist — a flat gold annulus per spot, sharing one mesh +
-    // material (same unlit-emissive planar-flash recipe as the combat rings, so it reads day/night).
+    // One-time lazy spawn once the plots exist — a surveyed-plot ground mark per spot (a dashed,
+    // pegged chalk line on the shared `combat_marks` decal quad + lit material, so it sits IN the
+    // scene's light like the ground instead of glowing like the old flat gold annulus).
     if !*spawned {
         if spots.0.is_empty() {
             return;
         }
+        let Some(marks) = marks else { return };
         *spawned = true;
-        let mesh = meshes.add(Annulus::new(2.45, 2.8).mesh().resolution(48).build());
-        let mat = materials.add(StandardMaterial {
-            base_color: Color::srgba(1.0, 0.86, 0.5, 0.55),
-            emissive: LinearRgba::rgb(1.6, 1.1, 0.4),
-            unlit: true,
-            alpha_mode: AlphaMode::Blend,
-            cull_mode: None,
-            ..default()
-        });
         for idx in 0..spots.0.len() {
-            spawn_build_ring(&mut commands, mesh.clone(), mat.clone(), BuildRingKind::Plot(idx));
+            spawn_build_ring(&mut commands, &marks, BuildRingKind::Plot(idx));
         }
-        spawn_build_ring(&mut commands, mesh, mat, BuildRingKind::House);
+        spawn_build_ring(&mut commands, &marks, BuildRingKind::House);
         return; // rings show from next frame
     }
     // Self-gate (build mode is off ~all the time): when not shown, hide every ring once on the
@@ -1572,7 +1563,7 @@ fn sync_build_rings(
     if !show {
         if *prev_shown {
             *prev_shown = false;
-            for (_, _, mut vis) in &mut rings {
+            for (_, _, mut vis, _) in &mut rings {
                 *vis = Visibility::Hidden;
             }
         }
@@ -1580,8 +1571,7 @@ fn sync_build_rings(
     }
     *prev_shown = true;
     let kind = mode.kind();
-    let pulse = 1.0 + (time.elapsed_secs() * 2.6).sin() * 0.05;
-    for (ring, mut tf, mut vis) in &mut rings {
+    for (ring, mut tf, mut vis, mut mt) in &mut rings {
         // `selected` = the plot the player has targeted (mouse / W·S) — it swells so "this one" reads.
         let (spot, ring_on, selected) = match ring.0 {
             BuildRingKind::Plot(idx) => {
@@ -1596,8 +1586,17 @@ fn sync_build_rings(
         match (ring_on, spot) {
             (true, Some(p)) => {
                 let y = crate::worldmap::ground_at_world(p.x, p.y).unwrap_or(0.0);
-                tf.translation = Vec3::new(p.x, y + 0.06, p.y);
-                tf.scale = Vec3::splat(pulse * if selected { 1.2 } else { 0.9 });
+                tf.translation = Vec3::new(p.x, y + 0.04, p.y);
+                tf.scale = Vec3::new(BUILD_RING_D, 1.0, BUILD_RING_D);
+                let want = crate::combat_marks::tag(
+                    crate::combat_marks::MarkKind::Plot,
+                    if selected { 1.0 } else { 0.7 },
+                    7,
+                    if selected { 1.0 } else { 0.0 },
+                );
+                if mt.0 != want.0 {
+                    mt.0 = want.0;
+                }
                 *vis = Visibility::Visible;
             }
             _ => *vis = Visibility::Hidden,
@@ -1605,16 +1604,24 @@ fn sync_build_rings(
     }
 }
 
+/// World diameter of a build-plot mark quad — the dashed survey line (at r ≈ 0.86 of the
+/// half-width in `ground_mark.wgsl`) lands on the old 2.45–2.8u ring.
+const BUILD_RING_D: f32 = 6.2;
+
 /// Spawn one parked, hidden build ring (placed + revealed by [`sync_build_rings`]).
-fn spawn_build_ring(commands: &mut Commands, mesh: Handle<Mesh>, mat: Handle<StandardMaterial>, kind: BuildRingKind) {
-    commands.spawn((
-        Mesh3d(mesh),
-        MeshMaterial3d(mat),
-        // Parked underground until the sync places it; laid flat like the combat rings.
-        Transform::from_xyz(0.0, -100.0, 0.0).with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
-        Visibility::Hidden,
-        BuildRing(kind),
-    ));
+fn spawn_build_ring(commands: &mut Commands, marks: &crate::combat_marks::MarkAssets, kind: BuildRingKind) {
+    let e = crate::combat_marks::spawn_mark(
+        commands,
+        marks,
+        crate::combat_marks::MarkKind::Plot,
+        Vec3::new(0.0, -100.0, 0.0), // parked underground until the sync places it
+        BUILD_RING_D,
+        0.0,
+        1.0,
+        0.7,
+        7,
+    );
+    commands.entity(e).insert((Visibility::Hidden, BuildRing(kind)));
 }
 
 /// Keep one construction-site pad standing on the next free dwelling slot inside the walls,

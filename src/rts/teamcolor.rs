@@ -1,31 +1,26 @@
-//! Team colours + selection ring in one. A pooled flat ground ring sits under each **selected**
-//! unit, tinted by [`Side`] (player = blue, rival = red). Only selected units are ringed — an
-//! always-on ring under every body read as clutter — so the ring doubles as the "this is selected"
-//! marker (there's no separate green ring anymore). Buildings are never ringed.
+//! Team colours + selection ring in one. A pooled ground mark sits under each **selected** unit,
+//! tinted by [`Side`] (player = pale bone-grey, rival = muted rust). Only selected units are ringed
+//! — an always-on ring under every body read as clutter — so the ring doubles as the "this is
+//! selected" marker. Buildings are never ringed.
 //!
 //! Same reposition-a-pool approach (no per-entity child management, so a ring can't orphan when a
-//! unit dies mid-frame); one shared ring mesh scaled per entity, two shared unlit materials.
+//! unit dies mid-frame). Each ring is a `combat_marks` decal (`MarkKind::Select`): shared quad +
+//! shared lit material, so it sits in the scene's light instead of glowing like the old flat unlit
+//! annulus; the side rides the instance `MeshTag`.
 
+use bevy::mesh::MeshTag;
 use bevy::prelude::*;
 
+use crate::combat_marks::{spawn_mark, tag, MarkAssets, MarkKind};
 use crate::dying::Dying;
 use crate::game_state::AppState;
 use crate::rts::{in_skirmish, RtsUnit, Selected, Side};
 
-/// Player ring colour (cool blue) and rival ring colour (warm red).
-const PLAYER: Color = Color::srgb(0.25, 0.55, 1.0);
-const RIVAL: Color = Color::srgb(1.0, 0.3, 0.28);
+/// World diameter of a selection mark (the line sits at r ≈ 0.84 of the half-width).
+const RING_D: f32 = 1.5;
 
 #[derive(Component)]
 struct TeamRing;
-
-/// Cached ring mesh + the two side materials.
-#[derive(Resource)]
-struct TeamRingAssets {
-    mesh: Handle<Mesh>,
-    player: Handle<StandardMaterial>,
-    rival: Handle<StandardMaterial>,
-}
 
 pub struct RtsTeamColorPlugin;
 
@@ -43,61 +38,32 @@ impl Plugin for RtsTeamColorPlugin {
 #[allow(clippy::type_complexity)]
 fn sync_team_rings(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    marks: Res<MarkAssets>,
     units: Query<(&GlobalTransform, &Side), (With<RtsUnit>, With<Selected>, Without<Dying>)>,
-    mut rings: Query<(&mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>), With<TeamRing>>,
-    mut assets_l: Local<Option<TeamRingAssets>>,
+    mut rings: Query<(&mut Transform, &mut Visibility, &mut MeshTag), With<TeamRing>>,
 ) {
-    let a = assets_l.get_or_insert_with(|| {
-        let side_mat = |c: Color| StandardMaterial {
-            base_color: c.with_alpha(0.75),
-            emissive: LinearRgba::from(c) * 0.6,
-            unlit: true,
-            alpha_mode: AlphaMode::Blend,
-            cull_mode: None,
-            ..default()
-        };
-        TeamRingAssets {
-            // Base ring radius 1.0 — scaled per entity below.
-            mesh: meshes.add(Annulus::new(0.8, 1.0).mesh().resolution(28).build()),
-            player: materials.add(side_mat(PLAYER)),
-            rival: materials.add(side_mat(RIVAL)),
-        }
-    });
-
-    // Desired rings: (world pos, radius, side) — units only.
-    let mut want: Vec<(Vec3, f32, Side)> = Vec::new();
-    for (gt, side) in &units {
-        want.push((gt.translation(), 0.62, *side));
-    }
+    // Desired rings: (world pos, side) — units only.
+    let want: Vec<(Vec3, Side)> = units.iter().map(|(gt, side)| (gt.translation(), *side)).collect();
 
     // Grow the pool.
     let have = rings.iter().count();
     for _ in have..want.len() {
-        commands.spawn((
-            Mesh3d(a.mesh.clone()),
-            MeshMaterial3d(a.player.clone()),
-            Transform::from_xyz(0.0, -100.0, 0.0)
-                .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
-            Visibility::Hidden,
-            TeamRing,
-        ));
+        let e = spawn_mark(&mut commands, &marks, MarkKind::Select, Vec3::new(0.0, -100.0, 0.0), RING_D, 0.0, 1.0, 0.9, 3);
+        commands.entity(e).insert((Visibility::Hidden, TeamRing));
     }
 
     let mut it = want.into_iter();
-    for (mut tf, mut vis, mut mat) in &mut rings {
+    for (mut tf, mut vis, mut mt) in &mut rings {
         match it.next() {
-            Some((p, r, side)) => {
-                tf.translation = Vec3::new(p.x, p.y + 0.06, p.z);
-                tf.scale = Vec3::splat(r);
-                // Keep the flat rotation set at spawn (only translation/scale change).
-                let want_mat = match side {
-                    Side::Player => &a.player,
-                    Side::Rival => &a.rival,
+            Some((p, side)) => {
+                tf.translation = Vec3::new(p.x, p.y + 0.04, p.z);
+                let aux = match side {
+                    Side::Player => 0.0,
+                    Side::Rival => 1.0,
                 };
-                if mat.0.id() != want_mat.id() {
-                    mat.0 = want_mat.clone();
+                let t = tag(MarkKind::Select, 0.9, 3, aux);
+                if mt.0 != t.0 {
+                    mt.0 = t.0;
                 }
                 *vis = Visibility::Visible;
             }

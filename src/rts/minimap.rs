@@ -83,8 +83,8 @@ fn spawn_panel(mut commands: Commands, panel: Query<Entity, With<MinimapPanel>>)
                 border: UiRect::all(Val::Px(2.0)),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.06, 0.09, 0.06, 0.72)),
-            BorderColor::all(Color::srgba(0.55, 0.45, 0.25, 0.9)),
+            BackgroundColor(crate::ui::theme::PANEL_HUD),
+            BorderColor::all(crate::ui::theme::BAR_FRAME),
             GlobalZIndex(40),
             MinimapPanel,
             crate::rts::RtsUi,
@@ -207,9 +207,9 @@ fn minimap_click(
 
 fn side_color(side: Side, building: bool) -> Color {
     match (side, building) {
-        (Side::Player, true) => Color::srgb(0.35, 0.85, 0.45),
-        (Side::Player, false) => Color::srgb(0.45, 0.95, 0.6),
-        (Side::Rival, true) => Color::srgb(0.9, 0.32, 0.28),
-        (Side::Rival, false) => Color::srgb(1.0, 0.45, 0.4),
+        (Side::Player, true) => crate::ui::theme::INFO,
+        (Side::Player, false) => crate::ui::theme::TEXT,
+        (Side::Rival, true) => crate::ui::theme::RED,
+        (Side::Rival, false) => crate::ui::theme::BAD,
     }
 }

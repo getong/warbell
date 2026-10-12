@@ -58,6 +58,66 @@ pub enum MarkKind {
     BloodDry = 3,
     /// Shaman-bolt scorch — [`MarkAssets::stain`].
     Scorch = 4,
+    /// Guardian-trial rune circle (`landmarks`) — [`MarkAssets::light`]; `aux` = hold progress,
+    /// which kindles the glyphs into a dim ember glow. Drawn on a [`draped_disc`], not the quad.
+    Rune = 5,
+    /// Surveyed build plot (`town` build rings) — [`MarkAssets::light`]; `aux` ≥ 0.5 = targeted.
+    Plot = 6,
+    /// RTS move-order click-mark (`rts::ordermark`) — [`MarkAssets::light`].
+    Order = 7,
+    /// RTS selected-unit ring (`rts::teamcolor`) — [`MarkAssets::light`]; `aux` ≥ 0.5 = rival.
+    Select = 8,
+    /// RTS attack-order click-mark (muted rust) — [`MarkAssets::light`].
+    OrderAttack = 9,
+}
+
+impl MarkKind {
+    /// Whether this kind draws with the lit premultiplied [`MarkAssets::light`] recipe (vs the
+    /// multiply [`MarkAssets::stain`]).
+    pub fn is_light(self) -> bool {
+        !matches!(self, MarkKind::Blood | MarkKind::BloodDry | MarkKind::Scorch)
+    }
+}
+
+/// A ground-mark disc DRAPED over the terrain: a `res`×`res` grid spanning `diameter` around
+/// `centre` (world XZ), each vertex sampled from `worldmap::ground_at_world` + `lift`, with UVs
+/// 0..1 like the shared quad. For marks too large to lie flat (the 16u rune circle on a slope
+/// would bury half a flat quad). Positions are relative to `(centre.x, base_y, centre.y)`, which
+/// is returned so the caller can place the entity there.
+pub fn draped_disc(centre: Vec2, diameter: f32, res: u32, lift: f32) -> (Mesh, Vec3) {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::mesh::{Indices, PrimitiveTopology};
+    let base_y = crate::worldmap::ground_at_world(centre.x, centre.y).unwrap_or(0.0);
+    let n = res.max(2);
+    let mut pos = Vec::with_capacity(((n + 1) * (n + 1)) as usize);
+    let mut uv = Vec::with_capacity(pos.capacity());
+    for j in 0..=n {
+        for i in 0..=n {
+            let u = i as f32 / n as f32;
+            let v = j as f32 / n as f32;
+            let x = (u - 0.5) * diameter;
+            let z = (v - 0.5) * diameter;
+            let y = crate::worldmap::ground_at_world(centre.x + x, centre.y + z).unwrap_or(base_y) + lift;
+            pos.push([x, y - base_y, z]);
+            uv.push([u, v]);
+        }
+    }
+    let mut idx = Vec::with_capacity((n * n * 6) as usize);
+    for j in 0..n {
+        for i in 0..n {
+            let a = j * (n + 1) + i;
+            let b = a + 1;
+            let c = a + n + 1;
+            let d = c + 1;
+            idx.extend_from_slice(&[a, c, b, b, c, d]);
+        }
+    }
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
+        .with_inserted_indices(Indices::U32(idx));
+    mesh.compute_smooth_normals();
+    (mesh, Vec3::new(centre.x, base_y, centre.y))
 }
 
 /// Pack a mark's per-instance state for `ground_mark.wgsl`: `alpha` (0..1 strength), `kind`, a
@@ -126,10 +186,7 @@ pub fn spawn_mark(
     alpha: f32,
     seed: u32,
 ) -> Entity {
-    let mat = match kind {
-        MarkKind::Ring | MarkKind::Shock => marks.light.clone(),
-        _ => marks.stain.clone(),
-    };
+    let mat = if kind.is_light() { marks.light.clone() } else { marks.stain.clone() };
     commands
         .spawn((
             Mesh3d(marks.quad.clone()),
