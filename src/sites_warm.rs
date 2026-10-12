@@ -54,36 +54,36 @@ const SITES_DEF: [Site; 11] = [
         solids: &[(0.0, -1.6, 0.55, 0.55, 0.0)],
         want: 1, names: &["The Surveyors' Line"],
         lore: "A Crown mark a century old, and stakes running toward the buried pyramid: someone measured it long before anyone dug." },
-    Site { model: "site_drowned_outpost", biome: Biome::Desert, foot: 3.5,
-        solids: &[(1.5, 0.3, 1.7, 1.2, 0.0), (-1.4, -0.4, 0.95, 0.3, 0.0), (-1.75, -1.55, 0.95, 0.95, 0.0)],
+    Site { model: "site_drowned_outpost", biome: Biome::Desert, foot: 3.8,
+        solids: &[(2.15, 0.35, 1.6, 1.35, 0.0), (-0.55, -0.3, 2.15, 0.26, 0.0), (-2.55, 0.9, 0.24, 0.95, 0.0), (-1.6, -1.85, 0.95, 0.95, 0.0)],
         want: 1, names: &["The Sand-Drowned Outpost"],
         lore: "The first colony's southern post: even this far from home they raised a bell-arch, and rang it every dusk." },
     Site { model: "site_glyph_wall", biome: Biome::Desert, foot: 3.0,
-        solids: &[(0.1, 0.35, 2.3, 0.5, 0.0)],
+        solids: &[(0.0, 0.25, 2.2, 0.6, 0.0)],
         want: 1, names: &["The Old Ones' Wall"],
         lore: "Older than any caravan: tusked figures with their arms raised, facing a ring that spreads like a struck bell's voice." },
     Site { model: "site_looted_caravan", biome: Biome::Desert, foot: 3.0,
         solids: &[(0.0, 0.0, 1.1, 0.6, 0.15), (1.55, 0.95, 0.4, 0.35, 0.0)],
         want: 1, names: &["The Plundered Caravan"],
         lore: "The Pasha's cloth slashed, his jars smashed, ork arrows in the boards. The orks never raided here before; the ashes are three days old." },
-    Site { model: "site_anselm_desert", biome: Biome::Desert, foot: 2.5,
-        solids: &[(0.0, 0.9, 1.3, 0.6, 0.1), (-1.15, 0.6, 0.5, 0.5, 0.0)],
+    Site { model: "site_anselm_desert", biome: Biome::Desert, foot: 2.8,
+        solids: &[(0.0, 1.2, 1.6, 0.65, 0.0)],
         want: 1, names: &["Anselm's Journal: The Survey Road"],
         lore: "\"The Governor will have the buried pyramid measured to the cubit. The green folk took our salt for their iron, and no one drew a blade.\"" },
     Site { model: "site_bell_pit", biome: Biome::Forest, foot: 3.2,
-        solids: &[(-1.6, 0.9, 0.65, 0.65, 0.0), (0.55, -0.75, 0.42, 0.42, 0.0)],
+        solids: &[(-1.55, 1.25, 0.5, 0.5, 0.0), (0.45, -0.35, 0.45, 0.45, 0.0)],
         want: 1, names: &["The Bell-Casting Pit"],
         lore: "Shards of a broken mould. On one, reversed, the same words that are cast on the castle's war bell." },
-    Site { model: "site_charcoal_kiln", biome: Biome::Forest, foot: 2.8,
-        solids: &[(0.0, 0.25, 1.45, 1.3, 0.0), (2.25, -0.3, 0.42, 0.55, 0.0)],
+    Site { model: "site_charcoal_kiln", biome: Biome::Forest, foot: 3.0,
+        solids: &[(0.0, 0.0, 1.4, 1.4, 0.0), (1.55, 1.75, 0.7, 0.85, 0.0), (-1.85, 1.0, 0.42, 0.6, 0.0)],
         want: 1, names: &["The Charcoal Burners' Mound"],
         lore: "Charcoal for the colony's bell furnace. The last burn was never opened." },
-    Site { model: "site_sawpit", biome: Biome::Forest, foot: 2.6,
-        solids: &[(0.0, 0.0, 2.1, 0.35, 0.0)],
+    Site { model: "site_sawpit", biome: Biome::Forest, foot: 3.0,
+        solids: &[(-0.15, 0.0, 2.05, 0.32, 0.0)],
         want: 1, names: &["The Colony Sawpit"],
         lore: "Two sawyers squared oak here for the first bell frame. The saw is still in the cut." },
     Site { model: "site_rooted_pillar", biome: Biome::Forest, foot: 3.0,
-        solids: &[(0.45, 0.85, 1.05, 1.05, 0.0), (-0.45, -0.4, 0.35, 0.3, 0.1)],
+        solids: &[(0.6, 1.45, 1.0, 1.0, 0.0), (-0.5, -0.35, 0.35, 0.3, 0.1)],
         want: 1, names: &["The Swallowed Pillar"],
         lore: "The oak lived three hundred years; the rings cut into the stone it swallowed are older still." },
     Site { model: "site_anselm_forest", biome: Biome::Forest, foot: 2.9,
@@ -107,6 +107,9 @@ const ROAD_MARGIN: f32 = 3.0;
 const SPREAD: f32 = 26.0;
 /// Gap to every other story piece past both footprints.
 const MIN_GAP: f32 = 10.0;
+/// The swallowed pillar's dead oak (`dead_a`, raw trunk r 0.18): grown so its trunk meets the
+/// model's 0.6u root flare.
+const OAK_SCALE: f32 = 3.4;
 /// Extra clearing round each site for the scatter (see [`planned_footprints`]).
 const SIGHTLINE: f32 = 2.5;
 /// The survey line stands within this band (past the keep-out) of the buried pyramid.
@@ -379,6 +382,17 @@ pub fn populate(commands: &mut Commands) {
         }
         if s.biome == Biome::Forest {
             dress_forest_rim(commands, kit, &p, near.clone());
+        }
+        if s.model == "site_rooted_pillar" {
+            // The giant dead oak that swallowed the pillar: the kit's dead snag, grown to a giant,
+            // planted on the model's root flare (local (0.6, 1.45), flare top y 1.45).
+            let o = Quat::from_rotation_y(p.yaw) * Vec3::new(0.6, 0.0, 1.45);
+            let tf = Transform::from_xyz(p.pos.x + o.x, y + 1.2, p.pos.y + o.z)
+                .with_rotation(Quat::from_rotation_y(p.yaw + 0.8))
+                .with_scale(Vec3::splat(OAK_SCALE));
+            if let Some(e) = kit.spawn_static_with(commands, "dead_a_lod0", tf, range.clone()) {
+                commands.entity(e).insert(BiomeEntity);
+            }
         }
         register_blockers(p.site, p.pos, p.yaw);
         crate::blockers::reserve_visual(p.pos.x, p.pos.y, s.foot);
