@@ -1348,6 +1348,15 @@ fn try_build(
         [Ok(a), Ok(o)] => crate::creature::set_detail_layers(images.add(a), images.add(o)),
         _ => warn!("realforest: creature detail layers missing — creatures keep the procedural surfaces"),
     }
+    // Townsfolk garment layers (linen, wool, leather, skin) — optional, packed from people_tex.py.
+    let people = ["albedo", "ormh"].map(|m| {
+        let pngs = ["linen", "wool", "leather", "skin"].map(|l| format!("forest_pbr/people_{l}_{m}.png"));
+        load::texture_array(&format!("forest_pbr/people_{m}.dds"), &pngs.each_ref().map(|s| s.as_str()), m == "albedo")
+    });
+    match people {
+        [Ok(a), Ok(o)] => crate::creature::set_people_layers(images.add(a), images.add(o)),
+        _ => warn!("realforest: people garment layers missing — townsfolk use the creature cloth layer"),
+    }
     Ok(Kit { mats, snow_mats: snow_twins, models, by_name, ground })
 }
 
