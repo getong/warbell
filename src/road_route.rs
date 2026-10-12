@@ -41,7 +41,7 @@ const SLOPE_K: f32 = 1.6;
 const NOISE_AMP: f32 = 0.28;
 const NOISE_WAVE: f32 = 26.0;
 /// Extra cost per water cell an artery crosses (a bridge is worth a short detour, not a long one).
-const WATER_TOLL: f32 = 18.0;
+const WATER_TOLL: f32 = 3.0;
 /// Weighted-A* factor: slightly inadmissible for speed; paths stay near-optimal.
 const H_WEIGHT: f32 = 1.15;
 
@@ -57,7 +57,14 @@ pub(crate) struct Grid {
     slope: Vec<f32>,
     kind: Vec<u8>,
     noise: Vec<f32>,
+    /// Land cell within [`BANK_REACH`] cells of bridgeable water: a bridge abutment. River banks
+    /// are eroded steep cuts, so the side-slope cap is waived there and the grade cap relaxed —
+    /// otherwise no road could ever reach a river and nothing would get bridged.
+    bank: Vec<bool>,
 }
+
+const BANK_REACH: i32 = 2;
+const BANK_GRADE_MAX: f32 = 0.5;
 
 /// What a search may do.
 #[derive(Clone, Copy)]
@@ -140,7 +147,24 @@ impl Grid {
             kind.push(ck);
             noise.push(cn);
         }
-        Grid { w, h, y, slope, kind, noise }
+        let mut bank = vec![false; n];
+        for j in 0..h {
+            for i in 0..w {
+                let k = (j * w + i) as usize;
+                if kind[k] != WATER {
+                    continue;
+                }
+                for dj in -BANK_REACH..=BANK_REACH {
+                    for di in -BANK_REACH..=BANK_REACH {
+                        let (a, b) = (i + di, j + dj);
+                        if a >= 0 && b >= 0 && a < w && b < h && kind[(b * w + a) as usize] == LAND {
+                            bank[(b * w + a) as usize] = true;
+                        }
+                    }
+                }
+            }
+        }
+        Grid { w, h, y, slope, kind, noise, bank }
     }
 
     /// Nearest passable land cell to `p` (endpoints can sit on a shore / beside a wall).
@@ -262,7 +286,7 @@ impl Grid {
                     water_cells += 1;
                     Some(())
                 }
-                _ if self.slope[kk] > SLOPE_MAX => None,
+                _ if self.slope[kk] > SLOPE_MAX && !self.bank[kk] => None,
                 _ => Some(()),
             }
         };
@@ -283,13 +307,14 @@ impl Grid {
         if !ny.is_nan() && !here_y.is_nan() {
             // Over a bridge (here_y from the bank behind), measure across the whole span.
             let grade = (ny - here_y).abs() / len;
-            if grade > GRADE_MAX && self.kind[k] == LAND {
+            let cap = if self.bank[k] || self.bank[nk] { BANK_GRADE_MAX } else { GRADE_MAX };
+            if grade > cap && self.kind[k] == LAND {
                 return None;
             }
             if grade > GRADE_MAX * 1.6 {
                 return None; // far bank is a cliff
             }
-            let s = self.slope[nk];
+            let s = if self.bank[nk] { self.slope[nk].min(SLOPE_MAX) } else { self.slope[nk] };
             mult = (1.0 + GRADE_K * grade * grade) * (1.0 + SLOPE_K * s * s);
         }
         mult *= self.noise[nk];
