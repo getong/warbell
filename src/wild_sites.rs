@@ -9,7 +9,7 @@
 //!   foot, the maul never lifted — the law of the iron voice, unstated); the first colony's
 //!   **signal tower** on a high spur with **Anselm's journal page** (stage 3: the bell hung, rung
 //!   every dusk, iron answering iron in the hills) under a stone at the stair foot; the colony's
-//!   **rope bridge, cut**, at a brink; the **Old Ones' door** cut into a granite face backed into
+//!   **rope bridge, cut**, across a real gap (both anchors, the bridge hanging down the far wall); the **Old Ones' door** cut into a granite face backed into
 //!   the slope; the **gully of the first war** under scree.
 //! - **Swamp — "the end and the other shore"** (black water, rotten timber, rust, peat, bone): the
 //!   colony's **sunken mission chapel** at the swamp's edge — empty bell-cote, the lectern with
@@ -25,7 +25,7 @@
 //! off roads / pass trails / rivers / camps / landmarks / the town / the Blight, clear of every
 //! other planned piece) and folded into `poi::story_clearings`, so the scatter keeps clear. Each
 //! scene has a [`Seat`] — how it meets the terrain: flat open ground, a pool shore (front in the
-//! water), a brink (front over a drop), a slope at its back, or the highest flat ground there is.
+//! water), a gap (front across a gully or sea inlet to a far rim), a slope at its back, or the highest flat ground there is.
 //! At phase 32 ([`populate`]) each site is re-checked and re-sited if a later phase claimed it;
 //! each becomes a minor discoverable (`landmarks::attach_story`).
 
@@ -48,8 +48,6 @@ enum Seat {
     High,
     /// On a bog-pool shore: the centre dry, open water in front (local -Z), dry land behind.
     Shore,
-    /// At a brink: the ground in front (local -Z) falls away at least this far.
-    Brink(f32),
     /// Across a gap: a far rim [`GAP_SPANS`] ahead (local -Z) at about the same height, the ground
     /// between them at least this far below both (a gully / the gorge); the far anchor
     /// (`<model>_far`) is spawned there facing back.
@@ -116,7 +114,7 @@ const SCENES: [Scene; 10] = [
         lore: "Colony helmets and ork cleavers under the same scree; both sides came when they were called." },
 ];
 
-/// Seating order: the most constrained first (shore / brink / backed / high), then the open ones.
+/// Seating order: the most constrained first (shore / gap / backed / high), then the open ones.
 const SEAT_ORDER: [usize; 10] = [3, 2, 7, 5, 6, 8, 9, 0, 1, 4];
 /// Two sites stand at least this far past their footprints from each other.
 const MIN_GAP: f32 = 10.0;
@@ -125,7 +123,7 @@ const SPREAD: f32 = 26.0;
 /// Max terrain spread under the (seated part of the) footprint.
 const FLAT_DELTA: f32 = 0.5;
 const FLAT_DELTA_RELAXED: f32 = 0.8;
-/// Last resort for the shore / brink / backed / high seats (a bank, a ledge): the model's buried
+/// Last resort for the shore / gap / backed / high seats (a bank, a ledge): the model's buried
 /// footings swallow this much under the seated half.
 const FLAT_DELTA_SEAT: f32 = 1.1;
 const CAMP_KEEP: f32 = 7.0;
@@ -207,12 +205,11 @@ fn front(yaw: f32) -> Vec2 {
 }
 
 /// Is this footprint probe (offset `d` from the centre) on the part of the scene that must sit on
-/// the ground? Shore / brink scenes leave their front (water / drop) out; a backed scene its back.
+/// the ground? Shore / gap scenes leave their front (water / drop) out; a backed scene its back.
 fn seated_probe(seat: Seat, d: Vec2, yaw: f32, foot: f32) -> bool {
     let along = d.dot(front(yaw)) / foot.max(0.01);
     match seat {
         Seat::Shore => along < -0.15,
-        Seat::Brink(_) => along < -0.2,
         // A gap anchor (two posts on a slate footing) only needs its inner back half level: rims
         // are rough, and the footing's buried courses take the rest.
         Seat::Gap(_) => along < -0.2 && d.length() < foot * 0.7,
@@ -299,14 +296,14 @@ fn ground_ok(scene: usize, q: Vec2, yaw: f32, flat: f32, trails: &[Vec<Vec2>]) -
         && trails.iter().all(|t| t.windows(2).all(|w| seg_dist(q, w[0], w[1]) > foot + TRAIL_KEEP))
 }
 
-/// High / brink / backed sites may stand up on a cliffy shelf: they are planned beside a pass trail
-/// (high, brink) or against the rise itself (backed), so the climb is the trail's.
+/// High / gap / backed sites may stand up on a cliffy shelf: they are planned beside a pass trail
+/// (high) or against the rise itself (backed), so the climb is the trail's.
 fn shelf_ok(seat: Seat) -> bool {
-    matches!(seat, Seat::High | Seat::Brink(_) | Seat::Gap(_) | Seat::Backed(_))
+    matches!(seat, Seat::High | Seat::Gap(_) | Seat::Backed(_))
 }
 
 /// The terrain shape a seat asks for: water in front of a shore scene (and dry land behind), a drop
-/// in front of a brink, a rise behind a backed scene.
+/// across a gap, a rise behind a backed scene.
 fn seat_shape_ok(seat: Seat, q: Vec2, yaw: f32, foot: f32, y0: f32) -> bool {
     let f = front(yaw);
     let side = Vec2::new(-f.y, f.x);
@@ -321,10 +318,6 @@ fn seat_shape_ok(seat: Seat, q: Vec2, yaw: f32, foot: f32, y0: f32) -> bool {
                 .all(|&(a, b)| !crate::worldmap::is_pool_world(q.x + (f.x * a + side.x * b) * foot, q.y + (f.y * a + side.y * b) * foot));
             wet && dry
         }
-        Seat::Brink(drop) => [(0.0, 1.0), (0.3, 1.0), (-0.3, 1.0)].iter().all(|&(b, a)| {
-            let p = q + f * (foot * a + 1.5) + side * b * foot;
-            h(p).is_some_and(|y| y < y0 - drop)
-        }),
         Seat::Backed(rise) => [(0.0, 1.0), (0.45, 0.9), (-0.45, 0.9)].iter().all(|&(b, a)| {
             let p = q - f * (foot * a + 1.0) + side * b * foot;
             h(p).is_some_and(|y| y > y0 + rise)
@@ -403,7 +396,7 @@ fn clear_of_others(q: Vec2, scene: usize, planned: &[Site], visual: bool) -> boo
 /// the seat: shuffled for open ground, outermost first for a rim scene, highest first for a high one.
 fn candidates(scene: usize, trails: &[Vec<Vec2>]) -> Vec<Vec2> {
     let s = &SCENES[scene];
-    if matches!(s.seat, Seat::High | Seat::Brink(_)) {
+    if s.seat == Seat::High {
         return trail_candidates(scene, trails);
     }
     let step = match s.seat {
@@ -459,7 +452,7 @@ fn at_edge(p: Vec2) -> bool {
 
 /// Spots beside the pass trails (every ~3u down each trail, both sides, a few offsets past the
 /// footprint + [`TRAIL_KEEP`]), inside the scene's biome: the high sites take the highest (a col on
-/// the pass, a spur above it), the brink one a shuffled order.
+/// the pass, a spur above it).
 fn trail_candidates(scene: usize, trails: &[Vec<Vec2>]) -> Vec<Vec2> {
     let s = &SCENES[scene];
     let mut rng = 0x3c6e_f372 ^ (scene as u32).wrapping_mul(0x85eb_ca6b);
@@ -574,20 +567,23 @@ fn seat_y(site: &Site) -> f32 {
     (y0 - 0.6 * (hi - lo)).max(lo) - 0.04
 }
 
-/// Base height of a gap scene's far anchor: its back-half ground, sunk like [`seat_y`].
+/// Base height of a gap scene's far anchor: its back-half ground (the probes [`far_anchor_ok`]
+/// checked), sunk like [`seat_y`].
 fn far_seat_y(far: Vec2, yaw: f32) -> f32 {
     let f = front(yaw);
     let Some(y0) = crate::worldmap::ground_at_world(far.x, far.y) else { return 0.0 };
     let (mut lo, mut hi) = (y0, y0);
     for k in 0..8 {
         let a = k as f32 * (TAU / 8.0);
-        let d = Vec2::new(a.cos(), a.sin()) * FAR_FOOT;
+        let d = Vec2::new(a.cos(), a.sin()) * FAR_FOOT * 0.75;
         if d.dot(f) < -0.3 * FAR_FOOT {
             continue;
         }
         if let Some(y) = crate::worldmap::ground_at_world(far.x + d.x, far.y + d.y) {
-            lo = lo.min(y);
-            hi = hi.max(y);
+            if (y - y0).abs() < 1.3 {
+                lo = lo.min(y);
+                hi = hi.max(y);
+            }
         }
     }
     (y0 - 0.6 * (hi - lo)).max(lo) - 0.04
@@ -684,19 +680,23 @@ pub fn shot_cams() -> Vec<(String, Transform)> {
         let (fw, side) = (Vec3::new(f.x, 0.0, f.y), Vec3::new(-f.y, 0.0, f.x));
         let name = s.model.trim_start_matches("site_");
         if let Some(far) = site.far() {
-            // Across a gap: from behind the near anchor over to the far one, and from the gap's
-            // side looking down the drop at the cut ropes on the far wall.
+            // Across a gap: from beside the near anchor across to the far one and the bridge hanging
+            // down its wall, and from out over the side of the gap taking in both anchors and the
+            // drop (both lifted clear of whatever ground is under them).
             let yf = far_seat_y(far, site.yaw);
             let mid = (site.pos + far) * 0.5;
             let side = Vec2::new(-f.y, f.x);
-            let back = site.pos - f * 3.5 + side * 2.0;
-            let eye = Vec3::new(back.x, y + 2.6, back.y);
-            let aim_far = Vec3::new(far.x, yf + 0.3, far.y);
-            out.push((format!("wild_{name}_near"), Transform::from_translation(eye).looking_at(aim_far, Vec3::Y)));
-            let e = mid + side * 12.0;
-            let eye = Vec3::new(e.x, y.max(yf) + 3.5, e.y);
-            let aim = Vec3::new(mid.x, y.min(yf) - 2.5, mid.y);
-            out.push((format!("wild_{name}_high"), Transform::from_translation(eye).looking_at(aim, Vec3::Y)));
+            let rim = y.max(yf);
+            let clear = |p: Vec2, lift: f32| {
+                let g = crate::worldmap::ground_at_world(p.x, p.y).unwrap_or(crate::worldmap::SEA_Y).max(crate::worldmap::SEA_Y);
+                Vec3::new(p.x, g.max(rim) + lift, p.y)
+            };
+            let e = site.pos - f * 2.5 + side * 2.5;
+            let aim_far = Vec3::new(far.x, yf - 1.5, far.y);
+            out.push((format!("wild_{name}_near"), Transform::from_translation(clear(e, 2.2)).looking_at(aim_far, Vec3::Y)));
+            let e = mid - side * 13.0;
+            let aim = Vec3::new(mid.x, rim - 3.0, mid.y);
+            out.push((format!("wild_{name}_high"), Transform::from_translation(clear(e, 4.0)).looking_at(aim, Vec3::Y)));
             info!("wild cam {name}: gap span {:.1} near {:.1},{:.1} far {:.1},{:.1}", site.span, site.pos.x, site.pos.y, far.x, far.y);
             continue;
         }

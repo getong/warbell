@@ -1222,7 +1222,8 @@ fn pbr_material(images: &mut Assets<Image>, set: &str, card: bool) -> Result<Sta
         return Ok(StandardMaterial { metallic: 1.0, perceptual_roughness: 0.5, reflectance: 0.5, ..default() });
     }
     if set == "bogwater" {
-        return Ok(StandardMaterial { perceptual_roughness: 0.07, reflectance: 0.6, ..default() });
+        // Black and still: a dull sheen, not a mirror of the sky.
+        return Ok(StandardMaterial { perceptual_roughness: 0.16, reflectance: 0.22, ..default() });
     }
     if set.is_empty() {
         // Waxy fruit skin: base colour comes from the vertex colours.

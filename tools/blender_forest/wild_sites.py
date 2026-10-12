@@ -465,9 +465,9 @@ def site_mission_chapel(rng):
     cross-slab, peat hummocks fringing the pool."""
     b = Builder()
     base = G(b)
-    WL = 0.04  # the water surface (untilted, base coords)
+    WL = 0.12  # the water surface (untilted, base coords), over the bog mud round it
     tilt = quat_x(-0.08) @ quat_z(-0.17)
-    off = Vector((0.15, -1.15, 0.15))
+    off = Vector((0.15, -1.07, 0.15))
     g = TG(base, tilt, off)
     rm = tilt.to_matrix()
 
