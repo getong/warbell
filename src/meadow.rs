@@ -149,22 +149,47 @@ pub fn build(
         true
     };
 
+    // Blender village props (town_kit `meadow_*`, real scale, 1:1) — same spots + blockers; each
+    // falls back to its low-poly mesh when the kit is missing.
+    let town_prop = |commands: &mut Commands, name: &str, x: f32, z: f32, yaw: f32, solid: Vec2| -> bool {
+        let tf = Transform::from_xyz(x, ground(x, z), z).with_rotation(Quat::from_rotation_y(yaw));
+        let Some(e) = crate::town_kit::spawn_piece(commands, name, tf) else { return false };
+        commands.entity(e).insert(BiomeEntity);
+        if solid.x > 0.0 {
+            crate::blockers::add_obb(x, z, solid.x, solid.y, yaw);
+        }
+        true
+    };
+
     // ── Village life ─────────────────────────────────────────────────────────────
     // Hay-making corner, NE quarter (clear of plots (10,-15.5)/(18,-17) by ≥5).
-    prop(commands, meshes, hay_cart_mesh(), 13.0 + DX, -20.5 - DZ, 0.55, Vec2::new(1.1, 0.7));
-    prop(commands, meshes, hay_bale_mesh(0), 15.6 + DX, -21.8 - DZ, 0.2, Vec2::new(0.55, 0.4));
-    prop(commands, meshes, hay_bale_mesh(1), 14.6 + DX, -23.0 - DZ, 1.1, Vec2::new(0.55, 0.4));
-    prop(commands, meshes, scarecrow_mesh(), 17.5 + DX, -23.5 - DZ, -0.4, Vec2::ZERO);
+    if !town_prop(commands, "meadow_hay_cart", 13.0 + DX, -20.5 - DZ, 0.55, Vec2::new(1.1, 0.7)) {
+        prop(commands, meshes, hay_cart_mesh(), 13.0 + DX, -20.5 - DZ, 0.55, Vec2::new(1.1, 0.7));
+    }
+    for (i, (x, z, yaw)) in [(15.6 + DX, -21.8 - DZ, 0.2), (14.6 + DX, -23.0 - DZ, 1.1)].into_iter().enumerate() {
+        if !town_prop(commands, "meadow_bale", x, z, yaw, Vec2::new(0.55, 0.4)) {
+            prop(commands, meshes, hay_bale_mesh(i as u32), x, z, yaw, Vec2::new(0.55, 0.4));
+        }
+    }
+    if !town_prop(commands, "meadow_scarecrow", 17.5 + DX, -23.5 - DZ, -0.4, Vec2::ZERO) {
+        prop(commands, meshes, scarecrow_mesh(), 17.5 + DX, -23.5 - DZ, -0.4, Vec2::ZERO);
+    }
     fence_run(commands, meshes, &mat, Vec2::new(10.5 + DX, -18.5 - DZ), Vec2::new(16.5 + DX, -18.0 - DZ));
 
     // Beekeeper's west edge (clear of plots (-20,-8)/(-18,-17)).
     for (i, (bx_, bz)) in [(-21.0 - DX, -13.0 - DZ), (-22.4 - DX, -12.2 - DZ), (-21.6 - DX, -14.6 - DZ)].into_iter().enumerate() {
-        prop(commands, meshes, beehive_mesh(i as u32), bx_, bz, i as f32 * 0.7, Vec2::new(0.3, 0.3));
+        if !town_prop(commands, "meadow_beehive", bx_, bz, i as f32 * 0.7, Vec2::new(0.3, 0.3)) {
+            prop(commands, meshes, beehive_mesh(i as u32), bx_, bz, i as f32 * 0.7, Vec2::new(0.3, 0.3));
+        }
     }
-    prop(commands, meshes, firewood_rack_mesh(), -24.5 - DX, -11.5 - DZ, FRAC_PI_2 * 0.85, Vec2::new(0.9, 0.35));
+    if !town_prop(commands, "meadow_firewood_rack", -24.5 - DX, -11.5 - DZ, FRAC_PI_2 * 0.85, Vec2::new(0.9, 0.35)) {
+        prop(commands, meshes, firewood_rack_mesh(), -24.5 - DX, -11.5 - DZ, FRAC_PI_2 * 0.85, Vec2::new(0.9, 0.35));
+    }
 
     // Supply drop-off by the east wall (clear of plot (20,8), off the z=0 lane).
-    prop(commands, meshes, crate_stack_mesh(), 21.0 + DX, 4.6 + DZ, -0.3, Vec2::new(0.75, 0.55));
+    if !town_prop(commands, "meadow_crates", 21.0 + DX, 4.6 + DZ, -0.3, Vec2::new(0.75, 0.55)) {
+        prop(commands, meshes, crate_stack_mesh(), 21.0 + DX, 4.6 + DZ, -0.3, Vec2::new(0.75, 0.55));
+    }
 
     // ── The rest campfire, forest side (next to the hero spawn) ────────────────────
     let fy = ground(FIRE_POS.x, FIRE_POS.y);
@@ -181,8 +206,8 @@ pub fn build(
     // Emissive flame + pooled flicker light + the audio anchor (`camps::Flicker` carries the
     // spatial campfire-crackle loop) + the rest marker.
     commands.spawn((
-        Mesh3d(meshes.add(crate::camps::flame_card_mesh(0.75))),
-        MeshMaterial3d(crate::camps::flame_card_material(materials)),
+        Mesh3d(meshes.add(crate::flame_fx::flame_card_mesh(0.75))),
+        MeshMaterial3d(crate::flame_fx::flame_card_material(materials)),
         Transform::from_translation(Vec3::new(FIRE_POS.x, fy + 0.14, FIRE_POS.y)),
         bevy::light::NotShadowCaster,
         crate::camps::Flicker { phase: 0.35 },

@@ -1888,7 +1888,7 @@ pub struct Armory {
     /// War-torch held in the off hand (shaft + lashing + pitch head; vertex-coloured
     /// so it rides the shared skin material and flashes with the body on a hit).
     torch_mesh: Handle<Mesh>,
-    /// Crossed flame cards (`camps::flame_card_mesh`), HDR-bright so bloom catches them.
+    /// Crossed flame cards (`flame_fx::flame_card_mesh`), HDR-bright so bloom catches them.
     flame_mesh: Handle<Mesh>,
     flame_mat: Handle<StandardMaterial>,
 }
@@ -1926,8 +1926,8 @@ impl Armory {
         });
         let torch_mesh = meshes.add(ork_torch_mesh());
         // Flame cards (the camp fires' painted flame, torch-sized), never solid cones.
-        let flame_mesh = meshes.add(crate::camps::flame_card_mesh(0.3));
-        let flame_mat = crate::camps::flame_card_material(materials);
+        let flame_mesh = meshes.add(crate::flame_fx::flame_card_mesh(0.3));
+        let flame_mat = crate::flame_fx::flame_card_material(materials);
         Armory { mat, tmpl, eye_mesh, eye_mat, torch_mesh, flame_mesh, flame_mat }
     }
 

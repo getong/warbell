@@ -737,12 +737,9 @@ struct FlameAssets {
 
 fn flame_assets(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) -> FlameAssets {
     FlameAssets {
-        mesh: meshes.add(Sphere::new(0.6).mesh().ico(1).unwrap()),
-        mat: materials.add(StandardMaterial {
-            base_color: Color::srgb(1.0, 0.45, 0.1),
-            emissive: LinearRgba::rgb(6.0, 2.0, 0.3),
-            ..default()
-        }),
+        // The shared flame cards (`flame_fx`) at roof-fire size, never an emissive egg.
+        mesh: meshes.add(crate::flame_fx::flame_card_mesh(2.3)),
+        mat: crate::flame_fx::flame_card_material(materials),
     }
 }
 
@@ -752,7 +749,7 @@ fn spawn_flame(commands: &mut Commands, fa: &FlameAssets, idx: usize, spots: &Pl
     commands.spawn((
         Mesh3d(fa.mesh.clone()),
         MeshMaterial3d(fa.mat.clone()),
-        Transform::from_xyz(pos.x, y + 1.6, pos.y),
+        Transform::from_xyz(pos.x, y + 0.5, pos.y),
         crate::biome::BiomeEntity,
         // A glowing emissive blob — it should never cast a shadow (a flame casting a hard sphere
         // shadow looks wrong anyway), so keep it out of every cascade's shadow pass.
@@ -771,8 +768,8 @@ fn spawn_flame(commands: &mut Commands, fa: &FlameAssets, idx: usize, spots: &Pl
 fn flame_flicker(time: Res<Time>, mut q: Query<(&mut Transform, &Flame)>) {
     let t = time.elapsed_secs_wrapped();
     for (mut tf, f) in &mut q {
-        let s = 0.8 + (t * 9.0 + f.idx as f32).sin() * 0.18;
-        tf.scale = Vec3::splat(s);
+        let p = t * 9.0 + f.idx as f32;
+        tf.scale = Vec3::new(1.0 + p.sin() * 0.08, 1.0 + (p * 1.37).sin() * 0.18, 1.0 + (p * 0.83).cos() * 0.08);
     }
 }
 

@@ -453,8 +453,8 @@ def meadow_firewood_rack(rng):
         for k in range(n):
             x = -L / 2 + 0.12 + k * (L - 0.24) / (n - 1) + (0.04 if r % 2 else 0.0)
             c = V(x, y, 0)
-            rr = rng.uniform(0.065, 0.085)
-            sides = 3 if rng.random() < 0.5 else 4
+            rr = rng.uniform(0.08, 0.095)
+            sides = int(rng.choice([5, 6, 7]))
             pole(g, c - V(0, 0, 0.3), c + V(rng.uniform(-0.02, 0.02), 0, 0.3), rr, rr, rng,
                  col=scale((0.78, 0.6, 0.42), rng.uniform(0.75, 1.0)), sides=sides, segs=1, wobble=0.004)
     board(g, V(0, H + 0.2, 0), (1, 0, 0), (0, 1, 0), L + 0.3, 0.8, 0.04, mat=M_TIMBER, col=scale(COL, 0.7), rng=rng)
