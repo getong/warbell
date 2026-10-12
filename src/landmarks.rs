@@ -163,6 +163,11 @@ impl Landmark {
         !self.gear.is_empty()
     }
 
+    /// Swap the lore line (the Witch's Hut follows its door, `witch.rs`).
+    pub(crate) fn set_lore(&mut self, lore: &'static str) {
+        self.lore = lore;
+    }
+
     /// A minor story site (no shrine / trial / tally) — see [`attach_story`].
     pub fn is_story(&self) -> bool {
         self.story
@@ -191,6 +196,12 @@ struct Meta {
     /// The signature gear (item id) sealed at this landmark, claimed by winning its trial.
     gear: &'static str,
 }
+
+/// The swamp landmark's name — Old Seffa's hut (`witch.rs` finds it by name).
+pub const WITCH_HUT: &str = "The Witch's Hut";
+/// Its lore while her door stays shut / once she trades with the hero (`witch.rs` swaps it).
+pub const WITCH_HUT_LORE_SHUT: &str = "The brew never cools. The door never opens.";
+pub const WITCH_HUT_LORE_OPEN: &str = "The brew never cools. The door stands open.";
 
 /// Per-biome landmark flavour: name, lore one-liner, the shrine buff it grants, beacon tint.
 fn meta(b: Biome) -> Meta {
@@ -233,8 +244,8 @@ fn meta(b: Biome) -> Meta {
             gear: "sword_gold", // Golden Blade (+21) — the miller's hidden pay
         },
         Biome::Swamp => Meta {
-            name: "The Witch's Hut",
-            lore: "The brew never cools. The door never opens.",
+            name: WITCH_HUT,
+            lore: WITCH_HUT_LORE_SHUT,
             buff: BuffKind::Resist,
             buff_mag: 0.6,
             beacon: Color::srgb(0.31, 0.94, 0.90), // bright cyan over murk

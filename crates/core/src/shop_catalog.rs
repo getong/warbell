@@ -71,8 +71,14 @@ impl ShopVendor {
     }
 }
 
-/// Old Seffa's stock. Empty until the swamp package fills it.
-pub static WITCH_CATALOG: &[ShopItem] = &[];
+/// Old Seffa's stock (living-island spec §2 item 6): her three brews. She buys ingredients
+/// (`ItemKind::Material`, venom, herbs …) through the shared SELL list. No `sleep_smoke` yet — it
+/// stays off the shelf until a throw verb exists.
+pub static WITCH_CATALOG: &[ShopItem] = &[
+    ShopItem { id: "bog_draught", name: "Bog Draught", icon: "", price: 26 },
+    ShopItem { id: "wolfsbane", name: "Wolfsbane Brew", icon: "", price: 32 },
+    ShopItem { id: "hornet_balm", name: "Hornet Balm", icon: "", price: 26 },
+];
 
 /// The Salt Caravan's stock. Empty until the meadow package fills it.
 pub static CARAVAN_CATALOG: &[ShopItem] = &[];
@@ -168,6 +174,7 @@ mod tests {
         assert_eq!(ShopVendor::default(), ShopVendor::Market);
         assert_eq!(vendor_items(ShopVendor::Market, &["axe"]), build_shop_items(&["axe"]));
         assert_eq!(vendor_items(ShopVendor::Witch, &["axe"]), WITCH_CATALOG.to_vec());
+        assert_eq!(WITCH_CATALOG.iter().map(|i| i.id).collect::<Vec<_>>(), ["bog_draught", "wolfsbane", "hornet_balm"]);
         assert_eq!(vendor_items(ShopVendor::Caravan, &[]), CARAVAN_CATALOG.to_vec());
         // Every content-vendor line must name a real item.
         for it in WITCH_CATALOG.iter().chain(CARAVAN_CATALOG) {

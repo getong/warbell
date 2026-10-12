@@ -34,6 +34,7 @@ fn collect_sites() -> Vec<Site> {
     crate::stories_cold::plan();
     crate::sites_warm::plan();
     crate::wild_sites::plan();
+    crate::ork_graveyard::plan();
 
     let mut out = Vec::new();
     let mut push = |src: &'static str, pos: Vec2, interactive: bool| out.push(Site { src, pos, interactive });
@@ -69,6 +70,9 @@ fn collect_sites() -> Vec<Site> {
     for (p, _) in crate::wild_sites::planned_footprints() {
         push("wild_sites", p, false);
     }
+    for (p, _) in crate::ork_graveyard::planned_footprints() {
+        push("ork_graveyard", p, true);
+    }
     out
 }
 
@@ -81,6 +85,7 @@ fn reset_all() {
     crate::stories_cold::reset_plan();
     crate::sites_warm::reset_plan();
     crate::wild_sites::reset_plan();
+    crate::ork_graveyard::reset_plan();
 }
 
 /// Fraction of a cell that is land (5×5 samples).
