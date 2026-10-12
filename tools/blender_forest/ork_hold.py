@@ -48,7 +48,7 @@ from landmarks_kit import lathe  # noqa: E402
 M_TAR = len(OC.MATS)
 MATS = OC.MATS + ["ice"]  # "ice" = the glossy low-roughness set: near-black vertex colour reads as wet tar
 
-BARK = (0.66, 0.6, 0.53)
+BARK = (0.8, 0.73, 0.64)  # bark_oak is a dark scan: 0.66 left the walls black on the shaded side
 HEWN = (0.86, 0.74, 0.58)
 IRON = (0.32, 0.31, 0.3)
 MUD = (0.42, 0.36, 0.3)
@@ -401,7 +401,35 @@ def hold_hall(rng):
         pole(g, V(sx * 1.3, -0.3, -HZ - 0.08), V(sx * 1.3, 2.95, -HZ - 0.08), 0.16, 0.15, rng, col=BARK, sides=8)
     beam(g, [V(-1.65, 2.95, -HZ - 0.1), V(1.65, 2.95, -HZ - 0.1)], 0.3, 0.26, mat=M_PLANK, rng=rng,
          col=scale(TIMBER, 0.7), rough=0.05)
-    lbox(g, V(0, 1.35, -HZ + 0.15), (2.4, 2.8, 0.1), quat_y(0), M_HIDE, SOOT, tile=1.0)
+    # No painted black mouth: the doorway opens into the real hall. Inside, a stone-ringed hearth
+    # (its fire + light are spawned by ork_fortress.rs at HALL_HEARTH), a smoke-blackened hide
+    # partition behind it that the firelight picks out, roof posts, a bench, hides on the walls.
+    hc = V(0, 0, -1.3)
+    for k in range(11):
+        a = k / 11 * 2 * math.pi
+        r = rng.uniform(0.16, 0.22)
+        stone(g, tuple(hc + V(math.cos(a) * 0.72, 0.05, math.sin(a) * 0.72)), (r * 1.2, r * 0.7, r), rng, detail=1,
+              col_fn=rock_col((0.42, 0.38, 0.34), moss=0.0, ground=0.0), tile=0.45)
+    mound(g, (hc.x, -0.02, hc.z), 0.62, 0.62, 0.08, rng, col_fn=lambda p_, n_: scale((0.09, 0.075, 0.065), 0.8 + 0.4 * nz(p_ * 5)),
+          rings=3, seg=14, power=0.6)
+    for k in range(5):
+        a = rng.uniform(0, 6.28)
+        pole(g, hc + V(math.cos(a) * 0.5, 0.05, math.sin(a) * 0.5), hc + V(math.cos(a) * 0.08, 0.22, math.sin(a) * 0.08),
+             0.06, 0.05, rng, col=(0.12, 0.1, 0.09), sides=6, segs=1)
+    for x in np.linspace(-3.2, 3.2, 9):   # the partition: hides hung on a pole between the roof posts
+        board(g, V(x, 1.5, 1.4 + 0.06 * math.sin(x * 3)), (1, 0, 0), (0, 0, -1), 0.82, 2.9, 0.04, mat=M_HIDE, rng=rng,
+              col=scale(DARK_HIDE, rng.uniform(0.85, 1.15)), jag=(0.0, 0.12))
+    pole(g, V(-3.6, 2.95, 1.4), V(3.6, 2.95, 1.4), 0.08, 0.07, rng, col=BARK, sides=6)
+    for sx in (-1, 1):
+        for z in (-1.9, 1.4):
+            pole(g, V(sx * 2.6, -0.2, z), V(sx * 2.6, YE + 1.4, z), 0.17, 0.15, rng, col=scale(BARK, 0.8), sides=8)
+        beam(g, [V(sx * 3.4, 0.42, -3.3), V(sx * 3.4, 0.42, 0.6)], 0.32, 0.12, mat=M_PLANK, rng=rng,
+             col=scale(TIMBER, 0.7), rough=0.05)   # benches along the side walls
+        for z in (-3.0, 0.3):
+            pole(g, V(sx * 3.4, -0.1, z), V(sx * 3.4, 0.36, z), 0.07, 0.07, rng, col=BARK, sides=6, segs=1)
+        for z in (-2.6, -0.4):
+            board(g, V(sx * (HX - 0.25), 1.6, z), (0, 0, 1), (-sx, 0, 0), 1.1, 1.4, 0.03, mat=M_HIDE, rng=rng,
+                  col=scale(HIDE, rng.uniform(0.75, 1.0)), jag=(0.06, 0.1))
     sheet(g, [[tuple(V(-1.15 + 0.55 * u - 0.15 * t * u, 2.85 - 2.6 * t, -HZ - 0.02 - 0.05 * u))
                for u in (0.0, 0.5, 1.0)] for t in np.linspace(0, 1, 5)], M_HIDE,
           lambda u, v: scale(DARK_HIDE, 0.8 + 0.25 * u), tile=0.6, double=True)

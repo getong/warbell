@@ -893,3 +893,7 @@ TOWN_FINISH = {
     "gate_leaf": gate_leaf,
     "gate_barricade": gate_barricade,
 }
+
+# Per-model timber lift (yard_props.lift_timber, exec'd before this file): weathered grey-brown oak
+# that reads mid-tone at noon. The burnt ruin keeps its charred beams dark.
+TOWN_FINISH = {k: (fn if k == "town_rubble" else lift_timber(fn)) for k, fn in TOWN_FINISH.items()}

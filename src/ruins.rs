@@ -566,6 +566,10 @@ pub fn landmark_sites() -> &'static [LandmarkSite] {
         let mut out = Vec::new();
         for (biome, scale, foot_r) in SITE_PARAMS {
             let probe_r = foot_r * scale;
+            // The spire's search changed (real snow), but the four landmarks after it share this rng:
+            // replay the OLD spire search's draws so they keep their spots (roads / sites are laid
+            // round them), then restore that stream once the new search is done.
+            let resume = (biome == crate::biome::Biome::Snow).then(|| legacy_snow_rng_end(rng, probe_r));
             let mut best: Option<LandmarkSite> = None;
             let mut best_score: Option<f32> = None;
             for _ in 0..4000 {
@@ -578,22 +582,28 @@ pub fn landmark_sites() -> &'static [LandmarkSite] {
                     || crate::rival::near_fort(x, z)
                     || Vec2::new(x, z).distance(crate::ork_fortress::CENTRE) < 30.0
                     // Mesa shelves are flat (the flatness grade LOVES them) but sit behind
-                    // sheer walls — a landmark up there is unreachable from its road spur.
-                    || crate::worldmap::cliff_shelf_world(x, z)
+                    // sheer walls — a landmark up there is unreachable from its road spur. The snow
+                    // massif reads as "shelf" all the way up past the snow line, so the spire skips
+                    // this test (its score keeps it low on the massif instead, see below).
+                    || (biome != crate::biome::Biome::Snow && crate::worldmap::cliff_shelf_world(x, z))
                 {
                     continue;
                 }
                 // Reject any footprint that runs off-land / over water, then grade by flatness.
                 let Some(spread) = footprint_spread(x, z, probe_r) else { continue };
-                let y = crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
+                let mut y = crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
                 let yaw = crate::wildlife::rng_range(&mut rng, 0.0, TAU);
-                // The frozen spire belongs up in the snow, not on the green valley floor: grade
-                // snow-poor spots down (a soft penalty, so a spot is always found).
-                // Any snow-covered spot beats every bare one; the flattest of those wins.
+                // The frozen spire belongs up in the snow, not on the green valley floor (the old soft
+                // penalty still let a dusted valley spot win: it stood on grass in a white disc).
+                // Real snow is altitude-bound, and the massif is never dead flat up there, so the
+                // flatness test is relaxed instead: any spot under full cover (snow over the WHOLE
+                // footprint) beats every thinner one; among those the flattest wins, and the spire is
+                // seated on the footprint's low side so its drifts bank against the slope, never float.
                 let score = spread
                     + if biome == crate::biome::Biome::Snow {
-                        let c = crate::alpine::snow_cover(x, z);
-                        (0.75 - c).max(0.0) * 4.0 + if c < 0.45 { 100.0 } else { 0.0 }
+                        let c = snow_footprint_min(x, z, probe_r);
+                        y = footprint_low(x, z, probe_r * 0.55).unwrap_or(y);
+                        (0.9 - c).max(0.0) * 6.0 + if c < 0.6 { 100.0 } else { 0.0 } + 0.04 * y
                     } else {
                         0.0
                     };
@@ -604,6 +614,9 @@ pub fn landmark_sites() -> &'static [LandmarkSite] {
                 if best_score.is_some_and(|b| b <= 0.01) {
                     break; // dead flat (and snowy enough) — done
                 }
+            }
+            if let Some(r) = resume {
+                rng = r;
             }
             match best {
                 Some(s) => out.push(s),
@@ -702,6 +715,76 @@ pub fn populate_landmarks(
     }
 }
 
+/// Screenshot cameras on every landmark (`FOREST_SHOT_STORIES=landmarks`, see `capture.rs`): an
+/// oblique from the south-east and a lower one from the north-west, framed by the footprint.
+pub fn shot_cams() -> Vec<(String, Transform)> {
+    let mut out = Vec::new();
+    for s in landmark_sites() {
+        let Some(&(_, scale, foot)) = SITE_PARAMS.iter().find(|p| p.0 == s.biome) else { continue };
+        let r = foot * scale;
+        let aim = Vec3::new(s.pos.x, s.y + r * 0.5, s.pos.y);
+        let name = format!("{:?}", s.biome).to_lowercase();
+        for (tag, off) in [("a", Vec3::new(1.0, 0.55, -1.0)), ("b", Vec3::new(-1.1, 0.3, 0.9))] {
+            let eye = aim + off * (r * 1.6 + 6.0);
+            info!("landmark cam {name}_{tag}: {:.1},{:.1},{:.1} -> {:.1},{:.1},{:.1}", eye.x, eye.y, eye.z, aim.x, aim.y, aim.z);
+            out.push((format!("lm_{name}_{tag}"), Transform::from_translation(eye).looking_at(aim, Vec3::Y)));
+        }
+    }
+    out
+}
+
+/// The rng state the pre-2026-10-12 spire search left behind (same draws, filters and early
+/// break), so the landmarks seated after it keep their long-standing spots.
+fn legacy_snow_rng_end(mut rng: u32, probe_r: f32) -> u32 {
+    let mut best: Option<f32> = None;
+    for _ in 0..4000 {
+        let x = crate::wildlife::rng_range(&mut rng, -crate::worldmap::GX + 6.0, crate::worldmap::GX - 6.0);
+        let z = crate::wildlife::rng_range(&mut rng, -crate::worldmap::GZ + 6.0, crate::worldmap::GZ - 6.0);
+        if crate::worldmap::biome_at_world(x, z) != Some(crate::biome::Biome::Snow)
+            || crate::worldmap::ground_at_world(x, z).is_none()
+            || crate::camps::in_clearing(x, z)
+            || crate::castle::in_footprint(x, z)
+            || crate::rival::near_fort(x, z)
+            || Vec2::new(x, z).distance(crate::ork_fortress::CENTRE) < 30.0
+            || crate::worldmap::cliff_shelf_world(x, z)
+        {
+            continue;
+        }
+        let Some(spread) = footprint_spread(x, z, probe_r) else { continue };
+        let _yaw = crate::wildlife::rng_range(&mut rng, 0.0, TAU);
+        let c = crate::alpine::snow_cover(x, z);
+        let score = spread + (0.75 - c).max(0.0) * 4.0 + if c < 0.45 { 100.0 } else { 0.0 };
+        if best.map_or(true, |b| score < b) {
+            best = Some(score);
+        }
+        if best.is_some_and(|b| b <= 0.01) {
+            break;
+        }
+    }
+    rng
+}
+
+/// Thinnest snow cover over a footprint (centre + a ring at `radius`): a spot is only "in the snow"
+/// if the whole apron is, not just its centre.
+fn snow_footprint_min(x: f32, z: f32, radius: f32) -> f32 {
+    let mut c = crate::alpine::snow_cover(x, z);
+    for i in 0..8 {
+        let a = i as f32 * FRAC_PI_4;
+        c = c.min(crate::alpine::snow_cover(x + a.cos() * radius, z + a.sin() * radius));
+    }
+    c
+}
+
+/// Lowest ground over the centre + a ring at `radius` (seat a landmark into a slope, not onto it).
+fn footprint_low(x: f32, z: f32, radius: f32) -> Option<f32> {
+    let mut lo = crate::worldmap::ground_at_world(x, z)?;
+    for i in 0..8 {
+        let a = i as f32 * FRAC_PI_4;
+        lo = lo.min(crate::worldmap::ground_at_world(x + a.cos() * radius, z + a.sin() * radius)?);
+    }
+    Some(lo)
+}
+
 /// Terrain height spread (max−min world-Y) over a landmark's footprint: the centre plus two
 /// rings of eight samples out to `radius`. Returns `None` if ANY sample is off-land/over water
 /// (so a landmark never plants with part of its base over a cliff edge or the sea). A spread of
@@ -719,4 +802,36 @@ fn footprint_spread(x: f32, z: f32, radius: f32) -> Option<f32> {
         }
     }
     Some(hi - lo)
+}
+
+#[cfg(test)]
+mod spire_tests {
+    use super::*;
+
+    /// The frozen spire stands in real snow (the whole drift apron under cover), never on the green
+    /// valley floor of the snow region.
+    #[test]
+    fn frozen_spire_stands_in_snow() {
+        let s = landmark_sites().iter().find(|s| s.biome == crate::biome::Biome::Snow).expect("spire site");
+        let (mut n, mut snowy, mut maxy) = (0, 0, f32::MIN);
+        let mut rng: u32 = 7;
+        for _ in 0..20000 {
+            let x = crate::wildlife::rng_range(&mut rng, -crate::worldmap::GX, crate::worldmap::GX);
+            let z = crate::wildlife::rng_range(&mut rng, -crate::worldmap::GZ, crate::worldmap::GZ);
+            if crate::worldmap::biome_at_world(x, z) == Some(crate::biome::Biome::Snow) {
+                n += 1;
+                let y = crate::worldmap::ground_at_world(x, z).unwrap_or(-9.0);
+                maxy = maxy.max(y);
+                if crate::alpine::snow_cover(x, z) >= 0.6 {
+                    snowy += 1;
+                }
+            }
+        }
+        let c = snow_footprint_min(s.pos.x, s.pos.y, 5.25);
+        eprintln!("spire at {:?} y {:.2} spread {:.2} cover {c:.2}; snow samples {n}, snowy {snowy}, max y {maxy:.1}", s.pos, s.y, s.spread);
+        assert!(c >= 0.6, "spire on bare ground (cover {c:.2})");
+        // The landmarks after it keep their long-standing spots (roads and sites are laid round them).
+        let d = landmark_sites().iter().find(|s| s.biome == crate::biome::Biome::Desert).expect("pyramid site");
+        assert!(d.pos.distance(Vec2::new(71.4, -45.1)) < 0.2, "pyramid moved to {:?}", d.pos);
+    }
 }
