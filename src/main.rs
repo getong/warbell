@@ -67,6 +67,7 @@ mod dying;
 mod economy;
 mod tree_ui;
 mod firelight;
+mod flame_fx; // crossed flame cards for braziers / fire baskets (transform-only flicker)
 mod fish;
 mod footstep_fx;
 mod game_state;
@@ -255,6 +256,7 @@ fn main() {
         ))
         .add_plugins(gates::GatesPlugin) // gates shut at dusk, open at dawn; ork-only solid, hackable
         .add_plugins(market::MarketPlugin) // the living market on the west lane: stalls, vendors, vendor greetings
+        .add_plugins(flame_fx::FlameFxPlugin) // brazier / fire-basket flame cards
         .add_plugins(town_kit::TownKitPlugin) // town-kit pieces (showcase only until the phase-4 layout)
         .add_plugins(bog::BogPlugin) // swamp-pool will-o'-wisp hover anim (dressing spawned at build)
         .add_plugins(poi::PoiPlugin) // micro-POI flags: fortress smoke column + wheeling crows

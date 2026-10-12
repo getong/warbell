@@ -157,7 +157,7 @@ def arch_door(g, rng, c, nrm, w, h, studs=True, ring=True):
         x = -r + (i + 0.5) * w / n_pl
         top = spring + math.sqrt(max(0.0, r * r - x * x)) - 0.03
         board(g, c + tng * x + UP * (top / 2) + nrm * 0.02, (0, 1, 0), tuple(nrm), top, w / n_pl - 0.012, 0.06,
-              mat=M_PLANK, col=scale((0.95, 0.68, 0.45), rng.uniform(0.7, 0.88)), rng=rng)
+              mat=M_TIMBER, col=scale((0.95, 0.68, 0.45), rng.uniform(0.7, 0.88)), rng=rng)
     for y in (0.35, spring * 0.55, spring - 0.05):
         lbox(g, c + UP * y + nrm * 0.065, (w - 0.1, 0.11, 0.035), yaw_q(tng), M_TIMBER, scale(BEAMC, 0.6), tile=0.5)
         if studs:
@@ -547,7 +547,7 @@ def rival_walls(rng):
             xa = hs - d
             ya = cy + math.sqrt(max(0.0, R * R - xa * xa)) - 0.08
             board(g, V(hx, ya / 2 + 0.04, zh - d), (0, 1, 0), (-sx, 0, 0), ya - 0.04, lw / n_pl - 0.01, 0.07,
-                  mat=M_PLANK, col=scale((0.95, 0.68, 0.45), rng.uniform(0.7, 0.88)), rng=rng)
+                  mat=M_TIMBER, col=scale((0.95, 0.68, 0.45), rng.uniform(0.7, 0.88)), rng=rng)
         for y in (0.5, 1.45, 2.35):
             lbox(g, V(hx - sx * 0.07, y, zh - lw / 2), (0.04, 0.13, lw - 0.15), quat_y(0.0), M_TIMBER,
                  scale(BEAMC, 0.55), tile=0.5)

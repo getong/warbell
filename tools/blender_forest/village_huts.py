@@ -719,11 +719,11 @@ def plank_walls(g, rng, W, D, y0, ye, ops, T=0.14):
                 if hgt < 0.06:
                     continue
                 board(g, A + t * s + UP * (lo + hgt / 2) + n * (T / 2 - 0.02), (0, 1, 0), tuple(n), hgt,
-                      bw - (0.018 if rng.random() < 0.85 else 0.04), 0.035, mat=M_PLANK,
+                      bw - (0.018 if rng.random() < 0.85 else 0.04), 0.035, mat=M_TIMBER,
                       col=cols[int(rng.integers(0, len(cols)))], rng=rng)
                 if k > 0:
                     board(g, A + t * (s - bw / 2) + UP * (lo + hgt / 2) + n * (T / 2 + 0.02), (0, 1, 0), tuple(n),
-                          hgt - 0.02, 0.06, 0.025, mat=M_PLANK, col=scale(POSTC, 0.62), rng=rng)
+                          hgt - 0.02, 0.06, 0.025, mat=M_TIMBER, col=scale(POSTC, 0.62), rng=rng)
                 # Inside face, so the open door shows a planked interior.
                 face(g, [A + t * (s - bw / 2) + UP * lo - n * 0.02, A + t * (s + bw / 2) + UP * lo - n * 0.02,
                          A + t * (s + bw / 2) + UP * yb - n * 0.02, A + t * (s - bw / 2) + UP * yb - n * 0.02],

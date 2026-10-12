@@ -74,13 +74,20 @@ pub fn populate(
         let y = crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
         // A little yaw variety so the row isn't mechanical.
         let yaw = (i as f32 * 1.7) % std::f32::consts::TAU;
-        commands.spawn((
-            Mesh3d(mesh.clone()),
-            MeshMaterial3d(mat.clone()),
-            Transform::from_xyz(x, y, z).with_rotation(Quat::from_rotation_y(yaw)),
-            Dummy { wobble_until: 0.0, knock: Vec2::ZERO },
-            BiomeEntity,
-        ));
+        let tf = Transform::from_xyz(x, y, z).with_rotation(Quat::from_rotation_y(yaw));
+        // The Blender pell (town_kit `training_dummy`: sacking, rope ties, bursting straw, a hacked
+        // shield) when the kit is loaded; the wobble rocks its root like the procedural one.
+        if let Some(e) = crate::town_kit::spawn_piece(commands, "training_dummy", tf) {
+            commands.entity(e).insert((Dummy { wobble_until: 0.0, knock: Vec2::ZERO }, BiomeEntity));
+        } else {
+            commands.spawn((
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(mat.clone()),
+                tf,
+                Dummy { wobble_until: 0.0, knock: Vec2::ZERO },
+                BiomeEntity,
+            ));
+        }
         // Solid pell — a slim base so you feel it, without snagging the courtyard lane.
         crate::blockers::add(x, z, 0.22);
     }

@@ -214,7 +214,7 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
     const MIN_SOLID: f32 = 0.08;
     const MIN_SOLID_AREA: f32 = 0.09;
     // `kit`: a town_kit.glb piece that replaces the procedural parts when the kit is loaded ("" = none).
-    let mut set_kit = |kit: &str, parts: Vec<(Mesh, M)>, pos: Vec3, yaw: f32, gate: DecorGate, foot: Vec2| {
+    let mut set_kit = |kit: &str, parts: Vec<(Mesh, M)>, pos: Vec3, yaw: f32, gate: DecorGate, foot: Vec2| -> Option<Entity> {
         let vis = if matches!(gate, DecorGate::Always) { Visibility::Inherited } else { Visibility::Hidden };
         let solid = (foot.x >= MIN_SOLID && foot.y >= MIN_SOLID && foot.x * foot.y >= MIN_SOLID_AREA)
             .then_some(DecorSolid { hw: foot.x, hd: foot.y, yaw });
@@ -227,7 +227,7 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
                 if let Some(s) = solid {
                     e.insert(s);
                 }
-                return;
+                return Some(e.id());
             }
         }
         for (i, (m, slot)) in parts.into_iter().enumerate() {
@@ -247,6 +247,7 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
                 }
             }
         }
+        None
     };
 
     // ── Day-one life (Always) ────────────────────────────────────────────────────
@@ -302,8 +303,11 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
     set_kit("", stone_pile_parts(), Vec3::new(kw - 1.3, 0.0, kn + 1.2), 0.3, DecorGate::Reinforced, Vec2::new(0.35, 0.65));
 
     // Tower Mastery: a standing fire basket inside each wall corner (the crews work all night).
+    let mut fires = Vec::new();
     for p in corner_baskets() {
-        set_kit("", brazier_parts(), Vec3::new(p.x, 0.0, p.y), p.x.signum() * 0.4, DecorGate::TowerMastery, Vec2::new(0.2, 0.2));
+        if let Some(e) = set_kit("gate_brazier", brazier_parts(), Vec3::new(p.x, 0.0, p.y), p.x.signum() * 0.4, DecorGate::TowerMastery, Vec2::new(0.2, 0.2)) {
+            fires.push((e, p.x + p.y));
+        }
     }
 
     // Merchant Guild: banner + stacked goods dressing the wandering merchant's shop by the
@@ -313,6 +317,10 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
     let (gdx, gdz) = (MERCHANT_SHOP.x + 0.9, MERCHANT_SHOP.y - 2.0);
     set_kit("", guild_banner_parts(), Vec3::new(bnx, stall_y(bnx, bnz), bnz), 0.2, DecorGate::Guild, Vec2::new(0.16, 0.16));
     set_kit("", guild_goods_parts(), Vec3::new(gdx, stall_y(gdx, gdz), gdz), -0.5, DecorGate::Guild, Vec2::new(0.6, 0.5));
+    // Live flame cards on the corner fire baskets (children, so they share the basket's reveal).
+    for (e, ph) in fires {
+        crate::flame_fx::flame_children(commands, e, Vec3::new(0.0, 1.04, 0.0), 0.95, ph);
+    }
 
     // Firelight: flickering pools for the night-burning pieces (the meshes' emissive alone
     // reads flat in the dark). Same pooled flicker as the wall torches.

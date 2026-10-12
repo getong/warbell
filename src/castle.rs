@@ -1831,7 +1831,7 @@ fn spawn_kit(
     kind: CastleKind,
     edit: crate::castle_kit::Edit,
     occluder: bool,
-) {
+) -> Option<Entity> {
     let y = if in_footprint(pos.x, pos.y) { 0.0 } else { crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0) };
     let tf = Transform::from_xyz(pos.x, y, pos.y).with_rotation(Quat::from_rotation_y(yaw));
     let tags = (CastlePart { kind }, crate::build_fx::RevealAt(Vec3::new(pos.x, y, pos.y)), BiomeEntity);
@@ -1842,13 +1842,14 @@ fn spawn_kit(
             commands.entity(e).insert(tags);
         })
     };
-    let Some(e) = e else { return };
+    let e = e?;
     let vis = if shown_at_start(kind) { Visibility::Inherited } else { Visibility::Hidden };
     let mut ec = commands.entity(e);
     ec.insert(vis);
     if occluder {
         ec.insert(crate::player::CameraOccluder);
     }
+    Some(e)
 }
 
 /// The burgage yard behind house `i`: fences, garden, shed / woodpile / coop / hayrick (local
@@ -1925,8 +1926,14 @@ pub fn build(
         );
     }
     // War-braziers lighting the kill-zone outside each gate (with the Gate upgrade).
+    let mut kit_fires: Vec<(Vec2, f32)> = Vec::new();
     for gate in Gate::ALL {
-        for p in brazier_spots(gate) {
+        for (k, p) in brazier_spots(gate).into_iter().enumerate() {
+            // The forged cresset (town_kit `gate_brazier`), spawned below with a live flame-card fire.
+            if crate::realforest::get().is_some_and(|kit| kit.has("gate_brazier")) {
+                kit_fires.push((Vec2::new(p.x, p.z), p.x * 0.31 + p.z * 0.17 + k as f32));
+                continue;
+            }
             spawn(brazier_parts(), p, 0.0, Vec3::ONE, CastleKind::Gate);
         }
     }
@@ -1954,6 +1961,11 @@ pub fn build(
         }
     }
 
+    for (pos, ph) in kit_fires {
+        if let Some(e) = spawn_kit(commands, meshes, "gate_brazier", pos, ph, CastleKind::Gate, crate::castle_kit::Edit::None, false) {
+            crate::flame_fx::flame_children(commands, e, Vec3::new(0.0, 1.04, 0.0), 0.95, ph);
+        }
+    }
     for (piece, pos, yaw) in kit_yard {
         spawn_kit(commands, meshes, piece, pos, yaw, CastleKind::Always, crate::castle_kit::Edit::None, false);
     }

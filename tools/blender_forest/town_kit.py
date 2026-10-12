@@ -2064,6 +2064,8 @@ def bounds(builder):
 # shaggy thatch, clay daub / grey logs on fieldstone footings; same node names, see village_huts.py.
 _vh = HERE / "village_huts.py"
 exec(compile(_vh.read_text(encoding="utf-8"), str(_vh), "exec"))
+_yp = HERE / "yard_props.py"
+exec(compile(_yp.read_text(encoding="utf-8"), str(_yp), "exec"))
 
 
 MODELS = {
@@ -2117,6 +2119,8 @@ MODELS = {
     "decor_notice_board": decor_notice_board,
     "decor_trough": decor_trough,
     "decor_bench": decor_bench,
+    "gate_brazier": gate_brazier,
+    "training_dummy": training_dummy,
 }
 
 ONLY = [a for a in sys.argv[sys.argv.index("--") + 1:]] if "--" in sys.argv else []
