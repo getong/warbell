@@ -192,11 +192,13 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
     let mush_stems = meshes.add(crate::biome_swamp::build_glowmush_stems_mesh());
     let mush_caps = meshes.add(crate::biome_swamp::build_glowmush_caps_mesh());
 
-    // The two swamp interiors (world coords, mirrors worldmap REGIONS): S swamp + E marsh arm.
-    // Authored at MAP_SCALE 2.2 — centres AND radii track the current scale (`world22`).
-    let zk = crate::worldmap::MAP_SCALE / 2.2;
-    let (zs, ze) = (crate::worldmap::world22(0.0, 83.6), crate::worldmap::world22(66.0, 52.8));
-    let zones: [(f32, f32, f32); 2] = [(zs.x, zs.y, 52.0 * zk), (ze.x, ze.y, 40.0 * zk)];
+    // The swamp interiors (world coords), straight from the worldmap's flat swamp REGIONS — so
+    // the dressing follows the map (the E marsh arm is gone, the S swamp shrank to r20) instead
+    // of a hard-coded copy that went stale on every rebalance.
+    let zones = crate::worldmap::swamp_zones_world();
+    // The tower / hut search the biggest swamp (the old hard-coded "S swamp" disc).
+    let (mx, mz, mr) = zones.iter().copied().fold((0.0, 0.0, 0.0), |b, z| if z.2 > b.2 { z } else { b });
+    info!("bog: swamp zones (world x, z, r) {zones:?}");
     let mut rng: u32 = 0xb06_d12e5;
     let clear = |x: f32, z: f32| {
         !crate::bridges::near_bridge(x, z, 1.6)
@@ -375,8 +377,8 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
     let mut best: Option<(f32, f32, f32)> = None;
     for _ in 0..3000 {
         let a = rng_next(&mut rng) * TAU;
-        let r = rng_next(&mut rng).sqrt() * 50.0;
-        let (x, z) = (0.0 + a.cos() * r, 83.6 + a.sin() * r);
+        let r = rng_next(&mut rng).sqrt() * mr;
+        let (x, z) = (mx + a.cos() * r, mz + a.sin() * r);
         let sd = crate::worldmap::pool_sd_world(x, z);
         if sd < best.map_or(-1.1, |b| b.0) && clear(x, z) {
             best = Some((sd, x, z));
@@ -418,8 +420,8 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
     let mut hut: Option<(f32, f32, f32)> = None;
     for _ in 0..2500 {
         let a = rng_next(&mut rng) * TAU;
-        let r = rng_next(&mut rng).sqrt() * 50.0;
-        let (x, z) = (0.0 + a.cos() * r, 83.6 + a.sin() * r);
+        let r = rng_next(&mut rng).sqrt() * mr;
+        let (x, z) = (mx + a.cos() * r, mz + a.sin() * r);
         let sd = crate::worldmap::pool_sd_world(x, z);
         // Shoreline band, slightly wet side, clear of decks/roads.
         if (-0.7..-0.25).contains(&sd) && clear(x, z) {

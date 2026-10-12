@@ -1029,6 +1029,17 @@ pub fn pool_sd_world(wx: f32, wz: f32) -> f32 {
     pool_sd((wx + GX) / MAP_SCALE, (wz + GZ) / MAP_SCALE)
 }
 
+/// Every flat swamp region of the active map as world `(centre x, centre z, radius)` — the bog
+/// dressing's zones, so they follow the regions instead of a hard-coded copy.
+pub fn swamp_zones_world() -> Vec<(f32, f32, f32)> {
+    active_map()
+        .regions
+        .iter()
+        .filter(|r| r.biome == TB::Swamp && r.peak == 0)
+        .map(|r| (r.x * MAP_SCALE - GX, r.z * MAP_SCALE - GZ, r.r * MAP_SCALE))
+        .collect()
+}
+
 fn edge_fray(x: f32, z: f32) -> f32 {
     (x * 0.5 + z * 0.35 + 1.3).sin() * 1.1
         + (x * 0.9 - z * 0.82 + 4.0).sin() * 1.6
