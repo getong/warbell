@@ -18,7 +18,8 @@
 //!   standing stones, ork offerings at the centre).
 //! - **Rocky** — an abandoned mine head (timber headframe over an open shaft, a tipped ore cart at
 //!   the end of its rail run); a rockfall that crushed a wagon on the track; a half-cut monolith in
-//!   a small quarry, the masons' tools dropped where they stood.
+//!   a small quarry, the masons' tools dropped where they stood. Each at most twice: the rocky
+//!   country's unique finds are `wild_sites` (the clan gong, the signal tower, ...).
 //!
 //! Models: `stories_cold.glb` (`tools/blender_forest/stories_cold.py`), real scale, base y=0.
 //!
@@ -87,19 +88,19 @@ const SCENES: [Scene; 10] = [
     // Headframe legs over the shaft (the shaft itself is inside the legs), the tipped cart, the spoil heap.
     Scene { model: "story_mine_head", biome: Biome::Rocky, snow: 0.0, foot: 3.1,
         solids: &[(0.0, 0.0, 1.15, 1.0, 0.0), (2.15, 0.85, 0.55, 0.45, 0.2), (-1.9, 1.2, 0.75, 0.6, 0.0)],
-        want: 3, names: &["The Colony Mine", "The Iron Shaft", "The Old Headframe"],
+        want: 2, names: &["The Colony Mine", "The Iron Shaft", "The Old Headframe"],
         lore: "The first colony's iron came out of this shaft; the headframe outlived every man who worked it.",
         trail: false },
     // The crushed wagon under its boulders + the third boulder.
     Scene { model: "story_rockfall_wagon", biome: Biome::Rocky, snow: 0.0, foot: 2.9,
         solids: &[(0.0, 0.0, 1.45, 0.8, 0.0), (1.55, -0.95, 0.55, 0.5, 0.0), (-1.8, -0.85, 0.4, 0.35, 0.0)],
-        want: 3, names: &["The Crushed Wagon", "The Rockfall", "The Buried Wagon"],
+        want: 2, names: &["The Crushed Wagon", "The Rockfall", "The Buried Wagon"],
         lore: "The mountain came down on this wagon, and no one ever came back to dig it out.",
         trail: false },
     // The bedrock shelf with the half-cut block, and the monolith blank on its rollers.
     Scene { model: "story_quarry", biome: Biome::Rocky, snow: 0.0, foot: 2.8,
         solids: &[(-0.6, -0.4, 1.35, 0.95, 0.08), (1.25, 0.9, 1.2, 0.45, -0.6)],
-        want: 3, names: &["The Half-Cut Stone", "The Masons' Quarry", "The Silent Quarry"],
+        want: 2, names: &["The Half-Cut Stone", "The Masons' Quarry", "The Silent Quarry"],
         lore: "The masons dropped their tools mid-cut and never came back for the stone.",
         trail: false },
     // The bell on its side, the broken bell wagon, the wagon on its side, the ox's drift.

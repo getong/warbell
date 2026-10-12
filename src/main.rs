@@ -137,6 +137,7 @@ mod poi;
 mod stories_cold;
 mod castle_kit;
 mod stories_warm;
+mod wild_sites;
 mod villagers;
 mod vista;
 mod visual;

@@ -10,6 +10,9 @@
 //! Models: `stories_warm.glb` (tools/blender_forest/stories_warm.py), loaded with the realistic kit;
 //! without the kit nothing spawns (the low-poly fallback world keeps its roadside POIs only).
 //!
+//! Each swamp scene stands at most twice (the island's "few repeats" rule — the swamp's unique finds
+//! are `wild_sites`).
+//!
 //! Planned at build phase 4 right after `poi::plan_clearings` ([`plan`]): a deterministic jittered
 //! grid over the island is filtered per scene by biome (centre + a ring past the footprint must all
 //! be that biome), the shared POI ground rules (`poi::site_ok`: flat, dry, off roads / plots / camps
@@ -50,14 +53,14 @@ const SCENES: [Scene; 7] = [
         model: "story_boat",
         biome: Biome::Swamp,
         foot: 2.8,
-        count: 3,
+        count: 2,
         boxes: &[(0.9, 0.5, 1.25, 0.5, 0.45), (-1.0, -0.8, 0.8, 0.7, 0.0), (1.25, -1.5, 0.75, 0.08, 0.0)],
     },
     Scene {
         model: "story_shrine",
         biome: Biome::Swamp,
         foot: 1.6,
-        count: 3,
+        count: 2,
         boxes: &[(0.0, -0.35, 0.3, 0.22, 0.12), (0.05, 0.25, 0.31, 0.2, 0.1)],
     },
     Scene {

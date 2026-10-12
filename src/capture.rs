@@ -195,6 +195,8 @@ fn drive_story_seq(
     if clock.seq.is_none() {
         clock.seq = Some(match std::env::var("FOREST_SHOT_CAMS") {
             Ok(spec) => parse_shot_cams(&spec),
+            // `FOREST_SHOT_STORIES=wild`: the swamp / rocky discovery sites instead of the snow set.
+            Err(_) if std::env::var("FOREST_SHOT_STORIES").is_ok_and(|v| v == "wild") => crate::wild_sites::shot_cams(),
             Err(_) => crate::stories_cold::shot_cams(),
         });
     }
