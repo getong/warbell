@@ -666,6 +666,7 @@ pub fn player_attack(
                 With<crate::rival::RivalSoldier>,
                 With<crate::rival::RivalWorker>,
                 With<crate::snowman::Snowman>,
+                With<crate::oddities::Oddity>,
             )>,
             Without<crate::dying::Dying>,
         ),

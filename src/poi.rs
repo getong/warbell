@@ -299,6 +299,8 @@ pub fn story_clearings() -> StoryClearings {
     spots.extend(crate::wild_sites::planned_footprints());
     spots.extend(crate::war_party::planned_footprints());
     spots.extend([crate::pasture::planned_footprints(), crate::drill_yard::planned_footprints(), crate::watch_beacon::planned_footprints(), crate::caravan::planned_footprints()].concat()); // WP4 meadow
+    spots.extend(crate::stashes::planned_footprints());
+    spots.extend(crate::castaway::planned_footprints());
     StoryClearings(spots)
 }
 /// Does a circle at `(x, z)` of radius `radius` overlap a planned story clearing (gallows
@@ -311,6 +313,8 @@ pub fn overlaps_planned_clearing(x: f32, z: f32, radius: f32) -> bool {
         || crate::stories_cold::overlaps_planned(x, z, radius)
         || crate::sites_warm::overlaps_planned(x, z, radius)
         || crate::wild_sites::overlaps_planned(x, z, radius)
+        || crate::stashes::overlaps_planned(x, z, radius)
+        || crate::castaway::planned_footprints().iter().any(|(p, f)| p.distance(Vec2::new(x, z)) < f + radius)
 }
 
 fn rng_next(state: &mut u32) -> f32 {
