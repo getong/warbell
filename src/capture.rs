@@ -193,7 +193,10 @@ fn drive_story_seq(
     cams: &mut Query<(&mut Transform, Option<&mut crate::controls::FlyCam>), With<Camera3d>>,
 ) -> bool {
     if clock.seq.is_none() {
+        // Both set: the (filtered, see `stories_cold::shot_cams`) story cams first, then the fixed ones.
+        let stories = std::env::var("FOREST_SHOT_STORIES").is_ok();
         clock.seq = Some(match std::env::var("FOREST_SHOT_CAMS") {
+            Ok(spec) if stories => crate::stories_cold::shot_cams().into_iter().chain(parse_shot_cams(&spec)).collect(),
             Ok(spec) => parse_shot_cams(&spec),
             Err(_) => crate::stories_cold::shot_cams(),
         });

@@ -180,15 +180,11 @@ pub fn build(
     }
     // Emissive flame + pooled flicker light + the audio anchor (`camps::Flicker` carries the
     // spatial campfire-crackle loop) + the rest marker.
-    let flame_mat = materials.add(StandardMaterial {
-        base_color: crate::palette::srgb(0xff8a30),
-        emissive: crate::palette::srgb(0xff8a30).to_linear() * 4.0,
-        ..default()
-    });
     commands.spawn((
-        Mesh3d(meshes.add(flame_mesh())),
-        MeshMaterial3d(flame_mat),
-        Transform::from_translation(Vec3::new(FIRE_POS.x, fy + 0.22, FIRE_POS.y)),
+        Mesh3d(meshes.add(crate::camps::flame_card_mesh(0.75))),
+        MeshMaterial3d(crate::camps::flame_card_material(materials)),
+        Transform::from_translation(Vec3::new(FIRE_POS.x, fy + 0.14, FIRE_POS.y)),
+        bevy::light::NotShadowCaster,
         crate::camps::Flicker { phase: 0.35 },
         RestFire,
         BiomeEntity,
@@ -499,17 +495,6 @@ fn sit_stump_mesh(mut seed: u32) -> Mesh {
         tinted(Cylinder::new(0.30, 0.09).mesh().resolution(7).build().translated_by(Vec3::new(0.0, 0.045, 0.0)), lin(WOOD_DARK)),
         tinted(Cylinder::new(0.235, 0.05).mesh().resolution(7).build().translated_by(Vec3::new(0.0, h, 0.0)), lin(WOOD)),
     ])
-}
-
-/// Flame cones (untinted — the emissive material colours them), like camps.rs.
-fn flame_mesh() -> Mesh {
-    let outer = Cone { radius: 0.17, height: 0.55 }.mesh().build().translated_by(Vec3::new(0.0, 0.27, 0.0));
-    let inner = Cone { radius: 0.09, height: 0.35 }.mesh().build().translated_by(Vec3::new(0.0, 0.2, 0.0));
-    let mut m = outer;
-    m.merge(&inner).expect("cones share attributes");
-    m.duplicate_vertices();
-    m.compute_flat_normals();
-    m
 }
 
 // ── tiny local mesh helpers (the props.rs contract) ────────────────────────────────
