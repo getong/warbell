@@ -73,7 +73,8 @@ const SCENES: [Scene; 11] = [
     // The drift + collapsed tent, the sled with its crates, the planted skis (+ the marker pole).
     Scene { model: "story_lost_camp", biome: Biome::Snow, snow: 0.45, foot: 2.6,
         solids: &[(-0.6, 0.2, 1.1, 1.0, 0.0), (1.15, -0.75, 1.0, 0.45, 0.35), (2.02, 0.35, 0.25, 0.3, 0.0)],
-        want: 3, names: &["The Timber Party's Camp", "The Iron Party's Camp", "The Woodcutters' Last Camp"],
+        // One here + the Frozen Camp vignette (`vignettes.rs`, same model) = the two-copy cap.
+        want: 1, names: &["The Timber Party's Camp", "The Iron Party's Camp", "The Woodcutters' Last Camp"],
         lore: "Anselm's timber party camped here; the colony rang for them nine dusks, and none came down.",
         trail: false },
     // The avalanche mound over the cabin + the standing chimney.

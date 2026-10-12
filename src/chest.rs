@@ -408,6 +408,7 @@ pub fn populate_chests(commands: &mut Commands, meshes: &mut Assets<Mesh>, mater
             body,
             lid,
             &chest_mat,
+            fancy,
             Vec3::new(x, y, z),
             0.0,
             Chest { cache, opened: false, opened_at: 0.0, factor, trophy: None, hoard: false, tier },
@@ -458,6 +459,7 @@ pub fn populate_chests(commands: &mut Commands, meshes: &mut Assets<Mesh>, mater
             &relic_body,
             &relic_lid,
             &chest_mat,
+            true,
             Vec3::new(x, y, z),
             0.0,
             Chest { cache: false, opened: false, opened_at: 0.0, factor, trophy: None, hoard: true, tier: tier_for(factor) },
@@ -492,6 +494,7 @@ pub fn spawn_trophy_chest(
         &body,
         &lid,
         &chest_mat,
+        true,
         pos,
         rot,
         Chest { cache: false, opened: false, opened_at: 0.0, factor: 1.0, trophy: Some((gold, loot)), hoard: false, tier: tier_for(factor) },
@@ -506,11 +509,16 @@ fn spawn_chest(
     body_mesh: &Handle<Mesh>,
     lid_mesh: &Handle<Mesh>,
     chest_mat: &Handle<StandardMaterial>,
+    relic: bool,
     pos: Vec3,
     rot: f32,
     chest: Chest,
     id: ChestId,
 ) {
+    // The realistic kit's Blender chest (landmarks.glb: plank-built body, iron or gilt bands, a
+    // vaulted lid on the same hinge origin) where loaded; the flat-shaded meshes otherwise.
+    let (kb, kl) = if relic { ("chest_relic_body", "chest_relic_lid") } else { ("chest_wood_body", "chest_wood_lid") };
+    let kit = crate::realforest::get().filter(|k| k.has(kb) && k.has(kl));
     commands
         .spawn((
             Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(rot)),
@@ -520,14 +528,17 @@ fn spawn_chest(
             crate::biome::BiomeEntity,
         ))
         .with_children(|p| {
+            let lid_tf = Transform::from_xyz(0.0, 0.40, -0.25);
+            if let Some(k) = kit {
+                let mut body = p.spawn((Transform::default(), Visibility::Inherited));
+                k.attach_static(&mut body, kb, Transform::IDENTITY);
+                let mut lid = p.spawn((lid_tf, Visibility::Inherited, ChestLid));
+                k.attach_static(&mut lid, kl, Transform::IDENTITY);
+                return;
+            }
             p.spawn((Mesh3d(body_mesh.clone()), MeshMaterial3d(chest_mat.clone()), Transform::default()));
             // Lid pivots on the back-top hinge edge (its entity origin).
-            p.spawn((
-                Mesh3d(lid_mesh.clone()),
-                MeshMaterial3d(chest_mat.clone()),
-                Transform::from_xyz(0.0, 0.40, -0.25),
-                ChestLid,
-            ));
+            p.spawn((Mesh3d(lid_mesh.clone()), MeshMaterial3d(chest_mat.clone()), lid_tf, ChestLid));
         });
 }
 

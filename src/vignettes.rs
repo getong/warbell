@@ -268,11 +268,15 @@ fn site_clear(x: f32, z: f32, radius: f32) -> bool {
     true
 }
 
+#[derive(Clone, Copy)]
 struct Spec {
     biome: crate::biome::Biome,
     mesh: fn() -> Mesh,
-    /// The Blender model (`wayside.glb`) drawn instead of `mesh` when the realistic kit is loaded.
+    /// The Blender model (`wayside.glb` / `stories_*.glb`) drawn instead of `mesh` when the realistic kit is loaded.
     kit: Option<&'static str>,
+    /// Flatness / clearance radius the (bigger) kit model wants; the search tries it first and
+    /// falls back to `foot_r` so a biome never loses its vignette to a tighter footprint.
+    kit_foot: f32,
     scale: f32,
     block_r: f32,
     foot_r: f32,
@@ -288,11 +292,11 @@ fn specs() -> [Spec; 5] {
     [
         // Pale wisp-blue, not ember orange: the camp's fire is cold, and an orange column rising
         // out of its ash ring read as a fire left burning (and twinned the Old Mill's amber).
-        Spec { biome: Biome::Forest, mesh: abandoned_camp, kit: Some("vignette_camp"), scale: 1.0, block_r: 0.9, foot_r: 1.6, name: "The Abandoned Camp", lore: "Cold ashes, and a meal left half-eaten.", buff: BuffKind::Haste, mag: 1.3, beacon: Color::srgb(0.66, 0.84, 1.0) },
-        Spec { biome: Biome::Desert, mesh: lost_caravan, kit: None, scale: 1.0, block_r: 1.0, foot_r: 1.5, name: "The Lost Caravan", lore: "The sand keeps its dead — and their gold.", buff: BuffKind::Power, mag: 1.4, beacon: Color::srgb(0.95, 0.55, 1.0) },
-        Spec { biome: Biome::Rocky, mesh: fallen_tower, kit: None, scale: 1.0, block_r: 1.0, foot_r: 1.8, name: "The Fallen Watchtower", lore: "It guarded the pass once. The pass forgot.", buff: BuffKind::Resist, mag: 0.6, beacon: Color::srgb(1.0, 0.8, 0.35) },
-        Spec { biome: Biome::Snow, mesh: frozen_camp, kit: None, scale: 1.0, block_r: 0.9, foot_r: 1.5, name: "The Frozen Camp", lore: "The expedition that never came home.", buff: BuffKind::Resist, mag: 0.6, beacon: Color::srgb(0.3, 0.92, 1.0) },
-        Spec { biome: Biome::Swamp, mesh: sunken_wreck, kit: None, scale: 1.0, block_r: 1.0, foot_r: 1.7, name: "The Sunken Wreck", lore: "The bog swallowed her whole, crew and all.", buff: BuffKind::Haste, mag: 1.3, beacon: Color::srgb(0.4, 0.95, 0.82) },
+        Spec { biome: Biome::Forest, mesh: abandoned_camp, kit: Some("vignette_camp"), kit_foot: 0.0, scale: 1.0, block_r: 0.9, foot_r: 1.6, name: "The Abandoned Camp", lore: "Cold ashes, and a meal left half-eaten.", buff: BuffKind::Haste, mag: 1.3, beacon: Color::srgb(0.66, 0.84, 1.0) },
+        Spec { biome: Biome::Desert, mesh: lost_caravan, kit: Some("story_caravan"), kit_foot: 2.9, scale: 1.0, block_r: 1.0, foot_r: 1.5, name: "The Lost Caravan", lore: "The sand keeps its dead — and their gold.", buff: BuffKind::Power, mag: 1.4, beacon: Color::srgb(0.95, 0.55, 1.0) },
+        Spec { biome: Biome::Rocky, mesh: fallen_tower, kit: Some("poi_watchtower"), kit_foot: 2.3, scale: 1.0, block_r: 1.0, foot_r: 1.8, name: "The Fallen Watchtower", lore: "It guarded the pass once. The pass forgot.", buff: BuffKind::Resist, mag: 0.6, beacon: Color::srgb(1.0, 0.8, 0.35) },
+        Spec { biome: Biome::Snow, mesh: frozen_camp, kit: Some("story_lost_camp"), kit_foot: 2.5, scale: 1.0, block_r: 0.9, foot_r: 1.5, name: "The Frozen Camp", lore: "The expedition that never came home.", buff: BuffKind::Resist, mag: 0.6, beacon: Color::srgb(0.3, 0.92, 1.0) },
+        Spec { biome: Biome::Swamp, mesh: sunken_wreck, kit: Some("story_boat"), kit_foot: 2.7, scale: 1.0, block_r: 1.0, foot_r: 1.7, name: "The Sunken Wreck", lore: "The bog swallowed her whole, crew and all.", buff: BuffKind::Haste, mag: 1.3, beacon: Color::srgb(0.4, 0.95, 0.82) },
     ]
 }
 
@@ -384,6 +388,11 @@ pub fn populate_vignettes(commands: &mut Commands, meshes: &mut Assets<Mesh>, ma
             }
             _ => None,
         }
+        .or_else(|| {
+            let kit_on = s.kit.is_some_and(|n| crate::realforest::get().is_some_and(|k| k.has(n)));
+            let wide = Spec { foot_r: s.kit_foot.max(s.foot_r), ..s };
+            if kit_on && wide.foot_r > s.foot_r { search(&wide, spec_seed(i), footprint_clear) } else { None }
+        })
         .or_else(|| search(&s, spec_seed(i), footprint_clear));
         if let Some((x, z, y, yaw)) = spot {
             let tf = Transform::from_xyz(x, y, z).with_rotation(Quat::from_rotation_y(yaw)).with_scale(Vec3::splat(s.scale));
