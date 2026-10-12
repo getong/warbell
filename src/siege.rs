@@ -605,6 +605,7 @@ impl Plugin for SiegePlugin {
         // Campaign-only — Skirmish has no night waves (RtsOutcome ends the RTS run instead).
         app.init_resource::<KeepHp>()
             .init_resource::<Siege>()
+            .init_resource::<NightMods>()
             .init_resource::<GameTime>()
             // Ungated spawn: the invader armory (asset baking) + the siege HUD root are built in
             // EVERY boot (the mode can flip mid-process); the HUD root is tagged `CampaignOnly` so
@@ -691,12 +692,62 @@ fn keep_attack_alert(
     *prev_hp = keep.hp;
 }
 
+/// Temporary night modifiers set by content (e.g. a desecrated ork graveyard: +2 berserkers for
+/// 2 nights). Read once per night when the wave begins ([`NightMods::take_night`]), saved
+/// (`SaveData::night_mods`), cleared on a fresh run.
+///
+/// ```ignore
+/// fn desecrate(mut mods: ResMut<NightMods>) { mods.add(2, 2); }
+/// ```
+#[derive(Resource, Default, Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct NightMods {
+    /// Extra berserkers joining each affected night (on top of the threat's own roster).
+    pub extra_berserkers: u32,
+    /// How many more nights the modifier lasts.
+    pub nights_left: u32,
+}
+
+impl NightMods {
+    #[allow(dead_code)] // content API: the graveyard package calls it
+    /// Stack a modifier: the extra orks add up, the duration extends to the longer one.
+    pub fn add(&mut self, extra_berserkers: u32, nights: u32) {
+        self.extra_berserkers += extra_berserkers;
+        self.nights_left = self.nights_left.max(nights);
+    }
+    /// Consume one night: returns this night's extra berserkers and counts the duration down
+    /// (clearing the modifier when it runs out).
+    pub fn take_night(&mut self) -> u32 {
+        if self.nights_left == 0 {
+            self.extra_berserkers = 0;
+            return 0;
+        }
+        let extra = self.extra_berserkers;
+        self.nights_left -= 1;
+        if self.nights_left == 0 {
+            self.extra_berserkers = 0;
+        }
+        extra
+    }
+}
+
+/// Run-state the director reads besides the siege itself, bundled to keep `run_director` under
+/// Bevy's 16-param cap.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct DirectorRes<'w> {
+    eco: Res<'w, crate::economy::EconomyState>,
+    def: Res<'w, crate::economy::Defenses>,
+    campaign: Res<'w, crate::quest::CampaignRes>,
+    night_mods: ResMut<'w, NightMods>,
+}
+
 fn reset_siege(
     mut siege: ResMut<Siege>,
     mut keep: ResMut<KeepHp>,
+    mut night_mods: ResMut<NightMods>,
     invaders: Query<Entity, With<WaveInvader>>,
     mut commands: Commands,
 ) {
+    *night_mods = NightMods::default();
     for e in &invaders {
         commands.entity(e).try_despawn();
     }
@@ -884,9 +935,7 @@ pub(crate) fn run_director(
     mut siege: ResMut<Siege>,
     mut keep: ResMut<KeepHp>,
     mut player: ResMut<crate::player::PlayerRes>,
-    eco: Res<crate::economy::EconomyState>,
-    def: Res<crate::economy::Defenses>,
-    campaign: Res<crate::quest::CampaignRes>,
+    mut ctx: DirectorRes,
     mut town: ResMut<crate::town::TownRes>,
     mut floats: ResMut<crate::combat_fx::FloatQueue>,
     armory: Option<Res<InvaderArmory>>,
@@ -920,7 +969,7 @@ pub(crate) fn run_director(
     let alive = alive_invaders.iter().count() as u32; // fading corpses don't count → wave clears
     let mods = mods_for(siege.difficulty);
     let next_night = (siege.wave_index + 1).max(0) as usize;
-    if siege.phase == GamePhase::Prep && campaign.0.learning_day(next_night) {
+    if siege.phase == GamePhase::Prep && ctx.campaign.0.learning_day(next_night) {
         siege.timers = guided_prep_timers(siege.timers, now, PREP_DURATION * mods.prep_mul, siege.skip_requested);
     }
     let res = step_wave_director(&WaveStepInput {
@@ -943,11 +992,24 @@ pub(crate) fn run_director(
                 siege.spawned = 0;
                 // Reinforce the keep for this night: its MAX HP scales with the night index, and
                 // the new headroom is granted as real HP (the town shored up the walls overnight).
-                let new_max = keep_max_for(siege.wave_index, siege.difficulty, def.reinforced);
+                let new_max = keep_max_for(siege.wave_index, siege.difficulty, ctx.def.reinforced);
                 let delta = new_max - keep.max;
                 keep.max = new_max;
                 if delta > 0.0 {
                     keep.hp = (keep.hp + delta).min(keep.max);
+                }
+                // Content night modifiers (`NightMods`): extra berserkers march with this night.
+                // They are live `WaveInvader`s outside the threat quota, so the night only clears
+                // once they fall too.
+                let extra = ctx.night_mods.take_night();
+                if let (Some(arm), true) = (armory.as_deref(), extra > 0) {
+                    let hp = (base_hp(OrkVariant::Berserker) * threat_for(index).hp_scale * mods.hp_mul
+                        * ork_level_hp_mul(player.0.level))
+                    .round();
+                    for k in 0..extra {
+                        let ring_index = 97 + k * 5 + index as u32 * 7;
+                        spawn_invader(&mut commands, &arm.0, OrkVariant::Berserker, hp, ring_index, now, Tactic::March);
+                    }
                 }
             }
             WaveAction::SetPhase(p) => {
@@ -960,7 +1022,7 @@ pub(crate) fn run_director(
                     // The dawn tithe: every villager who survived the night pays gold (the Tax
                     // Office doubles it). Population — not loot loops — is the gold engine, so
                     // the float spells out where the money came from.
-                    let tithe = town.0.tithe(eco.tax_office);
+                    let tithe = town.0.tithe(ctx.eco.tax_office);
                     if tithe > 0 {
                         player.0.add_gold(tithe);
                         floats.0.push(crate::combat_fx::FloatReq {
@@ -988,7 +1050,7 @@ pub(crate) fn run_director(
             }
             WaveAction::Spawn { variant, hp, spawn_index, wave_index } => {
                 let threat = threat_for(wave_index);
-                let cleared = crate::camps::raid_cleared(&campaign.0, wave_index);
+                let cleared = crate::camps::raid_cleared(&ctx.campaign.0, wave_index);
                 let Some(slot) = threat.slot_after_raid(spawn_index, cleared) else {
                     // Consume prevented slots too. The reducer's quota measures planned slots;
                     // leaving these uncounted would spawn forever and strand a reduced night.
@@ -2060,5 +2122,26 @@ mod tests {
         assert_eq!(nearest_guard_in_range(from, &far, GUARD_ENGAGE), None);
         // No guards at all → march the keep.
         assert_eq!(nearest_guard_in_range(from, &[], GUARD_ENGAGE), None);
+    }
+}
+
+#[cfg(test)]
+mod night_mods_tests {
+    use super::NightMods;
+
+    #[test]
+    fn night_mods_apply_for_their_nights_then_clear() {
+        let mut m = NightMods::default();
+        assert_eq!(m.take_night(), 0, "no modifier, no extras");
+        m.add(2, 2); // graveyard desecrated: +2 berserkers for 2 nights
+        assert_eq!(m.take_night(), 2);
+        assert_eq!(m.nights_left, 1);
+        assert_eq!(m.take_night(), 2);
+        assert_eq!(m, NightMods::default(), "spent modifier clears");
+        assert_eq!(m.take_night(), 0);
+        // Stacking: extras add, duration takes the longer.
+        m.add(2, 2);
+        m.add(1, 3);
+        assert_eq!((m.extra_berserkers, m.nights_left), (3, 3));
     }
 }

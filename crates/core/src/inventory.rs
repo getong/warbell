@@ -40,6 +40,10 @@ pub enum ItemKind {
     Weapon,
     Armor,
     Token,
+    /// A crafting/trade material (witch ingredients, the sleep-smoke throwable): sellable, but inert
+    /// when clicked in the bag — the content module that uses it (witch exchange stone, a throw
+    /// verb) consumes it via `Bag::consume_item`.
+    Material,
 }
 
 /// Which quick-slot a consumable surfaces in: the Food slot (Q) or one of the
@@ -134,6 +138,10 @@ impl ItemDef {
             ItemKind::Weapon => format!("+{} attack", self.damage_bonus as i64),
             ItemKind::Armor => format!("-{}% damage taken", (self.defense * 100.0).round() as i64),
             ItemKind::Token => "Key item".to_string(),
+            ItemKind::Material => match self.id {
+                "sleep_smoke" => "Thrown: a camp sleeps 25s".to_string(),
+                _ => "Ingredient".to_string(),
+            },
             ItemKind::Consumable => {
                 let mut parts: Vec<String> = Vec::new();
                 if self.heal > 0.0 {
@@ -228,6 +236,16 @@ impl ItemDef {
             "blade_frost" => return IconSpec { shape: IconShape::Blade, fg: (170, 210, 240), accent: (90, 110, 140) },
             "dragon_plate" => return IconSpec { shape: IconShape::Shield, fg: (70, 120, 80), accent: (40, 70, 50) },
             "sword_gold" => return IconSpec { shape: IconShape::Blade, fg: (235, 205, 90), accent: (150, 110, 50) },
+            // ─── Living-island content (zywa-wyspa spec §3) ───
+            "honeycomb" => return IconSpec { shape: IconShape::Food, fg: (225, 165, 45), accent: (140, 95, 30) },
+            "toad_glow" => return IconSpec { shape: IconShape::Orb, fg: (150, 225, 120), accent: (235, 255, 200) },
+            "vulture_quill" => return IconSpec { shape: IconShape::Herb, fg: (70, 60, 55), accent: (200, 190, 175) },
+            "antlion_chitin" => return IconSpec { shape: IconShape::Shield, fg: (165, 120, 70), accent: (95, 65, 35) },
+            "bog_draught" => return IconSpec { shape: IconShape::Potion, fg: (95, 120, 70), accent: (130, 100, 70) },
+            "wolfsbane" => return IconSpec { shape: IconShape::Potion, fg: (120, 70, 150), accent: (130, 100, 70) },
+            "hornet_balm" => return IconSpec { shape: IconShape::Potion, fg: (215, 160, 50), accent: (130, 100, 70) },
+            "sleep_smoke" => return IconSpec { shape: IconShape::Orb, fg: (150, 150, 165), accent: (215, 215, 225) },
+            "ring_cleaver" => return IconSpec { shape: IconShape::Blade, fg: (160, 150, 145), accent: (120, 40, 35) },
             "gold_armor" => return IconSpec { shape: IconShape::Shield, fg: (220, 185, 90), accent: (150, 115, 50) },
             _ => {}
         }
@@ -236,6 +254,7 @@ impl ItemDef {
             ItemKind::Weapon => IconSpec { shape: IconShape::Blade, fg: (190, 195, 205), accent: (120, 90, 55) },
             ItemKind::Armor => IconSpec { shape: IconShape::Shield, fg: (150, 155, 165), accent: (90, 95, 105) },
             ItemKind::Token => IconSpec { shape: IconShape::Scroll, fg: (215, 195, 150), accent: (150, 120, 80) },
+            ItemKind::Material => IconSpec { shape: IconShape::Orb, fg: (170, 160, 140), accent: (230, 225, 210) },
             ItemKind::Consumable => {
                 // A consumable with no bespoke spec: a buff item → tinted orb, a healer
                 // → a loaf/food round.
@@ -293,6 +312,33 @@ pub static ITEM_DEFS: &[ItemDef] = &[
     ItemDef::new("dragon_plate", "Dragonscale Plate", "🐉", ItemKind::Armor).def(0.42).stack(),
     // ─── Key items (tokens) ───────────────────────────────────────
     ItemDef::new("mercenary_contract", "Mercenary Contract", "📜", ItemKind::Token).stack(),
+    // ─── Living-island content (spec 2026-10-13 §3) ───────────────
+    // Empty `icon` = no emoji/Twemoji (that folder only ships the original set) → the procedural
+    // `icon_spec` recipe above is rasterised instead.
+    // Creature loot / witch ingredients. Honeycomb is edible (heal + a short Haste, tagged Food).
+    ItemDef::new("honeycomb", "Honeycomb", "", ItemKind::Consumable)
+        .heal(30.0)
+        .stack()
+        .buff(BuffKind::Haste, 6000.0, 1.2)
+        .quick(QuickKind::Food),
+    ItemDef::new("toad_glow", "Toad Glow", "", ItemKind::Material).stack(),
+    ItemDef::new("vulture_quill", "Vulture Quill", "", ItemKind::Material).stack(),
+    ItemDef::new("antlion_chitin", "Antlion Chitin", "", ItemKind::Material).stack(),
+    // Witch brews (Old Seffa) — 30 s versions of the creature-charm buffs.
+    ItemDef::new("bog_draught", "Bog Draught", "", ItemKind::Consumable)
+        .heal(60.0)
+        .stack()
+        .buff(BuffKind::Resist, 30000.0, 0.6),
+    ItemDef::new("wolfsbane", "Wolfsbane Brew", "", ItemKind::Consumable)
+        .stack()
+        .buff(BuffKind::Power, 30000.0, 1.4),
+    ItemDef::new("hornet_balm", "Hornet Balm", "", ItemKind::Consumable)
+        .stack()
+        .buff(BuffKind::Haste, 30000.0, 1.3),
+    // Thrown at an ork camp (the throw verb is the witch package's) — inert in the bag.
+    ItemDef::new("sleep_smoke", "Sleep Smoke", "", ItemKind::Material).stack(),
+    // Hrolk's blade from Skarn's Ring.
+    ItemDef::new("ring_cleaver", "Ring Cleaver", "", ItemKind::Weapon).dmg(26.0).stack(),
 ];
 
 /// Resolve an item id to its definition (the TS `ITEM_DEFS[id]`).
@@ -310,6 +356,7 @@ pub fn sell_value(id: &str) -> i64 {
         ItemKind::Armor => 4 + (d.defense * 60.0).round() as i64,
         ItemKind::Consumable => 1 + (d.heal / 8.0).round() as i64 + if d.buff.is_some() { 3 } else { 0 },
         ItemKind::Token => 0,
+        ItemKind::Material => 3,
     }
 }
 
@@ -775,7 +822,7 @@ impl Bag {
                 self.equip_from_bag(i, ItemKind::Armor);
                 None
             }
-            ItemKind::Token => None, // inert
+            ItemKind::Token | ItemKind::Material => None, // inert
         }
     }
 
@@ -1137,6 +1184,33 @@ mod tests {
         // Every defined item resolves to *some* spec (no panic / missing arm).
         for d in ITEM_DEFS {
             let _ = d.icon_spec();
+        }
+    }
+
+    #[test]
+    fn living_island_items_exist_with_their_effects() {
+        let buff = |id: &str| item_def(id).unwrap().buff.map(|(k, d, m)| (k, d, m));
+        assert_eq!(buff("bog_draught"), Some((BuffKind::Resist, 30000.0, 0.6)));
+        assert_eq!(item_def("bog_draught").unwrap().heal, 60.0);
+        assert_eq!(buff("wolfsbane"), Some((BuffKind::Power, 30000.0, 1.4)));
+        assert_eq!(buff("hornet_balm"), Some((BuffKind::Haste, 30000.0, 1.3)));
+        assert_eq!(item_def("honeycomb").unwrap().quick_of(), QuickKind::Food);
+        assert_eq!(item_def("ring_cleaver").unwrap().damage_bonus, 26.0);
+        for id in ["toad_glow", "vulture_quill", "antlion_chitin", "sleep_smoke"] {
+            let d = item_def(id).unwrap();
+            assert_eq!(d.kind, ItemKind::Material);
+            assert!(sell_value(id) > 0, "{id} sells to the witch");
+        }
+        // Materials are inert in the bag (no consume effect, still there afterwards).
+        let mut b = Bag::new();
+        b.add("toad_glow", 2);
+        let i = b.bag.iter().position(|s| s.item_id.as_deref() == Some("toad_glow")).unwrap();
+        assert_eq!(b.activate_bag_item(i), None);
+        assert_eq!(b.count_item("toad_glow"), 2);
+        assert_eq!(item_def("sleep_smoke").unwrap().stat_line(), "Thrown: a camp sleeps 25s");
+        // Ids are unique across the whole table.
+        for (i, d) in ITEM_DEFS.iter().enumerate() {
+            assert!(ITEM_DEFS[i + 1..].iter().all(|o| o.id != d.id), "duplicate id {}", d.id);
         }
     }
 

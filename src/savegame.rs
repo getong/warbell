@@ -29,6 +29,7 @@
 //! pickup `Toasts`, and the **muster** — a rallied war party (`villagers::Rallied`) is battlefield
 //! state, so a loaded run boots unrallied and `K` re-rallies. (See CLAUDE.md for the full list.)
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use bevy::ecs::system::SystemParam;
@@ -148,6 +149,46 @@ pub struct SaveData {
     /// default to `0.0` and simply resume with the clock restarting.
     #[serde(default)]
     pub playtime_secs: f64,
+    // ── content state (living-island packages) ──
+    /// [`WorldFlags`] — free-form per-package run state. Additive — old saves default to empty.
+    #[serde(default)]
+    pub world_flags: BTreeMap<String, i64>,
+    /// [`NightMods`](crate::siege::NightMods) still pending. Additive — old saves default to none.
+    #[serde(default)]
+    pub night_mods: crate::siege::NightMods,
+}
+
+/// Free-form, saved run state for content modules (witch trades, graveyard desecration, Tobin, …):
+/// string key → i64. Round-trips the save (`SaveData::world_flags`), is restored on load and wiped
+/// on every fresh run (New Game / Restart / Play Again), so a content module never needs its own
+/// save field or reset system. Keys are listed in the content spec (2026-10-13 §3); absent = 0.
+///
+/// ```ignore
+/// fn on_take(mut flags: ResMut<WorldFlags>) { flags.set("graveyard_desecrated", 1); flags.add("witch_favour", -1); }
+/// if flags.is("witch_open") { /* … */ }
+/// ```
+#[derive(Resource, Default, Clone, Debug, PartialEq, Eq)]
+pub struct WorldFlags(pub BTreeMap<String, i64>);
+
+#[allow(dead_code)] // content API: read/written by the living-island packages
+impl WorldFlags {
+    /// The flag's value, 0 when never set.
+    pub fn get(&self, key: &str) -> i64 {
+        self.0.get(key).copied().unwrap_or(0)
+    }
+    /// Non-zero?
+    pub fn is(&self, key: &str) -> bool {
+        self.get(key) != 0
+    }
+    pub fn set(&mut self, key: &str, value: i64) {
+        self.0.insert(key.to_string(), value);
+    }
+    /// Add `delta` (counters like `witch_trades`); returns the new value.
+    pub fn add(&mut self, key: &str, delta: i64) -> i64 {
+        let v = self.0.entry(key.to_string()).or_insert(0);
+        *v += delta;
+        *v
+    }
 }
 
 /// Set when the player picks **Continue**; drained by [`apply_pending_load`] on the next play frame.
@@ -247,6 +288,7 @@ impl Plugin for SaveGamePlugin {
             .init_resource::<SaveSlots>()
             .init_resource::<Playtime>()
             .init_resource::<AutosaveTimer>()
+            .init_resource::<WorldFlags>()
             .add_message::<GameLoaded>()
             .add_message::<RequestSave>()
             // Ungated: only scans which save files exist (no gameplay side effects), so it can run
@@ -417,19 +459,26 @@ fn rescan_slots(mut slots: ResMut<SaveSlots>) {
     refresh_slots(&mut slots);
 }
 
-/// The two per-run clocks, bundled so [`apply_pending_load`] can restore both without blowing past
-/// Bevy's 16-param system ceiling.
+/// The per-run clocks + small run-state stores, bundled so [`apply_pending_load`] can restore them
+/// without blowing past Bevy's 16-param system ceiling.
 #[derive(SystemParam)]
 struct RunClocks<'w> {
     playtime: ResMut<'w, Playtime>,
     timer: ResMut<'w, AutosaveTimer>,
     campaign: ResMut<'w, CampaignRes>,
+    flags: ResMut<'w, WorldFlags>,
+    night_mods: ResMut<'w, crate::siege::NightMods>,
 }
 
 /// Fresh-run reset (`OnExit(StartScreen)` / `OnExit(GameOver)`, like every other `reset_*`): the
 /// play clock restarts at zero and the periodic autosave is re-armed a full interval out. A
 /// **Continue** takes the same path, then [`apply_pending_load`] overwrites both from the snapshot.
-fn reset_run_clocks(mut playtime: ResMut<Playtime>, mut timer: ResMut<AutosaveTimer>) {
+fn reset_run_clocks(
+    mut playtime: ResMut<Playtime>,
+    mut timer: ResMut<AutosaveTimer>,
+    mut flags: ResMut<WorldFlags>,
+) {
+    flags.0.clear(); // content run-state goes with the clocks (a Continue overwrites it)
     playtime.0 = 0.0;
     *timer = AutosaveTimer::default();
 }
@@ -467,6 +516,8 @@ struct SaveCtx<'w, 's> {
     rival: Res<'w, crate::rival::RivalState>,
     active_map: Res<'w, crate::worldmap::ActiveMap>,
     playtime: Res<'w, Playtime>,
+    flags: Res<'w, WorldFlags>,
+    night_mods: Res<'w, crate::siege::NightMods>,
     chests: Query<'w, 's, (&'static Chest, &'static ChestId)>,
     landmarks: Query<'w, 's, &'static Landmark>,
 }
@@ -524,6 +575,8 @@ impl SaveCtx<'_, '_> {
             rival_destroyed: self.rival.destroyed,
             saved_at: unix_now(),
             playtime_secs: self.playtime.0,
+            world_flags: self.flags.0.clone(),
+            night_mods: *self.night_mods,
         }
     }
 }
@@ -706,6 +759,8 @@ fn apply_pending_load(
     clocks.playtime.0 = data.playtime_secs;
     clocks.timer.pending = false;
     clocks.timer.next_at = data.playtime_secs + AUTOSAVE_INTERVAL;
+    clocks.flags.0 = data.world_flags.clone();
+    *clocks.night_mods = data.night_mods;
 
     // Run state — clean Prep at the saved night.
     siege.difficulty = data.difficulty;
@@ -906,6 +961,8 @@ mod tests {
             rival_destroyed: false,
             saved_at: 1_750_000_000,
             playtime_secs: 1234.0,
+            world_flags: BTreeMap::from([("witch_trades".to_string(), 2), ("graveyard_desecrated".to_string(), 1)]),
+            night_mods: crate::siege::NightMods { extra_berserkers: 2, nights_left: 1 },
         }
     }
 
@@ -930,6 +987,68 @@ mod tests {
         assert_eq!(back.campaign, sample().campaign);
         assert!(back.bag.has_item("potion"));
         assert!(back.town.plots[0].is_built());
+        assert_eq!(back.world_flags, data.world_flags, "world flags round-trip");
+        assert_eq!(back.night_mods, data.night_mods, "night mods round-trip");
+    }
+
+    /// Saves from before the content packages have neither field → empty flags, no night mods.
+    #[test]
+    fn old_save_without_world_flags_loads_empty() {
+        let mut v = serde_json::to_value(sample()).unwrap();
+        v.as_object_mut().unwrap().remove("world_flags");
+        v.as_object_mut().unwrap().remove("night_mods");
+        let back: SaveData = serde_json::from_value(v).expect("old save parses");
+        assert!(back.world_flags.is_empty());
+        assert_eq!(back.night_mods, crate::siege::NightMods::default());
+    }
+
+    #[test]
+    fn world_flags_accessors() {
+        let mut f = WorldFlags::default();
+        assert_eq!(f.get("witch_trades"), 0);
+        assert!(!f.is("witch_open"));
+        assert_eq!(f.add("witch_trades", 1), 1);
+        assert_eq!(f.add("witch_trades", 2), 3);
+        f.set("witch_open", 1);
+        assert!(f.is("witch_open"));
+    }
+
+    /// Every fresh-run path (New Game / Restart via StartScreen, Play Again via GameOver) wipes the
+    /// flags; a title RESUME keeps them.
+    #[test]
+    fn fresh_run_wipes_world_flags_but_resume_keeps_them() {
+        use crate::game_state::ResumingRun;
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin)
+            .init_state::<AppState>()
+            .init_resource::<ResumingRun>()
+            .init_resource::<Playtime>()
+            .init_resource::<AutosaveTimer>()
+            .init_resource::<WorldFlags>()
+            .add_systems(OnExit(AppState::StartScreen), reset_run_clocks.run_if(crate::game_state::fresh_run_reset))
+            .add_systems(OnExit(AppState::GameOver), reset_run_clocks);
+        app.update();
+        let go = |app: &mut App, s: AppState| {
+            app.world_mut().resource_mut::<NextState<AppState>>().set(s);
+            app.update();
+        };
+        let flag = |app: &App| app.world().resource::<WorldFlags>().get("tobin_rescued");
+
+        // New Game.
+        app.world_mut().resource_mut::<WorldFlags>().set("tobin_rescued", 1);
+        go(&mut app, AppState::Playing);
+        assert_eq!(flag(&app), 0, "New Game clears last run's flags");
+        // Title → RESUME keeps the live run.
+        app.world_mut().resource_mut::<WorldFlags>().set("tobin_rescued", 1);
+        go(&mut app, AppState::StartScreen);
+        app.world_mut().resource_mut::<ResumingRun>().0 = true;
+        go(&mut app, AppState::Playing);
+        assert_eq!(flag(&app), 1, "RESUME keeps flags");
+        app.world_mut().resource_mut::<ResumingRun>().0 = false;
+        // Game over → Play Again.
+        go(&mut app, AppState::GameOver);
+        go(&mut app, AppState::Playing);
+        assert_eq!(flag(&app), 0, "Play Again clears flags");
     }
 
     #[test]
@@ -986,6 +1105,8 @@ mod tests {
             .init_resource::<Discoveries>()
             .init_resource::<Playtime>()
             .init_resource::<AutosaveTimer>()
+            .init_resource::<WorldFlags>()
+            .init_resource::<crate::siege::NightMods>()
             .add_systems(Update, apply_pending_load);
 
         let mut data = sample();
@@ -1014,6 +1135,8 @@ mod tests {
         assert_eq!(w.resource::<RescuedCamps>().done, vec![true, false, true]);
         assert_eq!(w.resource::<RescuedCamps>().seen, vec![true, true, true], "pending rescue remains observable in an empty, raided camp");
         assert_eq!(w.resource::<Playtime>().0, 1234.0, "play clock resumed");
+        assert_eq!(w.resource::<WorldFlags>().get("witch_trades"), 2, "world flags restored");
+        assert_eq!(w.resource::<crate::siege::NightMods>().nights_left, 1, "night mods restored");
         assert_eq!(
             w.resource::<AutosaveTimer>().next_at,
             1234.0 + AUTOSAVE_INTERVAL,

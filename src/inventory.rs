@@ -648,7 +648,7 @@ fn kind_accent_color(kind: ItemKind) -> Color {
     match kind {
         ItemKind::Weapon | ItemKind::Armor => GOLD,
         ItemKind::Consumable => GREEN,
-        ItemKind::Token => TEXT_FAINT,
+        ItemKind::Token | ItemKind::Material => TEXT_FAINT,
     }
 }
 
@@ -844,7 +844,7 @@ fn inv_tooltip(
                 let cur = ((1.0 - inv.0.armor_damage_mult()) * 100.0).round() as i64;
                 format!("Equip: -{}% dmg taken  (current -{}%)", (def.defense * 100.0).round() as i64, cur)
             }
-            ItemKind::Token => String::new(),
+            ItemKind::Token | ItemKind::Material => String::new(),
         };
     }
     node.display = Display::Flex;

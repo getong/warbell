@@ -7,7 +7,7 @@
 use bevy::prelude::*;
 use tileworld_core::inventory::{item_def, sell_value};
 use tileworld_core::player::Player;
-use tileworld_core::shop_catalog::{build_shop_items, discounted_price};
+use tileworld_core::shop_catalog::{discounted_price, vendor_items, ShopVendor};
 use tileworld_core::upgrade_store::{node_by_id, UpgradeEffect, UpgradeState, UPGRADE_NODES};
 
 use crate::game_state::{AppState, Modal};
@@ -64,6 +64,24 @@ impl Default for EconomyState {
     }
 }
 
+/// Who the shop modal is trading as (`Market` stall, `Witch`, `Caravan`). Openers set it via
+/// [`open_vendor`]; it falls back to `Market` whenever the shop closes, so every other path
+/// (`FOREST_PANEL=shop`, the stall's `[E] Shop`) keeps the original merchant.
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ActiveVendor(pub ShopVendor);
+
+/// Open the shop modal as `vendor` — the one call a content module needs (e.g. from its
+/// `interaction::Interacted` handler): `open_vendor(ShopVendor::Witch, &mut vendor, &mut modal)`.
+#[allow(dead_code)] // content API: the witch / caravan packages call it
+pub fn open_vendor(vendor: ShopVendor, active: &mut ActiveVendor, modal: &mut NextState<Modal>) {
+    active.0 = vendor;
+    modal.set(Modal::Shop);
+}
+
+fn reset_vendor(mut active: ResMut<ActiveVendor>) {
+    active.0 = ShopVendor::Market;
+}
+
 /// Reinforced-Keep bonus (forest's keep is 1500 base; +400 → 1900, healed to full).
 pub const REINFORCE_BONUS: f32 = 400.0;
 // (The old flat Tax Office stipend is gone: dawn gold is now the population tithe —
@@ -77,6 +95,7 @@ impl Plugin for EconomyPlugin {
             .init_resource::<Upgrades>()
             .init_resource::<Defenses>()
             .init_resource::<EconomyState>()
+            .init_resource::<ActiveVendor>()
             // Fresh run wipes the economy (gold resets with PlayerRes).
             .add_systems(OnExit(AppState::StartScreen), reset_economy.run_if(crate::game_state::fresh_run_reset))
             .add_systems(OnExit(AppState::GameOver), reset_economy)
@@ -87,7 +106,7 @@ impl Plugin for EconomyPlugin {
             // Merchant shop (open with T; buys land in the bag).
             .add_sim_systems(open_shop)
             .add_systems(OnEnter(Modal::Shop), spawn_shop)
-            .add_systems(OnExit(Modal::Shop), despawn_shop)
+            .add_systems(OnExit(Modal::Shop), (despawn_shop, reset_vendor))
             .add_systems(Update, (shop_interact, shop_close).run_if(in_state(Modal::Shop)));
         // Clip-only: auto-fill the War Table for a tree-showcase clip (ungated — runs while the
         // tree panel is up, which freezes the world).
@@ -255,12 +274,13 @@ fn open_shop(mut next: ResMut<NextState<Modal>>, mut auto_done: Local<bool>) {
 fn spawn_shop(
     mut commands: Commands,
     eco: Res<EconomyState>,
+    vendor: Res<ActiveVendor>,
     inv: Res<Inventory>,
     fonts: Res<UiFonts>,
     atlas: Res<IconAtlas>,
     tex: Res<crate::ui::texture::UiTextures>,
 ) {
-    build_shop_panel(&mut commands, &eco, &inv, &fonts, &atlas, &tex);
+    build_shop_panel(&mut commands, &eco, vendor.0, &inv, &fonts, &atlas, &tex);
 }
 
 /// (Re)build the merchant panel: a BUY list (catalog) above a SELL list (the bag's sellable items).
@@ -269,13 +289,14 @@ fn spawn_shop(
 fn build_shop_panel(
     commands: &mut Commands,
     eco: &EconomyState,
+    vendor: ShopVendor,
     inv: &Inventory,
     fonts: &UiFonts,
     atlas: &IconAtlas,
     tex: &crate::ui::texture::UiTextures,
 ) {
     let discount = eco.shop_discount as f64;
-    let items = build_shop_items(&eco.unlocked_weapons);
+    let items = vendor_items(vendor, &eco.unlocked_weapons);
     // Distinct sellable bag items (skip key items — `sell_value` 0) with their stack counts.
     let mut sellable: Vec<(String, i64, i64)> = Vec::new(); // (id, count, unit_price)
     for slot in inv.0.bag.iter() {
@@ -317,7 +338,7 @@ fn build_shop_panel(
             })
             .insert(BorderColor::all(BORDER_SOFT))
             .with_children(|h| {
-                h.spawn(label(&fonts.display, "WANDERING MERCHANT", 16.0, GOLD));
+                h.spawn(label(&fonts.display, vendor.title(), 16.0, GOLD));
                 h.spawn(Node {
                     flex_direction: FlexDirection::Row,
                     align_items: AlignItems::Center,
@@ -436,6 +457,7 @@ fn shop_close(
 fn shop_interact(
     time: Res<Time>,
     eco: Res<EconomyState>,
+    vendor: Res<ActiveVendor>,
     mut player: ResMut<PlayerRes>,
     mut inv: ResMut<Inventory>,
     mut toasts: ResMut<Toasts>,
@@ -456,7 +478,7 @@ fn shop_interact(
     let mut acted = false;
     // Built once per tick — the catalog is tiny but this system runs every frame the shop is open
     // and both the BUY loop and the recolour loop scan it (was rebuilt per-button before).
-    let items = build_shop_items(&eco.unlocked_weapons);
+    let items = vendor_items(vendor.0, &eco.unlocked_weapons);
 
     // BUY: a click or Enter/E focus activation (one per press).
     for (e, interaction, btn, _) in &buy_buttons {
@@ -497,7 +519,7 @@ fn shop_interact(
         for e in &panel {
             commands.entity(e).despawn();
         }
-        build_shop_panel(&mut commands, &eco, &inv, &fonts, &atlas, &tex);
+        build_shop_panel(&mut commands, &eco, vendor.0, &inv, &fonts, &atlas, &tex);
         return;
     }
 

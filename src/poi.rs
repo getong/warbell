@@ -269,6 +269,9 @@ struct StorySite { kind: usize, pos: Vec2, yaw: f32 }
 static STORY_SITES: std::sync::Mutex<Vec<StorySite>> = std::sync::Mutex::new(Vec::new());
 
 pub fn reset_plan() { STORY_SITES.lock().unwrap().clear(); }
+/// World XZ of every planned roadside story site + the gallows (the density audit reads these).
+#[allow(dead_code)]
+pub(crate) fn planned_story_sites() -> Vec<Vec2> { STORY_SITES.lock().unwrap().iter().map(|s| s.pos).collect() }
 
 /// Extra clear radius around a cold story site (see [`story_clearings`]).
 const COLD_SIGHTLINE: f32 = 3.5;

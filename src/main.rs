@@ -60,6 +60,8 @@ mod debug_panel;
 mod debug_stats;
 mod decor;
 mod demo;
+#[cfg(test)]
+mod density_report; // test-only 40u planned-site density audit (living-island spec §1)
 mod defenses;
 mod distant_isles;
 mod dof;

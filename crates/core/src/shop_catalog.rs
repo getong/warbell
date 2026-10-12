@@ -46,6 +46,47 @@ pub fn build_shop_items(unlocked: &[&str]) -> Vec<ShopItem> {
     items
 }
 
+/// Who is behind the counter when the shop modal opens. `Market` is the original merchant stall by
+/// the W gate (its catalog = [`build_shop_items`]); the others are content vendors whose stock lives
+/// in their own catalog below. The ECS layer holds the active one as a resource and every opener
+/// sets it before switching to the shop modal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ShopVendor {
+    #[default]
+    Market,
+    /// Old Seffa at the Witch's Hut (swamp) — buys ingredients, sells brews.
+    Witch,
+    /// The Salt Caravan (travelling Pasha traders).
+    Caravan,
+}
+
+impl ShopVendor {
+    /// Panel header.
+    pub fn title(self) -> &'static str {
+        match self {
+            ShopVendor::Market => "WANDERING MERCHANT",
+            ShopVendor::Witch => "OLD SEFFA",
+            ShopVendor::Caravan => "SALT CARAVAN",
+        }
+    }
+}
+
+/// Old Seffa's stock. Empty until the swamp package fills it.
+pub static WITCH_CATALOG: &[ShopItem] = &[];
+
+/// The Salt Caravan's stock. Empty until the meadow package fills it.
+pub static CARAVAN_CATALOG: &[ShopItem] = &[];
+
+/// The live BUY list for `vendor`. The Market keeps its exact original behaviour
+/// (`build_shop_items(unlocked)`); content vendors ignore the Arsenal unlocks.
+pub fn vendor_items(vendor: ShopVendor, unlocked: &[&str]) -> Vec<ShopItem> {
+    match vendor {
+        ShopVendor::Market => build_shop_items(unlocked),
+        ShopVendor::Witch => WITCH_CATALOG.to_vec(),
+        ShopVendor::Caravan => CARAVAN_CATALOG.to_vec(),
+    }
+}
+
 /// The Merchant-Guild discount: a flat multiplier on every shop price. 1.0 = full
 /// price; 0.8 once the guild is purchased. Mirrors the `shopDiscount` module flag
 /// in shopStore.ts (here it lives on the shop state the ECS layer owns).
@@ -120,6 +161,18 @@ mod tests {
         assert_eq!(both.len(), 5);
         assert_eq!(both[3].id, "axe");
         assert_eq!(both[4].id, "sword_gold");
+    }
+
+    #[test]
+    fn vendor_items_keep_market_and_route_content_vendors() {
+        assert_eq!(ShopVendor::default(), ShopVendor::Market);
+        assert_eq!(vendor_items(ShopVendor::Market, &["axe"]), build_shop_items(&["axe"]));
+        assert_eq!(vendor_items(ShopVendor::Witch, &["axe"]), WITCH_CATALOG.to_vec());
+        assert_eq!(vendor_items(ShopVendor::Caravan, &[]), CARAVAN_CATALOG.to_vec());
+        // Every content-vendor line must name a real item.
+        for it in WITCH_CATALOG.iter().chain(CARAVAN_CATALOG) {
+            assert!(crate::inventory::item_def(it.id).is_some(), "{} not in ITEM_DEFS", it.id);
+        }
     }
 
     #[test]

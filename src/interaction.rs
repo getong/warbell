@@ -9,6 +9,18 @@
 //! **E "Open chest"** and a press emits `chest::OpenChest` (the actual loot + lid swing stays in
 //! `chest.rs`). Other verbs keep their own keys: **F** forage/rescue (`verbs`/`villagers`),
 //! **R** recruit (`villagers`), **I** satchel, **Q/Y/T** quick-use (`inventory`).
+//!
+//! **Content hook.** Any world entity can join the same E arbitration without a new
+//! `InteractKind`: give it an [`Interactable`] (prompt text + radius) and a transform, then read
+//! [`Interacted`] messages for its entity:
+//!
+//! ```ignore
+//! commands.spawn((Transform::from_xyz(x, y, z), Interactable::new("Leave an offering", 3.0), Grave));
+//! fn on_offer(mut ev: MessageReader<Interacted>, graves: Query<(), With<Grave>>) {
+//!     for Interacted(e) in ev.read() { if graves.contains(*e) { /* ... */ } }
+//! }
+//! ```
+//! Remove the component (or the entity) to withdraw the prompt.
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -54,6 +66,8 @@ enum InteractKind {
     /// shrine for a timed buff (`landmarks::shrine`).
     Shrine,
     Rebuild(usize),
+    /// A content entity carrying an [`Interactable`] — **E** emits [`Interacted`] for it.
+    Generic(Entity),
 }
 impl InteractKind {
     fn prompt(self) -> &'static str {
@@ -67,12 +81,50 @@ impl InteractKind {
             InteractKind::TrialChallenge => "Challenge the guardians",
             InteractKind::Shrine => "Pray at the shrine",
             InteractKind::Rebuild(_) => "Rebuild",
+            // The real text comes from `Interactable::prompt` via `ActiveInteraction::label`.
+            InteractKind::Generic(_) => "Interact",
         }
     }
     /// The keycap shown on the prompt chip. Every contextual action — chests included — is on **E**.
     fn key_label(self) -> &'static str {
         "E"
     }
+}
+
+/// Generic content interactable: stand within `radius` (world XZ, from the entity's
+/// `GlobalTransform`) and the `[E] {prompt}` chip appears in the shared nearest-wins arbitration;
+/// pressing E emits [`Interacted`] with this entity. Content modules use this instead of adding
+/// their own `InteractKind` variant.
+#[derive(Component, Clone, Debug)]
+pub struct Interactable {
+    pub prompt: String,
+    pub radius: f32,
+}
+
+#[allow(dead_code)] // content API: spawned by the living-island packages
+impl Interactable {
+    pub fn new(prompt: impl Into<String>, radius: f32) -> Self {
+        Self { prompt: prompt.into(), radius }
+    }
+}
+
+/// Fired when the hero presses E on an [`Interactable`] (the entity that carried it).
+#[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Interacted(pub Entity);
+
+/// Nearest `Interactable` within its own radius of `p` -> (entity, xz, distance, prompt).
+fn nearest_interactable<'a>(
+    p: Vec2,
+    items: impl Iterator<Item = (Entity, &'a Interactable, Vec2)>,
+) -> Option<(Entity, Vec2, f32, &'a str)> {
+    let mut best: Option<(Entity, Vec2, f32, &'a str)> = None;
+    for (e, it, at) in items {
+        let d = p.distance(at);
+        if d < it.radius && best.map_or(true, |(_, _, bd, _)| d < bd) {
+            best = Some((e, at, d, it.prompt.as_str()));
+        }
+    }
+    best
 }
 
 /// The interactable the hero is currently in range of (nearest wins), or `None`.
@@ -91,6 +143,14 @@ struct ActiveInteraction {
 struct ChestIo<'w, 's> {
     chests: Query<'w, 's, (Entity, &'static crate::chest::Chest, &'static Transform)>,
     open: MessageWriter<'w, crate::chest::OpenChest>,
+}
+
+/// Hold-gate + generic content interactables, bundled to keep `drive_interaction` under the cap.
+#[derive(SystemParam)]
+struct WorldIo<'w, 's> {
+    assault: Res<'w, crate::ork_fortress::AssaultState>,
+    breach: MessageWriter<'w, crate::ork_fortress::BreachGate>,
+    generic: Query<'w, 's, (Entity, &'static Interactable, &'static GlobalTransform)>,
 }
 
 /// Landmark read + interact-request, bundled to keep `drive_interaction` under the param cap.
@@ -136,8 +196,11 @@ impl Plugin for InteractionPlugin {
         // Campaign-only: contextual hero E-prompts (shop / gate / recruit) have no hero to drive
         // them in Skirmish. `drive_interaction` also takes `Res<HeroState>` non-optionally.
         app.init_resource::<ActiveInteraction>()
+            .add_message::<Interacted>()
             .add_systems(Startup, setup_prompt.run_if(crate::rts::in_campaign))
-            .add_sim_systems(drive_interaction.run_if(crate::rts::in_campaign))
+            .add_sim_systems(
+                (drive_interaction, fire_generic_interaction).chain().run_if(crate::rts::in_campaign),
+            )
             .add_systems(Update, update_prompt.run_if(crate::rts::in_campaign));
     }
 }
@@ -172,8 +235,7 @@ fn drive_interaction(
     mut voices: ResMut<crate::audio::director::VoiceManager>,
     mut chest_io: ChestIo,
     mut landmark_io: LandmarkIo,
-    assault: Res<crate::ork_fortress::AssaultState>,
-    mut breach: MessageWriter<crate::ork_fortress::BreachGate>,
+    mut world_io: WorldIo,
 ) {
     let p = hero.pos;
 
@@ -228,8 +290,18 @@ fn drive_interaction(
         InteractKind::BreachGate,
         crate::ork_fortress::GATE,
         crate::ork_fortress::BREACH_RANGE,
-        !assault.breached,
+        !world_io.assault.breached,
     ));
+    // Nearest content `Interactable` (witch stone, graves, ...) — one generic candidate. Its own
+    // radius was already applied, so it enters the arbitration with an unbounded range.
+    let nearest_generic = nearest_interactable(
+        p,
+        world_io.generic.iter().map(|(e, it, gt)| (e, it, Vec2::new(gt.translation().x, gt.translation().z))),
+    )
+    .map(|(e, at, _, prompt)| (e, at, prompt.to_string()));
+    if let Some((e, at, _)) = &nearest_generic {
+        candidates.push((InteractKind::Generic(*e), *at, f32::INFINITY, true));
+    }
     // Nearest discovered landmark in reach: a sealed-gear one offers its trial, an already-claimed
     // (or gear-less vignette) one offers its shrine. Remember the entity so the E press targets it.
     // While a trial is actually running, drop the landmark prompt entirely — the hero is mid-defence
@@ -270,6 +342,7 @@ fn drive_interaction(
             let cost = kind.cost();
             Some(format!("Rebuild {} · {} wood · {} stone", kind.label(), cost.wood, cost.stone))
         }
+        Some(InteractKind::Generic(_)) => nearest_generic.as_ref().map(|(_, _, prompt)| prompt.clone()),
         _ => None,
     };
     active.blocked = match active.kind {
@@ -285,6 +358,7 @@ fn drive_interaction(
         match kind {
             InteractKind::Rebuild(idx) => { landmark_io.rebuild.write(crate::town::RebuildPlot(idx)); }
             InteractKind::Upgrades => next_modal.set(Modal::UpgradeTree),
+            // The stall is always the Market vendor (`economy::ActiveVendor` resets on close).
             InteractKind::Shop => next_modal.set(Modal::Shop),
             InteractKind::WarBell => {
                 siege.request_prep_skip();
@@ -305,8 +379,10 @@ fn drive_interaction(
             }
             // Break into the Hold — `ork_fortress::breach_gate` wakes the garrison + Warlord.
             InteractKind::BreachGate => {
-                breach.write(crate::ork_fortress::BreachGate);
+                world_io.breach.write(crate::ork_fortress::BreachGate);
             }
+            // Fired by `fire_generic_interaction` (chained right after) off `ActiveInteraction`.
+            InteractKind::Generic(_) => {}
             // Landmark — fire the request at exactly the landmark the resolver named; `landmarks.rs`
             // decides trial-vs-shrine from its state.
             InteractKind::TrialChallenge | InteractKind::Shrine => {
@@ -315,6 +391,20 @@ fn drive_interaction(
                 }
             }
         }
+    }
+}
+
+/// E on a generic [`Interactable`] -> [`Interacted`]. Split from `drive_interaction` (which only
+/// resolves it as the active candidate) so the firing rule is testable in isolation.
+fn fire_generic_interaction(
+    keys: Res<ButtonInput<KeyCode>>,
+    active: Res<ActiveInteraction>,
+    mut out: MessageWriter<Interacted>,
+) {
+    if let (true, None, Some(InteractKind::Generic(e))) =
+        (keys.just_pressed(KeyCode::KeyE), &active.blocked, active.kind)
+    {
+        out.write(Interacted(e));
     }
 }
 
@@ -519,5 +609,53 @@ fn update_prompt(
             *bc = BorderColor::all(PROMPT_BORDER);
             bg.0 = PANEL_HUD;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nearest_interactable_respects_each_radius() {
+        let mut w = World::new();
+        let (a, b) = (w.spawn_empty().id(), w.spawn_empty().id());
+        let near_small = Interactable::new("Small", 1.0);
+        let far_big = Interactable::new("Big", 10.0);
+        let items = || {
+            [(a, &near_small, Vec2::new(2.0, 0.0)), (b, &far_big, Vec2::new(5.0, 0.0))].into_iter()
+        };
+        // `a` is closer but out of its own 1u radius -> `b` wins.
+        let hit = nearest_interactable(Vec2::ZERO, items()).unwrap();
+        assert_eq!((hit.0, hit.3), (b, "Big"));
+        // Standing on `a` -> `a` (nearest) wins.
+        assert_eq!(nearest_interactable(Vec2::new(2.0, 0.0), items()).unwrap().0, a);
+        // Nothing in range.
+        assert!(nearest_interactable(Vec2::new(100.0, 0.0), items()).is_none());
+    }
+
+    fn fire_app(kind: Option<InteractKind>, blocked: bool, press: bool) -> Vec<Interacted> {
+        let mut app = App::new();
+        let mut keys = ButtonInput::<KeyCode>::default();
+        if press {
+            keys.press(KeyCode::KeyE);
+        }
+        app.insert_resource(keys)
+            .insert_resource(ActiveInteraction { kind, label: None, blocked: blocked.then(|| "no".to_string()) })
+            .add_message::<Interacted>()
+            .add_systems(Update, fire_generic_interaction);
+        app.update();
+        let msgs = app.world().resource::<Messages<Interacted>>();
+        msgs.iter_current_update_messages().copied().collect()
+    }
+
+    #[test]
+    fn e_on_generic_interactable_fires_interacted() {
+        let e = World::new().spawn_empty().id();
+        assert_eq!(fire_app(Some(InteractKind::Generic(e)), false, true), vec![Interacted(e)]);
+        // No press, blocked, or a built-in kind -> nothing.
+        assert!(fire_app(Some(InteractKind::Generic(e)), false, false).is_empty());
+        assert!(fire_app(Some(InteractKind::Generic(e)), true, true).is_empty());
+        assert!(fire_app(Some(InteractKind::Shop), false, true).is_empty());
     }
 }
