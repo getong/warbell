@@ -1350,7 +1350,7 @@ def camp_hunters(rng):
 # §2 A): each a different JOB in the war, told by what lies on the ground.
 #   ork_camp_ram     FOREST  the Ram Yard: oaks felled for a ram, debarked logs, chips, trestles, a
 #                            bark lean-to. The ram itself is its own model (ork_camp_ram_beam), shown
-#                            only once our walls stand; ork_camp_ram_burnt after "Fire the ram".
+#                            always in its yard; ork_camp_ram_burnt the day after "Fire the ram".
 #   ork_camp_pitch   DESERT  the Pitch Seep: black bitumen oozing from a wadi bank, kettles of pitch on
 #                            the fire, sheaves of torches drying, tar-black ground and glossy pools.
 #   ork_camp_reeds   GRASS   the Reed Hide: scouts' screen of bundled reeds, sleeping mats, and on the
