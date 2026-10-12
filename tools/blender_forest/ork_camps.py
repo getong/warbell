@@ -1422,10 +1422,153 @@ def felling_axe(g, rng, grip, head_at, edge_dir):
     lbox(g, head_at + e * 0.06, (0.05, 0.12, 0.2), quat_y(math.atan2(e.x, e.z)), M_IRON, (0.4, 0.38, 0.36), tile=0.2)
 
 
+
+# ─────────────────────────────────────────────── grounded clutter (shared by the role camps)
+def firewood(g, rng, c, yaw, n=9, L=0.9, col=(0.55, 0.48, 0.4)):
+    """Split firewood stacked crib-wise, the bottom course sunk into the ground."""
+    c = Vector(c)
+    rq = quat_y(yaw)
+    k = 0
+    for layer in range(3):
+        cnt = max(1, 4 - layer)
+        for j in range(cnt):
+            if k >= n:
+                return
+            x = (j - (cnt - 1) / 2) * 0.17
+            y = -0.03 + layer * 0.13
+            a = c + rq @ V(x + rng.uniform(-0.02, 0.02), y + 0.07, -L / 2)
+            bb = c + rq @ V(x + rng.uniform(-0.03, 0.03), y + 0.07, L / 2 + rng.uniform(-0.1, 0.1))
+            r = rng.uniform(0.055, 0.08)
+            tube(g, [a, bb], [r, r * 0.95], 6, M_BARK, scale(col, rng.uniform(0.75, 1.05)), tile=0.4)
+            k += 1
+
+
+def scatter_bones(g, rng, c, r, n, skulls=0):
+    """Gnawed bones dropped round a fire, half trodden into the dirt."""
+    c = Vector(c)
+    for k in range(n):
+        a = rng.uniform(0, 6.28)
+        d = rng.uniform(0.2, r)
+        p = c + V(math.cos(a) * d, -0.004, math.sin(a) * d)
+        t = rng.uniform(0, 6.28)
+        ln = rng.uniform(0.12, 0.3)
+        e = V(math.cos(t), rng.uniform(-0.05, 0.02), math.sin(t)) * ln
+        bone(g, p - e * 0.5, p + e * 0.5, rng.uniform(0.012, 0.02), rng, col=scale(BONE, rng.uniform(0.7, 0.95)))
+    for k in range(skulls):
+        a = rng.uniform(0, 6.28)
+        p = c + V(math.cos(a) * r * 0.8, -0.03, math.sin(a) * r * 0.8)
+        skull(g, p, rng.uniform(0.7, 0.95), rng, col=OLD_BONE, horns=rng.uniform(0, 0.8), yaw=rng.uniform(0, 6.28))
+
+
+def sunk_stones(g, rng, c, r, n, col=(0.62, 0.6, 0.56), big=0.22):
+    """Field stones bedded in the ground: centre below the surface, only the crowns showing."""
+    c = Vector(c)
+    for k in range(n):
+        a = rng.uniform(0, 6.28)
+        d = r * math.sqrt(rng.uniform(0.05, 1.0))
+        s = rng.uniform(0.05, big)
+        p = c + V(math.cos(a) * d, -s * 0.45, math.sin(a) * d)
+        stone(g, tuple(p), (s, s * 0.75, s * rng.uniform(0.7, 1.1)), rng, detail=1,
+              col_fn=lambda q, nn, cc=scale(col, rng.uniform(0.8, 1.05)): cc, tile=0.5)
+
+
+def ash_bed(g, rng, c, r):
+    """Ash and charcoal raked out of a fire: a ragged, barely-raised smear sunk into the dirt."""
+    c = Vector(c)
+    nz = Noise(rng, 3, 2.0)
+    mound(g, tuple(c + V(0, -0.025, 0)), r, r * rng.uniform(0.75, 0.95), 0.035, rng, mat=M_EARTH,
+          col_fn=lambda p, n: mix((0.09, 0.085, 0.08), (0.42, 0.4, 0.37), smoothstep(-0.2, 0.7, nz(p * 2.5) + 0.6 * math.hypot(p.x - c.x, p.z - c.z) / r - 0.3)),
+          tile=0.4, rings=3, seg=16, skirt=0.05, edge=0.45)
+    for k in range(10):
+        a = rng.uniform(0, 6.28)
+        d = rng.uniform(0.1, r * 1.1)
+        p = c + V(math.cos(a) * d, 0.0, math.sin(a) * d)
+        tube(g, [p, p + V(math.cos(a + 1.3), 0.01, math.sin(a + 1.3)) * rng.uniform(0.08, 0.22)], [0.02, 0.016], 5, M_BARK,
+             CHAR_COL, tile=0.2)
+
+
+def barrel(g, rng, c, h=0.8, r=0.3, stain=0.6, lying=False, yaw=0.0):
+    """A stave barrel with iron hoops, its lower half and one side soaked black with pitch."""
+    c = Vector(c)
+    prof = [(0.0, 0.0), (r * 0.86, 0.0), (r, h * 0.3), (r * 1.06, h * 0.5), (r, h * 0.7), (r * 0.86, h), (0.0, h)]
+    rot = quat_y(yaw) @ quat_x(math.pi / 2) if lying else quat_y(yaw)
+    verts, tris = lathe(prof, 16, c, rot)
+    tris = orient(verts, tris, c + rot @ V(0, h / 2, 0), V(0, 1, 0), True)
+    nzb = Noise(rng, 3, 3.0)
+
+    def f(p, n):
+        lp = rot.inverted() @ (p - c)
+        a = math.atan2(lp.z, lp.x)
+        y = lp.y / h
+        stave = 0.88 + 0.12 * math.sin(a * 16 / 2 * 2)
+        base = scale(mix((0.5, 0.36, 0.24), (0.36, 0.26, 0.18), nzb(p * 4)), stave)
+        soak = smoothstep(0.55, 0.15, y + 0.25 * math.sin(a * 3 + 1.0)) * stain + smoothstep(0.86, 1.0, y) * stain * 0.8
+        hoop = any(abs(y - hy) < 0.035 for hy in (0.12, 0.3, 0.7, 0.88))
+        if hoop:
+            return (0.16, 0.15, 0.14)
+        return mix(base, PITCH, min(1.0, soak))
+    smooth_mesh(g, verts, tris, M_PLANK, f, 0.4)
+
+
+def tall_grass(g, rng, c, r, n, h, col=(0.62, 0.66, 0.38)):
+    """Rank tall grass: fine arching blades, a few seed heads."""
+    c = Vector(c)
+    for k in range(n):
+        a = rng.uniform(0, 6.28)
+        d = r * math.sqrt(rng.uniform(0, 1))
+        foot = c + V(math.cos(a) * d, -0.05, math.sin(a) * d)
+        hh = h * rng.uniform(0.55, 1.05)
+        t = rng.uniform(0, 6.28)
+        arch = V(math.cos(t), 0, math.sin(t)) * hh * rng.uniform(0.15, 0.4)
+        tip = foot + V(0, hh, 0) + arch
+        tube(g, [foot, foot + V(0, hh * 0.6, 0) + arch * 0.3, tip - V(0, hh * 0.08, 0)], [0.009, 0.007, 0.002], 3, M_CLOTH,
+             mix(col, (0.9, 0.82, 0.55), rng.uniform(0.0, 0.5)), tile=0.4, cap=False)
+
+
+def flattened_reeds(g, rng, c, yaw, w, L, n):
+    """Reeds trodden flat into a gap: stems lying along the way through, broken and crossed."""
+    c = Vector(c)
+    rq = quat_y(yaw)
+    for k in range(n):
+        x = rng.uniform(-w / 2, w / 2)
+        z = rng.uniform(-L / 2, L / 2)
+        t = rng.uniform(-0.5, 0.5)
+        d = rq @ V(math.sin(t), 0, math.cos(t))
+        a = c + rq @ V(x, 0.0, z)
+        ln = rng.uniform(0.5, 1.2)
+        tube(g, [a, a + d * ln * 0.5 + V(0, 0.02, 0), a + d * ln], [0.011, 0.009, 0.003], 4, M_CLOTH,
+             mix(REED, (0.55, 0.5, 0.36), rng.uniform(0.2, 0.7)), tile=0.4, cap=False)
+
+
+def woven_mat(g, rng, c, yaw, w=0.8, l=1.85, col=(0.78, 0.66, 0.42)):
+    """A thick woven reed mat: a padded core, over-under weave strips, bound edges, a curled corner."""
+    c = Vector(c)
+    rq = quat_y(yaw)
+    lbox(g, c + V(0, 0.035, 0), (w, 0.05, l), rq, M_THATCH, scale(col, 0.82), tile=0.4)
+    nw = 9
+    for i in range(nw):
+        x = (i - (nw - 1) / 2) * w / nw
+        for j in range(8):
+            z = (j - 3.5) * l / 8
+            up = (i + j) % 2
+            lbox(g, c + rq @ V(x, 0.064 + 0.006 * up, z), (w / nw * 0.92, 0.012, l / 8 * 0.95), rq, M_THATCH,
+                 scale(col, 0.88 + 0.14 * up + rng.uniform(-0.04, 0.04)), tile=0.2)
+    for sx in (-1, 1):
+        tube(g, [c + rq @ V(sx * w / 2, 0.05, -l / 2), c + rq @ V(sx * w / 2, 0.05, l / 2)], [0.022, 0.022], 5, M_THATCH,
+             scale(col, 0.7), tile=0.3)
+    grid = [[tuple(c + rq @ V((i - 1) * w / 2, 0.075 + 0.12 * (j / 3) ** 2 * (i == 2), l / 2 + j * 0.06)) for j in range(4)]
+            for i in range(3)]
+    sheet(g, grid, M_THATCH, lambda u, v: scale(col, 0.9), tile=0.3, double=True)
+
+
 def camp_ram(rng):
     b = Builder()
     g = G(b)
-    ground_patch(g, rng, (0, 0, 0), 4.7, 4.4, (0.5, 0.42, 0.34))
+    # (The trampled ground is baked into the terrain mask — camps.rs `ground_wear`.)
+    ash_bed(g, rng, (-1.4, 0, 2.4), 0.95)
+    scatter_bones(g, rng, (-1.4, 0, 2.4), 1.6, 9, skulls=1)
+    firewood(g, rng, (-2.6, 0, 3.3), 0.4, n=9)
+    sunk_stones(g, rng, (0, 0, 0), 5.2, 26, col=(0.6, 0.58, 0.54))
     # Chips everywhere the axes worked: a pale carpet thickest round the trestle and the ram bed.
     for (cx, cz, n, sp) in ((-1.2, -3.4, 70, 1.3), (1.2, 0.5, 90, 1.6), (-3.6, 0.6, 40, 1.2), (3.4, 2.3, 20, 0.8)):
         for k in range(n):
@@ -1586,9 +1729,9 @@ def torch_stave(g, rng, foot, top, wrapped=True):
 def tar_pool(g, rng, c, rx, rz):
     """A glossy pitch pool: an iron-material (smooth, dark) lens inside a matte tar rim sinking in."""
     c = Vector(c)
-    mound(g, tuple(c + V(0, 0.07, 0)), rx * 1.25, rz * 1.25, 0.02, rng, mat=M_EARTH,
+    mound(g, tuple(c + V(0, 0.0, 0)), rx * 1.25, rz * 1.25, 0.02, rng, mat=M_EARTH,
           col_fn=lambda p, n: (0.06, 0.05, 0.045), tile=0.5, rings=3, seg=16, skirt=0.04, edge=0.25)
-    mound(g, tuple(c + V(0, 0.08, 0)), rx, rz, 0.018, rng, mat=M_IRON,
+    mound(g, tuple(c + V(0, 0.012, 0)), rx, rz, 0.018, rng, mat=M_IRON,
           col_fn=lambda p, n: PITCH, tile=0.8, rings=3, seg=18, skirt=0.0, edge=0.2, rough=0.0, power=0.3)
 
 
@@ -1596,21 +1739,33 @@ def camp_pitch(rng):
     b = Builder()
     g = G(b)
     nz = Noise(rng, 4, 0.9)
-    ground_patch(g, rng, (0, 0, 0), 4.8, 4.5, (0.88, 0.72, 0.54), h=0.03)
-    # The black ground: tar soaked into the sand round the seep, smeared toward the kettles.
-    mound(g, (-0.6, 0.045, -1.8), 3.2, 2.2, 0.025, rng, mat=M_EARTH,
-          col_fn=lambda p, n: mix((0.05, 0.045, 0.04), (0.5, 0.4, 0.3),
-                                  smoothstep(-0.1, 0.6, nz(p * 1.3) + 0.25 * math.hypot(p.x + 0.6, p.z + 1.8) - 0.6)),
-          tile=0.9, rings=5, seg=24, skirt=0.06, edge=0.3, power=0.4)
+    # (The trampled ground is baked into the terrain mask — camps.rs `ground_wear`.)
+    # Tar-stained sand: ragged blots soaked dark round the seep and the pools, sunk flush with the
+    # ground and fraying out to the sand colour at their rims (no hard-edged sheet).
+    for (x, z, rx, rz) in ((-0.8, -2.7, 1.7, 1.0), (1.4, -1.5, 0.9, 0.7), (-2.2, -1.0, 0.8, 0.9), (0.2, -0.4, 0.9, 0.7),
+                           (2.6, 0.8, 0.6, 0.6), (3.2, -2.1, 0.8, 0.6), (-1.0, 0.5, 0.6, 0.5)):
+        cx, cz = x, z
+        mound(g, (x, -0.02, z), rx, rz, 0.03, rng, mat=M_EARTH,
+              col_fn=lambda p, n, cx=cx, cz=cz, rx=rx: mix((0.07, 0.06, 0.05), (0.62, 0.5, 0.38),
+                                                           smoothstep(-0.15, 0.55, nz(p * 1.8) * 0.8 + math.hypot(p.x - cx, p.z - cz) / rx - 0.55)),
+              tile=0.6, rings=4, seg=20, skirt=0.04, edge=0.45, power=0.5)
+    # The seep: pitch welling from the bank's foot runs in a glossy tongue down into the low dip.
+    for (a, bb, r) in (((-0.9, -3.9), (-0.85, -3.3), 0.22), ((-0.85, -3.3), (-0.3, -2.6), 0.16), ((0.4, -3.95), (0.1, -3.2), 0.1)):
+        A, B = V(a[0], 0.02, a[1]), V(bb[0], 0.01, bb[1])
+        tube(g, [A, A.lerp(B, 0.5) + V(0.06, 0.0, 0), B], [r, r * 0.8, r * 0.5], 8, M_IRON, PITCH, tile=0.3)
+    for (x, y, z) in ((-1.4, 0.55, -4.0), (-0.9, 0.7, -4.15), (0.3, 0.5, -3.95), (1.7, 0.45, -3.85), (-3.0, 0.5, -3.65)):
+        tube(g, [V(x, y, z - 0.05), V(x + 0.03, y * 0.5, z + 0.08), V(x + 0.02, 0.02, z + 0.25)], [0.05, 0.04, 0.06], 6,
+             M_IRON, PITCH, tile=0.2)
     # The wadi bank at the back: sandstone ledges, pitch bleeding out of a bedding seam down the face.
     for (x, z, sx, sy, sz, yaw) in ((-3.2, -4.4, 2.4, 1.5, 1.2, 0.1), (-0.6, -4.8, 2.2, 1.9, 1.2, -0.05),
                                      (2.0, -4.5, 2.0, 1.3, 1.1, 0.15), (4.1, -3.6, 1.2, 0.9, 1.0, 0.5)):
         def rc(p, n, sy=sy):
-            seam = smoothstep(0.12, 0.0, abs(p.y - sy * 0.35)) * smoothstep(0.4, -0.2, n.y)
-            run = smoothstep(sy * 0.35, 0.0, p.y) * (1.0 if n.z > 0.2 else 0.3) * (0.5 + 0.5 * math.sin(p.x * 6.0))
-            base = rock_col((1.0, 0.82, 0.62), ground=0.0, noise=nz)(p, n)
-            return mix(base, PITCH, min(1.0, seam * 0.9 + 0.7 * run))
-        slab(g, (x, sy * 0.38, z), (sx, sy, sz), quat_y(yaw), rng, res=(6, 5, 3), round_r=0.12, rough=0.05, cuts=1,
+            seam = smoothstep(0.07, 0.0, abs(p.y - sy * 0.35)) * smoothstep(0.5, 0.0, n.y)
+            drip = smoothstep(0.82, 0.97, math.sin(p.x * 9.0 + 0.7 * math.sin(p.y * 3.0)) * 0.5 + 0.5)
+            run = smoothstep(sy * 0.36, 0.0, p.y) * (1.0 if n.z > 0.2 else 0.0) * drip
+            base = rock_col((1.18, 0.98, 0.74), ground=0.0, noise=nz)(p, n)
+            return mix(base, PITCH, min(1.0, seam * 0.85 + 0.9 * run))
+        slab(g, (x, sy * 0.3, z), (sx, sy, sz), quat_y(yaw), rng, res=(8, 6, 4), round_r=0.32, rough=0.12, cuts=2,
              col_fn=rc, tile=1.2)
     # The seep: a dug basin under the bank, brimming; a plank to stand on, a tarry bucket.
     tar_pool(g, rng, (-0.8, 0, -3.25), 1.1, 0.55)
@@ -1622,7 +1777,29 @@ def camp_pitch(rng):
     # The kettles on the fire (flame at (0.8, 0, -0.6)); a second one cold, a ladle across it.
     firepit(g, rng, (0.8, 0, -0.6), r=0.55, n=8, stone_col=(0.82, 0.68, 0.52))
     kettle(g, rng, V(0.8, 0.32, -0.6), r=0.46, h=0.6)
-    kettle(g, rng, V(-1.9, 0.08, 0.6), r=0.36, h=0.48)
+    firepit(g, rng, (-1.9, 0, 0.6), r=0.45, n=7, stone_col=(0.82, 0.68, 0.52))
+    ash_bed(g, rng, (-1.9, 0, 0.6), 0.7)
+    kettle(g, rng, V(-1.9, 0.26, 0.6), r=0.36, h=0.48)
+    for k in range(3):
+        a = k / 3 * 6.28 + 0.5
+        tube(g, [V(-1.9 + math.cos(a) * 0.65, -0.1, 0.6 + math.sin(a) * 0.65), V(-1.9, 1.15, 0.6)], [0.03, 0.022], 5, M_BARK,
+             mix((0.5, 0.42, 0.34), PITCH, 0.4), tile=0.3)
+    cord(g, V(-1.9, 1.12, 0.6), 0.32, rng)
+    ash_bed(g, rng, (0.8, 0, -0.6), 0.85)
+    # Stained barrels: a stood row by the bank, one on its side oozing, staves black where it spilt.
+    for (x, z, h_, st) in ((2.45, -3.55, 0.82, 0.55), (3.05, -3.35, 0.78, 0.75), (1.0, -3.75, 0.7, 0.4)):
+        barrel(g, rng, V(x, -0.04, z), h=h_, r=0.29, stain=st, yaw=rng.uniform(0, 6.28))
+    barrel(g, rng, V(2.2, 0.27, -2.75), h=0.78, r=0.28, stain=0.9, lying=True, yaw=-2.2)
+    tar_pool(g, rng, (1.3, 0, -3.0), 0.38, 0.26)
+    # Torches stacked log-fashion in a crib, dipped heads all one way.
+    for layer in range(4):
+        for j in range(7 - layer):
+            x = -4.6 + (j - (6 - layer) / 2) * 0.1
+            y = 0.05 + layer * 0.08
+            torch_stave(g, rng, V(x, y, -1.2 + 0.05 * (layer % 2)), V(x + 0.02, y, -0.05))
+    firewood(g, rng, (-0.6, 0, 1.8), 1.2, n=8, col=(0.6, 0.5, 0.4))
+    scatter_bones(g, rng, (0.8, 0, -0.6), 1.5, 7)
+    sunk_stones(g, rng, (0, 0, 0), 5.0, 18, col=(0.86, 0.72, 0.56))
     tube(g, [V(-2.3, 0.6, 0.4), V(-1.5, 0.58, 0.8), V(-1.3, 0.55, 0.9)], [0.018, 0.018, 0.02], 5, M_PLANK,
          mix(TIMBER, PITCH, 0.5), tile=0.3)
     # Torch sheaves: staves wrapped and dipped, standing to dry against a rail; more bundled and tied.
@@ -1677,20 +1854,35 @@ def reed_clump(g, rng, c, r, n, h, lean=0.0, yaw=0.0):
         hh = h * rng.uniform(0.7, 1.1)
         bend = V(math.sin(yaw) * lean + rng.uniform(-0.08, 0.08), 0, math.cos(yaw) * lean + rng.uniform(-0.08, 0.08))
         tip = foot + V(0, hh, 0) + bend * hh * 0.25
-        tube(g, [foot, foot.lerp(tip, 0.6) + bend * 0.04, tip], [0.014, 0.011, 0.003], 4, M_THATCH,
+        tube(g, [foot, foot.lerp(tip, 0.6) + bend * 0.04, tip], [0.014, 0.011, 0.003], 4, M_CLOTH,
              mix(REED, (0.75, 0.82, 0.45), rng.uniform(0.0, 0.45)), tile=0.5, cap=False)
         if k % 5 == 0:
-            tube(g, [tip - V(0, 0.18, 0), tip + V(0, 0.02, 0)], [0.018, 0.006], 4, M_THATCH, (0.42, 0.3, 0.2), tile=0.2)
+            tube(g, [tip - V(0, 0.18, 0), tip + V(0, 0.02, 0)], [0.018, 0.006], 4, M_CLOTH, (0.42, 0.3, 0.2), tile=0.2)
 
 
 def camp_reeds(rng):
     b = Builder()
     g = G(b)
     nz = Noise(rng, 4, 1.0)
-    # Trodden, flattened reed bed: straw-brown over the meadow green.
-    mound(g, (0, 0, 0), 4.2, 3.8, 0.04, rng, mat=M_THATCH,
-          col_fn=lambda p, n: mix((1.05, 0.92, 0.62), (0.72, 0.78, 0.45), 0.4 + 0.4 * nz(p * 1.2)), tile=1.2, rings=5, seg=24,
-          skirt=0.1, edge=0.2, power=0.4)
+    # (The trampled floor is baked into the terrain mask — camps.rs `ground_wear`.) The hide sits
+    # IN a reedbed: a thick wall of reeds and rank grass all round, broken only where feet go.
+    gaps = (0.0, math.pi * 0.62, math.pi * 1.32)  # +Z the spy slot / way out, a side run, the back path
+    for k in range(64):
+        a = k / 64 * 2 * math.pi + rng.uniform(-0.03, 0.03)
+        gd = min(abs(math.atan2(math.sin(a - q), math.cos(a - q))) for q in gaps)
+        if gd < 0.17:
+            continue
+        rr = rng.uniform(4.3, 5.4)
+        p = V(math.sin(a) * rr, 0, math.cos(a) * rr)
+        if k % 2:
+            reed_clump(g, rng, p, 0.55, 24, rng.uniform(1.7, 2.3), lean=0.12, yaw=a + math.pi)
+        else:
+            tall_grass(g, rng, p, 0.6, 40, rng.uniform(0.9, 1.3))
+    for q in gaps:
+        flattened_reeds(g, rng, V(math.sin(q) * 4.7, 0, math.cos(q) * 4.7), q, 0.9, 2.0, 26)
+    for k in range(10):
+        a = rng.uniform(0, 6.28)
+        tall_grass(g, rng, V(math.sin(a) * rng.uniform(2.0, 3.2), 0, math.cos(a) * rng.uniform(2.0, 3.2)), 0.25, 10, 0.45)
     # The screen: bundled reeds on two rails, an arc facing the walls (+Z), crouch height, with a
     # slot left open to watch through.
     R = 3.4
@@ -1716,25 +1908,53 @@ def camp_reeds(rng):
     fc = V(0.0, 0.0, 0.9)
     mound(g, tuple(fc + V(0, -0.01, 0)), 1.25, 1.05, 0.05, rng, mat=M_EARTH,
           col_fn=lambda p, n: scale((0.66, 0.54, 0.42), 0.92 + 0.08 * nz(p * 6)), tile=0.4, rings=3, seg=20, skirt=0.04)
-    W_, H_ = 0.42, 0.36
-    wall_h = 0.09
+    W_, H_ = 0.5, 0.42
+    wall_h = 0.11
     for (a, bb) in ((V(-W_, 0, -H_), V(W_, 0, -H_)), (V(W_, 0, -H_), V(W_, 0, H_)), (V(-W_, 0, H_), V(-0.07, 0, H_)),
                     (V(0.07, 0, H_), V(W_, 0, H_)), (V(-W_, 0, -H_), V(-W_, 0, -0.06)), (V(-W_, 0, 0.06), V(-W_, 0, H_))):
         d = bb - a
         lbox(g, fc + (a + bb) / 2 + V(0, 0.045 + wall_h / 2, 0), (0.05, wall_h, d.length), quat_y(math.atan2(d.x, d.z)),
              M_EARTH, scale(CLAY, rng.uniform(0.88, 1.0)), tile=0.3)
-    for sx in (-1, 1):
-        for sz in (-1, 1):
-            frustum(g, 0.06, 0.05, 0.04, 0.16, 8, M_EARTH, scale(CLAY, 0.95), tile=0.3, centre=tuple(fc + V(sx * W_, 0, sz * H_)))
-    lbox(g, fc + V(0.1, 0.13, -0.08), (0.18, 0.18, 0.16), quat_y(0.0), M_EARTH, scale(CLAY, 0.9), tile=0.3)
-    frustum(g, 0.04, 0.0, 0.22, 0.08, 6, M_EARTH, scale(CLAY, 0.85), tile=0.3, centre=tuple(fc + V(0.1, 0, -0.08)))
+    # Merlons pinched up along every wall top.
+    for (a, bb) in ((V(-W_, 0, -H_), V(W_, 0, -H_)), (V(W_, 0, -H_), V(W_, 0, H_)), (V(-W_, 0, -H_), V(-W_, 0, H_)),
+                    (V(-W_, 0, H_), V(W_, 0, H_))):
+        for t in np.linspace(0.08, 0.92, 9):
+            p = a.lerp(bb, t)
+            if abs(p.z - H_) < 0.01 and abs(p.x) < 0.1:
+                continue
+            if abs(p.x + W_) < 0.01 and abs(p.z) < 0.07:
+                continue
+            lbox(g, fc + p + V(0, 0.045 + wall_h + 0.016, 0), (0.035, 0.032, 0.035), quat_y(0.0), M_EARTH,
+                 scale(CLAY, rng.uniform(0.85, 1.0)), tile=0.2)
+    # Corner towers (round, crenellated rims) and two gate towers flanking the front gap.
+    for (tx, tz, tr) in ((-W_, -H_, 0.075), (W_, -H_, 0.075), (-W_, H_, 0.075), (W_, H_, 0.075), (-0.12, H_, 0.055), (0.12, H_, 0.055)):
+        tc = fc + V(tx, 0, tz)
+        frustum(g, tr, tr * 0.85, 0.04, 0.2, 10, M_EARTH, scale(CLAY, 0.95), tile=0.3, centre=tuple(tc))
+        for j in range(5):
+            a = j / 5 * 6.28
+            lbox(g, tc + V(math.cos(a) * tr * 0.8, 0.25, math.sin(a) * tr * 0.8), (0.025, 0.03, 0.025), quat_y(a), M_EARTH,
+                 scale(CLAY, 0.9), tile=0.2)
+    # The gate: a bark-chip leaf hanging half open, a lintel of twig over it.
+    lbox(g, fc + V(-0.04, 0.1, H_ + 0.03), (0.07, 0.09, 0.008), quat_y(0.6), M_BARK, (0.42, 0.3, 0.2), tile=0.1)
+    tube(g, [fc + V(-0.12, 0.2, H_), fc + V(0.12, 0.2, H_)], [0.008, 0.008], 4, M_BARK, (0.5, 0.42, 0.32), tile=0.1)
+    # The keep: a tall block, a stepped top, a twig flagstaff with a scrap of red rag.
+    kc = fc + V(0.1, 0, -0.1)
+    lbox(g, kc + V(0, 0.16, 0), (0.22, 0.24, 0.2), quat_y(0.0), M_EARTH, scale(CLAY, 0.9), tile=0.3)
+    lbox(g, kc + V(0, 0.3, 0), (0.16, 0.06, 0.14), quat_y(0.0), M_EARTH, scale(CLAY, 0.86), tile=0.3)
+    for (dx, dz) in ((-0.1, -0.09), (0.1, -0.09), (-0.1, 0.09), (0.1, 0.09), (0, -0.09), (0, 0.09)):
+        lbox(g, kc + V(dx, 0.3, dz), (0.03, 0.035, 0.03), quat_y(0.0), M_EARTH, scale(CLAY, 0.82), tile=0.2)
+    tube(g, [kc + V(0, 0.32, 0), kc + V(0, 0.52, 0)], [0.004, 0.003], 3, M_BARK, (0.5, 0.42, 0.32), tile=0.1)
+    lbox(g, kc + V(0.03, 0.49, 0), (0.06, 0.035, 0.004), quat_y(0.0), M_CLOTH, (0.6, 0.08, 0.05), tile=0.1)
+    # The bell tower in the yard (a stub with a pebble bell) and a hall against the west wall.
+    frustum(g, 0.04, 0.03, 0.04, 0.22, 8, M_EARTH, scale(CLAY, 0.92), tile=0.3, centre=tuple(fc + V(-0.22, 0, 0.12)))
+    lbox(g, fc + V(-0.32, 0.1, -0.15), (0.14, 0.1, 0.32), quat_y(0.0), M_EARTH, scale(CLAY, 0.88), tile=0.3)
     for k in range(34):
         a = k / 34 * 2 * math.pi
         p = fc + V(math.cos(a) * 0.82, 0.03, math.sin(a) * 0.7)
         tube(g, [p, p + V(0, 0.08, 0)], [0.006, 0.005], 3, M_BARK, (0.5, 0.42, 0.32), tile=0.1)
 
     def pebble(p, white=False):
-        s = rng.uniform(0.018, 0.028)
+        s = rng.uniform(0.026, 0.038)
         stone(g, tuple(p + V(0, 0.05, 0)), (s, s * 0.7, s), rng, mat=M_STONE, detail=0,
               col_fn=lambda q, n: (0.85, 0.84, 0.8) if white else (0.08, 0.075, 0.07), tile=0.1, cuts=1)
     for k in range(9):
@@ -1745,22 +1965,56 @@ def camp_reeds(rng):
         pebble(fc + V(-math.cos(a) * 0.62 - 0.05 * t, 0, math.sin(a) * 0.55 - 0.1))
     for k in range(5):
         pebble(fc + V(rng.uniform(-0.15, 0.15), 0, 0.28 + rng.uniform(-0.04, 0.03)), white=True)
-    for (x0, z0, x1, z1) in ((-0.95, 0.75, -0.95, 0.15), (-0.95, 0.15, -0.6, 0.0)):
-        a, bb = fc + V(x0, 0, z0), fc + V(x1, 0, z1)
-        d = bb - a
-        lbox(g, (a + bb) / 2 + V(0, 0.04, 0), (0.018, 0.006, d.length), quat_y(math.atan2(d.x, d.z)), M_EARTH, (0.2, 0.15, 0.12),
-             tile=0.2)
+    # Sticks laid as arrows of attack: shafts with two-twig heads, pointing at the gate and round the west.
+    def arrow(x0, z0, x1, z1):
+        a, bb = fc + V(x0, 0.055, z0), fc + V(x1, 0.055, z1)
+        d = (bb - a).normalized()
+        sd = V(-d.z, 0, d.x)
+        tube(g, [a, bb], [0.009, 0.008], 4, M_BARK, (0.45, 0.36, 0.26), tile=0.1)
+        for sg in (-1, 1):
+            tube(g, [bb, bb - d * 0.11 + sd * sg * 0.07], [0.008, 0.007], 4, M_BARK, (0.45, 0.36, 0.26), tile=0.1)
+    arrow(0.22, 1.2, 0.1, 0.62)
+    arrow(-1.0, 0.75, -0.95, 0.15)
+    arrow(-0.95, 0.15, -0.62, 0.0)
+    arrow(0.85, 1.0, 0.55, 0.55)
     tube(g, [fc + V(0.6, 0.06, 0.95), fc + V(1.3, 0.08, 1.35)], [0.012, 0.009], 4, M_BARK, (0.55, 0.47, 0.38), tile=0.3)
     # Sleeping mats at the back (reed mats under hides), a small dug-in fire (flame at (-2.3, 0, -1.6)),
     # water skins on a stake.
     for k, (x, z, yaw) in enumerate(((-1.2, -2.3, 0.2), (0.2, -2.6, -0.1), (1.6, -2.2, -0.35))):
         rq = quat_y(yaw)
-        lbox(g, V(x, 0.03, z), (0.75, 0.025, 1.8), rq, M_THATCH, (0.72, 0.62, 0.4), tile=0.4)
-        grid = [[tuple(V(x, 0.07 + 0.03 * math.sin(i + j), z) + rq @ V((i - 1.5) * 0.22, 0, (j - 2) * 0.32))
+        woven_mat(g, rng, V(x, -0.01, z), yaw)
+        grid = [[tuple(V(x, 0.1 + 0.03 * math.sin(i + j), z) + rq @ V((i - 1.5) * 0.22, 0, (j - 2) * 0.32))
                  for j in range(5)] for i in range(4)]
         hc = DARK_HIDE if k % 2 else HIDE
         sheet(g, grid, M_HIDE, lambda u, v, hc=hc: scale(hc, 0.85 + 0.15 * v), tile=0.5)
     firepit(g, rng, (-2.3, 0, -1.6), r=0.32, n=7)
+    ash_bed(g, rng, (-2.3, 0, -1.6), 0.6)
+    # The fire is covered: a low reed hood on four forked sticks, so no glow shows over the screen.
+    fh = V(-2.3, 0, -1.6)
+    for sx in (-1, 1):
+        for sz in (-1, 1):
+            tube(g, [fh + V(sx * 0.62, -0.1, sz * 0.5), fh + V(sx * 0.58, 0.85 + 0.12 * sz, sz * 0.48)], [0.022, 0.018], 5,
+                 M_BARK, (0.55, 0.48, 0.38), tile=0.3)
+    for k in range(16):
+        z = -0.55 + k * 0.073
+        tube(g, [fh + V(-0.72, 0.8 + 0.12 * z, z), fh + V(0.0, 0.92 + 0.12 * z, z + 0.02), fh + V(0.72, 0.8 + 0.12 * z, z)],
+             [0.02, 0.022, 0.02], 4, M_THATCH, mix(REED, (0.3, 0.26, 0.2), 0.35 + 0.25 * (k % 2)), tile=0.4)
+    firewood(g, rng, (-3.2, 0, -0.7), 0.9, n=6, col=(0.55, 0.48, 0.38))
+    # Gear: packs and a rolled hide by the mats, a shield face-down, spears stacked on a forked rest.
+    for (x, z) in ((-2.6, -2.8), (-1.9, -3.4)):
+        stone(g, (x, 0.18, z), (0.24, 0.2, 0.18), rng, mat=M_HIDE, detail=1, cuts=0,
+              col_fn=lambda p, n: scale(HIDE, 0.8), tile=0.3)
+        cord(g, V(x, 0.36, z), 0.12, rng)
+    tube(g, [V(1.4, 0.12, -3.75), V(2.0, 0.12, -3.55)], [0.12, 0.12], 8, M_HIDE, DARK_HIDE, tile=0.3)
+    shield(g, V(-1.9, 0.06, -0.5), quat_x(math.pi / 2), 0.38, rng)
+    rest = V(1.3, 0, -0.4)
+    for sx in (-0.45, 0.45):
+        tube(g, [rest + V(sx, -0.1, 0), rest + V(sx, 0.75, 0)], [0.025, 0.02], 5, M_BARK, (0.55, 0.48, 0.38), tile=0.3)
+    for k in range(5):
+        y = 0.72 + 0.03 * (k % 2)
+        spear(g, rest + V(-0.9, 0.02, -0.06 + k * 0.03), rest + V(0.95, y, -0.06 + k * 0.03), rng, col=(0.55, 0.48, 0.38))
+    scatter_bones(g, rng, (-2.3, 0, -1.6), 1.1, 6)
+    sunk_stones(g, rng, (0, 0, 0), 3.4, 10, col=(0.5, 0.5, 0.46), big=0.14)
     sk = V(2.6, 0, -1.3)
     pole(g, sk + V(0, -0.2, 0), sk + V(0, 1.3, 0), 0.03, 0.025, rng, col=(0.62, 0.55, 0.45), sides=5)
     for k in range(2):
@@ -1781,8 +2035,12 @@ def camp_eyrie(rng):
     b = Builder()
     g = G(b)
     nz = Noise(rng, 5, 0.5)
-    ground_patch(g, rng, (0, 0, 0.6), 4.4, 3.8, (0.62, 0.58, 0.54))
     cf = rock_col((0.86, 0.84, 0.8), moss=0.25, ground=0.0, noise=nz)
+    # (The trampled ground is baked into the terrain mask — camps.rs `ground_wear`.)
+    ash_bed(g, rng, (-1.6, 0, 1.4), 0.8)
+    scatter_bones(g, rng, (-1.6, 0, 1.4), 1.4, 8, skulls=1)
+    firewood(g, rng, (-3.0, 0, 0.6), 1.3, n=7, col=(0.6, 0.55, 0.48))
+    sunk_stones(g, rng, (0, 0, 0.6), 4.4, 30, col=(0.72, 0.7, 0.66), big=0.28)
     # The crag: jointed blocks, sheer on the camp side, its top a flat perch at ~3.75.
     stone(g, (0.0, 1.5, -3.2), (2.9, 2.4, 1.9), rng, detail=3, rough=0.1, cuts=3, col_fn=cf, tile=1.6, flat_y=0.95)
     slab(g, (-0.3, 3.4, -3.3), (3.6, 0.7, 2.6), quat_y(0.08), rng, res=(6, 2, 4), round_r=0.15, rough=0.04, cuts=1,
@@ -1932,6 +2190,9 @@ def camp_ring(rng):
     for k in range(10):
         a = k / 10 * 2 * math.pi + 0.3
         drift(g, (math.cos(a) * 4.4, 0, math.sin(a) * 4.3), rng.uniform(1.1, 1.6), rng.uniform(0.5, 0.7), rng.uniform(0.25, 0.4), rng)
+    ash_bed(g, rng, (2.2, 0, -3.6), 0.75)
+    scatter_bones(g, rng, (0, 0, 0), 2.6, 14, skulls=1)
+    firewood(g, rng, (3.4, 0, -2.6), 0.4, n=8, col=(0.58, 0.52, 0.45))
     # The bench of logs on stump legs just outside the ring (south-east), furs on it.
     bc = V(2.6, 0, 3.75)
     rq = quat_y(-0.62)

@@ -3312,9 +3312,10 @@ pub(crate) fn ground_color(x: f32, z: f32) -> [f32; 4] {
     if road_s > 0.0 {
         // Rock ground is dark grey-slate, so the warm path tint barely showed — trails through the
         // mountains read as invisible. On rock, blend HARDER and toward a lighter packed-earth so
-        // the road pops against the crags; other biomes keep the softer authored tint.
+        // the road pops against the crags; other biomes keep the softer authored tint. Kept a dusty
+        // grey-brown: a saturated tint trips the shader's scanned-sand gate (orange streaks on rock).
         let rocky = matches!(tile_biome_world(wx, wz), Some(Biome::Rocky));
-        let (road_col, road_blend) = if rocky { (0xba9057u32, 0.95) } else { (p.road_dirt, 0.85) };
+        let (road_col, road_blend) = if rocky { (0x988c7au32, 0.9) } else { (p.road_dirt, 0.85) };
         // Readability rework (map-character overhaul pass 2): a road reads via its EDGE, not a
         // linear smear. The old `road_s * blend` faded the tint out over the whole falloff, which
         // is exactly why the paths "melted into the biome". Now: a full-strength packed CORE with
