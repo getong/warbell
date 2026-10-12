@@ -142,16 +142,130 @@ fn footprint(x: f32, z: f32, reg: &Region) -> f32 {
     let border = if margin.is_finite() { smooth(0.0, 12.0, margin) } else { 1.0 };
     let coast = 0.25 + 0.75 * smooth(0.0, 9.0, sea_field(x, z));
     let ring = smooth(SAFE_PAD + SAFE_FRAY, SAFE_PAD + SAFE_FRAY + 10.0, castle_ring_dist(x, z));
-    // The deliberate lake (a tarn since the rock range slid S over the old E marsh arm) lies on the
-    // rock range's SW apron: settle the ground to its shore level (the old mesa's flat foot apron
-    // did) instead of sinking it into a pit in the flank. (The waterfall's plunge stream is NOT
-    // faded — its wall is the falls.)
-    let wet = smooth(1.0, 9.0, pool_sd(x, z).min(lake_sd(x, z)));
-    // ...except right behind the waterfall's head, where the range must stand as a wall for the
-    // falls to pour off (`vista` needs ≥1.6u of face within a few units of the stream head).
-    let (head, _) = waterfall_site_world();
-    let near_falls = 1.0 - smooth(3.0, 8.0, (x * MAP_SCALE - GX - head.x).hypot(z * MAP_SCALE - GZ - head.y) / MAP_SCALE);
-    rim * border * coast * ring * wet.max(near_falls)
+    // Settle the ground to the swamp bog pools' shore level. (The deliberate lake and the waterfall
+    // valley above it are NOT faded here any more: scaling the whole mountain down toward the lake
+    // drew a planar ramp whose crag noise stretched into organ-pipe flutes, and the pocket the
+    // falls needed was kept by an un-faded disc — two smooth pyramids either side of a slot. The
+    // rock range's [`gorge_carve`] cuts the lake basin and the valley out of the relief instead.)
+    let wet = smooth(1.0, 9.0, pool_sd(x, z));
+    rim * border * coast * ring * wet
+}
+
+// ── The waterfall valley ─────────────────────────────────────────────────────────────
+/// The HANGING VALLEY above the falls (BASE space), lip → upstream: the feeder brook's shallow
+/// trough across the plateau behind the head wall, so water visibly arrives at the lip.
+const HANG_CTRL: [(f32, f32); 4] = [(102.9, 65.9), (104.3, 64.1), (106.5, 63.4), (108.0, 62.1)];
+/// World Y of the hanging valley's floor at the lip (the falls drop ≈17u from here to the pool).
+const LIP_Y: f32 = 17.0;
+
+/// Nearest point of a polyline: `(distance, arc length to it, total length, segment, t, how far
+/// the projection falls BEFORE the first point (≥ 0))` — all in base units.
+fn poly_hit(n: usize, pt: impl Fn(usize) -> (f32, f32), x: f32, z: f32) -> (f32, f32, f32, usize, f32, f32) {
+    let mut best = (f32::INFINITY, 0.0, 0.0, 0, 0.0, 0.0);
+    let mut arc = 0.0;
+    for i in 0..n - 1 {
+        let ((ax, az), (bx, bz)) = (pt(i), pt(i + 1));
+        let (abx, abz) = (bx - ax, bz - az);
+        let l2 = abx * abx + abz * abz;
+        let l = l2.sqrt();
+        let tr = ((x - ax) * abx + (z - az) * abz) / l2;
+        let t = tr.clamp(0.0, 1.0);
+        let d = (x - ax - abx * t).hypot(z - az - abz * t);
+        if d < best.0 {
+            best = (d, arc + t * l, 0.0, i, t, if i == 0 { (-tr * l).max(0.0) } else { 0.0 });
+        }
+        arc += l;
+    }
+    best.2 = arc;
+    best
+}
+
+/// Rise (world Y) of a valley side `d` world units out from the floor's edge: a scree/talus apron
+/// at slope `lo` steepening to the rock wall's `hi` over ~`w` units — the concave profile of a real
+/// V-valley side whose foot is buried in its own debris.
+fn side_rise(d: f32, lo: f32, hi: f32, w: f32) -> f32 {
+    lo * d + (hi - lo) * (d - w * (1.0 - (-d / w).exp()))
+}
+
+/// The rock range's SW LAKE BASIN + WATERFALL VALLEY (world Y ceiling; `INFINITY` away from it):
+/// - a V-valley round the winding waterfall stream ([`plunge_path`]): a narrow floor that widens
+///   toward the lake, concave sides (talus ~30° at the foot steepening to 45–65° rock, with short
+///   sheer stretches) whose plan is wobbled by multi-scale noise into spurs and bays;
+/// - its HEAD closes behind the plunge pool in a real cliff (~75°) up to the hanging valley
+///   ([`HANG_CTRL`]), whose floor rises gently away from the lip — the falls' step;
+/// - the lake's tarn basin: the same concave sides rising off the shore.
+///
+/// [`mountain_y`] takes a smooth minimum of this and the DEM relief, so above the carve the real
+/// mountain keeps its own shape and the valley shoulders roll into it.
+fn gorge_carve(x: f32, z: f32) -> f32 {
+    if !(83.0..=112.0).contains(&x) || !(57.0..=90.0).contains(&z) {
+        return f32::INFINITY;
+    }
+    let b = MAP_SCALE;
+    // Shared plan wobble (world units): spurs & bays (~3 base) …
+    let spur = (vnoise(x * 0.33 + 3.1, z * 0.33 - 7.7) - 0.5) * 8.0;
+    // … and buttresses / gullies whose noise domain SLIDES with height (`hy`, world Y above the
+    // floor): a plan-only wobble extrudes straight up a steep face as rows of vertical flutes
+    // ("organ pipes"); sliding it makes the gullies wander and die out up the wall.
+    let butt = |hy: f32| (vnoise(x * 0.85 - 11.0 + hy * 0.07, z * 0.85 + 2.3 - hy * 0.05) - 0.5) * 2.4;
+    let wob = spur + butt(0.0);
+    // Wall steepness varies along the valley; here and there a short sheer stretch.
+    let sn = vnoise(x * 0.5 + 21.0, z * 0.5 - 13.0);
+    let crag = smooth(0.66, 0.86, vnoise(x * 0.7 - 4.0, z * 0.7 + 9.0));
+    // Ledges / blocks on the faces (world Y), zero on the floors.
+    let bump = (vnoise(x * 1.4 + 1.0, z * 1.4 - 3.0) - 0.5) * 1.6 + (vnoise(x * 3.3, z * 3.3 + 8.0) - 0.5) * 0.6;
+    let floor_y = SEA_Y + 0.35;
+
+    // 1. The valley round the waterfall stream.
+    let p = plunge_path();
+    let (d, arc, total, seg, t, pre) = poly_hit(p.len(), |i| (p[i].0, p[i].1), x, z);
+    let s = arc / total; // 0 at the plunge pool … 1 at the lake
+    let half = p[seg].2 + (p[(seg + 1).min(p.len() - 1)].2 - p[seg].2) * t;
+    let taper = 0.35 + 0.65 * smooth(0.0, 0.3, s); // calmer plan round the plunge pool
+    // The floor widens toward the lake, opening into a small delta flat at the mouth.
+    let wf = 0.6 + 3.0 * s + 8.0 * smooth(0.75, 1.0, s);
+    let head = smooth(0.3, 1.5, pre); // behind the plunge pool: the head wall
+    // Talus ~34° at the foot easing to ~24° near the lake; rock 50–60° up-valley, 36–47° at the
+    // mouth, short crags to ~68°; the head wall ~77° over a thin debris foot.
+    let lo = (0.68 - 0.2 * s) + (1.6 - (0.68 - 0.2 * s)) * head;
+    let hi = ((1.45 - 0.55 * s) * (0.8 + 0.4 * sn) + 1.0 * crag) * (1.0 - head) + 4.5 * head;
+    let main_at = |w: f32| {
+        let d0 = (d * b + w * taper - half * b).max(0.0);
+        let dd = (d0 - wf).max(0.0);
+        ((0.14 - 0.08 * smooth(0.75, 1.0, s)) * d0.min(wf) + side_rise(dd, lo, hi, 6.0), dd)
+    };
+    let (h0, _) = main_at(spur + butt(0.0));
+    let (h1, dd) = main_at(spur + butt(h0));
+    let v_main = floor_y + h1 + bump * smooth(0.0, 4.0, dd);
+
+    // 2. The hanging valley above the lip.
+    let (dh, arch, ..) = poly_hit(HANG_CTRL.len(), |i| HANG_CTRL[i], x, z);
+    let dh0 = (dh * b + wob * 0.5 - 1.0).max(0.0);
+    let v_hang = LIP_Y + 0.35 * arch + 0.12 * dh0.min(2.0)
+        + side_rise((dh0 - 2.0).max(0.0), 0.45, 1.0 * (0.8 + 0.4 * sn), 3.0)
+        + bump * 0.6 * smooth(2.0, 5.0, dh0);
+
+    // 3. The lake's tarn basin (distance off the shore along the ray from the centre).
+    let (lx, lz, rx, rz) = DELIBERATE_LAKE;
+    let (dx, dz) = (x - lx, z - lz);
+    let r = dx.hypot(dz).max(1e-4);
+    let re = 1.0 / ((dx / r / rx).powi(2) + (dz / r / rz).powi(2)).sqrt();
+    // The outlet (south) and delta (east) sides keep the broad, nearly level shore flat the old
+    // apron had — the rocky story scenes seat on it (`stories_cold_plan_seats_every_scene_in_its_biome`:
+    // a mine head E of the shore, a quarry S of it); under the mountain to the north the slopes
+    // rise almost straight off the water.
+    let open = smooth(-0.55, 0.1, dz / r);
+    let (flat_w, flat_s) = (1.5 + 12.0 * open, 0.10 - 0.06 * open);
+    let lake_at = |w: f32| {
+        let dl = ((r - re) * b + w).max(0.0);
+        let rise = side_rise((dl - flat_w).max(0.0), 0.55, 1.05 * (0.8 + 0.4 * sn) + 0.8 * crag, 6.0);
+        (flat_s * dl.min(flat_w) + rise, dl)
+    };
+    let (hl0, _) = lake_at(spur + butt(0.0));
+    let (hl, dl) = lake_at(spur + butt(hl0));
+    let v_lake = floor_y + hl + bump * smooth(flat_w, flat_w + 4.0, dl);
+
+    smin_poly(smin_poly(v_main, v_hang, 1.0), v_lake, 2.0).max(floor_y - 0.05)
 }
 
 /// 0..1 how much of base `(x, z)` the massif still OWNS against its neighbours: 1 on its own
@@ -233,8 +347,19 @@ fn mountain_y(x: f32, z: f32, reg: &Region) -> f32 {
         return 0.0;
     }
     let t = mesa_t(x, z, reg);
-    let m = if reg.biome == TB::Rock { rock_y(x, z, t, reg) } else { snow_y(x, z, t, reg) };
-    m * f
+    if reg.biome != TB::Rock {
+        return snow_y(x, z, t, reg) * f;
+    }
+    let m = rock_y(x, z, t, reg) * f;
+    // The SW lake basin + waterfall valley, cut OUT of the relief (a ceiling, not a scale-down):
+    // a smooth minimum rolls the valley shoulders into the mountain, never dipping a floor below
+    // its own level.
+    let carve = gorge_carve(x, z);
+    const K: f32 = 2.5;
+    if carve >= m + K {
+        return m;
+    }
+    smin_poly(m, carve, K).max(m.min(SEA_Y + 0.3))
 }
 
 /// The snow massif (Tatra-like): broad dome + ridged relief + authored summits.
