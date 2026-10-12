@@ -63,29 +63,32 @@ struct Scene {
     names: &'static [&'static str],
     lore: &'static str,
     trail: bool,
-    /// Least `alpine::snow_cover` under the whole footprint (snow scenes; 0 for rocky ones). Snow
-    /// grows with altitude, so this sets how high a scene sits: the avalanche-buried cabin in deep
-    /// snow, the camps and cairns in patchy snow, the steading and the pass-trail convoy lower,
-    /// where the snow line starts.
+    /// Least `alpine::snow_cover` under the whole footprint (snow scenes; 0 for rocky ones). At
+    /// least [`SOLID`] for every snow scene — the ground under it must read as snow, not as the
+    /// valley meadow (no baked white disc under a site any more); the avalanche-buried cabin wants
+    /// deeper snow still, higher up.
     snow: f32,
 }
 
+/// Snow cover under which the shader paints solid snow (see `alpine::SOLID_SNOW`).
+const SOLID: f32 = crate::alpine::SOLID_SNOW;
+
 const SCENES: [Scene; 11] = [
     // The drift + collapsed tent, the sled with its crates, the planted skis (+ the marker pole).
-    Scene { model: "story_lost_camp", biome: Biome::Snow, snow: 0.45, foot: 2.6,
+    Scene { model: "story_lost_camp", biome: Biome::Snow, snow: SOLID, foot: 2.6,
         solids: &[(-0.6, 0.2, 1.1, 1.0, 0.0), (1.15, -0.75, 1.0, 0.45, 0.35), (2.02, 0.35, 0.25, 0.3, 0.0)],
         // One here + the Frozen Camp vignette (`vignettes.rs`, same model) = the two-copy cap.
         want: 1, names: &["The Timber Party's Camp", "The Iron Party's Camp", "The Woodcutters' Last Camp"],
         lore: "Anselm's timber party camped here; the colony rang for them nine dusks, and none came down.",
         trail: false },
     // The avalanche mound over the cabin + the standing chimney.
-    Scene { model: "story_buried_cabin", biome: Biome::Snow, snow: 0.4, foot: 3.0,
+    Scene { model: "story_buried_cabin", biome: Biome::Snow, snow: 0.85, foot: 3.0,
         solids: &[(0.1, 0.0, 1.9, 1.4, 0.0), (-1.9, -0.6, 0.45, 0.45, 0.0)],
         want: 3, names: &["A Colonist's Winter Cabin", "The Snowbound Cabin", "The Chimney in the Snow"],
         lore: "A colonist built far from the chapel bell; the snow took his cabin, but nothing else came.",
         trail: false },
     // The cairn and the banner pole's foot.
-    Scene { model: "story_frozen_memorial", biome: Biome::Snow, snow: 0.45, foot: 2.3,
+    Scene { model: "story_frozen_memorial", biome: Biome::Snow, snow: SOLID, foot: 2.3,
         solids: &[(0.0, 0.0, 0.6, 0.6, 0.0), (0.6, -0.4, 0.08, 0.08, 0.0)],
         want: 3, names: &["The Last Muster", "The Muster Cairn", "The Colony's Cairn"],
         lore: "The first colony's last muster; that night, as every night, they rang the bell at dusk.",
@@ -109,20 +112,20 @@ const SCENES: [Scene; 11] = [
         lore: "The masons dropped their tools mid-cut and never came back for the stone.",
         trail: false },
     // The bell on its side, the broken bell wagon, the wagon on its side, the ox's drift.
-    Scene { model: "story_wrecked_convoy", biome: Biome::Snow, snow: 0.2, foot: 3.5,
+    Scene { model: "story_wrecked_convoy", biome: Biome::Snow, snow: SOLID, foot: 3.5,
         solids: &[(0.0, -1.45, 0.75, 0.7, 0.0), (1.95, 0.75, 1.25, 0.7, 0.05), (-2.05, 0.7, 1.3, 0.45, 0.12),
             (-0.1, 2.0, 0.9, 0.45, 0.0)],
         want: 1, names: &["The Crown Convoy"],
         lore: "A Crown war bell, hauled up the pass for the first colony; no one ever came back to dig it out.",
         trail: true },
     // The hermitage's walls (door gap included) + the bell-cote gable, and the two graves.
-    Scene { model: "story_hermitage", biome: Biome::Snow, snow: 0.5, foot: 3.4,
+    Scene { model: "story_hermitage", biome: Biome::Snow, snow: SOLID, foot: 3.4,
         solids: &[(0.0, 0.0, 1.35, 1.05, 0.0), (-2.25, 1.45, 0.4, 1.0, 0.0)],
         want: 1, names: &["Anselm's Hermitage"],
         lore: "Cut into the writing slope: the charter bids us ring at dusk, and none of us can say why.",
         trail: false },
     // Six stones on a 2.8u ring + the totem and offering stone at the centre.
-    Scene { model: "story_old_ones_ring", biome: Biome::Snow, snow: 0.5, foot: 3.6,
+    Scene { model: "story_old_ones_ring", biome: Biome::Snow, snow: SOLID, foot: 3.6,
         solids: &[(2.74, 0.56, 0.35, 0.35, 0.0), (0.89, 2.66, 0.33, 0.33, 0.0), (-1.86, 2.1, 0.33, 0.33, 0.0),
             (-2.74, -0.56, 0.33, 0.33, 0.0), (-0.89, -2.66, 0.33, 0.33, 0.0), (1.86, -2.1, 0.33, 0.33, 0.0),
             (0.0, 0.0, 0.55, 0.55, 0.3)],
@@ -130,7 +133,7 @@ const SCENES: [Scene; 11] = [
         lore: "Every stone is cut with rings like a bell's voice; the orks still bring tusks, as if to a law.",
         trail: false },
     // The burned log house, the well, the palisade stub, the tipped hand-cart.
-    Scene { model: "story_ruined_homestead", biome: Biome::Snow, snow: 0.3, foot: 3.0,
+    Scene { model: "story_ruined_homestead", biome: Biome::Snow, snow: SOLID, foot: 3.0,
         solids: &[(-0.6, 0.2, 1.3, 1.05, 0.0), (1.55, -0.95, 0.6, 0.6, 0.0), (1.7, 1.5, 0.9, 0.35, -0.3),
             (-2.0, -1.35, 0.55, 0.45, 0.7)],
         want: 3, names: &["The Outlying Steading", "The Burned Homestead", "The Palisade Farm"],
@@ -139,7 +142,7 @@ const SCENES: [Scene; 11] = [
     // The castaways' snow-block igloo (+ its entrance tunnel), the overturned longboat windbreak, the
     // oar planted by the door with the ship's lantern. On the snow COAST ([`COAST_SCENE`]): the model
     // faces the sea (local -Z) and its sled tracks run inland (+Z).
-    Scene { model: COAST_SCENE, biome: Biome::Snow, snow: 0.0, foot: 3.6,
+    Scene { model: COAST_SCENE, biome: Biome::Snow, snow: SOLID, foot: 3.6,
         solids: &[(-0.5, 0.3, 1.35, 1.35, 0.0), (-0.5, -1.4, 0.55, 0.6, 0.0), (2.7, 0.4, 0.7, 2.25, 0.0),
             (0.35, -2.7, 0.08, 0.08, 0.0)],
         want: 1, names: &["The Castaways' Snow-House"],
@@ -151,11 +154,18 @@ const SCENES: [Scene; 11] = [
 /// in the storm, and its crew dug in where it grounded.
 const COAST_SCENE: &str = "story_castaways";
 /// The coast scene needs open sea within this reach of its centre (and none under its footprint).
-const COAST_REACH: f32 = 22.0;
+/// It also needs solid snow, which is altitude-bound: the snow coast's strand is green meadow, so
+/// the castaways dig in up on the first snowy rise above the shore (nearest-to-the-sea spot wins).
+const COAST_REACH: f32 = 40.0;
 
 /// Unit direction from `q` toward the nearest open sea within [`COAST_REACH`] (probing 24 bearings
 /// past the footprint), or `None` inland.
 fn sea_dir(q: Vec2, foot: f32) -> Option<Vec2> {
+    sea_hit(q, foot).map(|(_, d)| d)
+}
+
+/// `(distance, direction)` to the nearest open sea within [`COAST_REACH`] (see [`sea_dir`]).
+fn sea_hit(q: Vec2, foot: f32) -> Option<(f32, Vec2)> {
     let mut best: Option<(f32, Vec2)> = None;
     for k in 0..24 {
         let a = k as f32 * (TAU / 24.0);
@@ -170,7 +180,7 @@ fn sea_dir(q: Vec2, foot: f32) -> Option<Vec2> {
             r += 1.5;
         }
     }
-    best.map(|(_, d)| d)
+    best
 }
 
 /// Order the plan seats scenes in each round: the one-off discoverables first (the castaways, who
@@ -238,12 +248,6 @@ pub fn reset_plan() {
 /// `(centre, visual radius)` of every planned cold story site (folded into `poi::story_clearings`).
 pub fn planned_footprints() -> Vec<(Vec2, f32)> {
     SITES.lock().unwrap().iter().map(|s| (s.pos, SCENES[s.scene].foot)).collect()
-}
-
-/// `(centre, visual radius)` of every planned SNOW story site: the alpine mask bakes a pocket of
-/// snow under each (`alpine::bake_mask`), so a site at the snow line stands in its own drift.
-pub fn snow_footprints() -> Vec<(Vec2, f32)> {
-    SITES.lock().unwrap().iter().filter(|s| SCENES[s.scene].biome == Biome::Snow).map(|s| (s.pos, SCENES[s.scene].foot)).collect()
 }
 
 /// Does a circle at `(x, z)` of radius `r` overlap a planned cold story site?
@@ -466,10 +470,12 @@ fn candidates(scene: usize, trails: &[Vec<Vec2>]) -> Vec<(Vec2, f32)> {
     }
     if s.model == COAST_SCENE {
         // Front (local -Z, mapped to (-sin yaw, -cos yaw)) turned to the sea; the tracks run inland.
-        return grid_candidates(s.biome, 0x51c0_1d00 ^ (scene as u32).wrapping_mul(0x85eb_ca6b))
+        let mut c: Vec<(f32, Vec2, f32)> = grid_candidates(s.biome, 0x51c0_1d00 ^ (scene as u32).wrapping_mul(0x85eb_ca6b))
             .into_iter()
-            .filter_map(|q| sea_dir(q, s.foot).map(|d| (q, (-d.x).atan2(-d.y))))
+            .filter_map(|q| sea_hit(q, s.foot).map(|(r, d)| (r, q, (-d.x).atan2(-d.y))))
             .collect();
+        c.sort_by(|a, b| a.0.total_cmp(&b.0));
+        return c.into_iter().map(|(_, q, yaw)| (q, yaw)).collect();
     }
     grid_candidates(s.biome, 0x51c0_1d00 ^ (scene as u32).wrapping_mul(0x85eb_ca6b))
         .into_iter()

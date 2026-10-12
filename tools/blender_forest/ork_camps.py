@@ -724,7 +724,7 @@ LIME = (0.92, 0.9, 0.85)
 CAVE_X = 2.65       # half-width of the mouth (inner faces of the side masses)
 CAVE_ROOF = 3.0     # underside of the roof slab
 CAVE_BACK = -6.6    # back wall face
-TALLY_C = V(-2.0, 1.45, -3.6)   # centre of the tally wall
+TALLY_C = V(-2.15, 1.45, -4.35)   # centre of the tally wall
 TALLY_YAW = -0.4                 # the wall faces +X turned out toward the mouth (+Z)
 
 
@@ -733,8 +733,9 @@ def cave_col(nz):
         inside = smoothstep(-2.2, -3.4, p.z) * smoothstep(CAVE_X + 0.6, CAVE_X - 0.6, abs(p.x)) * \
             smoothstep(CAVE_ROOF + 0.6, CAVE_ROOF - 0.4, p.y)
         lip_soot = smoothstep(0.2, -0.8, n.y) * smoothstep(-1.2, -2.6, p.z) * smoothstep(2.4, 3.2, p.y)
-        base = rock_col(LIME, moss=0.45, ground=0.0, noise=nz, var=0.16, lichen=(0.6, 0.62, 0.42))(p, n)
-        k = 1.0 - 0.6 * inside
+        base = rock_col(LIME, moss=0.12, ground=0.0, noise=nz, var=0.16, lichen=(0.6, 0.62, 0.42))(p, n)
+        # Pale bedded limestone like the rock range round it (the mass read as a dark boulder).
+        k = (1.0 - 0.6 * inside) * 1.32
         streak = 0.92 + 0.08 * nz(V(p.x * 6.0, p.y * 0.6, p.z * 6.0))
         return mix(scale(base, k * streak), SOOT, min(1.0, lip_soot * 0.9 + inside * 0.25))
     return f
@@ -825,66 +826,72 @@ def camp_cave(rng):
     def face_z_at(x, y):
         z = face_z + bed(y) + joint(x) + 0.28 * nzf(V(x * 0.6, y * 0.25, 0.0))
         z += 0.85 * smoothstep(arch_h - 0.4, arch_h + 0.9, y) * smoothstep(5.5, 1.0, abs(x))  # the brow
-        z -= 0.35 * smoothstep(arch_h + 1.2, 7.5, y)  # the face lays back above the brow
+        z -= 1.7 * smoothstep(arch_h + 1.2, 8.6, y)   # the face lays back above the brow
         z -= 2.6 * smoothstep(5.8, 8.0, abs(x))       # flanks swing back into the mountain
         return z
 
-    # Face sheet (grid), the opening cut out at its outline.
-    nx, ny = 64, 36
-    xs = [-8.0 + 16.0 * i / nx for i in range(nx + 1)]
-    ys = [-0.8 + 8.6 * j / ny for j in range(ny + 1)]
-    verts, idx = [], {}
-    for j, y in enumerate(ys):
-        for i, x in enumerate(xs):
-            hw = arch_half(y)
-            xx = x
-            # Snap the vertices just inside the opening onto its outline, so the rim is clean.
-            if abs(x) < hw and y < arch_h:
-                xx = math.copysign(hw, x) if abs(x) > hw - 16.0 / nx else x
-            idx[(i, j)] = len(verts)
-            verts.append(V(xx, y, face_z_at(xx, y)))
+    # ONE closed solid (signed distance field -> surface nets), not a face sheet + a tunnel + slabs:
+    # the old single-sided sheet left gaps round the mouth (the tunnel ring never met the cut
+    # outline) and showed nothing from behind or above, so the sky shone through it, and the
+    # rounded slab on top read as a dome glued on. Rock = behind the bedded face, under a top that
+    # steps back in ledges and sinks below ground ~12u back (the massif's own slope takes over), out
+    # to flanks that swing back into the mountain; minus the tunnel, whose mouth IS the face outline.
+    import sdfkit
+    h = 0.2
+    xs = np.arange(-10.0, 10.0 + 1e-6, h)
+    ys = np.arange(-1.2, 9.8 + 1e-6, h)
+    zs = np.arange(-16.0, 1.6 + 1e-6, h)
+    nzt = Noise(rng, 4, 0.45)
+    FZ = np.array([[face_z_at(float(x), float(y)) for y in ys] for x in xs])            # (nx, ny)
+
+    def top_y(x, z):
+        ledge = 0.32 * smoothstep(0.6, 0.9, (-z * 0.42 + 0.15 * nzt(V(x * 0.3, 0, z * 0.3))) % 1.0)
+        # A broken skyline (big low-frequency lumps + a notch or two), never a straight block edge.
+        return (6.1 + 1.1 * nzt(V(x * 0.22, 1.0, z * 0.22)) + 0.45 * nzt(V(x * 0.7, 2.0, z * 0.7))
+                - 0.22 * max(0.0, -4.0 - z) - ledge
+                - 3.6 * smoothstep(4.5, 9.4, abs(x)) - 9.0 * smoothstep(-5.0, -11.0, z))
+    def roof_y(x, z):
+        # Never thinner than ~1.3u of rock over the tunnel (its crown is ~3.4u at the mouth).
+        cap = 4.8 * smoothstep(5.2, 3.6, abs(x)) * smoothstep(CAVE_BACK - 1.6, CAVE_BACK - 0.6, z)
+        return max(top_y(x, z), cap)
+    YT = np.array([[roof_y(float(x), float(z)) for z in zs] for x in xs])                # (nx, nz)
+    tun_len = face_z - CAVE_BACK
+    D = np.clip((face_z - zs) / tun_len, 0.0, 1.0)                                      # (nz,)
+
+    def half_w(y, d):
+        sc = 1.0 - 0.18 * d
+        crown = arch_h * sc
+        if y > crown:
+            return -(y - crown)
+        # Behind the mouth the cave opens into a wider chamber (the tally wall stands in it).
+        return arch_half(y, d) * (1.0 + 0.32 * smoothstep(0.05, 0.4, d))
+    AH = np.array([[half_w(float(y), float(d)) for d in D] for y in ys])                # (ny, nz)
+    X, Y, Z = np.meshgrid(xs, ys, zs, indexing="ij")
+    P = np.stack([X, Y, Z], -1)
+
+    def vnoise(nz_, P, k=1.0):
+        out = np.zeros(P.shape[:-1])
+        for d_, f_, ph, amp in nz_.w:
+            out += amp * np.sin((P @ np.array([d_.x, d_.y, d_.z])) * f_ * k + ph)
+        return out / nz_.norm
+    rough = 0.16 * vnoise(Noise(rng, 4, 0.9), P)
+    f_front = Z - FZ[:, :, None]
+    f_top = Y - YT[:, None, :]
+    side_n = 0.7 * vnoise(Noise(rng, 3, 0.25), P)
+    f_side = np.abs(X) - (9.0 - 0.3 * np.maximum(Y, 0.0) + side_n - 1.2 * np.clip((-Z - 6.0) / 6.0, 0.0, 1.0))
+    f_back = -10.2 - Z      # the mass ends (underground) before its top skin thins into flaps
+    body = np.maximum(np.maximum(np.maximum(f_front, f_top), f_side), f_back) + rough
+    # The tunnel: the arch outline swept back, narrowing; its end rounds into a rough back wall.
+    end = CAVE_BACK + 0.25 * vnoise(Noise(rng, 3, 1.2), P)
+    tunnel = np.maximum(np.abs(X) - AH[None, :, :], end - Z)
+    tunnel = np.maximum(tunnel, -0.45 - Y)            # rock floor just under the camp ground
+    F = np.maximum(body, -tunnel)
+    verts_np, quads = sdfkit.surface_nets(F, np.array([xs[0], ys[0], zs[0]]), h)
+    verts = [V(float(a_), float(b_), float(c_)) for a_, b_, c_ in verts_np]
     tris = []
-    for j in range(ny):
-        for i in range(nx):
-            cxm = (xs[i] + xs[i + 1]) / 2
-            cym = (ys[j] + ys[j + 1]) / 2
-            if abs(cxm) < arch_half(cym) - 0.02 and cym < arch_h:
-                continue
-            a, b2, c2, d2 = idx[(i, j)], idx[(i + 1, j)], idx[(i + 1, j + 1)], idx[(i, j + 1)]
-            tris += [(a, c2, b2), (a, d2, c2)]
-    tris = [(a, b2, c2) if ((verts[b2] - verts[a]).cross(verts[c2] - verts[a])).z > 0 else (a, c2, b2)
-            for a, b2, c2 in tris]
+    for q in quads:
+        tris += [(int(q[0]), int(q[1]), int(q[2])), (int(q[0]), int(q[2]), int(q[3]))]
     smooth_mesh(g, verts, tris, M_ROCK, cf, 2.2)
-    # The tunnel: the arch outline swept back and narrowing, ending in a rough back wall.
-    rings = 9
-    seg = 22
-    tv, tt = [], []
-    for k in range(rings + 1):
-        d = k / rings
-        z = face_z - 0.15 - d * (face_z - CAVE_BACK + 0.2)
-        for s in range(seg + 1):
-            a = math.pi * s / seg  # 0 = right foot, pi = left foot, over the crown
-            y = math.sin(a) * arch_h * (1 - 0.18 * d) - 0.4 * (1 - math.sin(a))
-            x = math.cos(a) * arch_w * (1 - 0.18 * d) * (1 + 0.08 * math.sin(a * 5 + d * 3))
-            p = V(x, y, z)
-            p += V(math.cos(a), math.sin(a) * 0.6, 0) * 0.16 * nzf(p * 1.3)
-            tv.append(p)
-    for k in range(rings):
-        for s in range(seg):
-            a0, a1 = k * (seg + 1) + s, k * (seg + 1) + s + 1
-            b0, b1 = (k + 1) * (seg + 1) + s, (k + 1) * (seg + 1) + s + 1
-            tt += [(a0, b0, b1), (a0, b1, a1)]
-    axis_c = V(0, 0.4, 0)
-    tt = orient(tv, tt, axis_c, V(0, 0, 1), False)
-    smooth_mesh(g, tv, tt, M_ROCK, cf, 1.8)
-    stone(g, (0.0, 1.2, CAVE_BACK - 0.3), (arch_w * 0.9, arch_h * 0.75, 0.6), rng, detail=2, rough=0.15, cuts=1, col_fn=cf,
-          tile=1.6)
-    # Rock mass behind/above the face, laid back into the slope (keeps the silhouette a mountain).
-    slab(g, (0.0, 7.4, -6.2), (13.0, 2.4, 7.5), quat_x(0.18), rng, res=(8, 3, 6), round_r=0.8, rough=0.08, cuts=3,
-         taper=0.3, col_fn=cf, tile=2.6)
-    for sx in (-1, 1):
-        slab(g, (sx * 6.2, 3.0, -6.0), (4.0, 6.5, 6.5), quat_y(sx * 0.3), rng, res=(5, 7, 6), round_r=0.6, rough=0.08,
-             cuts=3, taper=0.25, col_fn=cf, tile=2.4)
     # Talus fan: blocks fallen from the beds, then rubble and gravel spreading out from the foot.
     tal = lambda p, n: scale(rock_col(LIME, moss=0.25, noise=nz, var=0.2)(p, n), 0.95)
     for k in range(7):

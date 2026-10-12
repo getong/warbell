@@ -603,7 +603,7 @@ pub fn landmark_sites() -> &'static [LandmarkSite] {
                     + if biome == crate::biome::Biome::Snow {
                         let c = snow_footprint_min(x, z, probe_r);
                         y = footprint_low(x, z, probe_r * 0.55).unwrap_or(y);
-                        (0.9 - c).max(0.0) * 6.0 + if c < 0.6 { 100.0 } else { 0.0 } + 0.04 * y
+                        (0.9 - c).max(0.0) * 6.0 + if c < crate::alpine::SOLID_SNOW { 100.0 } else { 0.0 } + 0.04 * y
                     } else {
                         0.0
                     };
@@ -617,6 +617,14 @@ pub fn landmark_sites() -> &'static [LandmarkSite] {
             }
             if let Some(r) = resume {
                 rng = r;
+            }
+            // The pyramid: the flattest spot was on the desert's rim, under the rock range's walls.
+            // It belongs out in the OPEN desert, dunes on every side — a search of its own (its own
+            // rng, so the landmarks after it keep their spots).
+            if biome == crate::biome::Biome::Desert {
+                if let Some(s) = open_desert_site(probe_r) {
+                    best = Some(s);
+                }
             }
             match best {
                 Some(s) => out.push(s),
@@ -764,6 +772,74 @@ fn legacy_snow_rng_end(mut rng: u32, probe_r: f32) -> u32 {
     rng
 }
 
+/// How far (world units, up to `cap`) the desert runs on every side of `(x, z)`: the nearest
+/// non-desert / off-land / water sample on 24 bearings, stepping out 4u at a time.
+fn desert_reach(x: f32, z: f32, cap: f32) -> f32 {
+    let mut reach = cap;
+    for k in 0..24 {
+        let a = k as f32 * (TAU / 24.0);
+        let mut r = 4.0;
+        while r < reach {
+            let (px, pz) = (x + a.cos() * r, z + a.sin() * r);
+            if crate::worldmap::biome_at_world(px, pz) != Some(crate::biome::Biome::Desert)
+                || crate::worldmap::ground_at_world(px, pz).is_none()
+                || crate::worldmap::is_river_world(px, pz)
+                || crate::worldmap::is_pool_world(px, pz)
+            {
+                reach = r;
+                break;
+            }
+            r += 4.0;
+        }
+    }
+    reach
+}
+
+/// Open desert keeps this far from every biome border (the rock range's walls above all).
+const PYRAMID_OPEN: f32 = 52.0;
+
+/// The pyramid's spot: deep in the desert ([`PYRAMID_OPEN`] of sand on every side, so the dunes
+/// frame it and no mountain wall stands behind it), on a low, gentle pan, clear of the Pasha's fort
+/// and the raiders' camp. Best = flattest, then the deepest in the sand.
+fn open_desert_site(probe_r: f32) -> Option<LandmarkSite> {
+    use crate::biome::Biome;
+    let mut rng: u32 = 0x9e7a_51d3;
+    let mut best: Option<(f32, LandmarkSite)> = None;
+    let raiders = crate::camps::plan().iter().filter(|c| crate::worldmap::biome_at_world(c.centre.x, c.centre.y) == Some(Biome::Desert)).map(|c| c.centre).collect::<Vec<_>>();
+    for _ in 0..6000 {
+        let x = crate::wildlife::rng_range(&mut rng, -crate::worldmap::GX + 6.0, crate::worldmap::GX - 6.0);
+        let z = crate::wildlife::rng_range(&mut rng, -crate::worldmap::GZ + 6.0, crate::worldmap::GZ - 6.0);
+        let yaw = crate::wildlife::rng_range(&mut rng, 0.0, TAU);
+        let q = Vec2::new(x, z);
+        if crate::worldmap::biome_at_world(x, z) != Some(Biome::Desert)
+            || crate::worldmap::cliff_shelf_world(x, z)
+            || crate::camps::in_clearing(x, z)
+            || crate::rival::near_fort(x, z)
+            || q.distance(crate::rival::RIVAL_CENTRE) < 55.0
+            || raiders.iter().any(|c| c.distance(q) < 35.0)
+        {
+            continue;
+        }
+        let Some(spread) = footprint_spread(x, z, probe_r + 3.0) else { continue };
+        if spread > 1.2 {
+            continue;
+        }
+        let reach = desert_reach(x, z, PYRAMID_OPEN + 24.0);
+        if reach < PYRAMID_OPEN {
+            continue;
+        }
+        let score = spread - 0.015 * reach;
+        if best.as_ref().map_or(true, |(b, _)| score < *b) {
+            let y = crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
+            best = Some((score, LandmarkSite { biome: Biome::Desert, pos: q, y, yaw, spread }));
+        }
+    }
+    if best.is_none() {
+        info!("landmark: no open-desert spot for the pyramid; keeping the flattest one");
+    }
+    best.map(|(_, s)| s)
+}
+
 /// Thinnest snow cover over a footprint (centre + a ring at `radius`): a spot is only "in the snow"
 /// if the whole apron is, not just its centre.
 fn snow_footprint_min(x: f32, z: f32, radius: f32) -> f32 {
@@ -829,9 +905,12 @@ mod spire_tests {
         }
         let c = snow_footprint_min(s.pos.x, s.pos.y, 5.25);
         eprintln!("spire at {:?} y {:.2} spread {:.2} cover {c:.2}; snow samples {n}, snowy {snowy}, max y {maxy:.1}", s.pos, s.y, s.spread);
-        assert!(c >= 0.6, "spire on bare ground (cover {c:.2})");
+        assert!(c >= crate::alpine::SOLID_SNOW, "spire on bare ground (cover {c:.2})");
         // The landmarks after it keep their long-standing spots (roads and sites are laid round them).
+        // The pyramid stands in open desert, sand on every side (no rock wall behind it).
         let d = landmark_sites().iter().find(|s| s.biome == crate::biome::Biome::Desert).expect("pyramid site");
-        assert!(d.pos.distance(Vec2::new(71.4, -45.1)) < 0.2, "pyramid moved to {:?}", d.pos);
+        let reach = desert_reach(d.pos.x, d.pos.y, PYRAMID_OPEN + 24.0);
+        eprintln!("pyramid at {:?} y {:.2} spread {:.2} desert reach {reach:.0}", d.pos, d.y, d.spread);
+        assert!(reach >= PYRAMID_OPEN, "pyramid near a biome border (reach {reach:.0})");
     }
 }

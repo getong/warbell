@@ -318,6 +318,11 @@ fn search(s: &Spec, seed: u32, clear: fn(f32, f32, f32) -> bool) -> Option<(f32,
         if crate::worldmap::biome_at_world(x, z) != Some(s.biome) || !clear(x, z, probe) {
             continue;
         }
+        // A snow vignette (the Frozen Camp) stands on real snow over its whole footprint, never on
+        // the snow region's green valley meadow.
+        if s.biome == crate::biome::Biome::Snow && crate::alpine::snow_footprint_min(x, z, probe + 1.5) < crate::alpine::SOLID_SNOW {
+            continue;
+        }
         let Some(spread) = footprint_spread(x, z, probe) else { continue };
         let y = crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
         let yaw = crate::wildlife::rng_range(&mut rng, 0.0, TAU);

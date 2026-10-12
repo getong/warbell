@@ -321,8 +321,10 @@ fn plot_is_outside(idx: usize) -> bool {
 
 /// The kind of building the rival raises. A `House` is a sandstone desert dwelling (lifts the
 /// rival's population → more tax income, keeping its bailey cohesive with the sandstone keep/walls);
-/// the producers (`Farm`/`Lumber`/`Mine`) reuse the **player town's own models** so the rival reads
-/// as a real economic settlement (a Stronghold-style mirror), each staffed by a desert worker.
+/// the producers (`Farm`/`Lumber`/`Mine`) are the Pasha's own desert works (`rival_kit.glb`: a date
+/// garden with a shaduf, a palm-wood yard, a sandstone pit) so the rival reads as a real economic
+/// settlement of its own culture, each staffed by a desert worker. (The player town's procedural
+/// farm/saw-shed/pit-head only stand in when the kit isn't loaded.)
 #[derive(Clone, Copy, PartialEq)]
 pub enum RivalKind {
     House,
@@ -425,13 +427,25 @@ fn spawn_building(
             RivalBuilding { idx },
         ))
         .id();
-    // Houses: sandstone (RivalMats + desert_house). Producers: the player town's textured models +
-    // material set, so they're literally the same farm/saw-shed/pit-head the player builds.
-    let house_piece = if idx % 2 == 0 { "rival_house_a" } else { "rival_house_b" };
-    let kit_house = kind.is_house() && attach_kit(&mut commands.entity(parent), house_piece);
+    // Every rival building is a rival-kit model (mud brick, sandstone, palm wood, shade cloth); the
+    // procedural fallbacks below only stand in when the kit isn't loaded.
+    let kit_piece = match kind {
+        RivalKind::House if idx % 2 == 0 => "rival_house_a",
+        RivalKind::House => "rival_house_b",
+        RivalKind::Farm => "rival_farm",
+        RivalKind::Lumber => "rival_lumber",
+        RivalKind::Mine => "rival_mine",
+    };
+    // A producer's yard (model +Z) faces out from the fort, away from the walls.
+    if !kind.is_house() {
+        let out = Vec2::new(off.x, off.y).normalize_or_zero();
+        let yaw = if out == Vec2::ZERO { 0.0 } else { out.x.atan2(out.y) };
+        commands.entity(parent).insert(Transform::from_xyz(wx, y, wz).with_rotation(Quat::from_rotation_y(yaw)));
+    }
+    let kit = attach_kit(&mut commands.entity(parent), kit_piece);
     commands.entity(parent).with_children(|p| {
         match kind {
-            RivalKind::House if kit_house => {}
+            _ if kit => {}
             RivalKind::House => {
                 for (mesh, slot) in desert_house(0.0, 0.0) {
                     p.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(rival.get(slot)), Transform::default()));
