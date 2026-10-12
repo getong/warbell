@@ -162,6 +162,15 @@ impl RivalMats {
     }
 }
 
+/// Hang the rival-kit model `name` (mud brick + sandstone, `rival_kit.glb`) under `e`, fading out
+/// past ~250 u like the rest of the fort's silhouette. False when the kit isn't loaded (the
+/// procedural parts below stand in).
+fn attach_kit(e: &mut EntityCommands, name: &str) -> bool {
+    let Some(kit) = crate::realforest::get().filter(|k| k.has(name)) else { return false };
+    let range = bevy::camera::visibility::VisibilityRange { start_margin: 0.0..0.0, end_margin: 240.0..270.0, use_aabb: true };
+    kit.attach_static_with(e, name, Transform::IDENTITY, range)
+}
+
 // ── Mesh assembly (local space; origin = fort centre, base at y = 0) ─────────────────
 
 /// Square ring of merlons (battlement teeth) at height `y`, spaced around a ±`half` square.
@@ -418,8 +427,11 @@ fn spawn_building(
         .id();
     // Houses: sandstone (RivalMats + desert_house). Producers: the player town's textured models +
     // material set, so they're literally the same farm/saw-shed/pit-head the player builds.
+    let house_piece = if idx % 2 == 0 { "rival_house_a" } else { "rival_house_b" };
+    let kit_house = kind.is_house() && attach_kit(&mut commands.entity(parent), house_piece);
     commands.entity(parent).with_children(|p| {
         match kind {
+            RivalKind::House if kit_house => {}
             RivalKind::House => {
                 for (mesh, slot) in desert_house(0.0, 0.0) {
                     p.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(rival.get(slot)), Transform::default()));
@@ -517,11 +529,14 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: &mut As
             RivalKeep,
         ))
         .id();
-    commands.entity(keep_root).with_children(|p| {
-        for (mesh, slot) in keep_parts() {
-            p.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mats.get(slot)), Transform::default()));
-        }
-    });
+    // The Blender keep (rival_kit.glb, tools/blender_forest/rival_kit.py) when the kit is loaded.
+    if !attach_kit(&mut commands.entity(keep_root), "rival_keep") {
+        commands.entity(keep_root).with_children(|p| {
+            for (mesh, slot) in keep_parts() {
+                p.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mats.get(slot)), Transform::default()));
+            }
+        });
+    }
 
     // Hand the material set to the economy tick so it can raise buildings / walls at runtime.
     commands.insert_resource(mats);
@@ -544,11 +559,13 @@ fn raise_walls(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &RivalM
     let root = commands
         .spawn((Transform::from_xyz(centre.x, y, centre.y), Visibility::Visible, BiomeEntity, RivalEntity, RivalWalls))
         .id();
-    commands.entity(root).with_children(|p| {
-        for (mesh, slot) in wall_parts() {
-            p.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mats.get(slot)), Transform::default()));
-        }
-    });
+    if !attach_kit(&mut commands.entity(root), "rival_walls") {
+        commands.entity(root).with_children(|p| {
+            for (mesh, slot) in wall_parts() {
+                p.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mats.get(slot)), Transform::default()));
+            }
+        });
+    }
     register_wall_blockers(centre);
 }
 

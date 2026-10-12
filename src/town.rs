@@ -1631,7 +1631,19 @@ fn spawn_building(
     spots: &PlotSpots,
 ) {
     let pos = spots.0.get(idx).copied().unwrap_or(Vec2::ZERO);
-    let parent = spawn_textured(commands, meshes, mats, BuildingMesh { idx }, building_parts(kind), pos);
+    // The Blender yard (town_kit.glb `town_farm` / `town_woodcutter` / `town_mine`, authored at
+    // world scale) when the kit is loaded; the procedural parts otherwise.
+    let piece = building_kit_piece(kind);
+    let kit = crate::realforest::get().filter(|k| k.has(piece));
+    let parts = if kit.is_some() { Vec::new() } else { building_parts(kind) };
+    let parent = spawn_textured(commands, meshes, mats, BuildingMesh { idx }, parts, pos);
+    if let Some(kit) = kit {
+        // The parent pops to WORLD_BUMP x BUILDING_TALLER; the kit model is already at world scale.
+        let (b, t) = (crate::castle::WORLD_BUMP, crate::castle::BUILDING_TALLER);
+        let range = bevy::camera::visibility::VisibilityRange { start_margin: 0.0..0.0, end_margin: 140.0..160.0, use_aabb: true };
+        kit.attach_static_with(&mut commands.entity(parent), piece,
+            Transform::from_scale(Vec3::new(1.0 / b, 1.0 / (b * t), 1.0 / b)), range);
+    }
     // Construction feedback: the fresh building pops up out of its plot on a kick of dust
     // (build_fx). Re-insert the parent transform pre-shrunk so it never flashes full-size.
     let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
@@ -1686,6 +1698,15 @@ fn rebuild_plot(mut requests: MessageReader<RebuildPlot>, siege: Option<Res<crat
             cues.write(crate::audio::AudioCue::UiSelect);
             built.write(PlayerBuilt(Some(kind)));
         }
+    }
+}
+
+/// The town-kit model for a producer's yard (`tools/blender_forest/village_huts.py`).
+fn building_kit_piece(kind: BuildKind) -> &'static str {
+    match kind {
+        BuildKind::Farm => "town_farm",
+        BuildKind::Lumber => "town_woodcutter",
+        BuildKind::Mine => "town_mine",
     }
 }
 

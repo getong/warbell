@@ -1695,12 +1695,13 @@ pub(crate) fn houses() -> &'static [HouseSite] {
             (33.0, 1.0, "town_house_b", 0.6, -0.06),
         ];
         let half_of = |piece: &str| match piece {
-            "town_street_house_a" => Vec2::new(2.2, 3.8),
-            "town_street_house_b" => Vec2::new(2.4, 3.5),
-            "town_house_a" => Vec2::new(2.3, 1.7),
-            "town_house_b" => Vec2::new(2.8, 1.8),
-            "town_house_c" => Vec2::new(1.9, 1.6),
-            _ => Vec2::new(2.4, 1.8), // town_house_d
+            // The poor village's walls (village_huts.py); the thatch overhangs ~0.45 beyond.
+            "town_street_house_a" => Vec2::new(2.1, 3.7),
+            "town_street_house_b" => Vec2::new(2.3, 3.4),
+            "town_house_a" => Vec2::new(2.55, 1.55),
+            "town_house_b" => Vec2::new(2.95, 1.65),
+            "town_house_c" => Vec2::new(1.75, 1.45),
+            _ => Vec2::new(2.2, 1.7), // town_house_d (the earth bank reaches a little further)
         };
         // Path distance from the gate to the lane's mouth.
         let lane_s0 = {
@@ -1830,7 +1831,7 @@ fn spawn_kit(
     kind: CastleKind,
     edit: crate::castle_kit::Edit,
     occluder: bool,
-) {
+) -> Option<Entity> {
     let y = if in_footprint(pos.x, pos.y) { 0.0 } else { crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0) };
     let tf = Transform::from_xyz(pos.x, y, pos.y).with_rotation(Quat::from_rotation_y(yaw));
     let tags = (CastlePart { kind }, crate::build_fx::RevealAt(Vec3::new(pos.x, y, pos.y)), BiomeEntity);
@@ -1841,13 +1842,14 @@ fn spawn_kit(
             commands.entity(e).insert(tags);
         })
     };
-    let Some(e) = e else { return };
+    let e = e?;
     let vis = if shown_at_start(kind) { Visibility::Inherited } else { Visibility::Hidden };
     let mut ec = commands.entity(e);
     ec.insert(vis);
     if occluder {
         ec.insert(crate::player::CameraOccluder);
     }
+    Some(e)
 }
 
 /// The burgage yard behind house `i`: fences, garden, shed / woodpile / coop / hayrick (local
@@ -1855,11 +1857,8 @@ fn spawn_kit(
 fn house_yard(h: &HouseSite) -> Vec<(&'static str, f32, f32, f32)> {
     let back = -h.half.y;
     let w = h.half.x.max(2.4) + 0.6; // the side fence line
-    let (fence, gate) = if h.dress % 2 == 0 {
-        ("town_fence_wattle", "town_fence_wattle_gate")
-    } else {
-        ("town_fence_picket", "town_fence_picket_gate")
-    };
+    // Poor village: woven hurdles only (the neat pointed picket fence read as suburban).
+    let (fence, gate) = ("town_fence_wattle", "town_fence_wattle_gate");
     let flip = if h.dress < 2 { 1.0 } else { -1.0 };
     let mut v = vec![
         // back fence (two modules, one with a gate) and one side fence
@@ -1927,24 +1926,49 @@ pub fn build(
         );
     }
     // War-braziers lighting the kill-zone outside each gate (with the Gate upgrade).
+    let mut kit_fires: Vec<(Vec2, f32)> = Vec::new();
     for gate in Gate::ALL {
-        for p in brazier_spots(gate) {
+        for (k, p) in brazier_spots(gate).into_iter().enumerate() {
+            // The forged cresset (town_kit `gate_brazier`), spawned below with a live flame-card fire.
+            if crate::realforest::get().is_some_and(|kit| kit.has("gate_brazier")) {
+                kit_fires.push((Vec2::new(p.x, p.z), p.x * 0.31 + p.z * 0.17 + k as f32));
+                continue;
+            }
             spawn(brazier_parts(), p, 0.0, Vec3::ONE, CastleKind::Gate);
         }
     }
     // The settlement's working corners: woodpile, hay store, cart. Permanent (`Always`) — the
     // courtyard never goes blank, walls or no walls. Off the open courtyard (spec v2 §2).
-    for (parts, (x, z, yaw)) in [
-        (wood_yard_parts(), WOOD_YARD),
-        (hay_corner_parts(), HAY_CORNER),
-        (cart_corner_parts(), CART_CORNER),
+    // The Blender versions (town_kit.glb `yard_*`, same local layouts) when the kit is loaded.
+    let has_kit = |name: &str| crate::realforest::get().is_some_and(|k| k.has(name));
+    let mut kit_yard: Vec<(&'static str, Vec2, f32)> = Vec::new();
+    for (piece, parts, (x, z, yaw)) in [
+        ("yard_wood", wood_yard_parts as fn() -> Vec<(Mesh, M)>, WOOD_YARD),
+        ("yard_hay", hay_corner_parts, HAY_CORNER),
+        ("yard_cart", cart_corner_parts, CART_CORNER),
     ] {
-        spawn(parts, Vec3::new(x, 0.0, z), yaw, Vec3::ONE, CastleKind::Always);
+        if has_kit(piece) {
+            kit_yard.push((piece, Vec2::new(x, z), yaw));
+        } else {
+            spawn(parts(), Vec3::new(x, 0.0, z), yaw, Vec3::ONE, CastleKind::Always);
+        }
     }
     if let Some(well) = town_plot("well") {
-        spawn(well_parts(), Vec3::new(well.pos.x, 0.0, well.pos.y), well.yaw, Vec3::ONE, CastleKind::Always);
+        if has_kit("yard_well") {
+            kit_yard.push(("yard_well", well.pos, well.yaw));
+        } else {
+            spawn(well_parts(), Vec3::new(well.pos.x, 0.0, well.pos.y), well.yaw, Vec3::ONE, CastleKind::Always);
+        }
     }
 
+    for (pos, ph) in kit_fires {
+        if let Some(e) = spawn_kit(commands, meshes, "gate_brazier", pos, ph, CastleKind::Gate, crate::castle_kit::Edit::None, false) {
+            crate::flame_fx::flame_children(commands, e, Vec3::new(0.0, 1.04, 0.0), 0.95, ph);
+        }
+    }
+    for (piece, pos, yaw) in kit_yard {
+        spawn_kit(commands, meshes, piece, pos, yaw, CastleKind::Always, crate::castle_kit::Edit::None, false);
+    }
     // The fortifications: every castle-kit piece of every tier (ruins → palisade → stone curtain,
     // the three keep tiers, the bell tower), shown by `sync_castle` as the Defenses upgrades land.
     for p in kit_layout() {

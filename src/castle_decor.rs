@@ -213,10 +213,23 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
     //    and stay solid.
     const MIN_SOLID: f32 = 0.08;
     const MIN_SOLID_AREA: f32 = 0.09;
-    let mut set = |parts: Vec<(Mesh, M)>, pos: Vec3, yaw: f32, gate: DecorGate, foot: Vec2| {
+    // `kit`: a town_kit.glb piece that replaces the procedural parts when the kit is loaded ("" = none).
+    let mut set_kit = |kit: &str, parts: Vec<(Mesh, M)>, pos: Vec3, yaw: f32, gate: DecorGate, foot: Vec2| -> Option<Entity> {
         let vis = if matches!(gate, DecorGate::Always) { Visibility::Inherited } else { Visibility::Hidden };
         let solid = (foot.x >= MIN_SOLID && foot.y >= MIN_SOLID && foot.x * foot.y >= MIN_SOLID_AREA)
             .then_some(DecorSolid { hw: foot.x, hd: foot.y, yaw });
+        if !kit.is_empty() {
+            let y = crate::worldmap::ground_at_world(pos.x, pos.z).filter(|_| !crate::castle::in_footprint(pos.x, pos.z)).unwrap_or(pos.y);
+            let tf = Transform::from_xyz(pos.x, y, pos.z).with_rotation(Quat::from_rotation_y(yaw));
+            if let Some(e) = crate::town_kit::spawn_piece(commands, kit, tf) {
+                let mut e = commands.entity(e);
+                e.insert((vis, Decor { gate }, crate::build_fx::RevealAt(pos), BiomeEntity));
+                if let Some(s) = solid {
+                    e.insert(s);
+                }
+                return Some(e.id());
+            }
+        }
         for (i, (m, slot)) in parts.into_iter().enumerate() {
             let mut e = commands.spawn((
                 Mesh3d(meshes.add(bake(m, pos, yaw, Vec3::ONE))),
@@ -234,33 +247,34 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
                 }
             }
         }
+        None
     };
 
     // ── Day-one life (Always) ────────────────────────────────────────────────────
     // Furniture has tight footprints, while small posts remain visual-only so plaza lanes stay smooth.
     // Castle v2 (spec §2): the courtyard in front of the keep stays OPEN — the day-one furniture
     // lives at the gates and along the walls, every spot derived from the wall/gate/keep consts.
-    set(notice_board_parts(), Vec3::new(S_GATE_X + 3.0, 0.0, HALF_Z - 4.6), 0.35, DecorGate::Always, Vec2::ZERO);
-    set(trough_parts(), Vec3::new(-HALF_X + 3.6, 0.0, W_GATE_Z + 3.0), HALF_PI, DecorGate::Always, Vec2::new(0.55, 0.25));
+    set_kit("decor_notice_board", notice_board_parts(), Vec3::new(S_GATE_X + 3.0, 0.0, HALF_Z - 4.6), 0.35, DecorGate::Always, Vec2::ZERO);
+    set_kit("decor_trough", trough_parts(), Vec3::new(-HALF_X + 3.6, 0.0, W_GATE_Z + 3.0), HALF_PI, DecorGate::Always, Vec2::new(0.55, 0.25));
     // (The old plaza market-goods pile lived here — removed; the merchant shop by the west-gate
     // market (`villagers::shop_parts`) is the town's market focal point.)
-    set(bench_parts(), Vec3::new(KEEP_POS.x - KEEP_HALF.x - 1.6, 0.0, KEEP_FRONT + 0.4), 0.0, DecorGate::Always, Vec2::new(0.60, 0.17));
+    set_kit("decor_bench", bench_parts(), Vec3::new(KEEP_POS.x - KEEP_HALF.x - 1.6, 0.0, KEEP_FRONT + 0.4), 0.0, DecorGate::Always, Vec2::new(0.60, 0.17));
     // A few lantern posts along the three gate lanes (thinned down — the bailey was getting busy).
     for (lx, lz, lyaw) in [
         (S_GATE_X - 2.3, HALF_Z - 7.0, 0.0),
         (-HALF_X + 6.5, W_GATE_Z - 2.0, -HALF_PI),
         (N_GATE_X + 2.0, -HALF_Z + 4.0, HALF_PI),
     ] {
-        set(lantern_parts(), Vec3::new(lx, 0.0, lz), lyaw, DecorGate::Always, Vec2::new(0.14, 0.14));
+        set_kit("", lantern_parts(), Vec3::new(lx, 0.0, lz), lyaw, DecorGate::Always, Vec2::new(0.14, 0.14));
     }
 
     // ── Filled in as the town grows (House(n): shown once houses > n) ───────────
     // Kitchen garden / woodpile / laundry sit among the houses along the walls, not in the yard.
-    set(garden_parts(), Vec3::new(-17.6, 0.0, 13.2), 0.15, DecorGate::House(1), Vec2::ZERO);
-    set(woodpile_parts(), Vec3::new(17.4, 0.0, 9.1), 0.4, DecorGate::House(2), Vec2::new(0.66, 0.37));
+    set_kit("", garden_parts(), Vec3::new(-17.6, 0.0, 13.2), 0.15, DecorGate::House(1), Vec2::ZERO);
+    set_kit("", woodpile_parts(), Vec3::new(17.4, 0.0, 9.1), 0.4, DecorGate::House(2), Vec2::new(0.66, 0.37));
     // Laundry line = cloth hung overhead on a string between two thin posts — you walk UNDER it.
     // No collision (a 2.6-wide box across the lane just walls off the courtyard for no reason).
-    set(laundry_parts(), Vec3::new(-21.5, 0.0, 11.0), 0.05, DecorGate::House(1), Vec2::ZERO);
+    set_kit("", laundry_parts(), Vec3::new(-21.5, 0.0, 11.0), 0.05, DecorGate::House(1), Vec2::ZERO);
     // (Far-side duplicate garden + laundry cut — the bailey was over-dressed with junk stands.)
 
     // ── Upgrade set pieces ───────────────────────────────────────────────────────
@@ -269,28 +283,31 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
     // The armory corner between the keep and the barracks plot (west of the keep): racked spears +
     // shields + a leather stand (tier 1), extended with steel — sword rail + iron stand (tier 2).
     let (kw, kn) = (KEEP_POS.x - KEEP_HALF.x, KEEP_POS.y - KEEP_HALF.y); // keep west face, north face
-    set(armory_parts(), Vec3::new(kw - 2.4, 0.0, KEEP_POS.y - 2.6), HALF_PI, DecorGate::ArmsTier(1), Vec2::new(0.7, 0.3));
-    set(armory_veteran_parts(), Vec3::new(kw - 2.4, 0.0, KEEP_POS.y - 0.4), HALF_PI, DecorGate::ArmsTier(2), Vec2::ZERO);
-    set(axe_display_parts(), Vec3::new(kw - 2.2, 0.0, KEEP_POS.y + 1.5), HALF_PI, DecorGate::Weapon("axe"), Vec2::new(0.32, 0.25));
-    set(sword_display_parts(), Vec3::new(kw - 2.2, 0.0, KEEP_POS.y + 2.9), HALF_PI, DecorGate::Weapon("sword_gold"), Vec2::new(0.3, 0.25));
-    set(grindstone_parts(), Vec3::new(kw - 4.2, 0.0, KEEP_POS.y + 0.6), 0.8, DecorGate::Purchased("hero_dmg_1"), Vec2::new(0.65, 0.40));
+    set_kit("", armory_parts(), Vec3::new(kw - 2.4, 0.0, KEEP_POS.y - 2.6), HALF_PI, DecorGate::ArmsTier(1), Vec2::new(0.7, 0.3));
+    set_kit("", armory_veteran_parts(), Vec3::new(kw - 2.4, 0.0, KEEP_POS.y - 0.4), HALF_PI, DecorGate::ArmsTier(2), Vec2::ZERO);
+    set_kit("", axe_display_parts(), Vec3::new(kw - 2.2, 0.0, KEEP_POS.y + 1.5), HALF_PI, DecorGate::Weapon("axe"), Vec2::new(0.32, 0.25));
+    set_kit("", sword_display_parts(), Vec3::new(kw - 2.2, 0.0, KEEP_POS.y + 2.9), HALF_PI, DecorGate::Weapon("sword_gold"), Vec2::new(0.3, 0.25));
+    set_kit("", grindstone_parts(), Vec3::new(kw - 4.2, 0.0, KEEP_POS.y + 0.6), 0.8, DecorGate::Purchased("hero_dmg_1"), Vec2::new(0.65, 0.40));
 
     // Civic: the tax-collector's counting booth inside the west (King's Road) gate — the Crown
     // taxes what comes in; the shrine the heal aura lives in by the infirmary on the east side.
-    set(tax_booth_parts(), Vec3::new(-HALF_X + 3.6, 0.0, W_GATE_Z - 3.4), HALF_PI, DecorGate::TaxOffice, Vec2::new(0.65, 0.45));
+    set_kit("", tax_booth_parts(), Vec3::new(-HALF_X + 3.6, 0.0, W_GATE_Z - 3.4), HALF_PI, DecorGate::TaxOffice, Vec2::new(0.65, 0.45));
     let shrine = crate::castle::SHRINE_POS;
-    set(shrine_parts(), Vec3::new(shrine.x, 0.0, shrine.y), -HALF_PI, DecorGate::Shrine, Vec2::new(0.4, 0.32));
+    set_kit("", shrine_parts(), Vec3::new(shrine.x, 0.0, shrine.y), -HALF_PI, DecorGate::Shrine, Vec2::new(0.4, 0.32));
 
     // Bounty board inside the north postern — wanted papers for the ork warlords.
-    set(bounty_board_parts(), Vec3::new(N_GATE_X - 2.4, 0.0, -HALF_Z + 2.8), 0.1, DecorGate::Purchased("eco_bounty"), Vec2::ZERO);
+    set_kit("", bounty_board_parts(), Vec3::new(N_GATE_X - 2.4, 0.0, -HALF_Z + 2.8), 0.1, DecorGate::Purchased("eco_bounty"), Vec2::ZERO);
 
     // Reinforced Keep: a mason's scaffold against the keep's west wall + dressed stone waiting.
-    set(scaffold_parts(), Vec3::new(kw - 0.05, 0.0, KEEP_POS.y + KEEP_HALF.y * 0.5), 0.0, DecorGate::Reinforced, Vec2::ZERO);
-    set(stone_pile_parts(), Vec3::new(kw - 1.3, 0.0, kn + 1.2), 0.3, DecorGate::Reinforced, Vec2::new(0.35, 0.65));
+    set_kit("", scaffold_parts(), Vec3::new(kw - 0.05, 0.0, KEEP_POS.y + KEEP_HALF.y * 0.5), 0.0, DecorGate::Reinforced, Vec2::ZERO);
+    set_kit("", stone_pile_parts(), Vec3::new(kw - 1.3, 0.0, kn + 1.2), 0.3, DecorGate::Reinforced, Vec2::new(0.35, 0.65));
 
     // Tower Mastery: a standing fire basket inside each wall corner (the crews work all night).
+    let mut fires = Vec::new();
     for p in corner_baskets() {
-        set(brazier_parts(), Vec3::new(p.x, 0.0, p.y), p.x.signum() * 0.4, DecorGate::TowerMastery, Vec2::new(0.2, 0.2));
+        if let Some(e) = set_kit("gate_brazier", brazier_parts(), Vec3::new(p.x, 0.0, p.y), p.x.signum() * 0.4, DecorGate::TowerMastery, Vec2::new(0.2, 0.2)) {
+            fires.push((e, p.x + p.y));
+        }
     }
 
     // Merchant Guild: banner + stacked goods dressing the wandering merchant's shop by the
@@ -298,8 +315,12 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
     let stall_y = |x: f32, z: f32| crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
     let (bnx, bnz) = (MERCHANT_SHOP.x - 2.1, MERCHANT_SHOP.y + 0.6);
     let (gdx, gdz) = (MERCHANT_SHOP.x + 0.9, MERCHANT_SHOP.y - 2.0);
-    set(guild_banner_parts(), Vec3::new(bnx, stall_y(bnx, bnz), bnz), 0.2, DecorGate::Guild, Vec2::new(0.16, 0.16));
-    set(guild_goods_parts(), Vec3::new(gdx, stall_y(gdx, gdz), gdz), -0.5, DecorGate::Guild, Vec2::new(0.6, 0.5));
+    set_kit("", guild_banner_parts(), Vec3::new(bnx, stall_y(bnx, bnz), bnz), 0.2, DecorGate::Guild, Vec2::new(0.16, 0.16));
+    set_kit("", guild_goods_parts(), Vec3::new(gdx, stall_y(gdx, gdz), gdz), -0.5, DecorGate::Guild, Vec2::new(0.6, 0.5));
+    // Live flame cards on the corner fire baskets (children, so they share the basket's reveal).
+    for (e, ph) in fires {
+        crate::flame_fx::flame_children(commands, e, Vec3::new(0.0, 1.04, 0.0), 0.95, ph);
+    }
 
     // Firelight: flickering pools for the night-burning pieces (the meshes' emissive alone
     // reads flat in the dark). Same pooled flicker as the wall torches.
