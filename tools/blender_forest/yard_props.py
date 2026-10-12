@@ -11,6 +11,32 @@ toolkit is in scope):
 """
 
 
+def lift_timber(fn, floor=0.78, gain_max=1.6, hue=(1.0, 0.9, 0.76), grey=0.4):
+    """Per-model timber tint fix (the wood read too dark in game): wrap a model fn so every
+    plank / timber / bark face corner of ITS builder is lifted toward weathered grey-brown oak —
+    luminance raised to at least `floor` (by at most `gain_max`, so deliberately shadowed bits
+    stay darker), then the hue pulled `grey` of the way to `hue`. The tint multiplies a scanned
+    wood albedo, so ~0.4-0.6 tints read near-black at noon; this lands them ~0.75-0.9. Local to
+    the wrapped models: the shared materials are untouched."""
+    hl = 0.3 * hue[0] + 0.59 * hue[1] + 0.11 * hue[2]
+    hn = tuple(h / hl for h in hue)
+
+    def lift(c):
+        lum = max(0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2], 1e-4)
+        k = min(max(floor / lum, 1.0), gain_max)
+        c = tuple(x * k for x in c[:3])
+        lum *= k
+        return tuple(x + (lum * h - x) * grey for x, h in zip(c, hn))
+
+    def wrapped(rng):
+        b = fn(rng)
+        wood = (M_PLANK, M_TIMBER, M_BARK)
+        b.faces = [(f[0], f[1], f[2], [lift(c) for c in f[3]], f[4]) if f[4] in wood else f for f in b.faces]
+        return b
+    wrapped.__name__ = fn.__name__
+    return wrapped
+
+
 def gate_brazier(rng):
     b = Builder()
     g = G(b)
@@ -481,3 +507,14 @@ def meadow_crates(rng):
     sack(g, rng, V(0.4, 0.22, 0.6))
     sack(g, rng, V(-0.5, 0.17, 0.62), lying=True)
     return b
+
+
+# The wooden yard / meadow pieces get the per-model timber lift (the brazier keeps its charred
+# logs dark).
+training_dummy = lift_timber(training_dummy)
+town_merchant_shop = lift_timber(town_merchant_shop)
+meadow_hay_cart = lift_timber(meadow_hay_cart)
+meadow_scarecrow = lift_timber(meadow_scarecrow)
+meadow_beehive = lift_timber(meadow_beehive)
+meadow_firewood_rack = lift_timber(meadow_firewood_rack)
+meadow_crates = lift_timber(meadow_crates)

@@ -75,7 +75,7 @@ ROT_WOOD = (0.75, 0.75, 0.7)
 FIRED = (0.85, 0.5, 0.34)
 RAW_CLAY = (0.62, 0.55, 0.48)
 PAPER = (0.92, 0.88, 0.76)
-DUNE = (0.96, 0.76, 0.5)             # wind-laid sand over the s_snow grain scan (reads as the terrain's sand)
+DUNE = (0.82, 0.62, 0.31)            # wind-laid sand over the (cool, bright) s_snow grain scan -> the terrain's sand
 INK = (0.12, 0.1, 0.09)
 
 
@@ -120,34 +120,38 @@ def mossy(base, moss=0.6, nz=None, wet=0.65):
     return f
 
 
-def carve_line(g, pts, col, r=0.012, mat=M_ROCK):
-    tube(g, [Vector(p) for p in pts], [r] * len(pts), 4, mat, col, tile=0.2, cap=False)
+def carve_line(g, pts, col, r=0.012, mat=M_ROCK, proj=None):
+    """`proj`: maps each point onto a curved face (so pecked lines follow the rock)."""
+    pts = [Vector(p) for p in pts]
+    if proj is not None:
+        pts = [proj(p) for p in pts]
+    tube(g, pts, [r] * len(pts), 4, mat, col, tile=0.2, cap=False)
 
 
-def ring_on(g, c, face, up, rr, col, r=0.012, mat=M_ROCK, n=15, arc=(0.0, 2 * math.pi)):
+def ring_on(g, c, face, up, rr, col, r=0.012, mat=M_ROCK, n=15, arc=(0.0, 2 * math.pi), proj=None):
     face, up = Vector(face).normalized(), Vector(up).normalized()
     right = up.cross(face).normalized()
     up = face.cross(right).normalized()
     pts = [Vector(c) + (right * math.cos(t) + up * math.sin(t)) * rr for t in np.linspace(arc[0], arc[1], n)]
-    carve_line(g, pts, col, r, mat)
+    carve_line(g, pts, col, r, mat, proj)
 
 
-def tusk_figure(g, c, face, up, s, col, mat=M_ROCK, arms_up=True):
+def tusk_figure(g, c, face, up, s, col, mat=M_ROCK, arms_up=True, proj=None):
     """A pecked stick figure with tusks: head ring, body, arms raised (or out), legs."""
     face, up = Vector(face).normalized(), Vector(up).normalized()
     right = up.cross(face).normalized()
     c = Vector(c)
     head = c + up * 0.32 * s
-    ring_on(g, head, face, up, 0.05 * s, col, r=0.018, mat=mat, n=9)
+    ring_on(g, head, face, up, 0.05 * s, col, r=0.018, mat=mat, n=9, proj=proj)
     body = [c + up * 0.26 * s, c + up * 0.05 * s]
-    carve_line(g, body, col, 0.02, mat)
+    carve_line(g, body, col, 0.02, mat, proj)
     for sg in (-1, 1):
         sh = c + up * 0.2 * s
         hand = sh + right * sg * 0.13 * s + up * (0.14 if arms_up else -0.02) * s
-        carve_line(g, [sh, sh + right * sg * 0.09 * s + up * 0.02 * s, hand], col, 0.018, mat)
-        carve_line(g, [c + up * 0.05 * s, c + right * sg * 0.07 * s - up * 0.16 * s], col, 0.018, mat)
+        carve_line(g, [sh, sh + right * sg * 0.09 * s + up * 0.02 * s, hand], col, 0.018, mat, proj)
+        carve_line(g, [c + up * 0.05 * s, c + right * sg * 0.07 * s - up * 0.16 * s], col, 0.018, mat, proj)
         t0 = head - up * 0.035 * s + right * sg * 0.025 * s
-        carve_line(g, [t0, t0 + right * sg * 0.03 * s + up * 0.045 * s], col, 0.008, mat)
+        carve_line(g, [t0, t0 + right * sg * 0.03 * s + up * 0.045 * s], col, 0.008, mat, proj)
 
 
 def shards(g, rng, n, cx, cz, spread, col, mat=M_CLAY, size=(0.05, 0.12), y=0.0):
@@ -494,7 +498,61 @@ def sand_col(nzn):
     return f
 
 
-def heightfield(g, x0, x1, z0, z1, step, hfn, col_fn, mat=M_EARTH, tile=1.0):
+def wind_dune(g, rng, centre, rx, rz, h, yaw, nu=40, nv=18, wave=0.34, amp=0.022, crest=0.3):
+    """A wind-built dune (local +X = downwind, turned by `yaw`): a long windward ramp scored with ripples
+    running across the wind, a sharp brink, a straight steep slip face; the rim sinks below the ground.
+    Ripple crests catch light, troughs hold darker grains; the slip face is smooth."""
+    c = Vector(centre)
+    rq = quat_y(yaw)
+    inv = rq.inverted()
+    nz = Noise(rng, 4, 1.2)
+    uc = crest + rng.uniform(-0.05, 0.05)
+
+    def phase(u, v):
+        return u * rx * 2 * math.pi / wave + 0.8 * math.sin(v * rz * 1.4) + 1.8 * nz(V(u * 0.7, v * 0.7, 0))
+
+    def rip_w(u):
+        return smoothstep(-1.0, -0.6, u) * smoothstep(uc, uc - 0.12, u)
+
+    verts = []
+    for i in range(nu + 1):
+        u = -1 + 2 * i / nu
+        for j in range(nv + 1):
+            v = -1 + 2 * j / nv
+            across = max(0.0, 1 - abs(v) ** 1.7) ** 0.55 * (1 + 0.1 * math.sin(v * 2.7 + u * 1.3))
+            if u <= uc:
+                sw = (u + 1) / (uc + 1)
+                prof = sw ** 1.3 * (1.3 - 0.3 * sw)
+            else:
+                prof = max(0.0, 1 - (u - uc) / (1 - uc)) ** 1.1
+            y = h * prof * across + amp * math.sin(phase(u, v)) * rip_w(u) * min(1.0, across * 3)
+            y -= 0.3 * max(abs(u), abs(v)) ** 6
+            verts.append(c + rq @ V(u * rx, y, v * rz))
+    tris = []
+    for i in range(nu):
+        for j in range(nv):
+            a, b2, c2, d2 = i * (nv + 1) + j, (i + 1) * (nv + 1) + j, (i + 1) * (nv + 1) + j + 1, i * (nv + 1) + j + 1
+            for t in ((a, b2, c2), (a, c2, d2)):
+                if max(verts[q].y for q in t) < -0.08:
+                    continue
+                n = (verts[t[1]] - verts[t[0]]).cross(verts[t[2]] - verts[t[0]])
+                tris.append(t if n.y >= 0 else (t[0], t[2], t[1]))
+
+    def col(p, n):
+        q = inv @ (p - c)
+        u, v = q.x / rx, q.z / rz
+        k = 0.93 + 0.07 * nz(p * 2.3)
+        r = math.sin(phase(u, v)) * rip_w(u)
+        k *= 1.0 + 0.07 * r                                  # light crests, dark troughs
+        if u > uc:
+            k *= 0.97                                        # the slip face: a smooth fresh fall
+        k *= 0.9 + 0.1 * smoothstep(-0.2, 0.15, p.y)         # damp-dark grains at the toe
+        return scale(DUNE, k)
+    smooth_mesh(g, verts, tris, M_SNOW, col, 1.6)
+
+
+def heightfield(g, x0, x1, z0, z1, step, hfn, col_fn, mat=M_EARTH, tile=1.0, cull=None):
+    """A height grid; `cull`: drop triangles lying wholly below that height (buried ground)."""
     nx, nzc = max(2, int((x1 - x0) / step)), max(2, int((z1 - z0) / step))
     verts, tris = [], []
     for i in range(nx + 1):
@@ -505,25 +563,48 @@ def heightfield(g, x0, x1, z0, z1, step, hfn, col_fn, mat=M_EARTH, tile=1.0):
         for j in range(nzc):
             k = i * (nzc + 1) + j
             for t in ((k, k + nzc + 1, k + nzc + 2), (k, k + nzc + 2, k + 1)):
+                if cull is not None and max(verts[q].y for q in t) < cull:
+                    continue
                 n = (verts[t[1]] - verts[t[0]]).cross(verts[t[2]] - verts[t[0]])
                 tris.append(t if n.y > 0 else (t[0], t[2], t[1]))
     smooth_mesh(g, verts, tris, mat, col_fn, tile)
 
 
+def rect_dist(x, z, cx, cz, hx, hz):
+    """Signed distance to a rectangle: square inside (the cut walls), rounded outside (the bank's toe)."""
+    dx, dz = abs(x - cx) - hx, abs(z - cz) - hz
+    if dx < 0 and dz < 0:
+        return max(dx, dz)
+    return math.hypot(max(dx, 0.0), max(dz, 0.0))
+
+
 def pit_bank(hx, hz, h, plateau, slope, nzn, cx=0.0, cz=0.0):
-    """Height of a spoil bank round a rectangular pit (inner half extents hx, hz): vertical-ish inner wall,
-    a flat-topped bank, an outer slope dying into the ground (sinks below 0 at its foot)."""
+    """Height of a heaped spoil bank round a rectangular pit (inner half extents hx, hz): the cut inner
+    wall, a lumpy rounded crest of thrown-out clods (heaps and saddles along it, never a flat shelf), an
+    outer slope whose toe wanders in lobes and bays and sinks below 0."""
+    w = plateau + slope
+    tc = 0.55 * plateau / w
+
     def f(x, z):
-        dx, dz = abs(x - cx) - hx, abs(z - cz) - hz
-        d = max(dx, dz) if (dx > 0 or dz > 0) else max(dx, dz)
+        d = rect_dist(x, z, cx, cz, hx, hz)
+        p = Vector((x, 0, z))
         if d < -0.04:
-            return -0.02 + 0.03 * nzn(Vector((x, 0, z)) * 3)
+            return -0.02 + 0.03 * nzn(p * 3)
+        lip = h * (1.0 + 0.05 * nzn(Vector((x, 5, z)) * 1.1))
+        heap = 0.1 + 0.2 * nzn(p * 0.8) + 0.08 * nzn(Vector((z, 2, x)) * 1.7)    # heaps and saddles
+        clods = 0.05 * nzn(Vector((x, 7, z)) * 2.4) + 0.03 * nzn(Vector((z, 9, x)) * 3.6)
         if d < 0.06:
-            return -0.02 + (h + 0.02) * smoothstep(-0.04, 0.06, d)
-        if d < 0.06 + plateau:
-            return h * (1.0 + 0.08 * nzn(Vector((x, 1, z)) * 2.5))
-        e = (d - 0.06 - plateau) / slope
-        return h * max(0.0, 1.0 - smoothstep(0.0, 1.0, e)) * (1.0 + 0.08 * nzn(Vector((x, 1, z)) * 2.5)) - 0.12 * smoothstep(0.8, 1.0, e)
+            return -0.02 + (lip + clods + 0.02) * smoothstep(-0.04, 0.06, d)
+        t = (d - 0.06) / w * (1.0 + 0.24 * nzn(Vector((x, 3, z)) * 1.2))      # lobed toe
+        if t < tc:
+            prof = 1.0 + heap * math.sin(0.5 * math.pi * t / tc) ** 0.7
+        else:
+            e = (t - tc) / (1.0 - tc)
+            top = 1.0 + heap
+            prof = top * (1.0 - smoothstep(0.0, 1.0, e) ** 0.85) if e < 1.0 else 0.0
+        y = lip * prof + clods * min(1.0, prof * 3.0)
+        e2 = (t - tc) / (1.0 - tc)
+        return y - 0.14 * smoothstep(0.85, 1.1, e2)
     return f
 
 
@@ -898,10 +979,12 @@ def site_drowned_outpost(rng):
     strap(g, lb[0].lerp(lb[1], 0.15) + V(0, 0.08, 0), lb[0].lerp(lb[1], 0.25) + V(0, 0.08, 0), V(0, 1, 0))
     # The dune that drowned it: piled against the east end, spilling through the arches and banked on
     # the windward (+Z) face along the whole arcade.
-    sand_drift(g, (2.15, -0.06, 0.35), 1.9, 1.6, 1.65, rng, power=0.75, rings=7, seg=26, edge=0.22)
+    # The wind comes from +Z: a rippled windward ramp climbs from behind, its brink sits on the wall and
+    # a straight slip face pours over / through the east bay toward the front.
+    wind_dune(g, rng, (2.1, -0.05, 0.2), 1.9, 1.75, 1.55, math.pi / 2, crest=0.12)
     sand_wedge(g, rng, (-2.4, -0.05), (1.6, -0.05), 1.3, 0.75, 1)
-    for cx in arches[:2]:
-        sand_drift(g, (cx, -0.06, -0.55), 0.5, 0.45, 0.22, rng)
+    for cx in arches[:2]:   # tongues of sand blown through the open arches, slip faces to the front
+        wind_dune(g, rng, (cx, -0.04, -0.62), 0.55, 0.5, 0.24, math.pi / 2, nu=14, nv=10, wave=0.3, amp=0.012, crest=-0.25)
     # The cistern: two courses of cut blocks round a sand-choked shaft, a band of turquoise tiles,
     # coping slabs, a broken winch frame with its rope.
     cc = V(-1.6, 0.0, -1.85)
@@ -941,34 +1024,126 @@ def site_glyph_wall(rng):
     b = Builder()
     g = G(b)
     nz = Noise(rng, 5, 1.2)
-    cream, ochre, rust, pale = (0.98, 0.86, 0.72), (0.95, 0.72, 0.5), (0.8, 0.5, 0.36), (1.0, 0.92, 0.8)
-    back = 0.85
-    layers = [  # y_bottom, thickness, front_z, x0, x1, colour, rough
-        (-0.35, 0.5, -0.38, -2.3, 2.2, cream, 0.03),
-        (0.15, 0.48, -0.45, -2.2, 2.1, ochre, 0.008),   # the lower panel (figures)
-        (0.63, 0.22, -0.22, -2.1, 2.05, rust, 0.04),    # a weak bed, weathered back
-        (0.85, 0.72, -0.5, -2.0, 1.95, pale, 0.008),    # the main panel (the rings)
-        (1.57, 0.26, -0.3, -1.8, 1.8, rust, 0.04),
-        (1.83, 0.42, -0.85, -1.6, 1.5, ochre, 0.03),    # a hard bed: the overhanging ledge
-        (2.25, 0.32, -0.55, -1.2, 1.0, cream, 0.04),
-    ]
-    strata_outcrop(g, rng, layers, back, nz)
+    cream, ochre, rust, pale = (0.98, 0.86, 0.72), (0.95, 0.68, 0.44), (0.74, 0.42, 0.3), (1.0, 0.92, 0.8)
+    # ONE outcrop: a single continuous rock surface. For each x a cross-section runs up the front face,
+    # over a weathered rounded crown and down the back; it tapers into the ground at both ends. The
+    # strata are only shallow relief in that one skin (hard beds stand out a few cm as ledges, weak beds
+    # weather back) plus colour banding; vertical joints cut the hard beds.
+    x0, x1, htop, back, dip = -2.45, 2.35, 2.6, 0.8, 0.035
+    beds = [  # top of bed (bedding coordinate), relief (-: projects toward -Z), colour
+        (0.15, 0.0, cream), (0.63, -0.03, ochre),      # the lower panel (figures)
+        (0.85, 0.08, rust),                             # a weak bed, weathered back
+        (1.57, -0.05, pale),                            # the main panel (the rings)
+        (1.83, 0.07, rust), (2.25, -0.2, ochre),        # a hard bed: the overhanging ledge
+        (9.0, -0.03, cream)]
+    joints = ((-1.98, 0.85, 2.3), (-0.62, -0.3, 0.66), (0.83, 0.85, 1.6), (1.78, -0.3, 0.66), (-0.08, 1.83, 2.3),
+              (0.62, -0.3, 0.2))
+    xm, half = (x0 + x1) / 2, (x1 - x0) / 2
+
+    def env(x):
+        return max(0.0, 1.0 - abs((x - xm) / half) ** 2.6) ** 0.6
+
+    def step(x, a, b_, wa=0.12, wb=0.12):
+        return smoothstep(a - wa, a + wa, x) * smoothstep(b_ + wb, b_ - wb, x)
+
+    def height(x):
+        """Stepped skyline: each hard bed eroded back further than the one under it, the ends sinking
+        into the sand in a long taper."""
+        e, f = 0.06 * nz(V(x * 1.3, 0, 5)), 0.14 * nz(V(x * 0.9, 3, 1))
+        return (-0.25 + 0.88 * step(x, -2.35 + e, 2.25 + e, 0.3, 0.3) + 0.94 * step(x, -2.0 - e, 1.9 + e, 0.14, 0.1)
+                + 0.68 * step(x, -1.6 + f, 1.42 - e, 0.2, 0.12) + (0.35 + f) * step(x, -0.65 - e, 0.75 + f, 0.3, 0.12)
+                + 0.04 * nz(V(x * 2.1, 0, 9)))
+
+    def strata(yb):
+        """(relief, colour, hardness) at bedding height yb, beds blended over a few cm."""
+        off, col, hard = beds[0][1], beds[0][2], 1.0 if beds[0][1] <= 0 else 0.0
+        for k in range(1, len(beds)):
+            t = smoothstep(beds[k - 1][0] - 0.03, beds[k - 1][0] + 0.03, yb)
+            off = off + (beds[k][1] - beds[k - 1][1]) * t
+            col = mix(col, beds[k][2], smoothstep(beds[k - 1][0] - 0.015, beds[k - 1][0] + 0.015, yb))
+            hard = hard + ((1.0 if beds[k][1] <= 0 else 0.0) - (1.0 if beds[k - 1][1] <= 0 else 0.0)) * t
+        return off, col, hard
+
+    def groove(x, yb=None):
+        """Vertical joints: each cuts only its own bed(s), offset bed to bed."""
+        return max(math.exp(-((x - xj) / 0.022) ** 2) * (1.0 if yb is None else smoothstep(lo - 0.04, lo + 0.04, yb) *
+                                                        smoothstep(hi + 0.04, hi - 0.04, yb)) for xj, lo, hi in joints)
+
+    def zf(x, y):
+        """Depth of the front face at (x, y)."""
+        off, _, hard = strata(y + dip * x)
+        z = -0.45 + off + 0.045 * nz(V(x * 0.7, y * 0.35, 3)) + 0.012 * nz(V(x * 3.1, y * 2.7, 7))
+        z += (1.0 - env(x)) * 0.45 + 0.05 * (1.0 - smoothstep(-0.1, 0.22, y))   # ends recede; sand-blasted foot
+        return z + 0.035 * groove(x, y + dip * x) * hard
+
+    def zb(x, y, yt):
+        return back + (yt - y) * 0.3 - (1.0 - env(x)) * 0.3 + 0.04 * nz(V(x * 0.9, y * 0.5, 11))
+
+    xs = sorted(set([round(x, 4) for x in np.linspace(x0, x1, 34)] +
+                    [round(j[0] + d, 4) for j in joints for d in (-0.035, 0.0, 0.035)]))
+    rows = sorted(set([round(y, 4) for y in np.arange(-0.3, 2.45, 0.1)] +
+                      [round(bt + d, 4) for bt, _, _ in beds[:-1] for d in (-0.03, 0.03)]))
+    ncap, nback = 7, 5
+    verts, cols_n = [], 0
+    for x in xs:
+        H = height(x)
+        rc = min(0.16, max(0.06, (H + 0.3) * 0.2))
+        yt = max(-0.3, H - rc)
+        H = max(H, yt + 0.02)
+        col_pts = []
+        for yb in rows:
+            y = min(yb - dip * x, yt) if yb > -0.3 else -0.3
+            col_pts.append(V(x, y, zf(x, y)))
+        zft, zbt = zf(x, yt), zb(x, yt, yt)
+        for i in range(1, ncap):
+            th = math.pi * i / ncap
+            col_pts.append(V(x, yt + (H - yt) * math.sin(th) ** 0.35 + 0.025 * nz(V(x * 2, th, 13)) * math.sin(th),
+                             zft + (zbt - zft) * (1 - math.cos(th)) / 2))
+        for i in range(nback + 1):
+            y = yt + (-0.3 - yt) * i / nback
+            col_pts.append(V(x, y, zb(x, y, yt)))
+        verts += col_pts
+        cols_n = len(col_pts)
+    tris = []
+    for i in range(len(xs) - 1):
+        for k in range(cols_n - 1):
+            a_, b_, c_, d_ = i * cols_n + k, (i + 1) * cols_n + k, (i + 1) * cols_n + k + 1, i * cols_n + k + 1
+            tris += [(a_, d_, c_), (a_, c_, b_)]
+
+    def rock(p, n):
+        yb = p.y + dip * p.x
+        _, c, hard = strata(yb)
+        c = scale(c, (0.92 + 0.08 * nz(p * 3.0)) * (0.95 + 0.05 * math.sin(yb * 58 + 3 * nz(p * 0.8))))   # laminae
+        vert = 1.0 - smoothstep(0.25, 0.7, abs(n.y))
+        streak = smoothstep(0.35, 0.9, 0.5 + 0.5 * math.sin(p.x * 9.7 + 2.6 * nz(V(p.x * 0.8, 0, 1))) * (0.6 + 0.4 * nz(V(p.x * 2.3, p.y * 0.4, 2))))
+        panel = 0.35 * (smoothstep(0.17, 0.25, yb) * smoothstep(0.62, 0.55, yb) + smoothstep(0.87, 0.95, yb) * smoothstep(1.56, 1.48, yb))
+        c = mix(c, VARNISH, min(0.9, vert * (0.8 * streak * smoothstep(0.1, 1.0, p.y) + panel)) * (n.z < 0.3))
+        c = mix(c, scale(VARNISH, 0.8), 0.6 * groove(p.x, yb) * vert)                       # the joints
+        c = mix(c, (1.0, 0.94, 0.82), 0.35 * smoothstep(0.55, 0.9, n.y))                   # bleached crown
+        ledge = smoothstep(0.55, 0.85, n.y) * (1.0 - smoothstep(1.9, 2.3, p.y))            # sand on the ledges
+        c = mix(c, scale(SAND, 0.95), 0.6 * ledge)
+        return mix(c, SAND, 0.4 * (1.0 - smoothstep(0.0, 0.35, p.y)))
+    smooth_mesh(g, verts, tris, M_SAND, rock, 1.1)
+
+    def proj(p):
+        return V(p.x, p.y, zf(p.x, p.y) - 0.006)
     # Petroglyphs pecked pale through the varnish: a great ring spreading on the main panel, tusked
     # figures on the lower panel with their arms raised toward it, a spiral, a count of dots.
     face, up = V(0, 0, -1), V(0, 1, 0)
     peck = (1.0, 0.9, 0.74)
-    rc = V(0.3, 1.21, -0.525)
+    rc_ = V(0.3, 1.21, -0.525)
     for rr in (0.06, 0.13, 0.2, 0.27, 0.33):
-        ring_on(g, rc, face, up, rr, scale(peck, 1.0 - rr * 0.3), r=0.018, n=25, mat=M_SAND)
+        ring_on(g, rc_, face, up, rr, scale(peck, 1.0 - rr * 0.3), r=0.018, n=25, mat=M_SAND, proj=proj)
     for k, x in enumerate((-1.75, -1.3, -0.85, -0.4)):
-        tusk_figure(g, V(x, 0.22 + 0.02 * k, -0.475), face, up, 0.85, peck, mat=M_SAND, arms_up=True)
+        tusk_figure(g, V(x, 0.22 + 0.02 * k, -0.475), face, up, 0.85, peck, mat=M_SAND, arms_up=True, proj=proj)
     for k, x in enumerate((1.05, 1.45)):
-        tusk_figure(g, V(x, 0.2, -0.475), face, up, 0.8, peck, mat=M_SAND, arms_up=k == 0)
+        tusk_figure(g, V(x, 0.2, -0.475), face, up, 0.8, peck, mat=M_SAND, arms_up=k == 0, proj=proj)
     sp = V(-1.25, 1.2, -0.525)
     carve_line(g, [sp + V(math.cos(t) * 0.022 * t, math.sin(t) * 0.022 * t, 0) for t in np.linspace(0.3, 12.5, 32)], peck, 0.016,
-               M_SAND)
+               M_SAND, proj)
     for k in range(9):
-        stone(g, (-0.3 + k * 0.1, 0.55, -0.475), (0.018, 0.018, 0.008), rng, mat=M_SAND, detail=1, rough=0, cuts=0,
+        x = -0.3 + k * 0.1
+        stone(g, tuple(proj(V(x, 0.55, 0))), (0.018, 0.018, 0.008), rng, mat=M_SAND, detail=1, rough=0, cuts=0,
               col_fn=lambda p, n: peck, tile=0.2)
     # Beds that broke off the face and fell, scree, a drift banked at the foot and a dune behind.
     for k, (x, z, a) in enumerate(((-1.6, -1.0, 0.3), (0.9, -1.15, -0.4), (1.9, -0.7, 0.9))):
@@ -977,7 +1152,7 @@ def site_glyph_wall(rng):
              col_fn=sun_rock(base=[cream, ochre, rust][k], nz=nz, varnish=0.4), tile=1.0)
     chips(g, rng, 34, 0.0, -0.9, 2.4, sun_rock(base=ochre, nz=nz, varnish=0.3), rmin=0.04, rmax=0.15)
     sand_wedge(g, rng, (-2.3, -0.4), (2.2, -0.4), 0.8, 0.28, -1)
-    sand_drift(g, (0.0, -0.08, 1.6), 2.6, 1.2, 1.1, rng, power=0.8)
+    wind_dune(g, rng, (0.0, -0.06, 1.75), 1.15, 2.5, 1.0, math.pi / 2, nu=30, nv=16, crest=0.55)   # ramped up the back
     # An ork offering at the foot: two tusks on a flat stone.
     slab(g, (0.25, 0.05, -1.0), (0.55, 0.1, 0.4), quat_y(0.2), rng, mat=M_SAND, res=(3, 1, 2), round_r=0.02, cuts=1,
          col_fn=sun_rock(nz=nz, varnish=0.2), tile=0.7)
@@ -1153,25 +1328,108 @@ def site_anselm_desert(rng):
 
 
 # ─────────────────────────────────────────────────────────────── FOREST
-def bank_col(nzn, cx, cz, hx, hz):
+DUG = (0.47, 0.35, 0.24)              # thrown-out spoil over the s_earth scan
+DUG_CLAY = (0.62, 0.49, 0.33)         # paler subsoil clods
+LITTER = (0.42, 0.3, 0.19)          # forest-floor leaf litter
+DAMP_FOOT = (0.22, 0.16, 0.11)
+
+
+def bank_col(nzn, cx, cz, hx, hz, h=0.5):
+    """Spoil-bank tint: bare dug earth on the cut faces and slopes (paler subsoil clods in it, dark and
+    damp toward every foot), leaf litter on the old crest with moss in patches only."""
     def f(p, n):
-        dx, dz = abs(p.x - cx) - hx, abs(p.z - cz) - hz
-        inside = dx < -0.02 and dz < -0.02
-        if inside:
-            return scale((0.11, 0.095, 0.085), 0.9 + 0.2 * nzn(p * 4))
-        steep = 1.0 - smoothstep(0.35, 0.8, n.y)
-        c = mix(scale(MOSS, 0.85 + 0.25 * nzn(p * 3)), scale(DAMP_EARTH, 0.75), 0.25 + 0.5 * smoothstep(-0.3, 0.6, nzn(p * 1.7)))
-        return mix(c, scale(DAMP_EARTH, 0.6), steep)
+        d = rect_dist(p.x, p.z, cx, cz, hx, hz)
+        if d < -0.03:
+            return scale((0.13, 0.105, 0.085), 0.85 + 0.25 * nzn(p * 4))
+        c = mix(DUG, scale(DUG, 0.78), 0.5 + 0.5 * nzn(p * 2.6))
+        c = mix(c, DUG_CLAY, 0.55 * smoothstep(0.25, 0.75, nzn(Vector((p.z, p.x, 1.0)) * 4.5)))
+        flat = smoothstep(0.5, 0.85, n.y)
+        old = flat * smoothstep(0.3 * h, 0.7 * h, p.y) * smoothstep(-0.55, 0.05, nzn(p * 1.3))
+        c = mix(c, scale(LITTER, 0.9 + 0.15 * nzn(p * 5)), 0.85 * old)
+        moss = old * smoothstep(0.3, 0.65, nzn(Vector((p.x, 4.0, p.z)) * 1.9))
+        c = mix(c, scale(MOSS, 0.8 + 0.2 * nzn(p * 6)), 0.8 * moss)
+        toe = (1.0 - smoothstep(0.0, 0.3 * h, p.y)) * smoothstep(0.3, 0.6, d)   # the outer toe: litter creeping up
+        c = mix(c, scale(LITTER, 0.9 + 0.15 * nzn(p * 4)), 0.8 * toe)
+        damp = 1.0 - smoothstep(-0.05, 0.28 * h, p.y)
+        inner = 1.0 - smoothstep(0.02, 0.12, d)
+        return mix(c, DAMP_FOOT, max(0.65 * damp, 0.45 * inner * (1.0 - smoothstep(0.0, h, p.y))))
     return f
 
 
-def shored_pit(g, rng, cx, cz, hx, hz, h, plateau, slope, posts_x=2, missing=None, fallen=True):
-    """A dug pit read at eye level: a spoil bank round a rectangular hole with a dark floor, the inner
-    walls shored with nailed planks between corner / middle posts."""
+def bank_roots(g, rng, root_pt, n):
+    """Roots torn through by the spade: tapering tubes sticking out of a cut face, drooping."""
+    for _ in range(n):
+        p0, out = root_pt()
+        out = (out + V(rng.uniform(-0.3, 0.3), 0, rng.uniform(-0.3, 0.3))).normalized()
+        L = rng.uniform(0.18, 0.45)
+        r0 = rng.uniform(0.012, 0.03)
+        pts = [p0 - out * 0.1, p0 + out * 0.05 + V(0, 0.01, 0), p0 + out * (0.05 + L * 0.5) - V(0, L * 0.25, 0),
+               p0 + out * (0.05 + L * 0.8) - V(0, L * 0.7, 0)]
+        tube(g, pts, [r0, r0 * 0.8, r0 * 0.45, 0.003], 5, M_BARK, (0.42, 0.33, 0.24), tile=0.2,
+             col_fn=lambda t: mix((0.36, 0.27, 0.19), (0.62, 0.52, 0.4), t))
+
+
+def shored_pit(g, rng, cx, cz, hx, hz, h, plateau, slope, posts_x=2, missing=None, fallen=True, step=0.1, clods=12,
+               roots=8, stones=8):
+    """A dug pit read at eye level: a heaped spoil bank round a rectangular hole with a dark floor, the inner
+    walls shored with nailed planks between corner / middle posts; turf sods cut off the top thrown on the
+    spoil (some tipped over), raw clods, stones turned up, roots sticking out of the cut. Returns the bank's
+    height function so props can sit on it."""
     nzn = Noise(rng, 4, 1.8)
-    ext_x, ext_z = hx + 0.06 + plateau + slope + 0.1, hz + 0.06 + plateau + slope + 0.1
-    heightfield(g, cx - ext_x, cx + ext_x, cz - ext_z, cz + ext_z, 0.11, pit_bank(hx, hz, h, plateau, slope, nzn, cx, cz),
-                bank_col(nzn, cx, cz, hx, hz), mat=M_EARTH, tile=0.9)
+    w = plateau + slope
+    ext_x, ext_z = hx + 0.06 + 1.3 * w + 0.1, hz + 0.06 + 1.3 * w + 0.1
+    hfn = pit_bank(hx, hz, h, plateau, slope, nzn, cx, cz)
+    heightfield(g, cx - ext_x, cx + ext_x, cz - ext_z, cz + ext_z, step, hfn, bank_col(nzn, cx, cz, hx, hz, h), mat=M_EARTH,
+                tile=0.9, cull=-0.1)
+
+    def bank_pt(dmin, dmax):
+        """A random point on the bank: (position on the surface, outward horizontal direction)."""
+        side = int(rng.integers(0, 4))
+        t = rng.uniform(-1.0, 1.0)
+        d = rng.uniform(dmin, dmax)
+        if side < 2:
+            sg = -1 if side == 0 else 1
+            x, z, out = cx + t * hx, cz + sg * (hz + d), V(0, 0, sg)
+        else:
+            sg = -1 if side == 2 else 1
+            x, z, out = cx + sg * (hx + d), cz + t * hz, V(sg, 0, 0)
+        return V(x, hfn(x, z), z), out
+
+    # Turf cut off the top before digging, thrown up on the spoil: most grass-up, some tipped over.
+    for k in range(clods):
+        p, out = bank_pt(0.1, plateau + 0.3 * slope)
+        if k % 3 == 2:
+            nrm = (out * rng.uniform(0.6, 1.2) + V(0, rng.uniform(-0.9, -0.2), 0)).normalized()   # tipped
+        else:
+            nrm = V(rng.uniform(-0.3, 0.3), 1.0, rng.uniform(-0.3, 0.3)).normalized()
+        turf_sod(g, rng, p - V(0, 0.05, 0), nrm, rng.uniform(0.55, 0.85))
+    # Raw clods of spoil and paler subsoil, heaped on the crest and rolled down the slope.
+    for k in range(clods + 2):
+        p, out = bank_pt(0.08, w * 0.9)
+        r = rng.uniform(0.05, 0.13)
+        c = DUG_CLAY if k % 4 == 0 else scale(DUG, rng.uniform(0.75, 1.0))
+        stone(g, tuple(p - V(0, r * 0.35, 0)), (r, r * rng.uniform(0.55, 0.8), r * rng.uniform(0.7, 1.0)), rng, mat=M_EARTH,
+              detail=1 if r > 0.1 else 0, rough=0.22, cuts=1, col_fn=lambda q, nn, c=c: mix(scale(c, 0.7), c, smoothstep(-0.3, 0.8, nn.y)),
+              tile=0.5)
+    # Stones the spade turned up, half buried in the spoil.
+    for k in range(stones):
+        p, out = bank_pt(0.05, w)
+        r = rng.uniform(0.06, 0.16)
+        stone(g, tuple(p - V(0, r * 0.4, 0)), (r, r * rng.uniform(0.5, 0.75), r * rng.uniform(0.7, 1.0)), rng, mat=M_ROCK,
+              detail=1 if r > 0.12 else 0, rough=0.12, cuts=2,
+              col_fn=rock_col((0.62, 0.6, 0.55), moss=0.25 if k % 2 else 0.0, ground=p.y - r * 0.4), tile=0.5)
+
+    # Roots sticking out of the cut over the shoring, and out of the outer slope where it was trimmed.
+    def lip_root():
+        p, out = bank_pt(0.02, 0.08)
+        p.y -= rng.uniform(0.03, 0.14)
+        return p, -out
+    bank_roots(g, rng, lip_root, roots)
+
+    def slope_root():
+        p, out = bank_pt(plateau * 0.6, plateau + slope * 0.5)
+        return p - V(0, 0.05, 0), out
+    bank_roots(g, rng, slope_root, 2)
     nw = int(h / 0.17 + 0.5)
     walls = [((cx - hx, cz - hz), (cx + hx, cz - hz), (0, 0, 1)), ((cx + hx, cz + hz), (cx - hx, cz + hz), (0, 0, -1)),
              ((cx - hx, cz + hz), (cx - hx, cz - hz), (1, 0, 0)), ((cx + hx, cz - hz), (cx + hx, cz + hz), (-1, 0, 0))]
@@ -1183,9 +1441,14 @@ def shored_pit(g, rng, cx, cz, hx, hz, h, plateau, slope, posts_x=2, missing=Non
         for i in range(n_posts + 1):
             p = A.lerp(B, i / n_posts) + V(*nrm) * 0.06
             beam(g, [p - V(0, 0.15, 0), p + V(0, h + 0.12, 0)], 0.1, 0.1, mat=M_MOSSWOOD, col=ROT_WOOD, rng=rng, jag=(0, 0.04))
+        for mk in (missing or {}).get(k, ()):   # roots hanging out of the bare cut behind a lost plank
+            for q in (0.3, 0.65):
+                c = A.lerp(B, q) - V(*nrm) * 0.05 + V(0, 0.17 * (mk + 0.5), 0)
+                bank_roots(g, rng, lambda c=c, nrm=nrm: (c.copy(), V(*nrm)), 1)
     if fallen:   # a plank sprung off the wall, leaning into the pit
         board(g, V(cx - hx * 0.4, 0.22, cz - hz + 0.25), V(1, 0, 0.1), V(0.1, 0.6, -1).normalized(), 1.1, 0.16, 0.035,
               mat=M_MOSSWOOD, col=ROT_WOOD, rng=rng)
+    return hfn
 
 
 def site_bell_pit(rng):
@@ -1195,7 +1458,7 @@ def site_bell_pit(rng):
     g = G(b)
     nz = Noise(rng, 4, 1.6)
     cx, cz, hx, hz = 0.25, -0.15, 1.05, 0.85
-    shored_pit(g, rng, cx, cz, hx, hz, 0.55, 0.45, 0.85, missing={3: (2,)})
+    hb = shored_pit(g, rng, cx, cz, hx, hz, 0.55, 0.45, 0.85, missing={3: (2,)}, clods=12, roots=9, stones=9)
     # In the pit: the clay core the mould was built over, cracked; the cope broken off it in shells
     # (one band of mirrored letters); the iron bands that held the cope; the bronze spill and slag.
     core = V(0.45, -0.03, -0.35)
@@ -1226,7 +1489,7 @@ def site_bell_pit(rng):
               col_fn=lambda p, n, kk=rng.uniform(0, 0.4): mix((0.08, 0.1, 0.08), VERDIGRIS, kk), tile=0.3)
     # The furnace on the bank: fired bricks in running bond round a clay-lined shaft, the top broken,
     # the stoke hole facing the pit, the flue standing broken behind; bricks tumbled down the bank.
-    fc = V(-1.55, 0.32, 1.25)
+    fc = V(-1.55, hb(-1.55, 1.25) - 0.1, 1.25)
     to_pit = math.atan2(cz - fc.z, cx - fc.x)
 
     def ftop(a):
@@ -1241,7 +1504,8 @@ def site_bell_pit(rng):
     for k in range(14):
         a = rng.uniform(-1.4, 1.4) + to_pit + math.pi
         rr = rng.uniform(0.6, 1.3)
-        p = fc + V(math.cos(a) * rr, -0.2 - 0.15 * rr, math.sin(a) * rr)
+        p = fc + V(math.cos(a) * rr, 0.0, math.sin(a) * rr)
+        p.y = hb(p.x, p.z) + 0.01
         slab(g, tuple(p), (0.23, 0.075, 0.11), quat_y(rng.uniform(0, 6.28)) @ quat_x(rng.uniform(-0.5, 0.5)), rng, mat=M_CLAY,
              res=(2, 1, 2), round_r=0.012, cuts=1, col_fn=lambda q, n, kk=rng.uniform(0.5, 1.0): scale(FIRED, kk), tile=0.3)
     for k in range(4):   # clay daub patches on the shell
@@ -1260,18 +1524,19 @@ def site_bell_pit(rng):
     tube(g, [bc + d * 0.48 + V(0, 0.12, 0), bc + d * 0.8 + V(0, 0.2, 0)], [0.03, 0.022], 6, M_IRON, (0.25, 0.18, 0.13), tile=0.2)
     cloth_drape(g, rng, bc + V(0, 0.08, 0), quat_y(-to_pit + math.pi / 2), 0.45, 0.6, (0.28, 0.22, 0.16), sag=0.04, folds=2)
     # Charcoal heaped on the bank, a raw-clay pile and a trough on the far side.
-    charcoal_heap(g, rng, -0.55, 0.95, 0.35, 45, y=0.5)
-    mound(g, (1.6, 0.42, 0.45), 0.35, 0.3, 0.2, rng, mat=M_CLAY, col_fn=lambda p, n: scale(RAW_CLAY, 0.8 + 0.2 * n.y), tile=0.4)
+    charcoal_heap(g, rng, -0.55, 0.95, 0.35, 45, y=hb(-0.55, 0.95) - 0.04)
+    mound(g, (1.6, hb(1.6, 0.45) - 0.06, 0.45), 0.35, 0.3, 0.2, rng, mat=M_CLAY, col_fn=lambda p, n: scale(RAW_CLAY, 0.8 + 0.2 * n.y), tile=0.4)
+    ty = max(hb(1.6 + dx_, z_) for dx_ in (-0.15, 0.15) for z_ in (-0.7, -0.35, 0.0)) - 0.02
     for sg in (-1, 1):
-        board(g, V(1.6 + sg * 0.15, 0.6, -0.35), V(0, 0, 1), V(sg, 0.3, 0), 0.7, 0.2, 0.03, mat=M_MOSSWOOD, col=ROT_WOOD, rng=rng)
-    board(g, V(1.6, 0.52, -0.35), V(0, 0, 1), V(0, 1, 0), 0.7, 0.3, 0.03, mat=M_MOSSWOOD, col=ROT_WOOD, rng=rng)
+        board(g, V(1.6 + sg * 0.15, ty + 0.08, -0.35), V(0, 0, 1), V(sg, 0.3, 0), 0.7, 0.2, 0.03, mat=M_MOSSWOOD, col=ROT_WOOD, rng=rng)
+    board(g, V(1.6, ty, -0.35), V(0, 0, 1), V(0, 1, 0), 0.7, 0.3, 0.03, mat=M_MOSSWOOD, col=ROT_WOOD, rng=rng)
     # The lifting tripod over the pit: two legs standing lashed at the apex, the third fallen; the
     # chain still hangs, the hook empty.
     apex = V(cx + 0.15, 3.0, cz + 0.05)
-    for f in (V(cx + 1.75, 0.35, cz - 1.15), V(cx - 1.45, 0.35, cz - 1.3)):
+    for f in (V(cx + 1.75, hb(cx + 1.75, cz - 1.15) - 0.05, cz - 1.15), V(cx - 1.45, hb(cx - 1.45, cz - 1.3) - 0.05, cz - 1.3)):
         pole(g, f - V(0, 0.2, 0), apex + (apex - f).normalized() * 0.18, 0.08, 0.06, rng, mat=M_MOSSWOOD, col=ROT_WOOD, sides=9)
     W.lashing(g, apex, (0, 1, 0), 0.11, rng, turns=4)
-    pole(g, V(cx - 0.7, 0.52, cz + 1.4), V(cx + 2.0, 0.1, cz + 2.0), 0.08, 0.06, rng, mat=M_MOSSWOOD, col=ROT_WOOD, sides=9)
+    pole(g, V(cx - 0.7, hb(cx - 0.7, cz + 1.4) + 0.05, cz + 1.4), V(cx + 2.0, max(0.04, hb(cx + 2.0, cz + 2.0) + 0.05), cz + 2.0), 0.08, 0.06, rng, mat=M_MOSSWOOD, col=ROT_WOOD, sides=9)
     links = [apex + V(0, -0.05 - 0.11 * k, 0) for k in range(11)]
     for k in range(len(links) - 1):
         m = (links[k] + links[k + 1]) / 2
@@ -1283,8 +1548,11 @@ def site_bell_pit(rng):
          tile=0.15)
     for k in range(4):   # windfall twigs and leaf litter on the bank
         a = rng.uniform(0, 6.28)
-        p = V(cx + math.cos(a) * 1.9, 0.3, cz + math.sin(a) * 1.6)
-        log(g, rng, p, p + V(math.cos(a + 1.4) * 0.8, 0.0, math.sin(a + 1.4) * 0.8), 0.035, col=OAK, moss=0.5, sides=6)
+        p = V(cx + math.cos(a) * 1.9, 0.0, cz + math.sin(a) * 1.6)
+        p.y = max(0.02, hb(p.x, p.z) + 0.02)
+        e = p + V(math.cos(a + 1.4) * 0.8, 0.0, math.sin(a + 1.4) * 0.8)
+        e.y = max(0.02, hb(e.x, e.z) + 0.02)
+        log(g, rng, p, e, 0.035, col=OAK, moss=0.5, sides=6)
     return b
 
 
@@ -1411,7 +1679,7 @@ def site_sawpit(rng):
     g = G(b)
     nz = Noise(rng, 4, 1.8)
     cx, cz, hx, hz, h = 0.0, 0.0, 1.5, 0.42, 0.5
-    shored_pit(g, rng, cx, cz, hx, hz, h, 0.35, 0.6, posts_x=3, fallen=False)
+    hb = shored_pit(g, rng, cx, cz, hx, hz, h, 0.35, 0.6, posts_x=3, fallen=False, clods=8, roots=7, stones=6)
     # Sawdust heaped on the pit floor under the cut and along it.
     for k, (x, r_, hh) in enumerate(((0.45, 0.4, 0.2), (0.9, 0.3, 0.12), (-0.2, 0.25, 0.08))):
         mound(g, (x, -0.04, 0.0), r_, 0.3, hh, rng, mat=M_EARTH, col_fn=lambda p, n: mix((0.86, 0.72, 0.52), MOSS,
@@ -1419,6 +1687,12 @@ def site_sawpit(rng):
     # Two squared skids across the pit, the trunk dogged to them with iron staples.
     for x in (-0.85, 0.95):
         beam(g, [V(x, h + 0.08, -0.85), V(x, h + 0.08, 0.85)], 0.17, 0.17, mat=M_MOSSWOOD, col=ROT_WOOD, rng=rng, rough=0.04)
+        for zs in (-0.68, 0.68):   # each skid end bedded on a packing block dug into the spoil
+            by = hb(x, zs)
+            top = h - 0.005
+            if top - by > -0.02:
+                slab(g, (x, (top + by - 0.08) / 2, zs), (0.24, top - by + 0.08, 0.2), quat_y(rng.uniform(-0.2, 0.2)), rng,
+                     mat=M_MOSSWOOD, res=(2, 1, 2), round_r=0.015, cuts=1, col_fn=lambda q, n: scale(ROT_WOOD, 0.8), tile=0.3)
         log_dog(g, V(x + 0.12, h + 0.2, 0.25), V(1, 0.6, 0))
     y0 = h + 0.17 + 0.3
     log(g, rng, V(-2.2, y0, 0.0), V(0.32, y0, 0.0), 0.3, col=OAK, moss=0.3, cap=False, sides=14)
@@ -1444,9 +1718,10 @@ def site_sawpit(rng):
         tube(g, [V(sx, 0.08, z), V(sx, -0.1, z)], [0.02, 0.02], 6, M_MOSSWOOD, ROT_WOOD, tile=0.3)
     tube(g, [V(sx, -0.1, -0.2), V(sx, -0.1, 0.2)], [0.025, 0.025], 6, M_MOSSWOOD, ROT_WOOD, tile=0.3)
     # The first slab cut off (bark on its back) and sawn boards stacked on stickers on the bank.
-    half_log(g, rng, V(-1.4, h + 0.06, 0.82), V(0.4, h + 0.04, 0.78), 0.12, 1)
+    half_log(g, rng, V(-1.4, hb(-1.4, 0.82) + 0.05, 0.82), V(0.4, hb(0.4, 0.78) + 0.05, 0.78), 0.12, 1)
+    sb = max(hb(x_, z_) for x_ in np.linspace(-1.15, 1.05, 7) for z_ in (-0.9, -0.64)) - 0.02   # the board stack's footing
     for k in range(3):
-        y = h + 0.03 + k * 0.08
+        y = sb + 0.03 + k * 0.08
         for x in (-1.0, 0.0, 0.9):
             if k:
                 beam(g, [V(x, y - 0.03, -0.92), V(x, y - 0.03, -0.62)], 0.04, 0.03, mat=M_MOSSWOOD, col=ROT_WOOD, rng=rng)
@@ -1454,8 +1729,11 @@ def site_sawpit(rng):
               col=mix((0.9, 0.78, 0.6), MOSS, 0.2 * k), rng=rng)
     for k in range(5):   # windfall and old bark on the bank
         a = rng.uniform(0, 6.28)
-        p = V(math.cos(a) * 2.1, 0.25, math.sin(a) * 1.0)
-        log(g, rng, p, p + V(math.cos(a + 1.5) * 0.7, 0.0, math.sin(a + 1.5) * 0.5), 0.035, col=OAK, moss=0.5, sides=6)
+        p = V(math.cos(a) * 2.1, 0.0, math.sin(a) * 1.0)
+        p.y = max(0.02, hb(p.x, p.z) + 0.02)
+        e = p + V(math.cos(a + 1.5) * 0.7, 0.0, math.sin(a + 1.5) * 0.5)
+        e.y = max(0.02, hb(e.x, e.z) + 0.02)
+        log(g, rng, p, e, 0.035, col=OAK, moss=0.5, sides=6)
     return b
 
 
@@ -1550,100 +1828,249 @@ def site_rooted_pillar(rng):
     return b
 
 
+def oriented(verts, tris, want):
+    """Wind each triangle so its normal agrees with `want(centroid)`."""
+    out = []
+    for t in tris:
+        n = (verts[t[1]] - verts[t[0]]).cross(verts[t[2]] - verts[t[0]])
+        c = (verts[t[0]] + verts[t[1]] + verts[t[2]]) / 3
+        out.append(t if n.dot(want(c)) >= 0 else (t[0], t[2], t[1]))
+    return out
+
+
+def grave_mound(g, rng, c, rx, rz, h, yaw, nz, sunk=0.35):
+    """An old grave: a low long hump of settled turf, its middle sunk where the coffin gave way (leaf
+    litter and damp collect there), the rim melting into the forest floor."""
+    c, rq = Vector(c), quat_y(yaw)
+    rings, seg = 5, 16
+
+    def hgt(r, a):
+        y = h * (1 - r ** 2.4) - h * sunk * math.exp(-(r / 0.5) ** 2) + 0.018 * nz(c + V(math.cos(a) * r, 0, math.sin(a) * r) * 3)
+        return y - 0.07 * smoothstep(0.85, 1.0, r)
+    verts = [c + V(0, hgt(0.0, 0.0), 0)]
+    for j in range(1, rings + 2):
+        r = j / rings
+        for i in range(seg):
+            a = i / seg * 2 * math.pi
+            wob = 1 + 0.08 * nz(c + V(math.cos(a), 2, math.sin(a)) * 1.7)
+            y = hgt(min(r, 1.0), a) - (0.08 if r > 1.0 else 0.0)
+            verts.append(c + rq @ V(math.cos(a) * rx * r * wob, y, math.sin(a) * rz * r * wob))
+    tris = [(0, 1 + i, 1 + (i + 1) % seg) for i in range(seg)]
+    for j in range(rings):
+        for i in range(seg):
+            a_, b_ = 1 + j * seg + i, 1 + j * seg + (i + 1) % seg
+            tris += [(a_, a_ + seg, b_ + seg), (a_, b_ + seg, b_)]
+    tris = oriented(verts, tris, lambda q: V(0, 1, 0))
+    inv = rq.inverted()
+
+    def col(p, n):
+        q = inv @ (p - c)
+        r = math.hypot(q.x / rx, q.z / rz)
+        dip = math.exp(-(r / 0.5) ** 2)
+        turf = mix(scale(MOSS, 0.75 + 0.2 * nz(p * 5)), scale(LITTER, 0.95), 0.6 * smoothstep(0.1, 0.6, nz(p * 2.2)))
+        turf = mix(turf, scale(LITTER, 0.8), 0.45 * dip)                  # litter and damp in the sunk middle
+        return mix(turf, scale(LITTER, 0.85), smoothstep(0.75, 1.0, r))   # the rim: forest floor
+    smooth_mesh(g, verts, tris, M_EARTH, col, 0.8)
+
+
+def rot_col(t, k=1.0):
+    """Rotten grave wood: grey, moss creeping up from the ground end (t = 0)."""
+    return mix(scale(MOSS, 0.7), scale((0.5, 0.48, 0.44), k), smoothstep(0.0, 0.35, t))
+
+
 def site_anselm_forest(rng):
     """Footprint r <= 3.0. Masses: the hollow oak stump (1.6, 0.5) r 0.75; the graves are low mounds."""
     b = Builder()
     g = G(b)
     nz = Noise(rng, 4, 1.8)
-    # Five graves in a row (+ one small one): sunken moss-grown mounds, rough-hewn crosses.
+    # Five graves in a row (+ one small one): settled, sunk turf mounds; rotten crosses leaning every way,
+    # one fallen across its grave, the child's a split board; a kerb of fieldstones round two of them.
     for k, (x, z, s) in enumerate(((-1.9, -0.3, 1.0), (-1.1, -0.35, 1.0), (-0.3, -0.3, 1.0), (0.45, -0.4, 1.0),
                                    (-1.5, 0.95, 0.55), (-0.6, 0.95, 1.0))):
-        forest_mound(g, (x, -0.06, z), 0.36 * s, 0.85 * s, 0.17 * s, rng, moss=0.85, rings=4, seg=14)
+        grave_mound(g, rng, (x, -0.02, z), 0.36 * s, 0.85 * s, 0.15 * s, rng.uniform(-0.08, 0.08), nz)
+        if k in (1, 5):
+            for i in range(9):
+                a = i / 9 * 2 * math.pi + rng.uniform(-0.1, 0.1)
+                if rng.uniform() < 0.2:
+                    continue   # stones gone, sunk out of sight
+                r = rng.uniform(0.07, 0.11)
+                stone(g, (x + math.cos(a) * 0.42 * s, -r * 0.35, z + math.sin(a) * 0.92 * s), (r, r * 0.7, r * 0.85), rng,
+                      mat=M_MOSSROCK, detail=0, rough=0.12, cuts=1, col_fn=mossy((0.66, 0.64, 0.6), 0.7, nz), tile=0.4)
         cz = z - 0.8 * s
-        lean = rng.uniform(-0.15, 0.15)
-        if k == 3:   # one cross fallen across its grave
-            beam(g, [V(x - 0.1, 0.12, cz + 0.2), V(x + 0.15, 0.1, z + 0.4)], 0.08, 0.06, mat=M_MOSSWOOD, col=ROT_WOOD,
-                 rng=rng, jag=(0.05, 0))
+        if k == 3:   # the cross fallen across its grave, its arm come off beside it
+            beam(g, [V(x - 0.12, 0.08, cz + 0.15), V(x + 0.18, 0.06, z + 0.45)], 0.08, 0.06, mat=M_MOSSWOOD, col=ROT_WOOD,
+                 rng=rng, jag=(0.05, 0), col_fn=lambda t: rot_col(1 - t, 0.9))
+            beam(g, [V(x - 0.3, 0.05, z - 0.05), V(x + 0.22, 0.04, z + 0.12)], 0.07, 0.05, mat=M_MOSSWOOD, col=ROT_WOOD,
+                 rng=rng, col_fn=lambda t: rot_col(0.5, 0.85))
+            disc(g, V(x - 0.1, 0.0, cz), quat_x(0.0), 0.06, 0.02, 7, M_EARTH, (0.12, 0.09, 0.07))   # the hole it stood in
+            continue
+        foot = V(x, -0.25, cz)
+        if k == 4:   # the child's grave: a small board, split down the middle, one half leaning off
+            for sg, lean in ((-1, 0.05), (1, 0.32)):
+                rq = quat_z(-sg * lean) @ quat_x(rng.uniform(-0.1, 0.1))
+                board(g, foot + V(sg * 0.07, 0.42, 0), rq @ V(0, 1, 0), V(0, 0, -1), 0.8, 0.13, 0.03, mat=M_MOSSWOOD,
+                      col=ROT_WOOD, rng=rng, jag=(0, 0.06), col_fn=lambda t: rot_col(t))
             continue
         h = 1.0 * s
-        rot = quat_x(lean) @ quat_z(rng.uniform(-0.1, 0.1))
-        foot = V(x, -0.2, cz)
-        beam(g, [foot, foot + rot @ V(0, h + 0.2, 0)], 0.09, 0.07, mat=M_MOSSWOOD, col=ROT_WOOD, rng=rng)
-        arm = foot + rot @ V(0, h * 0.82, 0)
-        beam(g, [arm - rot @ V(0.28 * s, 0, 0), arm + rot @ V(0.28 * s, 0, 0)], 0.07, 0.06, mat=M_MOSSWOOD, col=ROT_WOOD,
-             rng=rng)
+        rot = quat_x(rng.uniform(-0.28, 0.2)) @ quat_z(rng.uniform(-0.22, 0.22))
+        kk = rng.uniform(0.8, 1.0)
+        beam(g, [foot, foot + rot @ V(0, h + 0.25, 0)], 0.09, 0.07, mat=M_MOSSWOOD, col=ROT_WOOD, rng=rng, jag=(0, 0.03),
+             col_fn=lambda t, kk=kk: rot_col(t, kk))
+        arm = foot + rot @ V(0, h * 0.85, 0)
+        ar = rot @ quat_z(rng.uniform(-0.25, 0.25) if k in (0, 2) else 0.0)     # arms slipped on their pegs
+        beam(g, [arm - ar @ V(0.28 * s, 0, 0), arm + ar @ V(0.28 * s, 0, 0)], 0.07, 0.06, mat=M_MOSSWOOD, col=ROT_WOOD,
+             rng=rng, jag=(0.03, 0.03), col_fn=lambda t: rot_col(0.6, 0.9))
         tube(g, [arm + rot @ V(0.05 * math.cos(t), 0.05 * math.sin(t), 0.045) for t in np.linspace(0, 6.3, 7)],
-             [0.007] * 7, 3, M_CLOTH, scale(W.ROPE, 0.5), tile=0.2, cap=False)
-        for m in range(int(rng.integers(0, 3))):   # mushrooms on the mound
-            p = V(x + rng.uniform(-0.2, 0.2), 0.1, z + rng.uniform(-0.4, 0.4))
-            tube(g, [p - V(0, 0.08, 0), p + V(0, 0.05, 0)], [0.01, 0.008], 5, M_CLAY, (0.9, 0.86, 0.78), tile=0.2)
-            dome(g, p + V(0, 0.04, 0), 0.035, quat_y(0.0), M_CLAY, lambda q, n: (0.75, 0.6, 0.42), tile=0.2, rings=2,
+             [0.007] * 7, 3, M_CLOTH, scale(W.ROPE, 0.45), tile=0.2, cap=False)
+        for m in range(int(rng.integers(1, 3))):   # mushrooms in the grave turf
+            q = V(x + rng.uniform(-0.2, 0.2), 0.07, z + rng.uniform(-0.45, 0.45))
+            tube(g, [q - V(0, 0.08, 0), q + V(0, 0.04, 0)], [0.01, 0.008], 5, M_CLAY, (0.9, 0.86, 0.78), tile=0.2)
+            dome(g, q + V(0, 0.03, 0), 0.035, quat_y(0.0), M_CLAY, lambda qq, n: (0.75, 0.6, 0.42), tile=0.2, rings=2,
                  seg=8, squash=0.5)
     # A rotten paling once round the plot: stubs and one fallen section.
     for k in range(9):
         x = -2.5 + k * 0.48
         if k in (3, 4):
             continue
-        h = rng.uniform(0.25, 0.7)
-        beam(g, [V(x, -0.2, -1.75), V(x + rng.uniform(-0.05, 0.05), h, -1.75)], 0.06, 0.05, mat=M_MOSSWOOD, col=ROT_WOOD,
-             rng=rng, jag=(0, 0.06))
-    beam(g, [V(-1.1, 0.05, -2.0), V(-0.1, 0.05, -2.3)], 0.06, 0.04, mat=M_MOSSWOOD, col=ROT_WOOD, rng=rng)
-    # The hollow oak stump, its open side toward the graves; the journal page wedged in the hollow.
+        hh = rng.uniform(0.25, 0.7)
+        beam(g, [V(x, -0.2, -1.75), V(x + rng.uniform(-0.08, 0.08), hh, -1.75 + rng.uniform(-0.06, 0.06))], 0.06, 0.05,
+             mat=M_MOSSWOOD, col=ROT_WOOD, rng=rng, jag=(0, 0.06), col_fn=lambda t: rot_col(t))
+    beam(g, [V(-1.1, 0.04, -2.0), V(-0.1, 0.03, -2.3)], 0.06, 0.04, mat=M_MOSSWOOD, col=ROT_WOOD, rng=rng,
+         col_fn=lambda t: rot_col(0.3))
+    # The hollow oak: a gnarled broken trunk, buttress lobes and burls, flaring into roots; the bark rolls in
+    # round a tall dark hollow that opens toward the graves (-X), its broken top splintered.
     tc = V(1.65, 0.0, 0.5)
-    n_, rows = 24, 5
-    mouth = (2.35, 3.75)          # the hollow's mouth faces -X (the graves)
+    seg, ys = 26, [-0.15, 0.0, 0.18, 0.4, 0.65, 0.95, 1.25, 1.55, None]
+    mtop = 1.1
+
+    def mouth_w(y):
+        if y <= -0.1 or y >= mtop:
+            return 0.0
+        return 0.5 * max(0.0, 1 - (max(y, 0.0) / mtop) ** 2.4) ** 0.5 * smoothstep(-0.1, 0.0, y)
 
     def top_h(a):
-        return 1.35 + 0.3 * math.sin(a * 2 + 1) + 0.12 * math.sin(a * 5 + 0.3)
+        d = math.atan2(math.sin(a - 0.7), math.cos(a - 0.7))
+        return 1.75 + 0.3 * math.sin(a * 2 + 1) + 0.14 * math.sin(a * 5 + 0.3) + 0.6 * math.exp(-(d / 0.35) ** 2)
 
-    for k in range(n_):
-        a0, a1 = k / n_ * 2 * math.pi, (k + 1) / n_ * 2 * math.pi
-        if mouth[0] < (a0 + a1) / 2 < mouth[1]:
+    def rad(a, y):
+        fl = smoothstep(0.9, -0.2, y)
+        r = 0.6 + 0.3 * math.exp(-(y + 0.02) / 0.2)
+        r *= 1 + 0.32 * (fl + 0.2) * max(0.0, math.cos(5 * a + 0.7)) ** 2 + 0.05 * nz(V(math.cos(a) * 2, y * 1.5, math.sin(a) * 2))
+        for ab, yb, k in ((0.3, 0.85, 0.12), (4.6, 1.3, 0.09), (2.0, 0.5, 0.08)):   # burls
+            da = math.atan2(math.sin(a - ab), math.cos(a - ab))
+            r *= 1 + k * math.exp(-(da / 0.3) ** 2 - ((y - yb) / 0.2) ** 2)
+        return r
+    outer, inner = [], []
+    for y0 in ys:
+        ro, ri = [], []
+        w = 0.0 if y0 is None else mouth_w(y0)
+        for i in range(seg + 1):
+            a = math.pi + w + (2 * math.pi - 2 * w) * i / seg
+            y = top_h(a) if y0 is None else min(y0, top_h(a) - 0.1)
+            r = rad(a, y)
+            ro.append(tc + V(math.cos(a) * r, y, math.sin(a) * r))
+            yi = max(y, 0.12)
+            ri_ = (min(r * 0.74, 0.5) if y0 is not None else r * 0.74) * (1 + 0.04 * nz(V(a, yi * 3, 0)))
+            ri.append(tc + V(math.cos(a) * ri_, yi, math.sin(a) * ri_))
+        outer.append(ro)
+        inner.append(ri)
+
+    def grid(rows):
+        verts = [p for row in rows for p in row]
+        n = seg + 1
+        tris = []
+        for j in range(len(rows) - 1):
+            for i in range(seg):
+                a_, b_ = j * n + i, j * n + i + 1
+                tris += [(a_, b_, b_ + n), (a_, b_ + n, a_ + n)]
+        return verts, tris
+    vo, to = grid(outer)
+    n_wall = len(to)
+    for side in (0, seg):   # the lips: bark rolled in round the mouth
+        for j in range(len(ys) - 1):
+            base = len(vo)
+            vo += [outer[j][side], inner[j][side], inner[j + 1][side], outer[j + 1][side]]
+            to += [(base, base + 1, base + 2), (base, base + 2, base + 3)]
+    n_lips = len(to)
+    for i in range(seg):   # the splintered rim
+        base = len(vo)
+        vo += [outer[-1][i], outer[-1][i + 1], inner[-1][i + 1], inner[-1][i]]
+        to += [(base, base + 1, base + 2), (base, base + 2, base + 3)]
+    to = (oriented(vo, to[:n_wall], lambda c_: V(c_.x - tc.x, 0, c_.z - tc.z)) +
+          oriented(vo, to[n_wall:n_lips], lambda c_: tc + V(-0.7, c_.y, 0) - c_) +
+          oriented(vo, to[n_lips:], lambda c_: V(0, 1, 0)))
+
+    def bark(p, n):
+        c = scale((0.56, 0.5, 0.43), 0.85 + 0.2 * nz(p * 3))
+        c = mix(c, scale(MOSS, 0.85), 0.75 * smoothstep(0.7, -0.1, p.y) * (0.6 + 0.4 * nz(p * 4)))       # moss up from the roots
+        c = mix(c, scale(MOSS, 0.9), 0.5 * smoothstep(0.2, 0.8, n.z) * smoothstep(0.0, 0.5, nz(p * 2)))    # the damp side
+        c = mix(c, (0.68, 0.7, 0.58), 0.4 * smoothstep(0.45, 0.8, nz(p * 6.5)))                           # lichen
+        return mix(c, (0.4, 0.3, 0.22), 0.6 * smoothstep(0.5, 0.95, n.y))                                 # rotten top
+    smooth_mesh(g, vo, to, M_BARK, bark, 0.8)
+    vi, ti = grid(inner)
+    ti = oriented(vi, ti, lambda c_: V(tc.x - c_.x, 0, tc.z - c_.z))
+    smooth_mesh(g, vi, ti, M_MOSSWOOD, lambda p, n: mix((0.07, 0.05, 0.04), (0.36, 0.27, 0.19), smoothstep(0.2, 2.0, p.y)), 0.5)
+    disc(g, tc + V(0, 0.12, 0), quat_x(0.0), 0.5, 0.03, 12, M_EARTH, (0.1, 0.075, 0.06))   # the hollow's floor of punk and leaves
+    for k in range(7):   # the roots, flaring into the ground (none across the mouth), kept inside the footprint
+        a = 0.2 + k * 0.78
+        if abs(math.atan2(math.sin(a - math.pi), math.cos(a - math.pi))) < 0.55:
             continue
-        for wall, r_, sgn in ((0, 0.78, 1), (1, 0.62, -1)):
-            for j in range(rows):
-                f0, f1 = j / rows, (j + 1) / rows
-                quad, nrm, cols = [], [], []
-                for a, f in ((a0, f0), (a1, f0), (a1, f1), (a0, f1)):
-                    hh = -0.2 + (top_h(a) + 0.2) * f
-                    rr = r_ * (1.0 + 0.25 * (1 - f) ** 3) if wall == 0 else r_
-                    quad.append(tc + V(math.cos(a) * rr, hh, math.sin(a) * rr))
-                    nrm.append(V(math.cos(a) * sgn, 0.1, math.sin(a) * sgn).normalized())
-                    cols.append(mix(OAK, MOSS, 0.55 * (1 - f)) if wall == 0 else (0.3, 0.24, 0.18))
-                uvs = [(a0 * 0.78 / 0.9, quad[0].y / 0.9), (a1 * 0.78 / 0.9, quad[1].y / 0.9),
-                       (a1 * 0.78 / 0.9, quad[2].y / 0.9), (a0 * 0.78 / 0.9, quad[3].y / 0.9)]
-                if (quad[1] - quad[0]).cross(quad[3] - quad[0]).dot(nrm[0]) < 0:
-                    quad, uvs, nrm, cols = quad[::-1], uvs[::-1], nrm[::-1], cols[::-1]
-                g.poly(quad, uvs, nrm, cols, M_BARK if wall == 0 else M_MOSSWOOD)
-        # the rotten rim between the walls
-        o0, o1 = (tc + V(math.cos(a) * 0.78, top_h(a), math.sin(a) * 0.78) for a in (a0, a1))
-        i0, i1 = (tc + V(math.cos(a) * 0.62, top_h(a), math.sin(a) * 0.62) for a in (a0, a1))
-        g.flat([o0, o1, i1, i0], M_MOSSWOOD, ROT_WOOD, 0.4)
-        g.flat([i0, i1, o1, o0], M_MOSSWOOD, ROT_WOOD, 0.4)
-    for a in mouth:   # the mouth's cut edges
-        q = [tc + V(math.cos(a) * 0.78, -0.2, math.sin(a) * 0.78), tc + V(math.cos(a) * 0.62, -0.2, math.sin(a) * 0.62),
-             tc + V(math.cos(a) * 0.62, top_h(a), math.sin(a) * 0.62), tc + V(math.cos(a) * 0.78, top_h(a), math.sin(a) * 0.78)]
-        g.flat(q, M_MOSSWOOD, ROT_WOOD, 0.4)
-        g.flat(q[::-1], M_MOSSWOOD, ROT_WOOD, 0.4)
-    disc(g, tc + V(0, 0.06, 0), quat_x(0.0), 0.62, 0.04, 14, M_EARTH, (0.2, 0.16, 0.12))
-    for k in range(5):   # shelf fungus on the stump
-        a = 0.3 + k * 0.6
-        shelf_fungus(g, rng, tc + V(math.cos(a) * 0.74, 0.5 + k * 0.2, math.sin(a) * 0.74), V(math.cos(a), 0, math.sin(a)),
-                     s=0.12)
-    # The page and the journal's cover, wedged upright in the hollow's mouth, a stone to keep the rain off.
-    pp = tc + V(-0.45, 0.45, -0.05)
-    page(g, pp, quat_z(math.pi / 2 - 0.25) @ quat_y(0.1), w=0.2, l=0.28, curl=0.02)
-    lbox(g, tc + V(-0.35, 0.38, 0.12), (0.04, 0.32, 0.24), quat_z(-0.25), M_HIDE, (0.32, 0.2, 0.13), tile=0.3)
-    slab(g, tuple(tc + V(-0.3, 0.6, 0.0)), (0.32, 0.07, 0.4), quat_z(0.2), rng, mat=M_MOSSROCK, res=(2, 1, 2),
-         round_r=0.02, col_fn=mossy((0.7, 0.7, 0.66), 0.4, nz), tile=0.4)
+        d = V(math.cos(a), 0, math.sin(a))
+        reach = 2.0
+        while (tc + d * (0.95 + reach)).length > 2.85 and reach > 0.5:
+            reach -= 0.1
+        pts = [tc + d * 0.55 + V(0, 0.22, 0), tc + d * 0.95 + V(0, 0.04, 0), tc + d * (0.95 + reach * 0.45) + V(0, -0.03, 0),
+               tc + d * (0.95 + reach) + V(0, -0.12, 0)]
+        tube(g, pts, [0.2, 0.11, 0.065, 0.03], 8, M_BARK, (0.52, 0.47, 0.4), tile=0.7,
+             col_fn=lambda t: mix((0.52, 0.47, 0.4), MOSS, 0.4 + 0.4 * t))
+    for k in range(6):   # bracket fungus up the trunk
+        a = 0.4 + k * 0.75
+        y = 0.45 + k * 0.22
+        shelf_fungus(g, rng, tc + V(math.cos(a) * rad(a, y) * 0.95, y, math.sin(a) * rad(a, y) * 0.95), V(math.cos(a), 0, math.sin(a)),
+                     s=rng.uniform(0.09, 0.15))
+    # In the hollow: the journal's cover on the floor of rotted wood, a page tucked upright into a crack of
+    # the inner wall where it caught the light, a flat stone laid on the cover against the wet.
+    lbox(g, tc + V(-0.18, 0.16, 0.08), (0.24, 0.035, 0.3), quat_y(0.4) @ quat_z(0.12), M_HIDE, (0.3, 0.19, 0.12), tile=0.3)
+    page(g, tc + V(-0.3, 0.42, -0.22), quat_y(-0.9) @ quat_z(math.pi / 2 - 0.15), w=0.2, l=0.27, curl=0.02)
+    slab(g, tuple(tc + V(-0.16, 0.2, 0.1)), (0.18, 0.05, 0.14), quat_y(0.7), rng, mat=M_MOSSROCK, res=(2, 1, 2),
+         round_r=0.015, col_fn=mossy((0.7, 0.7, 0.66), 0.3, nz), tile=0.4)
+    # A limb the oak dropped, rotting in the litter, and its broken top's splinters.
+    log(g, rng, V(2.45, 0.1, -0.9), V(0.9, 0.08, -1.55), 0.13, col=(0.52, 0.47, 0.4), moss=0.6, sides=9)
+    log(g, rng, V(1.6, 0.09, -1.25), V(1.85, 0.35, -1.75), 0.05, col=(0.52, 0.47, 0.4), moss=0.4, sides=6)
+    for k in range(4):
+        q = tc + V(rng.uniform(-0.2, 0.9), 0.04, rng.uniform(-1.1, -0.7))
+        beam(g, [q, q + V(rng.uniform(-0.4, 0.4), 0.03, rng.uniform(-0.3, 0.3))], 0.05, 0.03, mat=M_MOSSWOOD, col=(0.4, 0.33, 0.26),
+             rng=rng, jag=(0.04, 0.04))
+    # Forest floor: drifts of leaf litter against the roots and the graves, loose leaves, twigs, mossy stones.
+    for k, (x, z, r_) in enumerate(((0.75, 0.2, 0.45), (1.2, 1.35, 0.5), (-2.4, 0.4, 0.4), (0.1, 0.6, 0.35), (-1.6, -1.3, 0.4),
+                                    (2.3, -0.2, 0.35))):
+        forest_mound(g, (x, -0.05, z), r_, r_ * 0.75, 0.08, rng, moss=0.25, base=LITTER, rings=3, seg=10)
+    leaf_cols = [(0.55, 0.36, 0.18), (0.45, 0.3, 0.16), (0.62, 0.45, 0.22), (0.35, 0.26, 0.17)]
+    for k in range(60):
+        a, rr = rng.uniform(0, 6.28), rng.uniform(0.3, 2.8)
+        q = V(math.cos(a) * rr, 0.012, math.sin(a) * rr)
+        if (q - tc).length < 0.8:
+            continue
+        rq = quat_y(rng.uniform(0, 6.28)) @ quat_x(rng.uniform(-0.25, 0.25))
+        sz = rng.uniform(0.04, 0.07)
+        g.flat([q + rq @ V(-sz * 0.45, 0.004, 0), q + rq @ V(0, 0, sz), q + rq @ V(sz * 0.45, 0.004, 0), q + rq @ V(0, 0, -sz)],
+               M_EARTH, leaf_cols[k % 4], 0.2)
+    for k in range(7):
+        q = V(rng.uniform(-2.6, 2.4), 0.02, rng.uniform(-2.2, 1.6))
+        a = rng.uniform(0, 6.28)
+        log(g, rng, q, q + V(math.cos(a) * 0.5, 0.0, math.sin(a) * 0.5), 0.015, col=(0.45, 0.38, 0.3), sides=4)
+    for k, (x, z, r_) in enumerate(((-2.5, 1.2, 0.18), (0.95, -0.5, 0.14), (2.4, 1.1, 0.2), (-0.1, -1.3, 0.12))):
+        stone(g, (x, r_ * 0.15, z), (r_, r_ * 0.6, r_ * 0.8), rng, mat=M_MOSSROCK, detail=1, rough=0.12, cuts=2,
+              col_fn=mossy((0.66, 0.64, 0.6), 0.8, nz), tile=0.5)
     # A rough wooden marker board at the head of the row: scratched lines (names), weathered illegible.
     mc = V(-2.55, 0.0, -0.9)
-    beam(g, [mc - V(0, 0.2, 0), mc + V(0.02, 0.95, 0)], 0.08, 0.06, mat=M_MOSSWOOD, col=ROT_WOOD, rng=rng)
-    board(g, mc + V(0.05, 0.7, -0.05), V(1, 0.05, 0), V(0, 0, -1), 0.6, 0.3, 0.035, mat=M_MOSSWOOD, col=ROT_WOOD, rng=rng)
+    beam(g, [mc - V(0, 0.2, 0), mc + V(0.06, 0.95, 0)], 0.08, 0.06, mat=M_MOSSWOOD, col=ROT_WOOD, rng=rng, col_fn=lambda t: rot_col(t))
+    board(g, mc + V(0.07, 0.7, -0.05), V(1, -0.12, 0), V(0, 0, -1), 0.6, 0.3, 0.035, mat=M_MOSSWOOD, col=ROT_WOOD, rng=rng,
+          jag=(0, 0.05), col_fn=lambda t: rot_col(0.5 + 0.5 * t))
     for k in range(4):
         y = 0.79 - k * 0.06
-        carve_line(g, [mc + V(-0.18, y, -0.075), mc + V(0.12 + 0.08 * (k % 2), y, -0.075)], (0.2, 0.17, 0.14), 0.006,
-                   M_MOSSWOOD)
+        carve_line(g, [mc + V(-0.18, y + 0.02, -0.075), mc + V(0.12 + 0.08 * (k % 2), y - 0.02 - 0.01 * (k % 2), -0.075)],
+                   (0.2, 0.17, 0.14), 0.006, M_MOSSWOOD)
     return b
 
 

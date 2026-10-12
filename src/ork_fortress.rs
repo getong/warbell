@@ -26,10 +26,9 @@ use bevy::mesh::MeshBuilder;
 use bevy::prelude::*;
 
 use crate::biome::{AtmoSample, BiomeAmbience, BiomeEntity, GroundDetail, ParticleKind};
-use crate::critters::PartKind;
 use crate::firelight::{self, FireLight};
 use crate::game_state::AppState;
-use crate::orks::{Armory, Faction, OrkPart, OrkVariant};
+use crate::orks::{Armory, Faction, OrkVariant};
 use crate::palette::lin;
 use crate::player::{HeroState, PendingHeroDamage};
 use crate::projectile::{advance_bolt, BoltStep};
@@ -210,7 +209,7 @@ impl Plugin for OrkFortressPlugin {
             .add_message::<BreachGate>()
             .add_systems(Startup, setup_bolt_assets)
             // Visual breathing stays live through pauses/panels (like camps + firelight).
-            .add_systems(Update, (wobble_flames, drift_smoke, denizen_limbs, quality_lod, gate_beacon))
+            .add_systems(Update, (wobble_flames, drift_smoke, quality_lod, gate_beacon))
             // Ungated (once per load): reconcile the fortress to pristine on a Continue/Load.
             .add_systems(Update, reset_fortress_on_load)
             // Fresh in-process run (New Game / Restart / Play Again route through StartScreen, and
@@ -293,7 +292,6 @@ struct Denizen {
     facing: f32,
     speed: f32,
     gait: f32,
-    swing: f32,
     bob: f32,
     phase: f32,
     timer: f32,
@@ -444,6 +442,8 @@ const BONFIRE_AT: Vec2 = Vec2::new(9.0, 95.0 + BLIGHT_DZ);
 const CAGE_AT: Vec2 = Vec2::new(3.0, 97.0 + BLIGHT_DZ);
 /// How much bigger the hall + spire read in the enlarged hold (spawn-transform scale).
 const HALL_SCALE: f32 = 1.25;
+/// The great hall's hearth in hall-model units (ork_hold.py `hold_hall`: the stone ring at hc).
+const HALL_HEARTH: Vec3 = Vec3::new(0.0, 0.0, -1.3);
 const SPIRE_SCALE: f32 = 1.15;
 
 /// The fortress war-banner: soot-black-red field, bone hoist band.
@@ -539,7 +539,7 @@ pub fn build(
     // behind the dark mouth (a bright flat card read as a painted rectangle).
     let glow_mat = std_mats.add(StandardMaterial {
         base_color: crate::palette::srgb(0x6a3a14),
-        emissive: crate::palette::srgb(0xff8a30).to_linear() * 0.35,
+        emissive: crate::palette::srgb(0xff6a20).to_linear() * 1.4,
         unlit: true,
         ..default()
     });
@@ -682,14 +682,36 @@ pub fn build(
         ));
     }
     crate::blockers::add_obb(HALL_AT.x, HALL_AT.y, 5.8 * HALL_SCALE, 4.3 * HALL_SCALE, 0.0);
-    // Doorway glow + flanking torches (warm light pooling out of the dark hall mouth).
-    commands.spawn((
-        Mesh3d(meshes.add(bx(2.0 * HALL_SCALE, 2.4 * HALL_SCALE, 0.05, Vec3::ZERO, lin(0xffffff)))),
-        MeshMaterial3d(glow_mat.clone()),
-        Transform::from_translation(hall_pos + Vec3::new(0.0, 1.45, -3.96) * HALL_SCALE),
-        bevy::light::NotShadowCaster,
-        BiomeEntity,
-    ));
+    // The doorway opens into the real hall (ork_hold.py): a hearth burns ~2.7 units in, its light
+    // picking out the hide partition, roof posts and benches behind the door, so the mouth reads
+    // as a lit interior with depth instead of a flat orange card. The ember bed glows under it.
+    {
+        let hp = hall_pos + HALL_HEARTH * HALL_SCALE;
+        let phase = rng_range(&mut rng, 0.0, 6.0);
+        let (mut light, mut fl) = firelight::torch_light(phase);
+        light.intensity *= 1.6;
+        light.range = 9.0;
+        fl.base = light.intensity;
+        let base = fl.base;
+        commands.spawn((
+            Mesh3d(meshes.add(card(0.75))),
+            MeshMaterial3d(card_fire.clone()),
+            bevy::light::NotShadowCaster,
+            Transform::from_translation(hp + Vec3::Y * 0.35),
+            Wobble { phase },
+            light,
+            fl,
+            FortressFlame { base },
+            BiomeEntity,
+        ));
+        commands.spawn((
+            Mesh3d(meshes.add(bx(0.9, 0.06, 0.9, Vec3::ZERO, lin(0xffffff)))),
+            MeshMaterial3d(glow_mat.clone()),
+            Transform::from_translation(hp + Vec3::Y * 0.02),
+            bevy::light::NotShadowCaster,
+            BiomeEntity,
+        ));
+    }
     for sx in [-1.0f32, 1.0] {
         let tp = hall_pos + Vec3::new(sx * 1.55, 2.1, -4.15) * HALL_SCALE;
         let phase = rng_range(&mut rng, 0.0, 6.0);
@@ -1356,7 +1378,6 @@ fn spawn_one_denizen(
             facing,
             speed: if beat.is_some() { 0.9 } else { 1.2 },
             gait: if beat.is_some() { 5.0 } else { 6.5 },
-            swing: 0.32,
             bob: 0.05,
             phase: rng_range(rng, 0.0, TAU),
             timer: rng_range(rng, 0.5, 4.0),
@@ -2785,36 +2806,18 @@ fn denizen_ok(next: Vec2, cur: Vec2) -> bool {
     (ny - cy).abs() <= 0.55
 }
 
-/// Procedural limb swing for the decorative population — the `ork_limbs` look (stride,
-/// counter-swinging arms, idle head scan) without the combat arms.
-fn denizen_limbs(
-    time: Res<Time>,
-    denizens: Query<(&Denizen, &Children)>,
-    mut parts: Query<(&OrkPart, &mut Transform)>,
-) {
-    let tw = time.elapsed_secs_wrapped();
-    for (d, children) in &denizens {
-        let t = tw + d.phase;
-        for &child in children {
-            let Ok((part, mut tf)) = parts.get_mut(child) else { continue };
-            tf.rotation = match part.kind {
-                PartKind::Leg(sign) => {
-                    let s = if d.moving { (t * d.gait).sin() * d.swing } else { (t * 0.8).sin() * 0.03 };
-                    Quat::from_rotation_x(sign * s)
-                }
-                PartKind::Arm(sign) => {
-                    let s = if d.moving { -(t * d.gait).sin() * 0.42 } else { (t * 0.8).sin() * 0.05 };
-                    Quat::from_rotation_x(sign * s)
-                }
-                PartKind::Head => {
-                    let bob = (t * 0.5).sin() * 0.06;
-                    let scan = if d.moving { 0.0 } else { (t * 0.4).sin() * 0.25 };
-                    Quat::from_euler(EulerRot::XYZ, bob, scan, 0.0)
-                }
-                PartKind::Tail => Quat::IDENTITY,
-            };
-        }
-    }
+/// Screenshot cameras on the Hold (`FOREST_SHOT_STORIES=landmarks`, see `capture.rs`): the great
+/// hall's lit doorway at eye height, and the hold from over the gate.
+pub fn shot_cams() -> Vec<(String, Transform)> {
+    let hy = ground_y(HALL_AT.x, HALL_AT.y).unwrap_or(0.0);
+    let door = Vec3::new(HALL_AT.x, hy + 1.6, HALL_AT.y - 4.0 * HALL_SCALE);
+    let eye = door + Vec3::new(2.5, 0.4, -9.0);
+    let cy = ground_y(CENTRE.x, CENTRE.y).unwrap_or(hy);
+    let over = Vec3::new(CENTRE.x - 10.0, cy + 14.0, CENTRE.y - 34.0);
+    vec![
+        ("hold_door".into(), Transform::from_translation(eye).looking_at(door, Vec3::Y)),
+        ("hold_over".into(), Transform::from_translation(over).looking_at(Vec3::new(CENTRE.x, cy + 2.0, CENTRE.y), Vec3::Y)),
+    ]
 }
 
 /// Each watchtower plinks a green warp bolt at a hero inside its (short) range.

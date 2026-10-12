@@ -337,10 +337,16 @@ def lm_frozen_spire(rng):
     mound(g, (0.0, -0.18, 2.3), 1.9, 1.4, 0.28, rng, mat=M_ICE, col_fn=crack, tile=1.0, rings=5, seg=20, skirt=0.1,
           rough=0.05, power=1.4, edge=0.3)
     # ── The snowfield: wind-built drifts round the pinnacle, a lee drift behind it.
+    # The stock drift tint (greyed foot, deep blue folds) read as a grey apron in the spire's shadow
+    # next to the terrain snow: lift it to the terrain's brightness, folds only faintly cool.
+    stock = OC.snow_fn
+    OC.snow_fn = lambda nzf: (lambda p, n: scale(mix((1.0, 1.0, 1.0), (0.86, 0.92, 1.0),
+                                                     (1.0 - smoothstep(0.05, 0.75, n.y)) * 0.6), 1.04 + 0.04 * nzf(p * 1.7)))
     OC.drift(g, (0.0, -0.25, -0.4), 4.8, 3.6, 0.85, rng)
     OC.drift(g, (-2.6, -0.2, 1.4), 2.6, 1.6, 0.6, rng)
     OC.drift(g, (2.8, -0.2, 0.6), 2.4, 1.5, 0.55, rng)
     OC.drift(g, (0.0, -0.2, -2.6), 3.0, 1.8, 1.0, rng)
+    OC.snow_fn = stock
     # Fallen ice chunks + loose rock in the snow.
     for k in range(8):
         a = rng.uniform(0, 6.283)
@@ -357,8 +363,12 @@ def lm_frozen_spire(rng):
 # rubble ramp, the processional stair up +Z to the summit shrine. Anchors used by ruins.rs: the
 # glyph strips at PYR_GLYPHS.
 PYR_N, PYR_W0, PYR_WT, PYR_TH = 8, 7.0, 1.7, 1.1
-SANDSTONE = (1.02, 0.84, 0.64)
-SAND = (0.9, 0.75, 0.5)
+# Tints are LINEAR multipliers on the scans. s_sandstone (sandstone_cracks) is a strongly ochre scan
+# (mean sRGB .85/.66/.47), so a "sandstone" tint near white read rusty-orange against the terrain:
+# this one cools it to a pale, weathered, sun-bleached sandstone (~sRGB .86/.76/.62).
+SANDSTONE = (1.0, 1.3, 1.7)
+SS_SAND = (1.03, 1.33, 1.3)     # loose sand ground into the stone's foot (= the terrain sand on that scan)
+SAND = (1.0, 0.82, 0.5)         # the desert terrain's 0xddc189 over the near-neutral s_plaster scan
 TURQ = (0.42, 0.72, 0.7)
 
 
@@ -369,31 +379,39 @@ def pyr_w(i):
 def sandstone_col(nz, k=1.0):
     def f(p, n):
         c = scale(SANDSTONE, k * (0.86 + 0.14 * nz(p * 0.7)))
-        c = mix(c, (1.08, 0.94, 0.76), smoothstep(0.6, 0.95, n.y) * 0.3)  # wind-scoured sunlit tops
-        c = mix(c, (0.7, 0.48, 0.32), 0.35 * smoothstep(0.35, 0.9, -nz(p * 0.25)))  # iron-stained courses
-        return mix(c, scale(SAND, 1.1), 0.45 * (1.0 - smoothstep(0.0, 1.2, p.y)))  # sand-blasted foot
+        c = mix(c, scale(SANDSTONE, 1.12), smoothstep(0.6, 0.95, n.y) * 0.3)  # wind-scoured sunlit tops
+        c = mix(c, (0.85, 0.98, 1.1), 0.3 * smoothstep(0.35, 0.9, -nz(p * 0.25)))  # faint iron-stained courses
+        return mix(c, SS_SAND, 0.45 * (1.0 - smoothstep(0.0, 1.2, p.y)))  # sand-blasted foot
     return f
 
 
 def dune(g, centre, rx, rz, h, yaw, rng, col_fn):
-    """A wind-built sand dune: a long windward ramp scored with ripples, a sharp crest and a steep
-    slip face; the rim sinks below the ground."""
+    """A wind-built sand dune: a long windward ramp scored with wind ripples (two crossing trains, so
+    they read as sand, not corrugated tin), a sharp sinuous crest whose horns trail downwind, and a
+    steep straight slip face that dies into a concave apron; the rim sinks below the ground."""
     c = Vector(centre)
     rq = quat_y(yaw)
     nz = Noise(rng, 4, 1.2)
-    uc = rng.uniform(0.3, 0.5)
-    nu, nv = 26, 14
+    uc0 = rng.uniform(0.3, 0.45)
+    ph = rng.uniform(0, 6.28)
+    nu, nv = 44, 20
     verts, idx = [], {}
     for i in range(nu + 1):
         u = -1 + 2 * i / nu
         for j in range(nv + 1):
             v = -1 + 2 * j / nv
-            across = max(0.0, 1 - abs(v) ** 1.6) ** 0.6 * (1 + 0.15 * math.sin(v * 2.7 + u * 1.3))
+            uc = uc0 + 0.18 * abs(v) ** 1.5 - 0.06 * math.sin(v * 2.4 + ph)  # crest bows, horns trail downwind
+            across = max(0.0, 1 - abs(v) ** 1.6) ** 0.6 * (1 + 0.12 * math.sin(v * 2.7 + u * 1.3))
             if u <= uc:
-                prof = ((u + 1) / (uc + 1)) ** 1.35
-                rip = 0.045 * math.sin(u * rx * 5.5 + v * 1.5 + nz(V(u, v, 0)) * 2.5) * smoothstep(-1.0, -0.2, u)
+                t = (u + 1) / (uc + 1)
+                prof = t ** 1.35
+                wx, wv = u * rx, v * rz
+                rip = (0.06 * math.sin(wx * 6.0 + wv * 0.9 + nz(V(u, v, 0)) * 3.0)
+                       + 0.025 * math.sin(wx * 9.5 - wv * 2.3 + ph)) / max(h, 0.6)
+                rip *= smoothstep(-1.0, -0.4, u) * (1.0 - smoothstep(0.75, 0.97, t))  # none on the brink
             else:
-                prof = max(0.0, 1 - ((u - uc) / (1 - uc)) ** 0.55)
+                e = (u - uc) / (1 - uc)
+                prof = max(0.0, 1 - e ** 0.8) * (1 - 0.25 * e) + 0.06 * smoothstep(0.6, 1.0, e) * (1 - e)
                 rip = 0.0
             y = h * (prof + rip) * across - 0.3 * (max(abs(u), abs(v)) ** 6)
             idx[(i, j)] = len(verts)
@@ -495,7 +513,8 @@ def lm_sunken_pyramid(rng):
     # Dark doorway into the top tier's +Z face.
     lbox(g, V(0, top - 0.55, pyr_w(PYR_N - 1) - 0.05), (1.0, 0.9, 0.2), quat_y(0), M_ROCK, (0.1, 0.08, 0.07), tile=0.6)
     # ── The dunes drowning the -X/-Z flank (sharp crests, ripples, slip faces) + sand in the angles.
-    sand = lambda p, n: scale(SAND, (0.94 + 0.06 * nz(p * 3.0)) * (0.92 + 0.08 * n.y))
+    # Sand: lit windward slopes a touch paler, the slip faces and ripple troughs a touch darker.
+    sand = lambda p, n: scale(SAND, (0.94 + 0.06 * nz(p * 3.0)) * (0.86 + 0.14 * smoothstep(0.3, 0.95, n.y)))
     dune(g, (-6.5, -0.3, -3.5), 7.5, 4.5, 3.6, 0.45, rng, sand)
     dune(g, (-3.0, -0.3, -7.2), 6.0, 3.8, 2.8, 1.2, rng, sand)
     dune(g, (-8.0, -0.3, 3.2), 5.0, 3.6, 2.0, -0.3, rng, sand)
@@ -513,7 +532,7 @@ def lm_sunken_pyramid(rng):
     # ── The colossus head, buried to the brow in the +X sand, and a toppled obelisk.
     head = V(8.6, 0.6, 5.0)
     hr = quat_y(-2.25) @ quat_z(0.12)
-    pale = lambda p, n: scale((1.04, 0.9, 0.72), 0.85 + 0.15 * nz(p * 2.0))
+    pale = lambda p, n: scale(SANDSTONE, 1.0 + 0.12 * nz(p * 2.0))
     stone(g, tuple(head), (1.3, 1.45, 1.4), rng, mat=M_SS, col_fn=pale, tile=1.8, detail=2, rough=0.05, cuts=0, rot=hr)
     slab(g, tuple(head + hr @ V(0, 1.15, -0.1)), (2.1, 0.4, 1.6), hr, rng, mat=M_SS, col_fn=sandstone_col(nz, 0.8),
          tile=1.6, res=(4, 1, 3), round_r=0.12, rough=0.02, cuts=1)

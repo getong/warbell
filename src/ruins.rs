@@ -585,15 +585,19 @@ pub fn landmark_sites() -> &'static [LandmarkSite] {
                 }
                 // Reject any footprint that runs off-land / over water, then grade by flatness.
                 let Some(spread) = footprint_spread(x, z, probe_r) else { continue };
-                let y = crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
+                let mut y = crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
                 let yaw = crate::wildlife::rng_range(&mut rng, 0.0, TAU);
-                // The frozen spire belongs up in the snow, not on the green valley floor: grade
-                // snow-poor spots down (a soft penalty, so a spot is always found).
-                // Any snow-covered spot beats every bare one; the flattest of those wins.
+                // The frozen spire belongs up in the snow, not on the green valley floor (the old soft
+                // penalty still let a dusted valley spot win: it stood on grass in a white disc).
+                // Real snow is altitude-bound, and the massif is never dead flat up there, so the
+                // flatness test is relaxed instead: any spot under full cover (snow over the WHOLE
+                // footprint) beats every thinner one; among those the flattest wins, and the spire is
+                // seated on the footprint's low side so its drifts bank against the slope, never float.
                 let score = spread
                     + if biome == crate::biome::Biome::Snow {
-                        let c = crate::alpine::snow_cover(x, z);
-                        (0.75 - c).max(0.0) * 4.0 + if c < 0.45 { 100.0 } else { 0.0 }
+                        let c = snow_footprint_min(x, z, probe_r);
+                        y = footprint_low(x, z, probe_r * 0.55).unwrap_or(y);
+                        (0.9 - c).max(0.0) * 6.0 + if c < 0.6 { 100.0 } else { 0.0 }
                     } else {
                         0.0
                     };
@@ -700,6 +704,45 @@ pub fn populate_landmarks(
             info!("landmark {:?}: best spot still uneven (spread {:.2})", biome, s.spread);
         }
     }
+}
+
+/// Screenshot cameras on every landmark (`FOREST_SHOT_STORIES=landmarks`, see `capture.rs`): an
+/// oblique from the south-east and a lower one from the north-west, framed by the footprint.
+pub fn shot_cams() -> Vec<(String, Transform)> {
+    let mut out = Vec::new();
+    for s in landmark_sites() {
+        let Some(&(_, scale, foot)) = SITE_PARAMS.iter().find(|p| p.0 == s.biome) else { continue };
+        let r = foot * scale;
+        let aim = Vec3::new(s.pos.x, s.y + r * 0.5, s.pos.y);
+        let name = format!("{:?}", s.biome).to_lowercase();
+        for (tag, off) in [("a", Vec3::new(1.0, 0.55, -1.0)), ("b", Vec3::new(-1.1, 0.3, 0.9))] {
+            let eye = aim + off * (r * 1.6 + 6.0);
+            info!("landmark cam {name}_{tag}: {:.1},{:.1},{:.1} -> {:.1},{:.1},{:.1}", eye.x, eye.y, eye.z, aim.x, aim.y, aim.z);
+            out.push((format!("lm_{name}_{tag}"), Transform::from_translation(eye).looking_at(aim, Vec3::Y)));
+        }
+    }
+    out
+}
+
+/// Thinnest snow cover over a footprint (centre + a ring at `radius`): a spot is only "in the snow"
+/// if the whole apron is, not just its centre.
+fn snow_footprint_min(x: f32, z: f32, radius: f32) -> f32 {
+    let mut c = crate::alpine::snow_cover(x, z);
+    for i in 0..8 {
+        let a = i as f32 * FRAC_PI_4;
+        c = c.min(crate::alpine::snow_cover(x + a.cos() * radius, z + a.sin() * radius));
+    }
+    c
+}
+
+/// Lowest ground over the centre + a ring at `radius` (seat a landmark into a slope, not onto it).
+fn footprint_low(x: f32, z: f32, radius: f32) -> Option<f32> {
+    let mut lo = crate::worldmap::ground_at_world(x, z)?;
+    for i in 0..8 {
+        let a = i as f32 * FRAC_PI_4;
+        lo = lo.min(crate::worldmap::ground_at_world(x + a.cos() * radius, z + a.sin() * radius)?);
+    }
+    Some(lo)
 }
 
 /// Terrain height spread (max−min world-Y) over a landmark's footprint: the centre plus two

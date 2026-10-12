@@ -450,7 +450,7 @@ def build_piece(piece, ao_fn):
             d = np.minimum(d, b.eval(q))
         return d
     ao = ambient_occlusion(ao_field, ps + nrm * 0.0015, nrm, step=0.009, k=1.7)
-    cav = 0.58 + 0.42 * ao
+    cav = (0.58 + 0.42 * ao) * getattr(piece, "tone", 1.0)  # `tone` < 1 darkens a whole piece
     cen = np.array([ps[f].mean(0) for f in faces])
     freg = np.zeros(len(faces), np.int64)
     for bi, (body, _, _) in enumerate(piece.bodies):
@@ -1106,15 +1106,28 @@ def piece_hat(kind):
         rim.add(ring(knots), HEADCLOTH)
         pc.add(rim)
     elif kind == "cap":
-        # Felt cap pulled over the crown with a slouched top and a rolled brim.
-        b = PBody(h=0.0018, budget=260)
-        b.sym = False  # slouched top
-        b.add(offset(sc, 0.011), HEADCLOTH).cut(half(P(0, 0.083, 0), (0, 1, 0.22)))
-        b.add(Ellipsoid(P(0.016, 0.155, -0.04), (0.05, 0.035, 0.06), rot_z(-0.4)), HEADCLOTH, 0.03)
+        # Soft felt / wool cap (NOT a helmet): a loose crown that slouches over to one side and sags
+        # behind, a dent pushed into the top, lumpy where the felt bunches, over a thick turned-up
+        # brim rolled unevenly round the head. Mottled weathering keeps it matte.
+        b = PBody(h=0.0018, budget=300)
+        b.sym = False  # slouched to one side
+        b.add(offset(sc, 0.014), HEADCLOTH).cut(half(P(0, 0.078, 0), (0, 1, 0.2)))
+        b.add(Ellipsoid(P(0.028, 0.15, -0.034), (0.07, 0.04, 0.074), rot_z(-0.45)), HEADCLOTH, 0.035)  # loose crown
+        b.add(Ellipsoid(P(0.07, 0.116, -0.046), (0.03, 0.03, 0.05), rot_z(-0.95)), HEADCLOTH, 0.03)  # lobe flopped over the side
+        b.add(Ellipsoid(P(0.01, 0.112, -0.1), (0.05, 0.028, 0.024)), HEADCLOTH, 0.03)  # sag at the back
+        b.sub(Ellipsoid(P(-0.03, 0.182, 0.012), (0.038, 0.013, 0.05)), HEADCLOTH, 0.02)  # a dent in the felt
+        b.shag(Sphere(P(0.02, 0.135, -0.03), 0.12), 0.0045, Tufts(48, (0, 1, 0), seed=11, n=8), soft=0.03)
         pc.add(b)
-        br = PBody(h=0.0016, budget=110)
-        br.add(layer(sc, -0.01, 0.017), BAND).cut(slab((0, 1, 0.22), 0.077, 0.097))
+        br = PBody(h=0.0016, budget=140)
+        br.sym = False
+        knots = surface_ring(offset(sc, 0.012).d, 0.0, -0.016, lambda a: 0.085 - 0.018 * math.cos(a) + 0.004 * math.sin(3 * a + 0.7),
+                             rad=0.2, n=26, tube=0.0085, embed=0.003)
+        angs = np.linspace(0, 2 * math.pi, len(knots), endpoint=False)
+        knots = [(q, r * (1.0 + 0.2 * math.sin(2 * a + 1.1) + 0.1 * math.sin(5 * a))) for (q, r), a in zip(knots, angs)]
+        br.add(ring(knots), HEADCLOTH)  # the rolled brim: same felt, turned up
         pc.add(br)
+        mottle = Tufts(70, (0, 1, 0), seed=5, n=8)
+        pc.weather = lambda p, n, reg: 0.25 + 0.45 * mottle(p) + 0.3 * ss(0.1, 0.075, p[:, 1])  # noqa: E731
     elif kind == "straw":
         b = PBody(h=0.002, budget=330)
         b.add(offset(sc, 0.024), HEADCLOTH).cut(half(P(0, 0.1, 0), (0, 1, 0)))
@@ -1659,6 +1672,11 @@ def piece_coif():
         knots.append((q + P(0, 0, -0.002), 0.0042))
     rim.add(ring(knots), HEADCLOTH)
     pc.add(rim)
+    # Undyed linen, not bleached white: a greyed base everywhere (the HEADCLOTH weathering tint),
+    # darker with sweat / soil round the face opening and at the nape, knot and tails.
+    pc.weather = lambda p, n, reg: (0.62 + 0.38 * ss(0.045, 0.085, p[:, 2])  # noqa: E731
+                                    + 0.38 * ss(0.0, -0.05, p[:, 1]))
+    pc.tone = 0.9
     return pc
 
 

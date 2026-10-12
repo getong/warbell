@@ -1239,8 +1239,10 @@ fn pbr_material(images: &mut Assets<Image>, set: &str, card: bool) -> Result<Sta
         return Ok(StandardMaterial { metallic: 1.0, perceptual_roughness: 0.5, reflectance: 0.5, ..default() });
     }
     if set == "bogwater" {
-        // Black and still: a dull sheen, not a mirror of the sky.
-        return Ok(StandardMaterial { perceptual_roughness: 0.16, reflectance: 0.22, ..default() });
+        // Black and still like the swamp's own pools (water.wgsl's tannin bog): a near-black body
+        // with a faint, crisp sheen. A rough surface spread the baked grey sky over the whole pool
+        // (it read as grey satin); a glossy, low-F0 one stays dark and only glints at grazing.
+        return Ok(StandardMaterial { perceptual_roughness: 0.08, reflectance: 0.14, ..default() });
     }
     if set.is_empty() {
         // Waxy fruit skin: base colour comes from the vertex colours.

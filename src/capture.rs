@@ -194,15 +194,28 @@ fn drive_story_seq(
 ) -> bool {
     if clock.seq.is_none() {
         // Both set: the (filtered, see `stories_cold::shot_cams`) story cams first, then the fixed ones.
-        let stories = std::env::var("FOREST_SHOT_STORIES").is_ok();
-        clock.seq = Some(match std::env::var("FOREST_SHOT_CAMS") {
-            Ok(spec) if stories => crate::stories_cold::shot_cams().into_iter().chain(parse_shot_cams(&spec)).collect(),
-            Ok(spec) => parse_shot_cams(&spec),
-            Err(_) if std::env::var("FOREST_SHOT_STORIES").as_deref() == Ok("sites") => crate::sites_warm::shot_cams(),
-            // `FOREST_SHOT_STORIES=wild`: the swamp / rocky discovery sites instead of the snow set.
-            Err(_) if std::env::var("FOREST_SHOT_STORIES").is_ok_and(|v| v == "wild") => crate::wild_sites::shot_cams(),
-            Err(_) => crate::stories_cold::shot_cams(),
-        });
+        // `FOREST_SHOT_STORIES` is a comma list of sets: `sites` (desert / forest), `wild` (swamp /
+        // rocky), `landmarks` (the five landmarks + the Hold), anything else = the snow set. `FOREST_SHOT_ONLY=a,b` keeps only cams whose name
+        // contains one of the substrings (one launch for a handful of sites).
+        let mut seq: Vec<(String, Transform)> = Vec::new();
+        if let Ok(sets) = std::env::var("FOREST_SHOT_STORIES") {
+            for set in sets.split(',').map(str::trim) {
+                seq.extend(match set {
+                    "sites" => crate::sites_warm::shot_cams(),
+                    "wild" => crate::wild_sites::shot_cams(),
+                    "landmarks" => crate::ruins::shot_cams().into_iter().chain(crate::ork_fortress::shot_cams()).collect(),
+                    _ => crate::stories_cold::shot_cams(),
+                });
+            }
+            if let Ok(only) = std::env::var("FOREST_SHOT_ONLY") {
+                let keys: Vec<&str> = only.split(',').map(str::trim).filter(|k| !k.is_empty()).collect();
+                seq.retain(|(n, _)| keys.iter().any(|k| n.contains(k)));
+            }
+        }
+        if let Ok(spec) = std::env::var("FOREST_SHOT_CAMS") {
+            seq.extend(parse_shot_cams(&spec));
+        }
+        clock.seq = Some(seq);
     }
     let dir = std::path::Path::new(main).parent().map(|p| p.to_path_buf()).unwrap_or_default();
     let list = clock.seq.clone().unwrap_or_default();

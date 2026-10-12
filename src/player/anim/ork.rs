@@ -376,10 +376,11 @@ fn arms_ease(staff: bool) -> Arms {
     if staff {
         Arms { l: Vec3::new(-0.109, -0.24, 0.19), le: Vec3::new(-0.3, -0.25, -0.92), r: Vec3::new(0.14, -0.03, 0.24), re: Vec3::new(0.5, -0.34, -0.8), w: Vec3::new(0.0, 0.99, -0.16) }
     } else {
-        // The club hangs loose in the fist beside the right thigh, head down by the knee and
-        // canted out and forward — clear of the leg's swing and of the skinned body's heavy
-        // deltoid (propped on the shoulder, its head sank through it: `club_clears_the_shoulder`).
-        Arms { l: Vec3::new(-0.109, -0.22, 0.187), le: Vec3::new(-0.29, -0.29, -0.91), r: Vec3::new(0.06, -0.2, 0.17), re: Vec3::new(0.35, -0.2, -0.92), w: Vec3::new(0.4, -0.36, 0.84) }
+        // The club is carried low in the fist at the right hip (forearm forward, elbow back), its
+        // head canted out and forward at hip height — not dangling by the shin — clear of the
+        // leg's swing and of the skinned body's heavy deltoid (propped on the shoulder, its head
+        // sank through it: `club_clears_the_shoulder`).
+        Arms { l: Vec3::new(-0.109, -0.22, 0.187), le: Vec3::new(-0.29, -0.29, -0.91), r: Vec3::new(0.06, -0.08, 0.2), re: Vec3::new(0.35, -0.2, -0.92), w: Vec3::new(0.44, -0.33, 0.83) }
     }
 }
 
