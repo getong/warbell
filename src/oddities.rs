@@ -503,10 +503,11 @@ fn seed_wilds(
         slots.push(mk(Kind::Vulture, p, i as f32 * 1.7, p, true));
     }
     // Antlion pits: 3 in the NE dune sea (spec empty area 4), flat sand, wide clearance.
-    let mut pits = scan(0xA27, 3, [150.0, 250.0, -190.0, -110.0], 28.0, |p| spot_ok(p, Biome::Desert, 5.6) && spread(p, 5.0) < 0.9);
+    let mut pits = scan(0xA27, 3, [150.0, 250.0, -190.0, -110.0], 28.0, |p| spot_ok(p, Biome::Desert, 6.4) && spread(p, 5.0) < 0.9);
     if pits.len() < 3 {
         let more = scan(0xA28, 3 - pits.len(), region(Biome::Desert), 28.0, |p| {
-            spot_ok(p, Biome::Desert, 5.6) && spread(p, 5.0) < 0.9 && pits.iter().all(|q| q.distance(p) > 28.0)
+            // Deep desert only: never on the castle's doorstep.
+            p.length() > 110.0 && spot_ok(p, Biome::Desert, 6.4) && spread(p, 5.0) < 0.9 && pits.iter().all(|q| q.distance(p) > 28.0)
         });
         pits.extend(more);
     }
@@ -676,13 +677,16 @@ fn attach_vulture_parts(commands: &mut Commands, a: &Assets_, e: Entity, legs_hi
 }
 
 fn pit_seat(p: Vec2) -> f32 {
-    // Seat the funnel on the HIGH side of its footprint so no dune pokes through its floor.
-    let mut hi = footing(p.x, p.y).unwrap_or(0.0);
+    // Seat the funnel so its floor clears the ground everywhere inside the rim (the terrain can't be
+    // dug, so the funnel is a low spoil ring — ~0.5 deep, the hero's feet sink into it like loose
+    // sand — whose apron dives back under the ground).
+    let funnel = |r: f32| -0.32 + 0.5 * (r / PIT_R).powf(1.3);
+    let mut hi = footing(p.x, p.y).unwrap_or(0.0) - funnel(0.0) + 0.04;
     for k in 0..12 {
         let a = k as f32 * std::f32::consts::TAU / 12.0;
         for r in [1.0f32, 2.2, 3.4] {
             if let Some(y) = footing(p.x + a.cos() * r, p.y + a.sin() * r) {
-                hi = hi.max(y - 0.6 * (r / PIT_R));
+                hi = hi.max(y - funnel(r) + 0.04);
             }
         }
     }
@@ -1129,7 +1133,8 @@ fn animate_wings(
             VState::Soar => (0.08 + 0.03 * (ph * 0.9).sin(), 0.0),
             VState::Climb | VState::Descend => ((ph * 6.0).sin() * 0.75 + 0.1, 0.05),
             VState::Dive => (-0.25, 0.45),
-            VState::Feed => (-0.55 + 0.08 * (ph * 2.0).sin(), 0.55),
+            // Half-folded and swept back along the flanks, the wrists mantling over the carcass.
+            VState::Feed => (0.12 + 0.06 * (ph * 2.0).sin(), 1.2),
         };
         tf.rotation = Quat::from_rotation_y(-s * yaw) * Quat::from_rotation_z(s * roll);
     }

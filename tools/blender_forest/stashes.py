@@ -347,13 +347,17 @@ def castaway_grotto(rng):
     pts = []
     for i in range(7):
         x = -1.25 + 2.5 * i / 6
-        sag = 0.12 * math.sin(math.pi * i / 6)
-        pts.append([V(x, 1.45 - sag * 0.3, -0.62), V(x, 0.9 - sag, -0.85 - sag * 0.6), V(x, 0.25 + 0.05 * (i % 2), -1.15)])
+        u = i / 6
+        sag = 0.3 * math.sin(math.pi * u)
+        # The right third is hauled aside and lashed, leaving a gap to crawl through.
+        hem = 0.25 + 0.05 * (i % 2) + 0.75 * max(0.0, u - 0.62) / 0.38
+        pts.append([V(x, 1.45 - sag * 0.25, -0.62), V(x, 0.95 - sag * 0.6, -0.95 - sag),
+                    V(x - 0.25 * max(0.0, u - 0.62), hem, -1.2 - 0.12 * math.sin(7.0 * u))])
     for i in range(6):
         for j in range(2):
             q = [pts[i][j], pts[i + 1][j], pts[i + 1][j + 1], pts[i][j + 1]]
             n = (q[1] - q[0]).cross(q[3] - q[0]).normalized()
-            col = mix((0.62, 0.58, 0.5), (0.45, 0.4, 0.34), 0.5 * j)
+            col = mix((0.86, 0.8, 0.68), (0.66, 0.58, 0.46), 0.5 * j)  # salt-bleached sailcloth, stained low
             g.poly(q, [(i / 6, j / 2), ((i + 1) / 6, j / 2), ((i + 1) / 6, (j + 1) / 2), (i / 6, (j + 1) / 2)], [n] * 4, [col] * 4,
                    M_CLOTH)
             g.poly(q[::-1], [(i / 6, (j + 1) / 2), ((i + 1) / 6, (j + 1) / 2), ((i + 1) / 6, j / 2), (i / 6, j / 2)], [-n] * 4,

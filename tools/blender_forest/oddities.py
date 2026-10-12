@@ -352,7 +352,8 @@ def vulture_wing():
         trailing = smoothstep(-0.02, -0.14, ps[:, 2])
         prim = smoothstep(0.62, 0.72, ps[:, 0])
         under = smoothstep(0.2, -0.6, n[:, 1])
-        return np.clip(0.62 - 0.55 * np.maximum(trailing, prim) - 0.1 * under, 0, 1)
+        rows = 0.06 * np.sin(ps[:, 2] * 70.0 + ps[:, 0] * 9.0)  # covert rows
+        return np.clip(0.74 + rows - 0.7 * np.maximum(trailing, prim) - 0.12 * under, 0, 1)
 
     return build("odd_vulture_wing", b, tone=tone, axis=[P(0, 0, 0.1), P(0, 0, -0.3)], uv_scale=5.0)
 
@@ -426,24 +427,27 @@ def antlion_pit():
     from mathutils import Vector
     rng = np.random.default_rng(41)
     rings, seg = 26, 56
-    R_RIM, R_OUT = 3.7, 5.4
+    R_RIM, R_OUT = 3.7, 6.2
     ph = rng.uniform(0, 6.28, 6)
 
     def h(r, a):
         wob = 0.05 * math.sin(a * 3 + ph[0]) + 0.03 * math.sin(a * 7 + ph[1])
         if r <= R_RIM:
             t = r / R_RIM
-            y = -0.32 + 1.12 * t ** 1.15
+            y = -0.32 + 0.5 * t ** 1.3  # shallow: the game seats the floor just above the ground
             y += 0.025 * math.sin(r * 9.0 + a * 2 + ph[2]) * t  # slumped sand runnels
         else:
-            t = (r - R_RIM) / (R_OUT - R_RIM)
-            y = 0.78 * (1 - t) ** 1.6 - 0.12 * t
+            t = min(1.0, (r - R_RIM) / (R_OUT - R_RIM))
+            # The spoil apron dives under the ground so it never ends in a floating lip.
+            y = 0.18 * (1 - t) ** 1.4 - 0.9 * t ** 1.2
+            if r > R_OUT:
+                y = -1.4  # buried skirt
         return y + wob * min(1.0, r / 2.0)
 
     bld = Builder()
     pts, uvs, cols, nrm = [], [], [], []
-    for i in range(rings + 1):
-        r = R_OUT * (i / rings) ** 0.85
+    for i in range(rings + 2):
+        r = R_OUT * (i / rings) ** 0.85 if i <= rings else R_OUT + 0.05
         for j in range(seg):
             a = math.tau * j / seg
             y = h(r, a)
@@ -457,6 +461,8 @@ def antlion_pit():
     def normal(i, j):
         p = pts[idx(i, j)]
         a = pts[idx(min(i + 1, rings), j)] - pts[idx(max(i - 1, 0), j)]
+        if i > rings:
+            a = pts[idx(rings, j)] - pts[idx(rings - 1, j)]
         b = pts[idx(i, j + 1)] - pts[idx(i, j - 1)]
         n = np.cross(b, a) if i > 0 else np.array([0, 1.0, 0])
         if n[1] < 0:
@@ -464,7 +470,7 @@ def antlion_pit():
         return n / max(np.linalg.norm(n), 1e-9)
 
     vid = [bld.v((p[0], -p[2], p[1])) for p in pts]
-    for i in range(rings):
+    for i in range(rings + 1):
         for j in range(seg):
             q = [idx(i, j), idx(i, j + 1), idx(i + 1, j + 1), idx(i + 1, j)]
             uv_, n_, c_ = [], [], []
@@ -476,7 +482,7 @@ def antlion_pit():
                 n_.append((n[0], -n[2], n[1]))
                 r = math.hypot(p[0], p[2])
                 shade = 0.62 + 0.38 * min(1.0, r / R_RIM) ** 0.7  # the funnel floor sits in its own shadow
-                c_.append((1.0 * shade, 0.86 * shade, 0.66 * shade))
+                c_.append((0.9 * shade, 0.8 * shade, 0.66 * shade))
             bld.face([vid[k] for k in q][::-1], uv_[::-1], n_[::-1], c_[::-1], 0)
     return bld.build("odd_antlion_pit", ["s_earth"])
 
