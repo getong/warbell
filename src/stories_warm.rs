@@ -302,7 +302,8 @@ mod tests {
         }
         for (kind, sc) in SCENES.iter().enumerate() {
             let n = first.iter().filter(|s| s.kind == kind).count();
-            assert!(n >= 2, "{} seated only {n} times", sc.model);
+            // Every scene seats as often as it asks (capped at 2 — a vignette model appears at most twice).
+            assert!(n >= sc.count.min(2), "{} seated only {n} times", sc.model);
         }
         for (i, s) in first.iter().enumerate() {
             let sc = &SCENES[s.kind];

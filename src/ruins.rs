@@ -589,8 +589,14 @@ pub fn landmark_sites() -> &'static [LandmarkSite] {
                 let yaw = crate::wildlife::rng_range(&mut rng, 0.0, TAU);
                 // The frozen spire belongs up in the snow, not on the green valley floor: grade
                 // snow-poor spots down (a soft penalty, so a spot is always found).
+                // Any snow-covered spot beats every bare one; the flattest of those wins.
                 let score = spread
-                    + if biome == crate::biome::Biome::Snow { (0.75 - crate::alpine::snow_cover(x, z)).max(0.0) * 4.0 } else { 0.0 };
+                    + if biome == crate::biome::Biome::Snow {
+                        let c = crate::alpine::snow_cover(x, z);
+                        (0.75 - c).max(0.0) * 4.0 + if c < 0.45 { 100.0 } else { 0.0 }
+                    } else {
+                        0.0
+                    };
                 if best_score.map_or(true, |b| score < b) {
                     best_score = Some(score);
                     best = Some(LandmarkSite { biome, pos: Vec2::new(x, z), y, yaw, spread });

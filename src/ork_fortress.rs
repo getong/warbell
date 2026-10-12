@@ -535,9 +535,11 @@ pub fn build(
     // The orks draw against the shared creature material (per-surface texture from the surf code).
     let ork_mat = crate::creature::make_creature_material(creature_mats);
     // Doorway glow + translucent smoke (the fires themselves are flame cards, below).
+    // The great hall's doorway: firelight deep inside, dim enough to read as a lit interior
+    // behind the dark mouth (a bright flat card read as a painted rectangle).
     let glow_mat = std_mats.add(StandardMaterial {
-        base_color: crate::palette::srgb(0xffb050),
-        emissive: crate::palette::srgb(0xff9838).to_linear() * 3.0,
+        base_color: crate::palette::srgb(0x6a3a14),
+        emissive: crate::palette::srgb(0xff8a30).to_linear() * 0.35,
         unlit: true,
         ..default()
     });

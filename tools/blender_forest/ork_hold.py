@@ -295,7 +295,7 @@ def roof_side(g, rng, sx, x_eave, y_eave, y_ridge, z0, z1, nz, soot=True):
             y += 0.07 * nz(V(x, 0, z) * 0.8) - sag
             row.append(tuple(V(x, y, z)))
         grid.append(row)
-    sheet(g, grid, M_HIDE, hide_col(nz, (5, 3), (lambda u, v: 0.6 * smoothstep(0.2, 0.0, v)) if soot else None),
+    sheet(g, grid, M_HIDE, hide_col(nz, (5, 3), (lambda u, v: 0.35 * smoothstep(0.15, 0.0, v)) if soot else None),
           tile=1.2, double=True)
 
 
@@ -374,8 +374,8 @@ def hold_hall(rng):
     for k, z in enumerate(np.linspace(-HZ - 0.3, HZ + 0.3, 8)):
         ext = 0.9 if k in (0, 7) else 0.12
         for sx in (-1, 1):
-            e = V(sx * (XE + 0.15), YE - 0.08, z)
-            r_ = V(0, YR - 0.12, z)
+            e = V(sx * (XE + 0.15), YE - 0.3, z)
+            r_ = V(0, YR - 0.32, z)
             d = (r_ - e).normalized()
             pole(g, e, r_ + d * ext, 0.11, 0.08, rng, col=BARK, sides=6, segs=3)
         if k in (0, 7):
@@ -540,8 +540,8 @@ def hold_longhouse(rng):
     for k, z in enumerate(np.linspace(-HZ - 0.2, HZ + 0.2, 6)):
         ext = 0.6 if k in (0, 5) else 0.08
         for sx in (-1, 1):
-            e = V(sx * (XE + 0.1), YE - 0.06, z)
-            r_ = V(0, YR - 0.1, z)
+            e = V(sx * (XE + 0.1), YE - 0.24, z)
+            r_ = V(0, YR - 0.26, z)
             pole(g, e, r_ + (r_ - e).normalized() * ext, 0.08, 0.06, rng, col=BARK, sides=6)
     pole(g, V(0, YR - 0.05, -HZ - 0.45), V(0, YR - 0.05, HZ + 0.45), 0.11, 0.1, rng, col=BARK, sides=7)
     for sx in (-1, 1):
