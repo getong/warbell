@@ -534,13 +534,8 @@ mod slope_tests {
                 i >= 0 && j >= 0 && i < w && j < h && set[(j * w + i) as usize]
             }))
         };
-        // The `vista.rs` overlook anchors (authored at MAP_SCALE 2.2 → `world22`, like vista does).
-        use crate::worldmap::world22;
-        for (c, label) in [
-            (world22(96.8, 6.6), "rock summit overlook"),
-            (world22(-101.2, -66.0), "snow summit overlook"),
-            (world22(95.0, -66.0), "canyon mouth overlook"),
-        ] {
+        // The `vista.rs` overlook anchors (derived from the region layout, like vista does).
+        for (c, _, label) in crate::vista::overlook_anchors() {
             println!("{label}: old {} new {}", near(&old, c, 5.0), near(&new, c, 5.0));
         }
         // The highest cell each rule reaches (the snow summit's crown).

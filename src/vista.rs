@@ -152,6 +152,23 @@ fn overlook_prop() -> Mesh {
 
 // ── placement ────────────────────────────────────────────────────────────────────────
 /// Build-phase 33: the waterfall + the three overlooks.
+/// The three overlook anchors `(anchor, what the view looks AT, label)`, DERIVED from the region
+/// layout (they were hand-authored world coords that went stale on every scale bump / region
+/// retune): the rock summit gazing back at the castle plain, the snow summit over the western sea,
+/// and 5 base units inside the rock range's N canyon mouth looking out at the rival's dunes.
+pub fn overlook_anchors() -> Vec<(Vec2, Vec2, &'static str)> {
+    use crate::worldmap::{biome_centres_world, pass_point_world, world22};
+    let c = biome_centres_world();
+    let mut out = vec![
+        (c[2], Vec2::ZERO, "rock summit → castle plain"),
+        (c[0], world22(-150.0, -66.0), "snow summit → western sea"),
+    ];
+    if let Some(canyon) = pass_point_world(2, 1, 5.0) {
+        out.push((canyon, crate::rival::RIVAL_CENTRE, "canyon mouth → rival dunes"));
+    }
+    out
+}
+
 pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) {
     use crate::worldmap::ground_at_world;
     let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.85, ..default() });
@@ -244,15 +261,7 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
     // 2. OVERLOOKS — ring-search a flat legal spot near each authored anchor, face the view.
     let prop = meshes.add(overlook_prop());
     let range = VisibilityRange { start_margin: 0.0..0.0, end_margin: 130.0..130.0, use_aabb: true };
-    // Authored at MAP_SCALE 2.2 (the summits are the region centres ×2.2) — `world22` keeps them
-    // on the summits / canyon mouth at the current scale (they had silently drifted off at 2.6).
-    use crate::worldmap::world22;
-    let anchors: [(Vec2, Vec2, &str); 3] = [
-        // (anchor, what the view looks AT, label)
-        (world22(96.8, 6.6), Vec2::ZERO, "rock summit → castle plain"),
-        (world22(-101.2, -66.0), world22(-150.0, -66.0), "snow summit → western sea"),
-        (world22(95.0, -66.0), world22(66.0, -88.0), "canyon mouth → rival dunes"),
-    ];
+    let anchors = overlook_anchors();
     let spot_ok = |x: f32, z: f32| {
         let Some(y0) = crate::worldmap::ground_at_world(x, z) else { return false };
         (0..6).all(|k| {

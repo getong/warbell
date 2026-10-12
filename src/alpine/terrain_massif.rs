@@ -142,15 +142,40 @@ fn footprint(x: f32, z: f32, reg: &Region) -> f32 {
     let border = if margin.is_finite() { smooth(0.0, 12.0, margin) } else { 1.0 };
     let coast = 0.25 + 0.75 * smooth(0.0, 9.0, sea_field(x, z));
     let ring = smooth(SAFE_PAD + SAFE_FRAY, SAFE_PAD + SAFE_FRAY + 10.0, castle_ring_dist(x, z));
-    // The E-marsh bog pools and the deliberate lake lie on the rock range's SW apron: settle the
-    // ground to their shore level (the old mesa's flat foot apron did) instead of sinking them
-    // into pits in the flank. (The waterfall's plunge stream is NOT faded — its wall is the falls.)
+    // The deliberate lake (a tarn since the rock range slid S over the old E marsh arm) lies on the
+    // rock range's SW apron: settle the ground to its shore level (the old mesa's flat foot apron
+    // did) instead of sinking it into a pit in the flank. (The waterfall's plunge stream is NOT
+    // faded — its wall is the falls.)
     let wet = smooth(1.0, 9.0, pool_sd(x, z).min(lake_sd(x, z)));
     // ...except right behind the waterfall's head, where the range must stand as a wall for the
     // falls to pour off (`vista` needs ≥1.6u of face within a few units of the stream head).
     let (head, _) = waterfall_site_world();
     let near_falls = 1.0 - smooth(3.0, 8.0, (x * MAP_SCALE - GX - head.x).hypot(z * MAP_SCALE - GZ - head.y) / MAP_SCALE);
     rim * border * coast * ring * wet.max(near_falls)
+}
+
+/// 0..1 how much of base `(x, z)` the massif still OWNS against its neighbours: 1 on its own
+/// ground, easing to 0 over 12 base units toward any boundary where another region claims the tile
+/// (`region_at` hands contested ground to the DEEPER region — the grown desert now owns the rock
+/// range's old northern plateau, inside the range's circle). 0 = ceded outright. Unlike the
+/// flank's `footprint` border, CONTINUOUS across the neighbour's own rim (a neighbour's claim fades
+/// out over 4 base units past its edge instead of vanishing at it) — the pass ramps ride it, and a
+/// jump there was a 2-class step in the only walkable ascent.
+pub(super) fn ownership(x: f32, z: f32, reg: &Region) -> f32 {
+    let wob = 2.4 * (x * 0.4 + 1.1).sin() + 2.4 * (z * 0.36 - 0.7).cos();
+    let own = (x - reg.x).hypot(z - reg.z) + wob - reg.r; // region_at's edge (negative inside)
+    let mut margin = f32::INFINITY;
+    for o in active_map().regions {
+        if std::ptr::eq(o, reg) {
+            continue;
+        }
+        let fray = if o.peak > 0 { 0.0 } else { edge_fray(x, z) };
+        let oe = (x - o.x).hypot(z - o.z) + wob + fray - o.r;
+        if oe < 4.0 {
+            margin = margin.min(if oe < 0.0 { oe } else { 3.0 * oe } - own);
+        }
+    }
+    if margin.is_finite() { smooth(0.0, 12.0, margin) } else { 1.0 }
 }
 
 /// The continuous pass-ramp floor at distance `dc` (base) from the centre — `pass_class` without
@@ -285,7 +310,19 @@ pub(super) fn massif_y(x: f32, z: f32, reg: &Region) -> f32 {
     // the safe ring (the grown snow massif's SE ascent starts inside it): the ring forces class-1
     // grass there, so an un-eased ramp left a 2-class lip at the foot of the main ascent.
     let ring = smooth(SAFE_PAD + SAFE_FRAY, SAFE_PAD + SAFE_FRAY + 10.0, castle_ring_dist(x, z));
-    m + (ramp_y(dc, reg) * ring - m) * w
+    // ...and to the neighbour's level where the corridor's outer reach crosses ground another
+    // region owns (the rock range's N canyon and WNW ascent run out across the grown desert): the
+    // bare radial ramp stood there as a rock causeway several units above the dunes. Now the trail
+    // runs out of the canyon as a level dry wash (`classify` hands those tiles the owner's biome)
+    // and starts climbing where the range's ground begins. Rock range only — the snow massif's
+    // corridors keep their tuned ramps (its footprint is the player's favourite; don't touch it).
+    let owned = if cedes_corridors(reg) { ownership(x, z, reg) } else { 1.0 };
+    m + (ramp_y(dc, reg) * ring * owned - m) * w
+}
+
+/// Does this massif's pass corridor yield to a neighbour's ground (see [`massif_y`])?
+pub(super) fn cedes_corridors(reg: &Region) -> bool {
+    is_massif_region(reg) && reg.biome == TB::Rock
 }
 
 /// Height CLASS of a massif tile (the quantised field — the mesh / ground read [`corner_y`]).

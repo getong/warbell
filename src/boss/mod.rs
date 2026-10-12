@@ -77,12 +77,14 @@ fn melee_dmg(level: i32) -> f32 {
 
 /// Biome region centres — where each warden spawns + roams (see CLAUDE.md). Authored in
 /// MAP_SCALE-2.2-era world coords; `world22` rescales them to the current map size.
-fn region_center(b: Biome) -> Vec2 {
+pub(crate) fn region_center(b: Biome) -> Vec2 {
     use crate::worldmap::world22;
     match b {
         Biome::Snow => world22(-69.0, -45.0),
         Biome::Desert => world22(60.0, -39.0),
-        Biome::Rocky => world22(66.0, 4.0),
+        // Moved with the rock range (biome rebalance: centre +2,+5 base = +4.4,+11 at 2.2), so the
+        // golem keeps the same DEM ground instead of ending up on the desert seam.
+        Biome::Rocky => world22(70.4, 15.0),
         Biome::Forest => world22(-60.0, 39.0),
         Biome::Swamp => world22(0.0, 57.0),
     }
