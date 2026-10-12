@@ -35,10 +35,14 @@ const VIL_MAX_TURN: f32 = 3.0;
 /// Root scale of a townsperson on the shared studio biped rig (`biped.rs`). The studio skeleton is
 /// ~1.8u tall at scale 1.0; this keeps adults a touch shorter than the hero (close to the orks'
 /// in-world height). Bumped ×1.35 (was 0.6) alongside the hero/ork/house rescale. `FOREST_VILLINE`.
-const SCALE: f32 = 0.81;
-/// Child villagers — the same rig scaled right down (+ a bigger head, see [`build_biped_body`]) so
-/// the suburbs have visibly childlike kids underfoot.
-const KID_SCALE: f32 = SCALE * 0.55;
+pub(crate) const SCALE: f32 = 0.81;
+/// Child villagers: a spawn below this scale is a CHILD — `spawn` then gives it a child's build
+/// and height from its look (`peasant_model::kit_build`: ~0.66–0.75 of an adult, short legs, big
+/// head), so the exact value only flags the kid.
+const KID_SCALE: f32 = SCALE * 0.7;
+/// Leg-swing amplitude (rad) of the studio run clip (`player::anim::run_pose`): the foot sweeps
+/// ~2·sin(0.8)·leg per step, plus a short flight — what a kid's cadence is matched to.
+const RUN_STRIDE_PER_LEG: f32 = 2.87;
 /// Drop the biped rig so the feet sit on the ground (matches the `peasant` model-viewer offset).
 /// Root-parented props the hands grip (a hauled log, a handcart) sit at rig-frame grips shifted by
 /// this (`player::anim::LOG_CRADLE` / `CART_GRIP` are rig-frame).
@@ -740,7 +744,9 @@ pub fn spawn_cage_captive(
     let pose = crate::biped::PoseOverride(life.first_pose());
     let root = commands
         .spawn((
-            Transform { translation: berth.seat, rotation: Quat::from_rotation_y(berth.seat_yaw), scale: Vec3::splat(SCALE) },
+            // A shade under townsfolk scale: the fuller adult frame would push elbows and knees
+            // through the bars of the cage berths sized for the old slim body.
+            Transform { translation: berth.seat, rotation: Quat::from_rotation_y(berth.seat_yaw), scale: Vec3::splat(SCALE * 0.94) },
             Visibility::Visible,
             BipedDrive { sitting: true, phase: (seed % 628) as f32 / 100.0, ..default() },
             Captive { key, seed },
@@ -1996,6 +2002,7 @@ fn villager_drive(
             Has<crate::miner::Carting>,
             Has<Archer>,
             Option<&crate::rts::workers::Haul>,
+            Has<Kid>,
         ),
         Without<crate::dying::Dying>,
     >,
@@ -2003,11 +2010,12 @@ fn villager_drive(
     let tw = time.elapsed_secs_wrapped();
     let now = time.elapsed_secs();
     let dt = time.delta_secs();
-    for (v, worker, role, mut d, hauling, carting, is_archer, rts_haul) in &mut q {
+    for (v, worker, role, mut d, hauling, carting, is_archer, rts_haul, is_kid) in &mut q {
         // Ease the idle↔gait blend so starts/stops aren't a snap.
         let target = if v.moving { 1.0 } else { 0.0 };
         d.moving_amt += (target - d.moving_amt) * (dt * 8.0).min(1.0);
-        d.run_amt = 0.0; // townsfolk walk (no jog)
+        // Townsfolk walk; kids scamper at a run (their cadence is matched to it in `spawn`).
+        d.run_amt = if is_kid { 1.0 } else { 0.0 };
         d.walk_phase = (tw + v.phase) * v.gait;
         d.phase = v.phase;
 
@@ -2630,13 +2638,17 @@ pub fn populate(
     for i in 0..4 {
         let home = play + Vec2::new(rng_range(&mut rng, -1.6, 1.6), rng_range(&mut rng, -1.6, 1.6));
         let kind = Kind::Peasant { skin: SKIN[i % SKIN.len()], tunic: TUNIC[(i + 1) % TUNIC.len()], hat: i % 2 == 0 };
-        let e = spawn(commands, meshes, &body_mat, kind, home, home, 2.8, 1.7, KID_SCALE, next_u32(&mut rng), false);
+        // (2.3 u/s: a child's jog at its own size, not an adult's sprint.)
+        let e = spawn(commands, meshes, &body_mat, kind, home, home, 2.3, 1.7, KID_SCALE, next_u32(&mut rng), false);
         commands.entity(e).insert(Kid);
     }
 
     // Screenshot hook: `FOREST_VILLINE="x,z"` parks one of each townsperson look in a line at the
     // given world XZ for model/texture close-ups (mirrors `FOREST_ORKLINE`/`FOREST_WILDLINE`):
-    // peasant · farmer · woodcutter · miner · guard. Tiny wander radius so they idle in place.
+    // peasant · farmer · woodcutter · miner · guard · archer to the +X side, and three children
+    // (youngest → oldest build) to the −X side, all facing +Z — so `FOREST_HERO` at the same spot
+    // (he faces +Z too) + `FOREST_TPS=1 FOREST_TPS_AZ=0` frames the hero between them for a size
+    // check. Speed 0 + wander 0 → they stand stock-still for the capture.
     if let Ok(s) = std::env::var("FOREST_VILLINE") {
         let p: Vec<f32> = s.split(',').filter_map(|t| t.trim().parse().ok()).collect();
         if p.len() == 2 {
@@ -2648,24 +2660,26 @@ pub fn populate(
                 Kind::Guard { skin: SKIN[1], tunic: TUNIC[0] },
                 Kind::Archer { skin: SKIN[2], tunic: TUNIC[2] },
             ];
-            for (i, k) in kinds.into_iter().enumerate() {
-                let x = p[0] + i as f32 * 1.5 - 3.0;
+            let adults = kinds.into_iter().enumerate().map(|(i, k)| (k, p[0] + 0.95 * (i + 1) as f32, SCALE, 50 + i as u32 * 13));
+            // Seeds 12 / 13 / 19 → kid looks 0 / 1 / 7: the youngest, middle and oldest child build.
+            let kids = [12u32, 13, 19].into_iter().enumerate().map(|(j, seed)| {
+                (Kind::Peasant { skin: SKIN[(j + 3) % SKIN.len()], tunic: TUNIC[(j + 4) % TUNIC.len()], hat: false }, p[0] - 0.85 * (j + 1) as f32, KID_SCALE, seed)
+            });
+            for (i, (k, x, scale, seed)) in adults.chain(kids).enumerate() {
                 let home = Vec2::new(x, p[1]);
-                // speed 0 + wander 0 → they stand stock-still for the capture.
-                let e = spawn(commands, meshes, &body_mat, k, home, home, 0.0, 0.0, SCALE, 50 + i as u32 * 13, false);
-                // Face the camera (−Z) + tag SceneActor so the wander brain leaves the transform
-                // alone and the facing sticks (clean front-on face shots).
+                let e = spawn(commands, meshes, &body_mat, k, home, home, 0.0, 0.0, scale, seed, false);
+                // Tag SceneActor so the wander brain leaves the transform alone and the facing
+                // sticks; keep the build's own root scale (a child's height, a man's frame).
                 let y = worldmap::ground_at_world(x, p[1]).unwrap_or(0.0);
                 if i == 0 {
                     info!("FOREST_VILLINE ground y {y:.2} at {x:.1},{:.1}", p[1]); // for FOREST_CAM framing
                 }
+                let kid = scale < SCALE * 0.9;
+                let pk = vil_biped_key(k, seed, kid, false).kind;
+                let root = SCALE * crate::peasant_model::person_rig(pk, kid, seed % crate::peasant_model::LOOKS).root;
                 commands.entity(e).insert((
                     crate::scenes::SceneActor,
-                    Transform {
-                        translation: Vec3::new(x, y, p[1]),
-                        rotation: Quat::from_rotation_y(std::f32::consts::PI),
-                        scale: Vec3::splat(SCALE),
-                    },
+                    Transform { translation: Vec3::new(x, y, p[1]), rotation: Quat::IDENTITY, scale: Vec3::splat(root) },
                 ));
             }
         }
@@ -2831,6 +2845,17 @@ fn spawn(
     let phase = rng01(&mut r) * TAU;
     let facing = rng01(&mut r) * TAU;
     let y = worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
+    // A kid's height comes from its build (by look); a grown-up's frame shifts it a few percent.
+    let kid = scale < SCALE * 0.9;
+    let rig = crate::peasant_model::person_rig(vil_biped_key(kind, seed, kid, desert).kind, kid, seed % crate::peasant_model::LOOKS);
+    let scale = if kid { SCALE } else { scale } * rig.root;
+    // A kid runs (the studio run clip) at a cadence matched to its short legs, so the feet keep
+    // up with the ground instead of skating; it also bobs less.
+    let (gait, bob) = if kid {
+        (TAU * speed / (RUN_STRIDE_PER_LEG * rig.leg * scale), 0.045 * scale / SCALE)
+    } else {
+        (8.0, 0.045)
+    };
 
     let vil = Villager {
         home,
@@ -2839,9 +2864,9 @@ fn spawn(
         facing,
         speed,
         wander_r,
-        gait: 8.0,
+        gait,
         swing: 0.5,
-        bob: 0.045,
+        bob,
         body_r: 0.22,
         phase,
         moving: false,
@@ -2864,8 +2889,8 @@ fn spawn(
             BiomeEntity,
         ))
         .id();
-    // Kids pass KID_SCALE (< SCALE) — detect that here so they get the childlike build.
-    build_biped_body(commands, root, kind, seed, scale < SCALE, desert, mat, meshes);
+    // Kids pass KID_SCALE (< SCALE) — detected above, so they get the child's build.
+    build_biped_body(commands, root, kind, seed, kid, desert, mat, meshes);
 
     // Armoured townsfolk double as town guards — they fight invaders at night and can be pulled to
     // staff a producer by day (the `Townsfolk` pool). They carry their identity colours [`Folk`] +
@@ -3054,8 +3079,8 @@ mod body_cache_tests {
 
 /// Build a townsperson's body on the shared studio biped skeleton (`biped.rs`): one [`spawn_biped`]
 /// call whose `rig` child carries [`BipedRig`] so a re-skin can drop + rebuild the whole skeleton in
-/// place. Shared by [`spawn`] (fresh) + [`reskin_townsfolk`] (job change). `kid` bumps the head a
-/// touch for a childlike build (the root scale already shrinks them).
+/// place. Shared by [`spawn`] (fresh) + [`reskin_townsfolk`] (job change). `kid` builds a child
+/// (narrow frame, short limbs, big head — the root scale from [`spawn`] sets the height).
 fn build_biped_body(
     commands: &mut Commands,
     root: Entity,
@@ -3066,11 +3091,10 @@ fn build_biped_body(
     mat: &Handle<crate::creature::CreatureMaterial>,
     _meshes: &mut Assets<Mesh>,
 ) {
-    // Kids get an oversized head on a downscaled body (chibi proportions) so they read as children,
-    // not just small adults. Joint spacing (+ a head multiplier) follow the body in use: the slim
-    // realistic kit body or the stocky box peasant (`peasant_model::rig_dims`).
-    let (hip_dx, shoulder_dx, head_mul) = crate::peasant_model::rig_dims();
-    let head_scale = (if kid { 1.55 } else { 1.06 }) * head_mul;
+    // The skeleton follows the person's build (`peasant_model::person_rig`, same look as the
+    // mesh): the adult's frame spacing, or a child's narrow frame, short limbs and big head.
+    let rig = crate::peasant_model::person_rig(vil_biped_key(kind, seed, kid, desert).kind, kid, seed % crate::peasant_model::LOOKS);
+    let (hip_dx, shoulder_dx) = (rig.hip_dx, rig.shoulder_dx);
     // Off-hand mount: only the GUARD mesh set carries a shield (peasant_model returns None for
     // workers/peasants, and spawn_biped mounts nothing then), so this stays a no-op for civilians.
     let shield_xf = Transform {
@@ -3090,7 +3114,19 @@ fn build_biped_body(
         let h = world.resource_scope(|world, mut cache: Mut<VillagerBodyCache>| {
             cache.get_or_upload(key, &mut world.resource_mut::<Assets<Mesh>>())
         });
-        crate::biped::spawn_biped(&mut world.commands(), root, &mat, h, head_scale, 1.0, hip_dx, shoulder_dx, VIL_RIG_OFF, Some(shield_xf));
+        crate::biped::spawn_biped_scaled(
+            &mut world.commands(),
+            root,
+            &mat,
+            h,
+            rig.head_scale,
+            1.0,
+            hip_dx,
+            shoulder_dx,
+            VIL_RIG_OFF - rig.drop,
+            Some(shield_xf),
+            rig.limbs,
+        );
         // The outfit's tool, and the joint layout its grips are solved against (a re-skin to a
         // new trade lands here too, so the clips always grip the tool actually in hand).
         if let Some(mut d) = world.get_mut::<BipedDrive>(root) {

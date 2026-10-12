@@ -55,10 +55,10 @@ JOINTS = ("hips", "torso", "neck", "head", "sh_l", "el_l", "sh_r", "el_r", "hip_
           "hip_r", "knee_r", "foot_r")
 HIPS, TORSO, NECK, HEAD, SH_L, EL_L, SH_R, EL_R, HIP_L, KNEE_L, FOOT_L, HIP_R, KNEE_R, FOOT_R = range(14)
 
-SDX = 0.2  # shoulder joint half-span (`peasant_model::KIT_SHOULDER_DX`)
+SDX = 0.2  # authored shoulder joint half-span (`peasant_model::KIT_SHOULDER_DX`; the game reshapes per build)
 HDX = 0.1  # hip joint half-span (`peasant_model::KIT_HIP_DX`)
 HEAD_Y = 1.63  # head pivot in the rig (hips 1.05 + torso 0.15 + neck 0.35 + head 0.08)
-HEAD_SCALE = 1.06 * 1.1  # adult head scale the body is proportioned for (kids: 1.55 * 1.1)
+HEAD_SCALE = 1.06 * 1.1  # adult head scale the body is proportioned for (kids: per build, `peasant_model::kit_build`)
 HEAD_FRAME = ("hu_head", "hu_hair", "hu_beard", "hu_hat")
 
 
@@ -810,7 +810,11 @@ FACES = {
     "a": dict(w=1.0, jaw=1.0, nose=1.0, eye=1.0, chin=1.0, lip=1.0, cheek=1.0, brow=1.0),
     "b": dict(w=1.05, jaw=1.14, nose=1.14, eye=0.95, chin=1.12, lip=1.05, cheek=1.12, brow=1.15),
     "c": dict(w=0.95, jaw=0.88, nose=0.92, eye=1.04, chin=0.9, lip=0.95, cheek=0.9, brow=0.9, hook=1.0),
-    "kid": dict(w=1.0, jaw=0.8, nose=0.7, eye=1.25, chin=0.8, lip=0.9, cheek=1.2, brow=0.7, kid=True),
+    # A child: a rounder, softer face — small snub nose, small jaw and chin, big eyes, full cheeks,
+    # no brow ridge.
+    "kid": dict(w=1.04, jaw=0.74, nose=0.6, eye=1.28, chin=0.74, lip=0.86, cheek=1.32, brow=0.5, kid=True),
+    # A woman: finer jaw and nose, fuller lips, a smooth brow, no larynx.
+    "w": dict(w=0.96, jaw=0.86, nose=0.84, eye=1.1, chin=0.88, lip=1.1, cheek=1.06, brow=0.55, soft=True),
 }
 
 
@@ -869,7 +873,7 @@ def face(b, f):
     # Neck: from under the skull down into the tunic collar; a throat in front.
     b.add(Cone(P(0, -0.022, -0.026), P(0, -0.135, -0.014), 0.043, 0.049), S, 0.02)
     b.add(Cone(P(0, -0.052, 0.024), P(0, -0.128, 0.026), 0.022, 0.024), S, 0.02)
-    if not kid:
+    if not kid and not f.get("soft"):
         b.add(Sphere(P(0, -0.07, 0.042), 0.0085), S, 0.008)  # larynx
         for sx in (-1, 1):  # sternocleidomastoids
             b.add(Cone(P(sx * 0.045, -0.02, -0.006), P(sx * 0.012, -0.13, 0.04), 0.011, 0.011), S, 0.012)
@@ -1401,6 +1405,228 @@ def piece_bracer():
     return pc
 
 
+# ───────────────────────────────────────────────────────────────── children
+# A child is its own body, authored in the same rig frame (same joints, same skin kinds) so every
+# clip and spawn site keeps working; the game shortens the limbs and sizes the child
+# (`peasant_model::kit_build`). Soft, unmuscled shapes: a round belly, no pecs / lats / shoulder
+# blades, slim smooth limbs, a plain smock to the knee, bare shins and simple turnshoes.
+def kid_trunk_core():
+    b = PBody(h=0.004, budget=820)
+    T = TUNIC
+    b.add(Ellipsoid(P(0, 0.99, -0.01), (0.14, 0.1, 0.104)), T)  # pelvis
+    b.add(Ellipsoid(P(0, 1.16, 0.016), (0.128, 0.13, 0.104)), T, 0.06)  # round child's belly
+    b.add(Ellipsoid(P(0, 1.33, -0.004), (0.128, 0.15, 0.09)), T, 0.06)  # soft ribcage
+    for sx in (-1, 1):
+        b.add(Cone(P(sx * 0.03, 1.506, -0.016), P(sx * 0.162, 1.474, -0.004), 0.033, 0.03), T, 0.05)  # sloped shoulder
+        b.add(Sphere(P(sx * 0.16, 1.452, 0.004), 0.04), T, 0.045)
+    b.add(Cone(P(0, 1.46, -0.01), P(0, 1.56, -0.006), 0.056, 0.046), T, 0.03)
+    # The smock: one loose bell from the chest to just above the knee, gathered at the yoke.
+    b.add(Squash(CappedCone(P(0, 1.16, 0), P(0, 0.68, 0), 0.136, 0.19), P(0, 0, -0.004), (1, 1, 0.82)), T, 0.05)
+    b.cut(half(P(0, 0.68, 0), (0, 1, 0)))
+    b.cut(Fn(lambda p: p[:, 1] - (1.528 + 1.6 * (p[:, 0] ** 2 + (0.8 * p[:, 2]) ** 2)), (-1,) * 3, (1,) * 3))
+    # Gathers falling from the yoke + loose drape folds toward the hem.
+    b.shag(Ellipsoid(P(0, 1.3, 0.06), (0.12, 0.09, 0.06)), 0.0025, Folds(14, 0.2, 1.36, 1.22), soft=0.03)
+    b.shag(Ellipsoid(P(0, 0.82, -0.004), (0.24, 0.17, 0.2)), 0.006, Folds(9, 1.7, 1.08, 0.7), soft=0.04)
+    return b
+
+
+_KID_TRUNK = None
+
+
+def kid_trunk():
+    global _KID_TRUNK
+    if _KID_TRUNK is None:
+        _KID_TRUNK = kid_trunk_core()
+    return _KID_TRUNK
+
+
+def piece_kid_trunk():
+    pc = Piece("hu_kid_trunk", "trunk")
+    tb = kid_trunk()
+    pc.add(tb)
+    # A cord tied loosely round the waist (no buckle, no pouch), the knot's tails at one hip.
+    cord = PBody(h=0.0018, budget=110)
+    cord.sym = False
+    cord.add(ring(surface_ring(tb.eval, 0.0, 0.0, lambda a: 1.1 + 0.012 * math.cos(a), rad=0.3, n=30, tube=0.005)), BAND)
+    xk = hit(tb.eval, [[0.3, 1.1, 0.04]], [[-1, 0, 0]])[0][0]
+    cord.add(Sphere(P(xk + 0.004, 1.1, 0.04), 0.009), BAND, 0.003)
+    for dz in (-0.01, 0.012):
+        cord.add(Cone(P(xk + 0.004, 1.095, 0.04 + dz), P(xk + 0.012, 1.0, 0.045 + dz * 2), 0.004, 0.003), BAND, 0.002)
+    pc.add(cord)
+    # Rough neckline + a turned hem.
+    col = PBody(h=0.0018, budget=70)
+    angs = np.linspace(0, 2 * math.pi, 26, endpoint=False)
+    org = [[0.058 * math.sin(a), 1.7, -0.004 + 0.055 * math.cos(a)] for a in angs]
+    col.add(ring([(P(q[0], q[1] + 0.002, q[2]), 0.005) for q in hit(tb.eval, org, [[0, -1, 0]] * len(org), t1=0.3)]), TRIM)
+    pc.add(col)
+    hem = PBody(h=0.0025, budget=110, clip=((-0.3, 0.67, -0.3), (0.3, 0.71, 0.3)))
+    hem.add(layer(tb, -0.02, 0.003), TRIM).cut(slab((0, 1, 0), 0.68, 0.698))
+    pc.add(hem)
+    pc.weather = lambda p, n, reg: ss(0.86, 0.69, p[:, 1]) * 0.6 + ss(1.36, 1.28, p[:, 1]) * 0.15  # noqa: E731
+    return pc
+
+
+def piece_kid_arm(sx):
+    """A loose smock sleeve to the wrist (no biceps / forearm masses) and a small soft hand."""
+    side = "l" if sx < 0 else "r"
+    pc = Piece(f"hu_kid_arm_{side}", f"arm_{side}")
+    ax, az = sx * SDX, 0.01
+    X = lambda d: ax + sx * d  # noqa: E731
+    cl = PBody(h=0.002, budget=220)
+    cl.add(Ellipsoid(P(X(-0.004), 1.44, az), (0.044, 0.06, 0.047)), TUNIC)
+    cl.add(Chain([(P(X(0.0), 1.43, az), 0.043), (P(X(0.0), 1.3, az + 0.002), 0.04), (P(X(0.0), 1.17, az - 0.002), 0.038),
+                  (P(X(0.0), 1.06, az + 0.004), 0.039), (P(X(0.0), 1.01, az + 0.004), 0.037)]), TUNIC, 0.03)
+    cl.add(CappedCone(P(X(0.0), 1.03, az + 0.004), P(X(0.0), 0.995, az + 0.004), 0.038, 0.036), TUNIC, 0.01)
+    cl.shag(Ellipsoid(P(X(0.0), 1.17, az + 0.02), (0.05, 0.06, 0.04)), 0.004, Creases(120.0, ax, az, seed=sx), soft=0.02)
+    cl.shag(Ellipsoid(P(X(0.0), 1.04, az), (0.05, 0.05, 0.05)), 0.003, Creases(140.0, ax, az, 1.0 + sx), soft=0.02)
+    pc.add(cl)
+    sk = PBody(h=0.0017, budget=240)
+    sk.add(Squash(Cone(P(0, 1.02, 0), P(0, 0.975, 0), 0.019, 0.0185), P(X(0.002), 0, az + 0.006), (1.0, 1.0, 1.2)), SKIN)
+    fist(sk, sx, ax, 0.92, az, k=0.008)
+    pc.add(sk)
+    pc.weather = lambda p, n, reg: ss(0.98, 0.93, p[:, 1]) * (reg == SKIN) * 0.35  # noqa: E731
+    return pc
+
+
+def piece_kid_leg(sx):
+    """A bare child's leg (smooth, no muscle heads) under the smock and a soft leather turnshoe."""
+    side = "l" if sx < 0 else "r"
+    pc = Piece(f"hu_kid_leg_{side}", f"leg_{side}")
+    x0 = sx * HDX
+    X = lambda d: x0 + sx * d  # noqa: E731
+    lg = PBody(h=0.0024, budget=260)
+    lg.add(Chain([(P(X(-0.014), 1.04, -0.006), 0.056), (P(X(-0.008), 0.9, 0.0), 0.055), (P(X(0.0), 0.72, 0.004), 0.046),
+                  (P(X(0.0), 0.6, 0.004), 0.041)]), SKIN)
+    lg.add(Sphere(P(X(0.0), 0.6, 0.012), 0.038), SKIN, 0.03)  # round knee
+    lg.add(Chain([(P(X(0.0), 0.6, 0.0), 0.039), (P(X(0.0), 0.47, -0.006), 0.038), (P(X(0.0), 0.3, -0.002), 0.031),
+                  (P(X(0.0), 0.17, -0.004), 0.027)]), SKIN, 0.03)
+    lg.add(Ellipsoid(P(X(0.004), 0.45, -0.018), (0.032, 0.07, 0.03)), SKIN, 0.03)  # soft calf
+    pc.add(lg)
+    sh = PBody(h=0.0018, budget=210)
+    sh.add(Chain([(P(X(0.0), 0.17, -0.006), 0.034), (P(X(0.0), 0.12, -0.01), 0.036)]), BOOT)
+    sh.add(Sphere(P(X(0.0), 0.1, -0.03), 0.038), BOOT, 0.02)  # heel
+    sh.add(Chain([(P(X(0.0), 0.105, -0.022), 0.038), (P(X(0.002), 0.094, 0.05), 0.039), (P(X(-0.002), 0.088, 0.12), 0.031)]),
+           BOOT, 0.022)
+    sh.add(Ellipsoid(P(X(-0.002), 0.088, 0.112), (0.036, 0.028, 0.038)), BOOT, 0.015)  # rounded toe
+    sh.cut(half(P(0, 0.064, 0), (0, 1, 0)))
+    sh.sub(CappedCone(P(X(0.0), 0.2, -0.008), P(X(0.0), 0.165, -0.008), 0.029, 0.027), BOOT, 0.004)  # open throat
+    sh.shag(Ellipsoid(P(X(0.0), 0.11, 0.03), (0.05, 0.05, 0.08)), 0.0025, Creases(160.0, x0, 0.0, 3 + sx), soft=0.02)
+    pc.add(sh, cull=lg.eval, depth=0.003)
+    tie = PBody(h=0.0012, budget=60)
+    tie.add(ring(surface_ring(offset(sh, 0.002).d, x0, -0.008, lambda a: 0.15, rad=0.1, n=16, tube=0.0028)), BAND)
+    pc.add(tie)
+    pc.weather = lambda p, n, reg: ss(0.32, 0.06, p[:, 1]) * 0.7 + np.exp(-((p[:, 1] - 0.6) / 0.05) ** 2) * 0.4  # noqa: E731
+    return pc
+
+
+# ───────────────────────────────────────────────────────────────── women
+def dress_core():
+    """A woman's kirtle: a fitted bodice (a bust, a narrower waist), the skirt falling from the
+    girdle to the ankle with deep drape folds. Same trunk frame / weights as the tunic, so the
+    skirt halves follow the thighs and shins through a stride."""
+    b = PBody(h=0.0045, budget=1150)
+    T = TUNIC
+    b.add(Ellipsoid(P(0, 0.99, -0.014), (0.15, 0.1, 0.11)), T)  # hips
+    b.add(Ellipsoid(P(0, 1.15, 0.0), (0.115, 0.1, 0.085)), T, 0.04)  # waist
+    b.add(Ellipsoid(P(0, 1.33, -0.012), (0.122, 0.15, 0.088)), T, 0.05)  # ribcage
+    for sx in (-1, 1):
+        b.add(Sphere(P(sx * 0.052, 1.335, 0.052), 0.05), T, 0.04)  # bust
+        b.add(Cone(P(sx * 0.03, 1.505, -0.018), P(sx * 0.158, 1.478, -0.006), 0.032, 0.028), T, 0.04)
+        b.add(Sphere(P(sx * 0.158, 1.454, 0.004), 0.037), T, 0.035)
+    b.add(Cone(P(0, 1.46, -0.01), P(0, 1.56, -0.006), 0.056, 0.046), T, 0.025)
+    # Skirt: girdle -> knee -> ankle, flaring, a touch longer at the back.
+    b.add(Squash(CappedCone(P(0, 1.1, 0), P(0, 0.6, 0), 0.142, 0.205), P(0, 0, -0.008), (1, 1, 0.84)), T, 0.04)
+    b.add(Squash(CappedCone(P(0, 0.62, 0), P(0, 0.12, 0), 0.205, 0.255), P(0, 0, -0.01), (1, 1, 0.86)), T, 0.03)
+    b.cut(half(P(0, 0.115, 0), (0, 1, 0.08)))
+    b.cut(Fn(lambda p: p[:, 1] - (1.528 + 1.6 * (p[:, 0] ** 2 + (0.8 * p[:, 2]) ** 2)), (-1,) * 3, (1,) * 3))
+    b.shag(Ellipsoid(P(0, 0.5, -0.01), (0.32, 0.45, 0.3)), 0.009, Folds(11, 0.8, 1.02, 0.2, power=1.2), soft=0.05)
+    return b
+
+
+_DRESS = None
+
+
+def dress():
+    global _DRESS
+    if _DRESS is None:
+        _DRESS = dress_core()
+    return _DRESS
+
+
+def dress_weights(p, kind):
+    """A long skirt is one tube round both legs: the tunic split (each half riding its own thigh
+    and shin) tears it into trousers mid-stride. Below the hips it half-follows the pelvis, the
+    thighs share the rest over a wide left/right blend, and the knees do not pull the hem."""
+    W = skin_weights(p, kind)
+    x, y = p[:, 0], p[:, 1]
+    t = ss(1.13, 1.27, y)
+    leg = ss(1.04, 0.93, y) * (1 - t)
+    sr = ss(-0.16, 0.16, x)
+    share = 0.55
+    for j in (HIP_L, HIP_R, KNEE_L, KNEE_R):
+        W[:, j] = 0.0
+    W[:, HIPS] = (1 - t) - leg * share
+    W[:, HIP_L] = leg * share * (1 - sr)
+    W[:, HIP_R] = leg * share * sr
+    return W
+
+
+def piece_dress():
+    pc = Piece("hu_dress", "trunk")
+    pc.weights = dress_weights
+    db = dress()
+    pc.add(db)
+    # Girdle: a narrow leather belt low on the waist, its long end hanging down the front, a purse.
+    gd = PBody(h=0.0022, budget=150, clip=((-0.22, 1.05, -0.2), (0.22, 1.12, 0.2)))
+    gd.add(layer(db, -0.001, 0.006), LEATHER).cut(slab((0, 1, 0), 1.074, 1.094))
+    pc.add(gd)
+    zf = hit(db.eval, [[0.0, 1.084, 0.3]], [[0, 0, -1]])[0][2]
+    bits = PBody(h=0.0016, budget=140)
+    bits.sym = False
+    bits.add(RBox(P(0.0, 1.084, zf + 0.008), (0.012, 0.012, 0.004), 0.003), METAL)
+    z2 = hit(db.eval, [[0.02, 0.86, 0.3]], [[0, 0, -1]])[0][2]
+    bits.add(Cone(P(0.008, 1.08, zf + 0.006), P(0.02, 0.86, z2 + 0.005), 0.006, 0.005), LEATHER, 0.002)  # strap end
+    xp = hit(db.eval, [[0.3, 1.02, 0.03]], [[-1, 0, 0]])[0]
+    bits.add(Ellipsoid(P(xp[0] + 0.012, 1.02, 0.03), (0.016, 0.03, 0.026), rot_z(0.12)), LEATHER)  # purse
+    bits.add(Cone(P(xp[0] + 0.006, 1.08, 0.03), P(xp[0] + 0.012, 1.05, 0.03), 0.003, 0.003), BAND, 0.002)
+    pc.add(bits)
+    col = PBody(h=0.0018, budget=80)
+    angs = np.linspace(0, 2 * math.pi, 28, endpoint=False)
+    org = [[0.064 * math.sin(a), 1.7, -0.004 + 0.06 * math.cos(a)] for a in angs]
+    col.add(ring([(P(q[0], q[1] + 0.002, q[2]), 0.005) for q in hit(db.eval, org, [[0, -1, 0]] * len(org), t1=0.3)]), TRIM)
+    pc.add(col)
+    hem = PBody(h=0.0028, budget=150, clip=((-0.35, 0.1, -0.35), (0.35, 0.17, 0.35)))
+    hem.add(layer(db, -0.022, 0.0035), TRIM).cut(slab((0, 1, 0), 0.12, 0.15))
+    pc.add(hem)
+    pc.weather = lambda p, n, reg: ss(0.45, 0.13, p[:, 1]) * 0.7 + ss(1.42, 1.34, p[:, 1]) * ss(0.09, 0.12, np.abs(p[:, 0])) * 0.3  # noqa: E731
+    return pc
+
+
+def piece_coif():
+    """A linen kerchief over the hair, knotted at the nape, a fold framing the face."""
+    pc = Piece("hu_hat_coif", "head", "head")
+    sc = scalp_body()
+    b = PBody(h=0.0018, budget=330)
+    b.add(offset(sc, 0.014), HEADCLOTH).cut(half(P(0, -0.02, 0.0), (0, 1, -0.55)))
+    for sx in (-1, 1):
+        b.add(Ellipsoid(P(sx * 0.072, 0.02, -0.03), (0.018, 0.05, 0.045)), HEADCLOTH, 0.02)  # over the ears
+    b.sub(Ellipsoid(P(0, 0.02, 0.1), (0.062, 0.09, 0.06)), HEADCLOTH, 0.01)  # face opening
+    b.add(Ellipsoid(P(0, -0.035, -0.094), (0.03, 0.022, 0.02)), HEADCLOTH, 0.012)  # the knot
+    for sx in (-1, 1):
+        b.add(Cone(P(sx * 0.01, -0.04, -0.1), P(sx * 0.03, -0.12, -0.11), 0.012, 0.007), HEADCLOTH, 0.01)  # tails
+    b.shag(Sphere(P(0, 0.05, -0.04), 0.15), 0.003, Folds(9, 2.0, 0.16, -0.04), soft=0.03)
+    pc.add(b)
+    rim = PBody(h=0.0015, budget=90)
+    knots = []
+    for a in np.linspace(0, 2 * math.pi, 24, endpoint=False):
+        q = P(0.062 * math.sin(a) * 1.02, 0.02 + 0.09 * math.cos(a), 0.0)
+        q[2] = hit(b.eval, [[q[0], q[1], 0.25]], [[0, 0, -1]], t1=0.25)[0][2]
+        knots.append((q + P(0, 0, -0.002), 0.0042))
+    rim.add(ring(knots), HEADCLOTH)
+    pc.add(rim)
+    return pc
+
+
 # ───────────────────────────────────────────────────────────────── AO references
 def rig_reference():
     """The default person (sleeved arms, plain legs, a head blob) for baking AO into rig pieces."""
@@ -1587,6 +1813,9 @@ def all_pieces():
     out += [(lambda k=k: piece_hat(k)) for k in HATS]
     out += [piece_apron, piece_guard, piece_archer, piece_cloak, piece_sash, piece_robe, piece_bracer]
     out += [(lambda sx=sx: piece_pauldron(sx)) for sx in (-1, 1)]
+    out += [piece_kid_trunk] + [(lambda sx=sx: piece_kid_arm(sx)) for sx in (-1, 1)]
+    out += [(lambda sx=sx: piece_kid_leg(sx)) for sx in (-1, 1)]
+    out += [piece_dress, piece_coif]
     return out
 
 
@@ -1703,6 +1932,7 @@ def preview(objs, weights, out_png, pose_name="rest", yaw=None, cam=None, looks_
         ("Farmer", "b", "crop", "short", "turban", "sleeve", True),
         ("Guard", "a", "crop", "short", "warhelm", "sleeve", True),
         ("Unemployed", "kid", "bowl", None, None, "bare", False),
+        ("Woman", "w", "crop", None, "coif", "sleeve", False),
     ]
     if looks_sel:
         looks = [looks[i] for i in looks_sel]
@@ -1716,7 +1946,11 @@ def preview(objs, weights, out_png, pose_name="rest", yaw=None, cam=None, looks_
         root_s = 0.55 / 0.81 if kid else 1.0
         names = ["hu_trunk", f"hu_arm_{fore}_l", f"hu_arm_{fore}_r", f"hu_leg_{'wrap_' if desert else ''}l",
                  f"hu_leg_{'wrap_' if desert else ''}r", f"hu_head_{fv}"]
-        if hat not in ("hood", "archer", "turban", "headwrap", "warhelm", "helm"):
+        if kid:  # the child's own body
+            names = ["hu_kid_trunk", "hu_kid_arm_l", "hu_kid_arm_r", "hu_kid_leg_l", "hu_kid_leg_r", "hu_head_kid"]
+        if kind == "Woman":
+            names[0] = "hu_dress"
+        if hat not in ("hood", "archer", "turban", "headwrap", "warhelm", "helm", "coif"):
             names.append(f"hu_hair_{hair}")
         if beard:
             names.append(f"hu_beard_{beard}_{fv}")
