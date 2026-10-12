@@ -395,7 +395,7 @@ fn add_seats(w: &mut LifeWorld, c: Vec2, yaw: f32, face: f32, h: f32, offs: &[f3
     let view = crate::blockers::read();
     for &o in offs {
         let p = c + rot2(Vec2::new(o, 0.0), yaw) + f * fwd_off;
-        if !leg_room(&view, p, face) {
+        if !leg_room(&view, p, face) || !clear_of_market(p, face) {
             info!("village_life: seat at {:.1},{:.1} dropped (leg room blocked)", p.x, p.y);
             continue;
         }
@@ -412,6 +412,20 @@ fn leg_room(view: &crate::blockers::BlockView, p: Vec2, face: f32) -> bool {
         let q = p + f * d + side * s;
         !view.any_within(q.x, q.y, 0.0)
     }))
+}
+
+/// The sitter's body (hips ±0.25) and leg room stay out of every market stall / loose market prop
+/// (laid out independently of the tavern's furniture, and possibly after the seats).
+fn clear_of_market(p: Vec2, face: f32) -> bool {
+    let f = fwd(face);
+    let boxes = crate::market::footprints();
+    [-0.1_f32, 0.2, 0.5].iter().all(|&d| {
+        let q = p + f * d;
+        boxes.iter().all(|(c, half, yaw)| {
+            let l = rot2(q - *c, -*yaw).abs();
+            l.x > half.x + 0.25 || l.y > half.y + 0.25
+        })
+    })
 }
 
 /// Props that are NOT in the blocker grid (walk-through or visual-only) but still own their
@@ -575,7 +589,7 @@ fn life_setup(
             // Standing room to warm the hands: in the gap between this log and the next, inside the
             // ring of logs and outside the tripod's legs (r 1.0).
             let g = a + TAU / 6.0;
-            let p = f + Vec2::new(g.cos(), g.sin()) * 1.45;
+            let p = f + Vec2::new(g.cos(), g.sin()) * 1.55;
             add_spot(&mut w, SpotKind::Fire, p, yaw_to(p, f), c, None, 0);
         }
     }
@@ -759,6 +773,7 @@ fn life_houses(
     // where nothing of the house stands (never one on top of the other).
     if let Some((c, yaw, face, top, offs)) = house_seats(h.piece) {
         add_seats(&mut w, h.local(c.x, c.y), h.yaw + yaw, h.yaw + face, top, offs, 0.0, v, 0);
+        debug!("village_life: house {i} ({}) own bench at {}", h.piece, h.local(c.x, c.y));
     } else if let Some((c, yaw, face)) = house_new_bench(h.piece) {
         add_bench(&mut commands, &mut w, h.local(c.x, c.y), h.yaw + yaw, h.yaw + face, v, 0);
     }
@@ -922,6 +937,9 @@ fn chores(body: Body, phase: Phase, zone: Zone) -> &'static [(SpotKind, f32)] {
     match (body, phase) {
         (Body::Kid, _) => &[(Play, 1.0)],
         (Body::Elder, _) => &[(Seat, 4.0), (Fire, 1.0)],
+        // The keep's own folk keep a little work going through the noon meal (the drill, the cart).
+        (Body::Man, Phase::Noon) if zone == Zone::Courtyard => &[(Seat, 2.6), (Fire, 0.5), (Spar, 1.4), (Haul, 1.0)],
+        (Body::Woman, Phase::Noon) if zone == Zone::Courtyard => &[(Seat, 3.0), (Well, 1.0), (Laundry, 0.6)],
         (_, Phase::Noon) => &[(Seat, 5.0), (Fire, 0.6)],
         // The keep's own men: the cart and the hay to unload into the keep, the guard drill.
         (Body::Man, _) if zone == Zone::Courtyard => &[(Haul, 1.8), (Spar, 1.6), (Wood, 1.2), (Well, 0.4), (Fire, 0.4), (Seat, 0.3)],
@@ -2104,7 +2122,7 @@ mod tests {
             let feet = *p + fwd(*face) * 0.4;
             for k in 0..3 {
                 let g = 1.0 + k as f32 * TAU / 3.0 + TAU / 6.0;
-                let stand = Vec2::new(g.cos(), g.sin()) * 1.45;
+                let stand = Vec2::new(g.cos(), g.sin()) * 1.55;
                 assert!(stand.distance(feet) > 0.6, "warm-up spot {k} on seat {i}'s feet");
                 assert!(logs.iter().all(|l| l.distance(stand) > 0.95), "warm-up spot {k} in a log");
             }
