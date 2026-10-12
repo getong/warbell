@@ -1,4 +1,4 @@
-<img width="1919" height="1076" alt="image" src="https://github.com/user-attachments/assets/cc2dfadd-6f5d-4f85-bffd-6680d3599c78" /><img width="1919" height="1076" alt="image" src="https://github.com/user-attachments/assets/c5b6d8f0-5b66-428d-8282-3fffc341277b" />
+<img width="1919" height="1076" alt="image" src="https://github.com/user-attachments/assets/cc2dfadd-6f5d-4f85-bffd-6680d3599c78" />
 <div align="center">
 
 # ⚔️ Warbell
