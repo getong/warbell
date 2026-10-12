@@ -63,9 +63,9 @@ const GREET_R: f32 = 6.5;
 const WALK: f32 = 0.85;
 
 const SKIN: u32 = 0x9a6a4c;
-const DRESS: u32 = 0x4a3d31;
-const SCARF: u32 = 0x8a8478; // a desert indigo, sun-faded to grey
-const SHAWL: u32 = 0x8e7253; // madder-brown wool, washed out
+const DRESS: u32 = 0x3b342c;
+const SCARF: u32 = 0x56607a; // a desert indigo, sun-faded
+const SHAWL: u32 = 0x5e2f26; // madder wool gone dark with smoke (never near her skin tone)
 
 /// Ingredient → the brew Seffa leaves for it (spec §2 table: bog_draught = marsh_herb + toad_glow,
 /// wolfsbane = venom + vulture_quill, hornet_balm = honeycomb + goat_charm). Stone code = index + 1.
@@ -106,6 +106,31 @@ impl Hut {
         let (s, c) = self.yaw.sin_cos();
         self.pos + Vec2::new(l.x * c + l.y * s, -l.x * s + l.y * c)
     }
+}
+
+/// The trodden yard (hut-local centre, world radius): no reeds or scatter on it.
+const YARD_C: Vec2 = Vec2::new(0.4, 2.9);
+const YARD_R: f32 = 7.0;
+static YARD: std::sync::Mutex<Option<(Vec2, f32)>> = std::sync::Mutex::new(None);
+
+pub fn reset_plan() {
+    *YARD.lock().unwrap() = None;
+}
+
+/// World plan (after the story layers, before the scatter): keep her yard clear.
+pub fn plan() {
+    let Some(hut) = Hut::find() else { return };
+    let c = hut.at(YARD_C);
+    crate::blockers::reserve_visual(c.x, c.y, YARD_R);
+    *YARD.lock().unwrap() = Some((c, YARD_R));
+}
+
+pub fn planned_footprints() -> Vec<(Vec2, f32)> {
+    YARD.lock().unwrap().iter().copied().collect()
+}
+
+pub fn overlaps_planned(x: f32, z: f32, r: f32) -> bool {
+    YARD.lock().unwrap().is_some_and(|(c, yr)| c.distance_squared(Vec2::new(x, z)) < (yr + r).powi(2))
 }
 
 fn ground(p: Vec2) -> f32 {
@@ -677,18 +702,10 @@ fn sync_yard(
 }
 
 /// The hut's lore follows her door.
-fn hut_lore(
-    flags: Res<WorldFlags>,
-    mut q: Query<&mut crate::landmarks::Landmark>,
-    added: Query<(), Added<crate::landmarks::Landmark>>,
-    mut last: Local<Option<bool>>,
-) {
+fn hut_lore(flags: Res<WorldFlags>, mut q: Query<&mut crate::landmarks::Landmark>, mut last: Local<Option<bool>>) {
     let open = flags.is("witch_open");
-    if *last == Some(open) && added.is_empty() {
-        return;
-    }
     for mut lm in &mut q {
-        if lm.name == crate::landmarks::WITCH_HUT {
+        if lm.name == crate::landmarks::WITCH_HUT && (*last != Some(open) || lm.is_added()) {
             lm.set_lore(if open { crate::landmarks::WITCH_HUT_LORE_OPEN } else { crate::landmarks::WITCH_HUT_LORE_SHUT });
             *last = Some(open);
         }

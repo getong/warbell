@@ -177,12 +177,12 @@ def sf_trade_stone(rng):
     """Footprint r <= 3.3. Masses: the stone (0, 0, 0.45 x 0.35), the fence runs along z +0.8."""
     b = Builder()
     g = G(b)
-    ks = stone_fn((0.82, 0.82, 0.78), rng, moss=0.75, damp_h=0.3, y0=-0.05, lichen=(0.88, 0.9, 0.78))
+    ks = stone_fn((0.82, 0.82, 0.78), rng, moss=0.35, damp_h=0.3, y0=-0.05, lichen=(0.88, 0.9, 0.78))
     pf = peat_fn(rng, base=(0.62, 0.55, 0.45), wet=0.6, grass=1.2, grass_col=(0.38, 0.46, 0.2))
     mound(g, (0.0, -0.06, 0.2), 3.3, 1.6, 0.08, rng, mat=M_EARTH, col_fn=pf, tile=1.2, rings=5, seg=24, skirt=0.2,
           power=0.5)
     # The stone: squat, flat-topped, sunk; the hollow in its top worn dark by years of things left.
-    stone(g, (0.0, 0.13, 0.0), (0.5, 0.3, 0.38), rng, mat=M_GRANITE, detail=2, rough=0.1, cuts=2, rot=quat_y(0.3),
+    stone(g, (0.0, 0.15, 0.0), (0.5, 0.62, 0.38), rng, mat=M_GRANITE, detail=2, rough=0.1, cuts=2, rot=quat_y(0.3),
           col_fn=ks, tile=0.7, flat_y=0.4)
     stone(g, (0.02, 0.405, -0.02), (0.18, 0.012, 0.14), rng, mat=M_GRANITE, detail=1, rough=0.04, cuts=0,
           col_fn=lambda p, n: (0.2, 0.19, 0.17), tile=0.4)

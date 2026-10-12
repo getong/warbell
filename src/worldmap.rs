@@ -3688,6 +3688,7 @@ pub fn build_step(
         crate::sites_warm::reset_plan();
         crate::wild_sites::reset_plan();
         crate::ork_graveyard::reset_plan();
+        crate::witch::reset_plan();
         crate::realforest::reset_cover_stream();
         // Warm the per-map sampling bakes ([`tiles`] → [`water_near`] → [`tile_centre_ground`])
         // behind the loading veil: the first caller would otherwise pay the one-time bake as a
@@ -4022,6 +4023,7 @@ fn bs_sea_and_boats(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: 
     // The swamp / rocky discovery sites (sunken chapel, clan gong, ...), after every other story layer.
     crate::wild_sites::plan();
     crate::ork_graveyard::plan(); // the Field of the Answered, after every story layer (WP2)
+    crate::witch::plan(); // Old Seffa's trodden yard by the Witch's Hut (WP2)
     // FOREST_CASTLEKIT_SHOWCASE: reserve open ground for the castle-kit showcase rows.
     crate::castle_kit::plan();
 }
