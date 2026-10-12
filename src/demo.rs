@@ -321,6 +321,9 @@ fn rescue_drive(
         // Nearest camp cage to the castle (origin).
         *site = crate::camps::cage_positions()
             .into_iter()
+            .enumerate()
+            .filter(|(i, _)| crate::camps::has_cage(*i))
+            .map(|(_, c)| c)
             .min_by(|a, b| a.0.length_squared().total_cmp(&b.0.length_squared()));
     }
     let Some((cage, centre)) = *site else { return };
@@ -387,6 +390,9 @@ fn captives_drive(
     if site.is_none() {
         *site = crate::camps::cage_positions()
             .into_iter()
+            .enumerate()
+            .filter(|(i, _)| crate::camps::has_cage(*i))
+            .map(|(_, c)| c)
             .min_by(|a, b| a.0.length_squared().total_cmp(&b.0.length_squared()));
     }
     let Some((cage, centre)) = *site else { return };
