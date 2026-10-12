@@ -912,8 +912,12 @@ fn fragment(
         swamp_rgb = mix(swamp_rgb, swamp_rgb * 0.22 + vec3<f32>(0.004, 0.006, 0.004), sqrt(standing));
         pbr_input.material.base_color = vec4<f32>(swamp_rgb, pbr_input.material.base_color.a);
         let rw = pbr_input.material.perceptual_roughness;
-        let gloss = standing * standing;
+        let gloss = smoothstep(0.6, 0.97, standing);
         pbr_input.material.perceptual_roughness = mix(mix(rw, 0.88, wet), 0.05, gloss);
+        // The half-wet shoreline (dark, not yet mirror-flat) still caught the sun in a mid-roughness
+        // lobe — a bright outline round every sheet seen from above. Only the flat interior reflects.
+        let edge = standing * (1.0 - gloss);
+        pbr_input.material.reflectance = pbr_input.material.reflectance * (1.0 - 0.85 * smoothstep(0.0, 0.25, edge));
         pbr_input.N = normalize(mix(pbr_input.N, normalize(in.world_normal), gloss));
     }
 
