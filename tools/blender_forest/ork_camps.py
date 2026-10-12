@@ -683,8 +683,8 @@ LIME = (0.92, 0.9, 0.85)
 CAVE_X = 2.65       # half-width of the mouth (inner faces of the side masses)
 CAVE_ROOF = 3.0     # underside of the roof slab
 CAVE_BACK = -6.6    # back wall face
-TALLY_C = V(-2.35, 1.45, -3.9)   # centre of the tally wall
-TALLY_YAW = 0.55                 # the wall's normal: +X turned toward the mouth
+TALLY_C = V(-2.0, 1.45, -3.6)   # centre of the tally wall
+TALLY_YAW = -0.7                 # the wall faces +X turned out toward the mouth (+Z)
 
 
 def cave_col(nz):
@@ -756,17 +756,22 @@ def camp_cave(rng):
     cf = cave_col(nz)
     # The rock: side masses, the roof slab with its overhanging lip, the back wall, the upper mass
     # that runs back into the mountain. Interior hollow x ±CAVE_X, y 0..CAVE_ROOF, z CAVE_BACK..-2.6.
+    # Bedded limestone: big rough-hewn blocks with fracture faces, not boulders.
     for sx in (-1, 1):
-        stone(g, (sx * (CAVE_X + 2.15), 1.7, -5.0), (2.3, 2.9, 3.4), rng, detail=3, rough=0.12, cuts=2, col_fn=cf,
-              tile=2.2, rot=quat_y(sx * 0.15))
-        stone(g, (sx * (CAVE_X + 1.3), 0.6, -2.6), (1.3, 1.3, 1.2), rng, detail=2, rough=0.14, cuts=2, col_fn=cf, tile=1.6)
-    slab(g, (0, CAVE_ROOF + 0.85, -4.9), (2 * CAVE_X + 3.2, 1.7, 5.2), quat_x(0.04), rng, res=(8, 3, 6), round_r=0.4,
+        slab(g, (sx * (CAVE_X + 2.0), 1.9, -5.0), (4.2, 4.6, 6.6), quat_y(sx * 0.12) @ quat_z(sx * 0.05), rng,
+             res=(6, 7, 8), round_r=0.45, rough=0.07, cuts=3, taper=0.18, col_fn=cf, tile=2.2)
+        slab(g, (sx * (CAVE_X + 1.25), 0.65, -2.3), (2.4, 1.6, 1.8), quat_y(sx * 0.4) @ quat_x(0.08), rng,
+             res=(4, 3, 3), round_r=0.3, rough=0.08, cuts=2, col_fn=cf, tile=1.6)
+    slab(g, (0, CAVE_ROOF + 0.85, -4.9), (2 * CAVE_X + 3.6, 1.7, 5.4), quat_x(0.04), rng, res=(8, 3, 6), round_r=0.35,
          rough=0.05, cuts=2, col_fn=cf, tile=2.2)
-    slab(g, (0.2, CAVE_ROOF + 0.45, -2.35), (2 * CAVE_X + 1.6, 0.9, 1.3), quat_z(0.04), rng, res=(8, 2, 3), round_r=0.3,
+    slab(g, (0.2, CAVE_ROOF + 0.45, -2.35), (2 * CAVE_X + 1.8, 0.9, 1.3), quat_z(0.04), rng, res=(8, 2, 3), round_r=0.25,
          rough=0.07, cuts=1, col_fn=cf, tile=2.0)
-    stone(g, (0, 1.8, CAVE_BACK - 1.7), (CAVE_X + 1.5, 3.0, 1.8), rng, detail=3, rough=0.1, cuts=1, col_fn=cf, tile=2.2)
-    stone(g, (0.3, CAVE_ROOF + 2.4, -6.8), (5.6, 2.2, 3.6), rng, detail=3, rough=0.12, cuts=2, col_fn=cf, tile=2.6)
-    stone(g, (-1.8, CAVE_ROOF + 3.6, -8.5), (3.2, 2.0, 2.4), rng, detail=2, rough=0.14, cuts=2, col_fn=cf, tile=2.6)
+    slab(g, (0, 1.9, CAVE_BACK - 1.2), (2 * CAVE_X + 3.0, 4.6, 2.6), quat_y(0.05), rng, res=(6, 6, 3), round_r=0.4,
+         rough=0.06, cuts=2, col_fn=cf, tile=2.2)
+    slab(g, (0.3, CAVE_ROOF + 2.5, -6.9), (10.5, 3.6, 6.4), quat_y(-0.08) @ quat_z(0.06), rng, res=(8, 4, 6), round_r=0.6,
+         rough=0.07, cuts=3, taper=0.3, col_fn=cf, tile=2.6)
+    slab(g, (-1.8, CAVE_ROOF + 4.6, -8.6), (6.0, 3.2, 4.4), quat_y(0.3), rng, res=(6, 4, 4), round_r=0.5, rough=0.08,
+         cuts=2, taper=0.35, col_fn=cf, tile=2.6)
     # Fallen blocks + scree at the foot of the flanks.
     for k in range(14):
         sx = -1 if k % 2 else 1
