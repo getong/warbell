@@ -199,6 +199,8 @@ fn drive_story_seq(
             Ok(spec) if stories => crate::stories_cold::shot_cams().into_iter().chain(parse_shot_cams(&spec)).collect(),
             Ok(spec) => parse_shot_cams(&spec),
             Err(_) if std::env::var("FOREST_SHOT_STORIES").as_deref() == Ok("sites") => crate::sites_warm::shot_cams(),
+            // `FOREST_SHOT_STORIES=wild`: the swamp / rocky discovery sites instead of the snow set.
+            Err(_) if std::env::var("FOREST_SHOT_STORIES").is_ok_and(|v| v == "wild") => crate::wild_sites::shot_cams(),
             Err(_) => crate::stories_cold::shot_cams(),
         });
     }
