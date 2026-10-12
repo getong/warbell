@@ -221,7 +221,10 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
             .then_some(DecorSolid { hw: foot.x, hd: foot.y, yaw });
         if !kit.is_empty() {
             let y = crate::worldmap::ground_at_world(pos.x, pos.z).filter(|_| !crate::castle::in_footprint(pos.x, pos.z)).unwrap_or(pos.y);
-            let tf = Transform::from_xyz(pos.x, y, pos.z).with_rotation(Quat::from_rotation_y(yaw));
+            // The kitchen garden / woodpile reuse the town kit's (bigger) yard pieces, shrunk to the
+            // old footprints so they keep clear of the houses and lanes.
+            let sc = match kit { "town_garden" => 0.55, "town_woodpile" => 0.7, _ => 1.0 };
+            let tf = Transform::from_xyz(pos.x, y, pos.z).with_rotation(Quat::from_rotation_y(yaw)).with_scale(Vec3::splat(sc));
             if let Some(e) = crate::town_kit::spawn_piece(commands, kit, tf) {
                 let mut e = commands.entity(e);
                 e.insert((vis, Decor { gate }, crate::build_fx::RevealAt(pos), BiomeEntity));
@@ -275,8 +278,8 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
 
     // ── Filled in as the town grows (House(n): shown once houses > n) ───────────
     // Kitchen garden / woodpile / laundry sit among the houses along the walls, not in the yard.
-    set_kit("", garden_parts(), Vec3::new(-17.6, 0.0, 13.2), 0.15, DecorGate::House(1), Vec2::ZERO);
-    set_kit("", woodpile_parts(), Vec3::new(17.4, 0.0, 9.1), 0.4, DecorGate::House(2), Vec2::new(0.66, 0.37));
+    set_kit("town_garden", garden_parts(), Vec3::new(-17.6, 0.0, 13.2), 0.15, DecorGate::House(1), Vec2::ZERO);
+    set_kit("town_woodpile", woodpile_parts(), Vec3::new(17.4, 0.0, 9.1), 0.4, DecorGate::House(2), Vec2::new(0.66, 0.37));
     // Laundry line = cloth hung overhead on a string between two thin posts — you walk UNDER it.
     // No collision (a 2.6-wide box across the lane just walls off the courtyard for no reason).
     set_kit("decor_laundry", laundry_parts(), Vec3::new(-21.5, 0.0, 11.0), 0.05, DecorGate::House(1), Vec2::ZERO);

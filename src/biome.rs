@@ -1229,7 +1229,7 @@ pub fn scatter_region(
                                     if !snow_prop(k, &mut alp_chunks, class_index(fb), fi, at, rot, fs) && fb.block_radius * fs >= 0.30 {
                                         queue(false, fb.variants[fi].clone(), at, rot, fs);
                                     }
-                                } else if let Some(k) = rocky_kit.or(desert_kit) {
+                                } else if let Some(k) = rocky_kit.or(desert_kit).or(swamp_kit) {
                                     if let Some((m, sm)) = bkit::passive_prop(k, cfg.biome, class_index(fb), fi / PROP_TINTS.len(), cx, cz) {
                                         bk_chunks.push(k, m, Vec3::new(cx, py, cz), rot, fs * sm, crate::realforest::Tier::Props);
                                     }
@@ -1562,6 +1562,10 @@ pub fn scatter_region(
                                     }
                                 } else if let Some(k) = swamp_kit {
                                     if let Some((m, sm)) = bkit::swamp_cover(k, i, x, z).filter(|_| !no_grass()) {
+                                        bk_chunks.push(k, m, Vec3::new(x, py, z), rot, s * sm, crate::realforest::Tier::Cover);
+                                    }
+                                } else if let Some(k) = desert_kit {
+                                    if let Some((m, sm)) = bkit::desert_cover(k, i, x, z).filter(|_| !no_grass()) {
                                         bk_chunks.push(k, m, Vec3::new(x, py, z), rot, s * sm, crate::realforest::Tier::Cover);
                                     }
                                 } else if cfg.biome != Biome::Desert || bkit::desert_cover_ok(i, x, z) {

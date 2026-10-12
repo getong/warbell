@@ -18,7 +18,7 @@
     forward_io::{VertexOutput, FragmentOutput},
     mesh_view_bindings::{view, lights},
 }
-#import warbell::alpine::alpine_apply
+#import warbell::alpine::{alpine_apply, alpine_sand}
 
 struct ForestParams {
     // x=detailScale, y=detailStrength, z=variation, w=meanLuminance
@@ -336,6 +336,12 @@ fn fragment(
     // ground isn't green — the warm yellow-green drift + green blade imprint were
     // reading as dirt smears on snowfields and cliff walls. Value-only layers stay.
     let green = clamp((rgb.g - max(rgb.r, rgb.b)) * 6.0 + 0.30, 0.0, 1.0);
+    // Sand (desert dunes, beaches): bright, warm, saturated vertex colour that isn't green. Rock
+    // (grey), the Blight / roads (dark), snow (unsaturated) and grass all fall outside the gate.
+    let v_lum = dot(rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let v_sat = 1.0 - rgb.b / max(rgb.r, 1e-3);
+    let sand_v = smoothstep(0.22, 0.32, v_lum) * smoothstep(0.48, 0.58, v_sat) * (1.0 - green);
+    let sand_rgb0 = rgb;
 
     // The original vision.ts ground texture — a SUBTLE low-opacity gradient, three layers:
     // (1) fine value mottle (three octaves), amplitude softened a touch from the original.
@@ -874,6 +880,41 @@ fn fragment(
     // reaches (the apron round the snow biome); only the wooded floor skips it, as before.
     let alp_skip = select(fp_w, fp_w * (1.0 - glade), forest.pbr.x > 0.5);
     let alp_k = alpine_apply(&pbr_input, in.world_position.xyz, in.world_normal, cliff, alp_skip, alp_road, wp3_dx, wp3_dy, forest.params2.y);
+    // Scanned sand over the desert / beaches (`alpine::alpine_sand`): the procedural sand and the
+    // lawn's blade imprint were the last pre-PBR ground still on screen. Tint = the vertex sand
+    // with only the broad drift, so the dune shading survives but no grass grain does.
+    let sand_w = sand_v * (1.0 - alp_k) * (1.0 - fp_w) * (1.0 - cliff) * (1.0 - bank_soil)
+        * smoothstep(0.45, 0.75, in.world_normal.y) * (1.0 - smoothstep(0.35, 0.8, alp_road));
+    let sand_tint = sand_rgb0 * (1.0 + (ter_hue - 0.5) * variation * 0.40) * (0.92 + 0.16 * ter_big);
+    alpine_sand(&pbr_input, in.world_position.xyz, in.world_normal, sand_w, sand_tint, wp3_dx, wp3_dy);
+    // Bare earth off the scanned floors — the Blight's trampled ork mud, desert cart tracks, dirt
+    // flats — was the last procedural ground (a flat brown smear with soft blobs). The forest
+    // floor's scanned PATH layer (soil + pebbles), re-toned to the vertex earth colour, takes it.
+    let earth_w = smoothstep(0.36, 0.48, v_sat) * (1.0 - green) * (1.0 - sand_w) * (1.0 - alp_k) * (1.0 - fp_w)
+        * (1.0 - cliff) * (1.0 - bank_soil) * smoothstep(0.45, 0.75, in.world_normal.y)
+        * (1.0 - clamp(pbr_input.material.base_color.a, 0.0, 1.0)) * f32(forest.pbr.x > 0.5);
+    if earth_w > 0.003 {
+        let te = 3.1;
+        let ue = wp / te + vec2<f32>(0.43, 0.19);
+        let a_e = textureSampleGrad(fp_albedo, fp_samp, ue, 2, wp_dx / te, wp_dy / te).rgb;
+        let o_e = textureSampleGrad(fp_ormh, fp_samp, ue, 2, wp_dx / te, wp_dy / te);
+        let n_e = textureSampleGrad(fp_normal, fp_samp, ue, 2, wp_dx / te, wp_dy / te).rgb * 2.0 - 1.0;
+        let lwe = vec3<f32>(0.2126, 0.7152, 0.0722);
+        let mean_e = max(dot(textureSampleLevel(fp_albedo, fp_samp, vec2<f32>(0.5), 2, 12.0).rgb, lwe), 0.02);
+        let rel_e = a_e / mean_e;
+        let e_tint = sand_rgb0 * (1.0 + (ter_hue - 0.5) * variation * 0.40) * (0.90 + 0.20 * ter_big);
+        let e_col = mix(vec3<f32>(dot(rel_e, lwe)), rel_e, 0.35) * e_tint;
+        let gn_e = normalize(in.world_normal);
+        let tx_e = select(normalize(vec3<f32>(1.0, 0.0, 0.0) - gn_e * gn_e.x),
+                         normalize(cross(vec3<f32>(0.0, 0.0, 1.0), gn_e)), abs(gn_e.x) > 0.98);
+        let bz_e = cross(gn_e, tx_e);
+        let nw_e = normalize(tx_e * n_e.x * 1.5 + bz_e * n_e.y * 1.5 + gn_e * max(n_e.z, 0.2));
+        let be = pbr_input.material.base_color;
+        pbr_input.material.base_color = vec4<f32>(mix(be.rgb, e_col, earth_w), be.a);
+        pbr_input.N = normalize(mix(pbr_input.N, nw_e, earth_w));
+        pbr_input.material.perceptual_roughness = mix(pbr_input.material.perceptual_roughness, max(o_e.g, 0.8), earth_w);
+        pbr_input.diffuse_occlusion *= vec3<f32>(mix(1.0, o_e.r, earth_w * 0.7));
+    }
 
     // ── Wet ground (marsh) — the vertex-colour ALPHA carries a per-vertex wetness (0 = dry … 1 =
     //    standing bog), which `worldmap::ground_color` feathers over the biome BLEND band. Lower the

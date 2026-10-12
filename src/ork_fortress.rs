@@ -1206,7 +1206,12 @@ pub fn build(
             } else if roll < trees + 0.104 {
                 spawn_solid(commands, meshes, &mat, scrap_mesh(&mut s), at(p), ry(rng01(&mut s) * TAU));
             } else if roll < trees + 0.109 {
-                spawn_solid(commands, meshes, &mat, impale_mesh(&mut s), at(p), ry(rng01(&mut s) * TAU));
+                let m = impale_mesh(&mut s);
+                let r = ry(rng01(&mut s) * TAU);
+                // The camps' skull stakes (structures.glb) in place of the faceted impaled stake.
+                if !kit_prop(commands, "ork_spikes", at(p) - Vec3::Y * 0.05, r, 1.05) {
+                    spawn_solid(commands, meshes, &mat, m, at(p), r);
+                }
                 crate::blockers::add(p.x, p.y, 0.25);
             } else if roll < trees + 0.1125 {
                 let m = ribcage_mesh(&mut s);
@@ -1232,7 +1237,12 @@ pub fn build(
             } else if roll < trees + 0.1245 && fumes < 20 {
                 fumes += 1;
                 let base = at(p);
-                spawn_solid(commands, meshes, &mat, vent_mesh(&mut s), base, ry(rng01(&mut s)));
+                let m = vent_mesh(&mut s);
+                let r = ry(rng01(&mut s));
+                // A small bubbling tar seep (ork_hold.glb) under the fumes, sunk into the mire.
+                if !kit_prop(commands, "blight_tarpit", base - Vec3::Y * 0.04, r, 0.55) {
+                    spawn_solid(commands, meshes, &mat, m, base, r);
+                }
                 for k in 0..2 {
                     commands.spawn((
                         Mesh3d(smoke_puff.clone()),
@@ -1260,7 +1270,11 @@ pub fn build(
     .into_iter()
     .enumerate()
     {
-        spawn_solid(commands, meshes, &timber_mat, waypost_mesh(&mut rng), at(wp), ry(i as f32 * 1.4));
+        let m = waypost_mesh(&mut rng);
+        // Carved clan totems (ork_hold.glb) mark the road instead of the faceted signposts.
+        if !kit_prop(commands, "hold_totem", at(wp) - Vec3::Y * 0.08, ry(i as f32 * 1.4), 0.7) {
+            spawn_solid(commands, meshes, &timber_mat, m, at(wp), ry(i as f32 * 1.4));
+        }
         crate::blockers::add(wp.x, wp.y, 0.3);
     }
 
@@ -1649,6 +1663,9 @@ fn kit_clutter(commands: &mut Commands, kind: u32, pos: Vec3, rot: Quat, p: Vec2
         }
         1 => kit_prop(commands, "stump_a", pos - Vec3::Y * 0.06, rot, 0.85 + 0.5 * r1),
         3 => kit_prop(commands, "ork_spikes", pos, rot, 0.8 + 0.25 * r2),
+        // Mud pools: the flat hexagonal decals read as low-poly tiles on the scanned mire floor
+        // (terrain.wgsl's earth layer already draws the trampled mud) — nothing to spawn.
+        2 => crate::realforest::get().is_some(),
         _ => false,
     }
 }

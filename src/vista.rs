@@ -463,13 +463,23 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
         // view direction (stand at the prop, look past the lean at `view_at`).
         let v = (view_at - q).normalize_or_zero();
         let yaw = v.y.atan2(v.x) + std::f32::consts::PI;
-        commands.spawn((
-            Mesh3d(prop.clone()),
-            MeshMaterial3d(mat.clone()),
-            Transform::from_xyz(q.x, y, q.y).with_rotation(Quat::from_rotation_y(-yaw)),
-            BiomeEntity,
-            range.clone(),
-        ));
+        let tf = Transform::from_xyz(q.x, y, q.y).with_rotation(Quat::from_rotation_y(-yaw));
+        // Realistic kit: a wind-flagged spruce (its lee sweep along -X like the old pine), a scanned
+        // sitting boulder and a cairn, all sunk a little into the summit turf.
+        let kit = crate::realforest::get().filter(|k| k.has("spruce_flag_lod0") && k.has("rock_02_a") && k.has("rk_cairn"));
+        if let Some(k) = kit {
+            let mut e = commands.spawn((tf, Visibility::default(), BiomeEntity));
+            if let Some(tree) = k.pick_named(&["spruce_flag_lod0"], 0.0) {
+                e.with_children(|p| {
+                    let mut t = p.spawn((Transform::from_xyz(-0.2, -0.1, 0.0).with_scale(Vec3::splat(0.85)), Visibility::default()));
+                    k.attach_tree(&mut t, tree, true);
+                });
+            }
+            k.attach_static_with(&mut e, "rock_02_a", Transform::from_xyz(0.95, -0.12, 0.55).with_rotation(Quat::from_rotation_y(0.7)).with_scale(Vec3::new(0.55, 0.38, 0.5)), range.clone());
+            k.attach_static_with(&mut e, "rk_cairn", Transform::from_xyz(1.0, -0.06, -0.6).with_scale(Vec3::splat(0.45)), range.clone());
+        } else {
+            commands.spawn((Mesh3d(prop.clone()), MeshMaterial3d(mat.clone()), tf, BiomeEntity, range.clone()));
+        }
         crate::blockers::add_obb(q.x, q.y, 0.5, 0.5, 0.0);
         placed += 1;
         info!("vista: overlook ({label}) at {:.1},{:.1}", q.x, q.y);
