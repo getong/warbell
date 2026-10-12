@@ -74,8 +74,15 @@ impl ShopVendor {
 /// Old Seffa's stock. Empty until the swamp package fills it.
 pub static WITCH_CATALOG: &[ShopItem] = &[];
 
-/// The Salt Caravan's stock. Empty until the meadow package fills it.
-pub static CARAVAN_CATALOG: &[ShopItem] = &[];
+/// The Salt Caravan's stock: Pasha's traders carry salted meat, desert venom and charms, hide
+/// armour and a healer's draught — no bread, no Arsenal blades (the W-gate stall keeps those).
+pub static CARAVAN_CATALOG: &[ShopItem] = &[
+    ShopItem { id: "elk_jerky", name: "Salted Jerky", icon: "🍖", price: 12 },
+    ShopItem { id: "potion", name: "Health Potion", icon: "🧪", price: 14 },
+    ShopItem { id: "venom", name: "Venom Vial", icon: "🧫", price: 22 },
+    ShopItem { id: "goat_charm", name: "Goat Charm", icon: "🔔", price: 18 },
+    ShopItem { id: "leather_armor", name: "Leather Armor", icon: "🦺", price: 55 },
+];
 
 /// The live BUY list for `vendor`. The Market keeps its exact original behaviour
 /// (`build_shop_items(unlocked)`); content vendors ignore the Arsenal unlocks.

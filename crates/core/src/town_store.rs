@@ -209,13 +209,28 @@ pub struct Town {
     /// Signed net-food meter in food-units, clamped to ±[`SETTLE_FOOD`]. Positive →
     /// approaching a new settler; negative → approaching a starvation loss.
     pub growth: f64,
+    /// Food per second from the common pasture's live flock (set every frame by the game's
+    /// `pasture` module from [`pasture_food`]). Derived, so never saved.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub pasture: f64,
+}
+
+/// A full flock on the common pasture adds this much food per second.
+pub const PASTURE_FOOD_FULL: f64 = 0.1;
+/// Head of sheep that make a "full" flock.
+pub const PASTURE_FULL_FLOCK: u32 = 8;
+
+/// Food per second a flock of `sheep` grazing the common pasture yields: proportional, capped at
+/// [`PASTURE_FOOD_FULL`] for a full flock (extra lambs don't add more).
+pub fn pasture_food(sheep: u32) -> f64 {
+    PASTURE_FOOD_FULL * (sheep.min(PASTURE_FULL_FLOCK) as f64 / PASTURE_FULL_FLOCK as f64)
 }
 
 impl Town {
     /// A fresh town with `n` empty producer plots and the given starting population
     /// (houses default to 0 — the game uses [`Town::reset`] for its `START_*` state).
     pub fn new(n: usize, start_population: u32) -> Self {
-        Self { plots: vec![Plot::empty(); n], population: start_population, houses: 0, growth: 0.0 }
+        Self { plots: vec![Plot::empty(); n], population: start_population, houses: 0, growth: 0.0, pasture: 0.0 }
     }
 
     /// Re-init for a new run: empty plots, the starting houses + peasants, zeroed meter.
@@ -293,9 +308,10 @@ impl Town {
 
     // ── Food economy (flow) ────────────────────────────────────────────────────────
 
-    /// Food produced per second by every staffed, non-burning Farm.
+    /// Food produced per second by every staffed, non-burning Farm, plus the pasture flock.
     pub fn food_rate(&self) -> f64 {
-        self.plots
+        self.pasture
+            + self.plots
             .iter()
             .filter_map(|p| match (p.state, p.kind, p.staffed) {
                 (PlotState::Built { burning: false, .. }, Some(k), true) => match k.produces() {
@@ -304,7 +320,7 @@ impl Town {
                 },
                 _ => None,
             })
-            .sum()
+            .sum::<f64>()
     }
 
     /// Food eaten per second by the population — only the mouths **beyond** the larder pair
@@ -510,6 +526,17 @@ mod tests {
         assert!(t.build_house(&mut bank));
         assert_eq!(bank.wood(), 71.0); // 88 - 17
         assert_eq!(bank.stone(), 80.5); // 92 - 11.5
+    }
+
+    #[test]
+    fn pasture_flock_feeds_the_town() {
+        assert_eq!(pasture_food(0), 0.0);
+        assert!((pasture_food(4) - 0.05).abs() < 1e-9);
+        assert!((pasture_food(PASTURE_FULL_FLOCK) - PASTURE_FOOD_FULL).abs() < 1e-9);
+        assert!((pasture_food(20) - PASTURE_FOOD_FULL).abs() < 1e-9); // lambs beyond a full flock add nothing
+        let mut t = Town::new(3, 0);
+        t.pasture = pasture_food(8);
+        assert!((t.food_rate() - 0.1).abs() < 1e-9);
     }
 
     #[test]

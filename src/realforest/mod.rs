@@ -1332,11 +1332,11 @@ fn try_build(
     let wind = [mat_index["canopy"], mat_index["undergrowth"], mat_index["swamp_cards"]];
     let mut models = Vec::new();
     let mut by_name = HashMap::new();
-    for glb in ["forest_pbr/trees.glb", "forest_pbr/undergrowth.glb", "forest_pbr/props.glb", "forest_pbr/structures.glb", "forest_pbr/wayside.glb", "forest_pbr/stories_warm.glb", "forest_pbr/creatures.glb", "forest_pbr/animals.glb", "forest_pbr/people.glb", "forest_pbr/orks.glb", "forest_pbr/stories_cold.glb", "forest_pbr/snowmen.glb", "forest_pbr/wardens.glb", "forest_pbr/alpine_flora.glb", "forest_pbr/market.glb", "forest_pbr/castle_kit.glb", "forest_pbr/town_kit.glb", "forest_pbr/biome_props.glb", "forest_pbr/swamp_flora.glb", "forest_pbr/ork_camps.glb", "forest_pbr/sites_warm.glb", "forest_pbr/rival_kit.glb", "forest_pbr/stories_castaways.glb", "forest_pbr/landmarks.glb", "forest_pbr/ork_hold.glb", "forest_pbr/wild_sites.glb"] {
+    for glb in ["forest_pbr/trees.glb", "forest_pbr/undergrowth.glb", "forest_pbr/props.glb", "forest_pbr/structures.glb", "forest_pbr/wayside.glb", "forest_pbr/stories_warm.glb", "forest_pbr/creatures.glb", "forest_pbr/animals.glb", "forest_pbr/people.glb", "forest_pbr/orks.glb", "forest_pbr/stories_cold.glb", "forest_pbr/snowmen.glb", "forest_pbr/wardens.glb", "forest_pbr/alpine_flora.glb", "forest_pbr/market.glb", "forest_pbr/castle_kit.glb", "forest_pbr/town_kit.glb", "forest_pbr/biome_props.glb", "forest_pbr/swamp_flora.glb", "forest_pbr/ork_camps.glb", "forest_pbr/sites_warm.glb", "forest_pbr/rival_kit.glb", "forest_pbr/stories_castaways.glb", "forest_pbr/landmarks.glb", "forest_pbr/ork_hold.glb", "forest_pbr/wild_sites.glb", "forest_pbr/meadow_kit.glb", "forest_pbr/caravan.glb"] {
         // The townsfolk parts (people.glb) and the skinned ork bodies (orks.glb) are optional:
         // without them the villagers keep their box-built bodies (`peasant_model`) and the orks
         // their per-joint creatures.glb parts; the rest of the kit still loads.
-        if (glb.ends_with("people.glb") || glb.ends_with("orks.glb") || glb.contains("/stories_") || glb.contains("/sites_") || glb.ends_with("snowmen.glb") || glb.ends_with("wardens.glb") || glb.ends_with("alpine_flora.glb") || glb.ends_with("market.glb") || glb.ends_with("castle_kit.glb") || glb.ends_with("town_kit.glb") || glb.ends_with("biome_props.glb") || glb.ends_with("swamp_flora.glb") || glb.ends_with("ork_camps.glb") || glb.ends_with("rival_kit.glb") || glb.ends_with("landmarks.glb") || glb.ends_with("ork_hold.glb") || glb.ends_with("wild_sites.glb"))
+        if (glb.ends_with("people.glb") || glb.ends_with("orks.glb") || glb.contains("/stories_") || glb.contains("/sites_") || glb.ends_with("snowmen.glb") || glb.ends_with("wardens.glb") || glb.ends_with("alpine_flora.glb") || glb.ends_with("market.glb") || glb.ends_with("castle_kit.glb") || glb.ends_with("town_kit.glb") || glb.ends_with("biome_props.glb") || glb.ends_with("swamp_flora.glb") || glb.ends_with("ork_camps.glb") || glb.ends_with("rival_kit.glb") || glb.ends_with("landmarks.glb") || glb.ends_with("ork_hold.glb") || glb.ends_with("wild_sites.glb") || glb.ends_with("meadow_kit.glb") || glb.ends_with("caravan.glb"))
             && !load::asset_path(glb).exists()
         {
             warn!("realforest: {glb} missing — falling back to the older bodies");
@@ -1629,6 +1629,21 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
             data[k] = data[k].max(to_u8(fw));
             data[k + 1] = data[k + 1].max(to_u8((0.30 + 0.54 * plough) * fw));
             data[k + 3] = (data[k + 3] as f32 * (1.0 - fw)) as u8;
+        }
+    }
+    // The meadow sites (fold, drill yard, beacon): trampled mud and sheep tracks — `meadow`.
+    for (c, r, wear) in crate::meadow::ground_wear_passes() {
+        let (i0, i1) = (((c.x - r - x0) * RES).max(0.0) as usize, (((c.x + r - x0) * RES).max(0.0) as usize).min(w));
+        let (j0, j1) = (((c.y - r - z0) * RES).max(0.0) as usize, (((c.y + r - z0) * RES).max(0.0) as usize).min(h));
+        for j in j0..j1 {
+            let wz = z0 + (j as f32 + 0.5) / RES;
+            for i in i0..i1 {
+                let Some((fl, pa, de)) = wear(x0 + (i as f32 + 0.5) / RES, wz) else { continue };
+                let k = (j * w + i) * 4;
+                data[k] = data[k].max(to_u8(fl));
+                data[k + 1] = data[k + 1].max(to_u8(pa));
+                data[k + 3] = data[k + 3].max(to_u8(de));
+            }
         }
     }
     let mut img = Image::new(
