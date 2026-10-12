@@ -316,7 +316,12 @@ struct Layout {
     warband: [(f32, f32); 4],
     /// Solid props: (x, z, half-width, half-depth, local yaw).
     blockers: &'static [(f32, f32, f32, f32, f32)],
+    /// Camp-local footprint `(x0, x1, z0, z1)` the scatter keeps out of (the cave's rock runs far
+    /// back into the slope, the stilt deck out over the water).
+    foot: (f32, f32, f32, f32),
 }
+
+const FOOT: (f32, f32, f32, f32) = (-CLEAR_HALF, CLEAR_HALF, -CLEAR_HALF, CLEAR_HALF);
 
 /// Deck top of the swamp camp's stilt platform (`ork_camps.py` DECK_Y).
 const STILT_DECK_Y: f32 = 0.6;
@@ -338,6 +343,7 @@ const LAYOUTS: [Layout; 5] = [
             (-0.5, -4.3, 1.4, 1.4, 0.0),
             (1.75, -3.5, 0.7, 0.4, 0.15),
         ],
+        foot: FOOT,
     },
     Layout {
         model: "ork_camp_raiders",
@@ -356,6 +362,7 @@ const LAYOUTS: [Layout; 5] = [
             (4.7, -3.4, 0.3, 1.2, 0.0),
             (2.6, -3.4, 0.4, 0.3, 0.3),
         ],
+        foot: FOOT,
     },
     Layout {
         model: "ork_camp_cave",
@@ -365,13 +372,14 @@ const LAYOUTS: [Layout; 5] = [
         spare_cages: &[],
         warband: [(1.8, 0.6), (-1.6, 0.0), (0.4, 2.0), (-1.0, -3.9)],
         blockers: &[
-            (-4.8, -5.0, 2.1, 3.2, 0.0),
-            (4.8, -5.0, 2.1, 3.2, 0.0),
-            (-3.95, -2.6, 1.1, 1.0, 0.0),
-            (3.95, -2.6, 1.1, 1.0, 0.0),
-            (0.0, -8.3, 4.0, 1.5, 0.0),
+            (-5.6, -5.0, 2.6, 2.6, 0.0),
+            (5.6, -5.0, 2.6, 2.6, 0.0),
+            (0.0, -7.6, 3.4, 1.0, 0.0),
+            (-4.6, -2.0, 1.2, 0.5, 0.0),
+            (4.6, -2.0, 1.2, 0.5, 0.0),
             (2.9, -0.9, 0.3, 0.85, 0.0),
         ],
+        foot: (-8.8, 8.8, -11.5, CLEAR_HALF),
     },
     Layout {
         model: "ork_camp_stilts",
@@ -386,6 +394,7 @@ const LAYOUTS: [Layout; 5] = [
             (-2.7, -2.0, 0.35, 1.0, 0.0),
             (-3.0, -4.0, 1.2, 1.0, 0.0),
         ],
+        foot: (-CLEAR_HALF, CLEAR_HALF, -CLEAR_HALF, 8.0),
     },
     Layout {
         model: "ork_camp_hunters",
@@ -401,6 +410,7 @@ const LAYOUTS: [Layout; 5] = [
             (-2.2, 2.9, 0.65, 0.3, 2.4),
             (-0.4, -4.1, 0.5, 0.5, 0.0),
         ],
+        foot: FOOT,
     },
 ];
 
@@ -563,14 +573,21 @@ pub fn cage_positions() -> Vec<(Vec2, Vec2)> {
         .collect()
 }
 
-/// True if `(wx, wz)` is inside any planned camp's clearing (axis-aligned box around centre).
+/// True if `(wx, wz)` is inside any planned camp's footprint (the kind's camp-local box,
+/// rotated with the site).
 pub fn in_clearing(wx: f32, wz: f32) -> bool {
-    match SITES.get() {
-        Some(sites) => sites
-            .iter()
-            .any(|c| (wx - c.centre.x).abs() <= CLEAR_HALF && (wz - c.centre.y).abs() <= CLEAR_HALF),
-        None => false,
-    }
+    near_camp(wx, wz, 0.0)
+}
+
+/// True if a circle of radius `r` at `(wx, wz)` touches any planned camp's footprint — the
+/// scatter keep-out (`realforest::keep_clear`).
+pub fn near_camp(wx: f32, wz: f32, r: f32) -> bool {
+    let Some(sites) = SITES.get() else { return false };
+    sites.iter().any(|c| {
+        let l = Quat::from_rotation_y(-c.rot) * Vec3::new(wx - c.centre.x, 0.0, wz - c.centre.y);
+        let (x0, x1, z0, z1) = layout(c.kind).foot;
+        l.x >= x0 - r && l.x <= x1 + r && l.z >= z0 - r && l.z <= z1 + r
+    })
 }
 
 /// A candidate `(cx, cz)` is a valid camp centre for `biome` if a flat clearing of base-height
@@ -724,11 +741,19 @@ pub fn build(
         ..default()
     });
     // Emissive flame (bloom-lit, like the castle torches) + translucent smoke.
+    // Fire: crossed alpha flame cards (a painted tongue-of-flame texture, HDR-bright so it blooms),
+    // never a solid cone. Double-sided, unlit, no shadows; the `Flicker` scale wobble animates it.
+    let flame_tex = images.add(flame_card_image());
     let flame_mat = materials.add(StandardMaterial {
-        base_color: crate::palette::srgb(0xff8a30),
-        emissive: crate::palette::srgb(0xff8a30).to_linear() * 4.0,
+        base_color: Color::linear_rgb(5.0, 2.6, 1.1),
+        base_color_texture: Some(flame_tex),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        double_sided: true,
+        cull_mode: None,
         ..default()
     });
+    let flame_cards = meshes.add(flame_card_mesh());
     let smoke_mat = materials.add(StandardMaterial {
         base_color: Color::srgba(0.55, 0.55, 0.57, 0.4),
         alpha_mode: AlphaMode::Blend,
@@ -841,9 +866,10 @@ pub fn build(
         let fire = place(lay.fire);
         let phase = (site.seed % 1000) as f32 * 0.01;
         commands.spawn((
-            Mesh3d(meshes.add(flame_mesh())),
+            Mesh3d(flame_cards.clone()),
             MeshMaterial3d(flame_mat.clone()),
-            Transform::from_translation(fire + Vec3::Y * 0.28),
+            Transform::from_translation(fire + Vec3::Y * 0.06),
+            bevy::light::NotShadowCaster,
             Flicker { phase },
             BiomeEntity,
             // Pooled flicker-light so the camp reads from across the map at night (the flame
@@ -1112,16 +1138,75 @@ fn sit_stump_mesh(mut seed: u32) -> Mesh {
     ])
 }
 
-/// Flame cones (untinted — the emissive flame material colours them). Built about y≈0 so the
-/// flicker scale grows it from the fire.
-fn flame_mesh() -> Mesh {
-    let outer = Cone { radius: 0.17, height: 0.55 }.mesh().build().translated_by(v(0.0, 0.27, 0.0));
-    let inner = Cone { radius: 0.09, height: 0.35 }.mesh().build().translated_by(v(0.0, 0.2, 0.0));
-    let mut m = outer;
-    m.merge(&inner).expect("cones share attributes");
-    m.duplicate_vertices();
-    m.compute_flat_normals();
-    m
+/// The camp fire's flame cards: three vertical quads crossed at 60° plus a smaller inner set,
+/// 0.75 wide x 0.95 tall, base at y=0, UV v=1 at the base (the flame texture's root).
+fn flame_card_mesh() -> Mesh {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::mesh::{Indices, PrimitiveTopology};
+    let (mut pos, mut uv, mut nrm, mut idx) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for (w, h, phase) in [(0.75_f32, 0.95_f32, 0.0_f32), (0.42, 0.62, 0.5)] {
+        for k in 0..3 {
+            let a = phase + k as f32 * std::f32::consts::FRAC_PI_3;
+            let d = Vec3::new(a.cos(), 0.0, a.sin()) * (w / 2.0);
+            let n = Vec3::new(-a.sin(), 0.0, a.cos());
+            let base = pos.len() as u32;
+            for (p, t) in [(-d, [0.0, 1.0]), (d, [1.0, 1.0]), (d + Vec3::Y * h, [1.0, 0.0]), (-d + Vec3::Y * h, [0.0, 0.0])] {
+                pos.push(p.to_array());
+                uv.push(t);
+                nrm.push(n.to_array());
+            }
+            idx.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+        }
+    }
+    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, nrm)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
+        .with_inserted_indices(Indices::U32(idx))
+}
+
+/// A painted flame (64x128 RGBA): three licking tongues over a hot root, white-yellow at the core,
+/// orange then deep red at the ragged edges, soft alpha falloff — the card texture for the fire.
+fn flame_card_image() -> Image {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+    let (w, h) = (64u32, 128u32);
+    let mut data = Vec::with_capacity((w * h * 4) as usize);
+    let sstep = |a: f32, b: f32, x: f32| {
+        let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
+    for y in 0..h {
+        let v = 1.0 - y as f32 / (h - 1) as f32; // 0 root .. 1 tip
+        for x in 0..w {
+            let u = x as f32 / (w - 1) as f32 * 2.0 - 1.0;
+            let mut heat = 0.0_f32;
+            for (off, tall, sway) in [(0.0_f32, 1.0_f32, 0.0_f32), (-0.42, 0.7, 0.9), (0.4, 0.78, -0.7), (0.18, 0.52, 1.7)] {
+                let vt = v / tall;
+                if vt >= 1.0 {
+                    continue;
+                }
+                let centre = off * (1.0 - vt * 0.6) + 0.12 * (vt * 6.0 + sway).sin() * vt;
+                let half = (0.42 - (off.abs() * 0.25)) * (1.0 - vt).powf(0.75) * (0.75 + 0.25 * (1.0 - vt * vt));
+                let d = ((u - centre).abs() / half.max(1e-3)).min(2.0);
+                heat = heat.max((1.0 - d) * (1.0 - vt * 0.55));
+            }
+            heat *= sstep(0.0, 0.08, v); // the root sits in the embers
+            let a = sstep(0.0, 0.35, heat);
+            let core = sstep(0.35, 0.85, heat);
+            let r = 1.0;
+            let g = 0.25 + 0.65 * sstep(0.1, 0.7, heat);
+            let b = 0.05 + 0.6 * core * core;
+            data.extend([(r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8, (a * 255.0) as u8]);
+        }
+    }
+    Image::new(
+        Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::default(),
+    )
 }
 
 // ── Mesh helpers ─────────────────────────────────────────────────────────────────

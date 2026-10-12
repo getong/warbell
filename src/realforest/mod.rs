@@ -891,7 +891,7 @@ fn chunk_center(k: (i32, i32)) -> Vec3 {
 /// landmarks. Merged chunks can't be thinned afterwards the way single trees are, so it is
 /// decided here, at placement.
 pub fn keep_clear(x: f32, z: f32, r: f32) -> bool {
-    crate::camps::plan().iter().any(|c| Vec2::new(x - c.centre.x, z - c.centre.y).length() < 6.0 + r)
+    (!crate::camps::plan().is_empty() && crate::camps::near_camp(x, z, r + 0.8))
         || crate::poi::overlaps_planned_clearing(x, z, r)
         || crate::wayside::overlaps_planned(x, z, r)
         || crate::vignettes::overlaps_planned(x, z, r)

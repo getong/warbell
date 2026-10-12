@@ -41,8 +41,49 @@ import wayside_models as W  # noqa: E402
 from wayside_models import (M_BARK, M_PLANK, M_STONE, M_HIDE, M_THATCH, M_CLOTH, M_IRON, M_ROCK, M_EARTH,  # noqa: E402
                             V, beam, board, bounds, lashing, lbox, mix, mound, pole, rock_col, scale, slab,
                             smooth_mesh, smoothstep, stone, tube, Noise)
-from stories_cold import (M_SNOW, MATS as COLD_MATS, crate, disc, dome, drift, lathe, orient, snow_fn,  # noqa: E402
+from stories_cold import (M_SNOW, MATS as COLD_MATS, crate, disc, dome, lathe, orient, snow_fn,  # noqa: E402
                           spear)
+
+WIND_YAW = 0.6  # the camp's prevailing wind (drifts build their crest + lee lip along it)
+
+
+def drift(g, centre, rx, rz, h, rng, power=None, **_):
+    """A WIND-SCULPTED drift (replaces the round snow mound): a long windward ramp scored with
+    sastrugi ripples, a crest, and a sharp leeward lip that curls over a steep lee face. `rx` is the
+    half-length along the wind, `rz` the half-width; the rim sinks under the ground."""
+    c = Vector(centre)
+    rq = quat_y(WIND_YAW + rng.uniform(-0.25, 0.25))
+    nz = Noise(rng, 4, 1.4)
+    uc = rng.uniform(0.35, 0.55)
+    nu, nv = 18, 10
+    verts, idx = [], {}
+    for i in range(nu + 1):
+        u = -1 + 2 * i / nu
+        for j in range(nv + 1):
+            v = -1 + 2 * j / nv
+            across = max(0.0, 1 - abs(v) ** 1.8) ** 0.7 * (1 + 0.12 * math.sin(v * 3.3 + u))
+            if u <= uc:
+                prof = ((u + 1) / (uc + 1)) ** 1.5
+                rip = 0.07 * math.sin(v * rz * 14.0 + u * 2.0 + nz(V(u, v, 0)) * 2.0) * smoothstep(-1.0, -0.3, u)
+            else:
+                prof = max(0.0, 1 - ((u - uc) / (1 - uc)) ** 0.42)
+                rip = 0.0
+            y = h * (prof * across + rip * across) - 0.14 * (max(abs(u), abs(v)) ** 6)
+            x = u * rx
+            # The cornice: the crest's top curls a little past the lee face.
+            if prof > 0.75 and u > uc - 0.1:
+                x += 0.18 * h * smoothstep(0.75, 1.0, prof) * across
+            idx[(i, j)] = len(verts)
+            verts.append(c + rq @ V(x, y, v * rz))
+    tris = []
+    for i in range(nu):
+        for j in range(nv):
+            a, b2, c2, d2 = idx[(i, j)], idx[(i + 1, j)], idx[(i + 1, j + 1)], idx[(i, j + 1)]
+            for t in ((a, b2, c2), (a, c2, d2)):
+                n = (verts[t[1]] - verts[t[0]]).cross(verts[t[2]] - verts[t[0]])
+                tris.append(t if n.y >= 0 else (t[0], t[2], t[1]))
+    smooth_mesh(g, verts, tris, M_SNOW, snow_fn(nz), 1.8)
+
 
 M_PLASTER = len(COLD_MATS)
 M_ASHLAR = M_PLASTER + 1
@@ -684,7 +725,7 @@ CAVE_X = 2.65       # half-width of the mouth (inner faces of the side masses)
 CAVE_ROOF = 3.0     # underside of the roof slab
 CAVE_BACK = -6.6    # back wall face
 TALLY_C = V(-2.0, 1.45, -3.6)   # centre of the tally wall
-TALLY_YAW = -0.7                 # the wall faces +X turned out toward the mouth (+Z)
+TALLY_YAW = -0.4                 # the wall faces +X turned out toward the mouth (+Z)
 
 
 def cave_col(nz):
@@ -754,30 +795,114 @@ def camp_cave(rng):
     g = G(b)
     nz = Noise(rng, 5, 0.6)
     cf = cave_col(nz)
-    # The rock: side masses, the roof slab with its overhanging lip, the back wall, the upper mass
-    # that runs back into the mountain. Interior hollow x ±CAVE_X, y 0..CAVE_ROOF, z CAVE_BACK..-2.6.
-    # Bedded limestone: big rough-hewn blocks with fracture faces, not boulders.
+    # The rock: ONE natural cliff face (the massif's own bedded limestone) with an irregular arch
+    # opening, a tunnel narrowing back into darkness, an overhanging brow above the mouth, and a
+    # talus fan of fallen blocks at its foot. Beds run level across the face (ledges + recessed
+    # partings), vertical joints break it into blocks.
+    arch_w, arch_h, face_z = CAVE_X + 0.15, CAVE_ROOF + 0.4, -2.55
+    nzf = Noise(rng, 5, 0.7)
+    nzj = Noise(rng, 3, 0.35)
+
+    def arch_half(y, d=0.0):
+        """Half-width of the opening at height y (d = depth fraction into the tunnel)."""
+        s = 1.0 - 0.18 * d
+        t = max(0.0, 1.0 - (max(y, 0.0) / (arch_h * s)) ** 2.4)
+        wob = 1.0 + 0.1 * math.sin(y * 3.1 + 1.0) + 0.06 * math.sin(y * 7.3)
+        return arch_w * s * t ** 0.5 * wob
+
+    def bed(y):
+        """Bedding relief: each 0.55u bed juts at its top and is recessed at its parting."""
+        f = (y + 0.2) / 0.55 % 1.0
+        return 0.12 * smoothstep(0.0, 0.25, f) - 0.1 * smoothstep(0.85, 1.0, f)
+
+    def joint(x):
+        """Vertical joints: sharp grooves at irregular spacing."""
+        j = 0.0
+        for jx in (-5.6, -3.7, 3.6, 5.2, 6.8, -6.9):
+            j -= 0.22 * math.exp(-((x - jx - 0.3 * nzj(V(0, x, 0))) / 0.12) ** 2)
+        return j
+
+    def face_z_at(x, y):
+        z = face_z + bed(y) + joint(x) + 0.28 * nzf(V(x * 0.6, y * 0.25, 0.0))
+        z += 0.85 * smoothstep(arch_h - 0.4, arch_h + 0.9, y) * smoothstep(5.5, 1.0, abs(x))  # the brow
+        z -= 0.35 * smoothstep(arch_h + 1.2, 7.5, y)  # the face lays back above the brow
+        z -= 2.6 * smoothstep(5.8, 8.0, abs(x))       # flanks swing back into the mountain
+        return z
+
+    # Face sheet (grid), the opening cut out at its outline.
+    nx, ny = 64, 36
+    xs = [-8.0 + 16.0 * i / nx for i in range(nx + 1)]
+    ys = [-0.8 + 8.6 * j / ny for j in range(ny + 1)]
+    verts, idx = [], {}
+    for j, y in enumerate(ys):
+        for i, x in enumerate(xs):
+            hw = arch_half(y)
+            xx = x
+            # Snap the vertices just inside the opening onto its outline, so the rim is clean.
+            if abs(x) < hw and y < arch_h:
+                xx = math.copysign(hw, x) if abs(x) > hw - 16.0 / nx else x
+            idx[(i, j)] = len(verts)
+            verts.append(V(xx, y, face_z_at(xx, y)))
+    tris = []
+    for j in range(ny):
+        for i in range(nx):
+            cxm = (xs[i] + xs[i + 1]) / 2
+            cym = (ys[j] + ys[j + 1]) / 2
+            if abs(cxm) < arch_half(cym) - 0.02 and cym < arch_h:
+                continue
+            a, b2, c2, d2 = idx[(i, j)], idx[(i + 1, j)], idx[(i + 1, j + 1)], idx[(i, j + 1)]
+            tris += [(a, c2, b2), (a, d2, c2)]
+    tris = [(a, b2, c2) if ((verts[b2] - verts[a]).cross(verts[c2] - verts[a])).z > 0 else (a, c2, b2)
+            for a, b2, c2 in tris]
+    smooth_mesh(g, verts, tris, M_ROCK, cf, 2.2)
+    # The tunnel: the arch outline swept back and narrowing, ending in a rough back wall.
+    rings = 9
+    seg = 22
+    tv, tt = [], []
+    for k in range(rings + 1):
+        d = k / rings
+        z = face_z - 0.15 - d * (face_z - CAVE_BACK + 0.2)
+        for s in range(seg + 1):
+            a = math.pi * s / seg  # 0 = right foot, pi = left foot, over the crown
+            y = math.sin(a) * arch_h * (1 - 0.18 * d) - 0.4 * (1 - math.sin(a))
+            x = math.cos(a) * arch_w * (1 - 0.18 * d) * (1 + 0.08 * math.sin(a * 5 + d * 3))
+            p = V(x, y, z)
+            p += V(math.cos(a), math.sin(a) * 0.6, 0) * 0.16 * nzf(p * 1.3)
+            tv.append(p)
+    for k in range(rings):
+        for s in range(seg):
+            a0, a1 = k * (seg + 1) + s, k * (seg + 1) + s + 1
+            b0, b1 = (k + 1) * (seg + 1) + s, (k + 1) * (seg + 1) + s + 1
+            tt += [(a0, b0, b1), (a0, b1, a1)]
+    axis_c = V(0, 0.4, 0)
+    tt = orient(tv, tt, axis_c, V(0, 0, 1), False)
+    smooth_mesh(g, tv, tt, M_ROCK, cf, 1.8)
+    stone(g, (0.0, 1.2, CAVE_BACK - 0.3), (arch_w * 0.9, arch_h * 0.75, 0.6), rng, detail=2, rough=0.15, cuts=1, col_fn=cf,
+          tile=1.6)
+    # Rock mass behind/above the face, laid back into the slope (keeps the silhouette a mountain).
+    slab(g, (0.0, 7.4, -6.2), (13.0, 2.4, 7.5), quat_x(0.18), rng, res=(8, 3, 6), round_r=0.8, rough=0.08, cuts=3,
+         taper=0.3, col_fn=cf, tile=2.6)
     for sx in (-1, 1):
-        slab(g, (sx * (CAVE_X + 2.0), 1.9, -5.0), (4.2, 4.6, 6.6), quat_y(sx * 0.12) @ quat_z(sx * 0.05), rng,
-             res=(6, 7, 8), round_r=0.45, rough=0.07, cuts=3, taper=0.18, col_fn=cf, tile=2.2)
-        slab(g, (sx * (CAVE_X + 1.25), 0.65, -2.3), (2.4, 1.6, 1.8), quat_y(sx * 0.4) @ quat_x(0.08), rng,
-             res=(4, 3, 3), round_r=0.3, rough=0.08, cuts=2, col_fn=cf, tile=1.6)
-    slab(g, (0, CAVE_ROOF + 0.85, -4.9), (2 * CAVE_X + 3.6, 1.7, 5.4), quat_x(0.04), rng, res=(8, 3, 6), round_r=0.35,
-         rough=0.05, cuts=2, col_fn=cf, tile=2.2)
-    slab(g, (0.2, CAVE_ROOF + 0.45, -2.35), (2 * CAVE_X + 1.8, 0.9, 1.3), quat_z(0.04), rng, res=(8, 2, 3), round_r=0.25,
-         rough=0.07, cuts=1, col_fn=cf, tile=2.0)
-    slab(g, (0, 1.9, CAVE_BACK - 1.2), (2 * CAVE_X + 3.0, 4.6, 2.6), quat_y(0.05), rng, res=(6, 6, 3), round_r=0.4,
-         rough=0.06, cuts=2, col_fn=cf, tile=2.2)
-    slab(g, (0.3, CAVE_ROOF + 2.5, -6.9), (10.5, 3.6, 6.4), quat_y(-0.08) @ quat_z(0.06), rng, res=(8, 4, 6), round_r=0.6,
-         rough=0.07, cuts=3, taper=0.3, col_fn=cf, tile=2.6)
-    slab(g, (-1.8, CAVE_ROOF + 4.6, -8.6), (6.0, 3.2, 4.4), quat_y(0.3), rng, res=(6, 4, 4), round_r=0.5, rough=0.08,
-         cuts=2, taper=0.35, col_fn=cf, tile=2.6)
-    # Fallen blocks + scree at the foot of the flanks.
-    for k in range(14):
+        slab(g, (sx * 6.2, 3.0, -6.0), (4.0, 6.5, 6.5), quat_y(sx * 0.3), rng, res=(5, 7, 6), round_r=0.6, rough=0.08,
+             cuts=3, taper=0.25, col_fn=cf, tile=2.4)
+    # Talus fan: blocks fallen from the beds, then rubble and gravel spreading out from the foot.
+    tal = lambda p, n: scale(rock_col(LIME, moss=0.25, noise=nz, var=0.2)(p, n), 0.95)
+    for k in range(7):
         sx = -1 if k % 2 else 1
-        p = V(sx * rng.uniform(CAVE_X + 0.6, CAVE_X + 3.6), 0.0, rng.uniform(-2.2, 0.8))
-        s = rng.uniform(0.18, 0.55)
-        stone(g, (p.x, s * 0.35, p.z), (s, s * 0.7, s * 0.9), rng, detail=1, rough=0.12, col_fn=cf, tile=0.9)
+        p = V(sx * rng.uniform(2.9, 6.0), 0.0, rng.uniform(-2.3, -0.8))
+        s = rng.uniform(0.35, 0.8)
+        slab(g, (p.x, s * 0.3, p.z), (s * 1.6, s, s * 1.2), quat_y(rng.uniform(0, 3)) @ quat_x(rng.uniform(-0.3, 0.3)), rng,
+             res=(2, 2, 2), round_r=0.06, rough=0.06, cuts=2, col_fn=tal, tile=1.0)
+    for k in range(70):
+        sx = -1 if k % 2 else 1
+        r = rng.uniform(0, 1) ** 0.6
+        p = V(sx * (2.7 + r * 4.0) + rng.uniform(-0.6, 0.6), 0.0, -2.2 + r * 2.6 * rng.uniform(0.3, 1.0))
+        s = rng.uniform(0.06, 0.22) * (1.2 - r * 0.6)
+        stone(g, (p.x, s * 0.2, p.z), (s, s * 0.6, s * 0.85), rng, detail=0, rough=0.1, cuts=2, col_fn=tal, tile=0.5)
+    for sx in (-1, 1):
+        mound(g, (sx * 4.4, 0.0, -1.9), 2.6, 1.4, 0.32, rng, mat=M_ROCK,
+              col_fn=lambda p, n: scale(LIME, 0.62 + 0.15 * nz(p * 4)), tile=0.6, rings=4, seg=16, skirt=0.15,
+              rough=0.25, edge=0.3, power=1.1)
     # Cave floor: packed dirt and ash, hides for bedding at the back, a bone midden by the left wall.
     ground_patch(g, rng, (0, 0, -4.4), CAVE_X + 0.2, 2.4, (0.42, 0.38, 0.34), h=0.04)
     ground_patch(g, rng, (0.3, 0, -0.6), 3.4, 2.6, (0.6, 0.55, 0.5), h=0.03)
@@ -1032,7 +1157,7 @@ def yurt(g, rng, c, r, door_yaw, wall_h=1.25, crown_h=2.35, pole_top=None):
         d = V(math.cos(a), 0, math.sin(a))
         if d.dot(door) > 0.75:
             continue
-        drift(g, tuple(c + d * (r + 0.25)), 0.7, 0.5, rng.uniform(0.25, 0.4), rng, power=0.9)
+        drift(g, tuple(c + d * (r + 0.35)), 1.0, 0.55, rng.uniform(0.3, 0.45), rng)
     # Door frame and flap.
     dp = c + door * (r + 0.02)
     side = rq @ V(1, 0, 0)
@@ -1115,7 +1240,6 @@ def camp_hunters(rng):
             else:
                 lbox(g, p + V(0, -0.22, 0), (0.03, 0.42, 0.06), quat_x(rng.uniform(-0.1, 0.1)), M_HIDE,
                      mix((0.36, 0.08, 0.06), (0.16, 0.06, 0.05), rng.uniform(0, 1)), tile=0.2)
-    snowcap = lambda a, bb: drift(g, tuple(a), 0.3, 0.1, 0.04, rng, power=0.6)
     stretched_hide(g, rng, V(-2.2, 0, 2.9), 2.4)
     # The frozen pond: grey-blue ice, wind-scoured, snow drifted on its rim; two fishing holes with
     # chipped ice heaped round them, lines on stick tripods, the catch frozen to the ice.
@@ -1126,7 +1250,7 @@ def camp_hunters(rng):
           rings=5, seg=26, skirt=0.06, rough=0.05, edge=0.18, power=0.25)
     for k in range(9):
         a = k / 9 * 2 * math.pi + rng.uniform(0, 0.3)
-        drift(g, tuple(pc + V(math.cos(a) * 2.5, 0, math.sin(a) * 2.1)), 0.9, 0.45, rng.uniform(0.12, 0.25), rng)
+        drift(g, tuple(pc + V(math.cos(a) * 2.5, 0, math.sin(a) * 2.1)), 1.2, 0.5, rng.uniform(0.15, 0.3), rng)
     for k, hc in enumerate((pc + V(-0.7, 0, -0.3), pc + V(0.8, 0, 0.5))):
         disc(g, hc + V(0, 0.03, 0), quat_y(0), 0.24, 0.02, 14, M_EARTH, (0.015, 0.02, 0.03), tile=0.3)
         for j in range(9):
@@ -1209,7 +1333,7 @@ def camp_hunters(rng):
     for k in range(8):
         a = k / 8 * 2 * math.pi + 0.2
         p = V(math.cos(a) * 4.6, 0, math.sin(a) * 4.4)
-        drift(g, tuple(p), rng.uniform(0.9, 1.4), rng.uniform(0.5, 0.8), rng.uniform(0.2, 0.4), rng)
+        drift(g, tuple(p), rng.uniform(1.6, 2.4), rng.uniform(0.6, 0.9), rng.uniform(0.35, 0.6), rng)
     return b
 
 
