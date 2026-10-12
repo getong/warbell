@@ -2121,6 +2121,13 @@ MODELS = {
     "decor_bench": decor_bench,
     "gate_brazier": gate_brazier,
     "training_dummy": training_dummy,
+    "town_merchant_shop": town_merchant_shop,
+    "meadow_hay_cart": meadow_hay_cart,
+    "meadow_bale": meadow_bale,
+    "meadow_scarecrow": meadow_scarecrow,
+    "meadow_beehive": meadow_beehive,
+    "meadow_firewood_rack": meadow_firewood_rack,
+    "meadow_crates": meadow_crates,
 }
 
 ONLY = [a for a in sys.argv[sys.argv.index("--") + 1:]] if "--" in sys.argv else []

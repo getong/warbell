@@ -2574,7 +2574,14 @@ pub fn populate(
     // Face the open front south onto the west market lane: from_rotation_y(0)*(+Z) = +Z.
     let to_castle = Vec2::Y;
     let shop_yaw = 0.0_f32;
-    prop(commands, meshes, shop_parts(), Vec3::new(market.x, my, market.y), shop_yaw);
+    // The Blender booth (town_kit `town_merchant_shop`: board roof, striped awning, counter with a
+    // balance + coins, goods shelf, hanging coin sign) when the kit is loaded; same footprint/front.
+    let shop_tf = Transform::from_xyz(market.x, my, market.y).with_rotation(Quat::from_rotation_y(shop_yaw));
+    if let Some(e) = crate::town_kit::spawn_piece(commands, "town_merchant_shop", shop_tf) {
+        commands.entity(e).insert(BiomeEntity);
+    } else {
+        prop(commands, meshes, shop_parts(), Vec3::new(market.x, my, market.y), shop_yaw);
+    }
     // Solid shopfront — counter + posts + back wall block; the hero routes around and stops at the
     // interaction range to browse. Oriented box (yaw) so it hugs the rotated booth.
     crate::blockers::add_obb(market.x, market.y, 1.6, 1.05, shop_yaw);

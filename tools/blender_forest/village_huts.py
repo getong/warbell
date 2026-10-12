@@ -692,7 +692,7 @@ def plank_walls(g, rng, W, D, y0, ye, ops, T=0.14):
     """Board-and-batten barn walls: a squared sill beam on the footing, squared corner and door
     posts, a wall plate, vertical weathered boards (uneven bottoms, a few gaps) with battens over the
     joints; the openings dressed like the huts'."""
-    cols = [scale((1.0, 0.8, 0.6), rng.uniform(0.72, 0.95)) for _ in range(9)]
+    cols = [scale((1.0, 0.72, 0.46), rng.uniform(0.88, 1.0)) for _ in range(9)]
     for wi, (a, b) in enumerate(_walls(W, D)):
         A, B = V(a[0], 0, a[1]), V(b[0], 0, b[1])
         t = (B - A).normalized()
