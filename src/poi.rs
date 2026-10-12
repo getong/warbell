@@ -292,6 +292,7 @@ pub fn story_clearings() -> StoryClearings {
     // The cold sites stand out in the snow forest: a wider glade (no trunks or crowns right up to
     // the drift) so the scene reads from a distance instead of through a screen of branches.
     spots.extend(crate::stories_cold::planned_footprints().into_iter().map(|(p, foot)| (p, foot + COLD_SIGHTLINE)));
+    spots.extend(crate::sites_warm::planned_footprints());
     StoryClearings(spots)
 }
 /// Does a circle at `(x, z)` of radius `radius` overlap a planned story clearing (gallows
@@ -302,6 +303,7 @@ pub fn overlaps_planned_clearing(x: f32, z: f32, radius: f32) -> bool {
         p.distance_squared(site.pos) < (STORY_FOOTPRINTS[site.kind] + radius + 0.35).powi(2)
     }) || crate::stories_warm::overlaps_planned(x, z, radius)
         || crate::stories_cold::overlaps_planned(x, z, radius)
+        || crate::sites_warm::overlaps_planned(x, z, radius)
 }
 
 fn rng_next(state: &mut u32) -> f32 {

@@ -37,7 +37,7 @@ struct Scene {
 }
 
 const SCENES: [Scene; 7] = [
-    Scene { model: "story_caravan", biome: Biome::Desert, foot: 3.0, count: 3, boxes: &[(-0.36, -0.15, 1.2, 0.45, 0.25)] },
+    Scene { model: "story_caravan", biome: Biome::Desert, foot: 3.0, count: 2, boxes: &[(-0.36, -0.15, 1.2, 0.45, 0.25)] },
     Scene { model: "story_ribs", biome: Biome::Desert, foot: 3.5, count: 2, boxes: &[(0.0, 0.0, 1.7, 1.2, 0.0)] },
     Scene {
         model: "story_oasis",
@@ -64,14 +64,14 @@ const SCENES: [Scene; 7] = [
         model: "story_hunter",
         biome: Biome::Forest,
         foot: 2.3,
-        count: 3,
+        count: 2,
         boxes: &[(-0.6, -0.95, 0.95, 0.5, 0.0), (1.25, -0.55, 0.7, 0.32, 0.0), (1.3, 0.95, 0.26, 0.26, 0.0)],
     },
     Scene {
         model: "story_woodcut",
         biome: Biome::Forest,
         foot: 2.4,
-        count: 3,
+        count: 2,
         boxes: &[(-0.5, -0.95, 1.3, 0.45, 0.0), (0.95, 0.55, 0.75, 0.35, -0.3), (-0.65, 0.8, 0.33, 0.33, 0.0)],
     },
 ];
