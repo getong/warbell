@@ -27,8 +27,8 @@ its footprint, front toward +Z unless noted.
                       bed on its side, two wheels at -Z, sharpened stakes leaning out at +Z.
 """
 
-GREYW = (1.05, 1.0, 0.9)      # sun-greyed fence wood
-OAKD = (0.9, 0.74, 0.56)       # oiled castle timber
+GREYW = (1.3, 1.22, 1.08)      # sun-greyed fence wood
+OAKD = (1.15, 0.95, 0.72)       # oiled castle timber
 IRN = (0.46, 0.44, 0.42)
 HEMP = (0.9, 0.78, 0.56)
 
