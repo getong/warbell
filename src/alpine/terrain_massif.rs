@@ -157,25 +157,25 @@ fn footprint(x: f32, z: f32, reg: &Region) -> f32 {
 /// 0..1 how much of base `(x, z)` the massif still OWNS against its neighbours: 1 on its own
 /// ground, easing to 0 over 12 base units toward any boundary where another region claims the tile
 /// (`region_at` hands contested ground to the DEEPER region — the grown desert now owns the rock
-/// range's old northern plateau, inside the range's circle). 0 = ceded outright. Unlike the
-/// flank's `footprint` border, CONTINUOUS across the neighbour's own rim (a neighbour's claim fades
-/// out over 4 base units past its edge instead of vanishing at it) — the pass ramps ride it, and a
-/// jump there was a 2-class step in the only walkable ascent.
+/// range's old northern plateau, inside the range's circle). 0 = ceded outright. The pass ramps
+/// ride it, so unlike the flank's `footprint` border it must be SMOOTH: continuous across the
+/// neighbour's own rim (a claim fades out over 4 base units past its edge instead of vanishing at
+/// it), no `edge_fray` (its ±3.7 scallops swing the margin ~1 base per tile — on a 5u-high ramp
+/// that was a 2-class step in the only walkable ascent), and a wider 16-unit fade.
 pub(super) fn ownership(x: f32, z: f32, reg: &Region) -> f32 {
-    let wob = 2.4 * (x * 0.4 + 1.1).sin() + 2.4 * (z * 0.36 - 0.7).cos();
-    let own = (x - reg.x).hypot(z - reg.z) + wob - reg.r; // region_at's edge (negative inside)
+    // (`region_at`'s wobble is common to both edges and cancels out of the margin.)
+    let own = (x - reg.x).hypot(z - reg.z) - reg.r;
     let mut margin = f32::INFINITY;
     for o in active_map().regions {
         if std::ptr::eq(o, reg) {
             continue;
         }
-        let fray = if o.peak > 0 { 0.0 } else { edge_fray(x, z) };
-        let oe = (x - o.x).hypot(z - o.z) + wob + fray - o.r;
+        let oe = (x - o.x).hypot(z - o.z) - o.r;
         if oe < 4.0 {
             margin = margin.min(if oe < 0.0 { oe } else { 3.0 * oe } - own);
         }
     }
-    if margin.is_finite() { smooth(0.0, 12.0, margin) } else { 1.0 }
+    if margin.is_finite() { smooth(0.0, 16.0, margin) } else { 1.0 }
 }
 
 /// The continuous pass-ramp floor at distance `dc` (base) from the centre — `pass_class` without

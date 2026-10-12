@@ -82,9 +82,9 @@ pub(crate) fn region_center(b: Biome) -> Vec2 {
     match b {
         Biome::Snow => world22(-69.0, -45.0),
         Biome::Desert => world22(60.0, -39.0),
-        // Moved with the rock range (biome rebalance: centre +2,+5 base = +4.4,+11 at 2.2), so the
+        // Moved with the rock range (biome rebalance: centre +1,+3 base = +2.2,+6.6 at 2.2), so the
         // golem keeps the same DEM ground instead of ending up on the desert seam.
-        Biome::Rocky => world22(70.4, 15.0),
+        Biome::Rocky => world22(68.2, 10.6),
         Biome::Forest => world22(-60.0, 39.0),
         Biome::Swamp => world22(0.0, 57.0),
     }

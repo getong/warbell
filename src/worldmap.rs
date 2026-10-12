@@ -339,7 +339,7 @@ const REGIONS: [Region; 5] = [
     // desert and slides S/SE over the old E marsh arm, so it loses ~10% area while the desert gains
     // ~40%. The DEM rides the centre, so the summits, the pass valleys and the SW waterfall wall
     // over the lake (`BLUE_STREAMS[0]`, ≈18 base W of the centre) keep their relief.
-    Region { x: 118.0, z: 62.0, r: 38.0, biome: TB::Rock, peak: 22, cliffy: true, passes: &ROCK_PASSES },
+    Region { x: 117.0, z: 60.0, r: 38.0, biome: TB::Rock, peak: 22, cliffy: true, passes: &ROCK_PASSES },
     // SW forest + S swamp: r +2/+3 (pass 0, map-character overhaul) — the two most
     // "nothing left once you subtract the claims" biomes get extra interior on top of the
     // MAP_SCALE 2.2 bump. Snow/desert radii stay (their shared seam is already tuned tight).
