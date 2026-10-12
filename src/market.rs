@@ -108,6 +108,17 @@ pub(crate) fn stall_slots() -> [(Vec2, f32, Vec2); 4] {
     })
 }
 
+/// Every stall's and loose prop's ground footprint as `(centre, half, yaw)` — for placement checks
+/// that run before (or without) the market's blockers (`village_life` seats).
+pub(crate) fn footprints() -> Vec<(Vec2, Vec2, f32)> {
+    let mut v: Vec<(Vec2, Vec2, f32)> = STALLS
+        .iter()
+        .map(|s| (s.pos + (Quat::from_rotation_y(s.yaw) * Vec3::new(0.0, 0.0, -0.04)).xz(), Vec2::new(1.05, 0.55), s.yaw))
+        .collect();
+    v.extend(PROPS.iter().map(|(_, p, _, r)| (*p, Vec2::splat(*r), 0.0)));
+    v
+}
+
 /// Townsfolk pausing at a counter: (world XZ, facing yaw).
 /// (Empty since `village_life`: living customers now walk up to the counters, haggle and pay —
 /// a parked shopper would stand in their slot.)

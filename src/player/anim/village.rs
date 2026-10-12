@@ -45,6 +45,10 @@ pub(crate) enum Act {
     Hide,
     Call,
     Browse,
+    /// Reach into the cart / down to the bales, then hoist the sack up onto the shoulder.
+    Lift,
+    /// Guard drill with a wooden waster: guard, cut, recover, parry — feet set in a fighting stance.
+    Spar,
 }
 
 /// What a seated resident does on the bench.
@@ -84,6 +88,10 @@ const R_SIP: Arm = [-1.45, 0.0, -0.30, -2.15];
 /// The right hand low in the lap holding the food / the mug.
 const R_LAP: Arm = [-0.70, 0.0, -0.18, -1.15];
 const L_LAP: Arm = [-0.70, 0.0, 0.18, -1.15];
+
+fn lerp4(a: Arm, b: Arm, s: f32) -> Arm {
+    std::array::from_fn(|i| a[i] + (b[i] - a[i]) * s)
+}
 
 fn wave01(x: f32) -> f32 {
     0.5 + 0.5 * x.sin()
@@ -252,6 +260,55 @@ pub(crate) fn stand(act: Act, t: f32, k: f32) -> Pose {
             p.head.r = p.head.r * rx(-0.12);
             p.torso.r = p.torso.r * rx(-0.05);
             set_arms(&mut p, arm([-0.10, 0.0, -0.05, -0.30]), arm([-1.25, 0.0, -0.55, -2.20]));
+        }
+        Act::Lift => {
+            // `k` doubles as the act's clock (the brain gives it ~2.6 s): bend over the load with
+            // both hands down at knee height, then straighten with it swung up to the right shoulder.
+            let up = smoothstep(((k - 0.15) / 0.6).clamp(0.0, 1.0));
+            let bend = 1.0 - up;
+            let hips = Vec3::new(0.0, 1.01 - 0.24 * bend, -0.05 * bend);
+            let pitch = 0.25 * bend;
+            let mut q = rest();
+            q.hips = Jp { t: Some(hips), r: rx(pitch) };
+            plant_legs(&mut q, hips, pitch, 0.10, 0.16);
+            q.torso.r = rx(0.55 * bend + 0.06 * up);
+            q.head.r = rx(0.25 * bend);
+            let reach = ([-1.05, 0.0, 0.18, -0.25], [-1.05, 0.0, -0.18, -0.25]);
+            let l = mix(reach.0, [-0.20, 0.0, 0.10, -0.40], up);
+            let r = mix(reach.1, [-0.95, 0.0, 0.95, -2.25], up);
+            set_arms(&mut q, l, r);
+            return base.lerp(&q, smoothstep((k * 6.0).min(1.0)));
+        }
+        Act::Spar => {
+            // A slow drill (~2.2 s): guard high → a downward diagonal cut with a half-step lunge →
+            // recover → a horizontal parry. The left arm out for balance, knees bent.
+            let c = (t * 0.45).fract();
+            let (cut, parry) = if c < 0.35 {
+                (smoothstep(c / 0.35), 0.0)
+            } else if c < 0.55 {
+                (1.0 - smoothstep((c - 0.35) / 0.2), 0.0)
+            } else if c < 0.8 {
+                (0.0, smoothstep((c - 0.55) / 0.12) * (1.0 - smoothstep((c - 0.7) / 0.1)))
+            } else {
+                (0.0, 0.0)
+            };
+            let hips = Vec3::new(0.0, 0.95 - 0.03 * cut, 0.05 * cut);
+            let mut q = rest();
+            q.hips = Jp { t: Some(hips), r: Quat::from_rotation_y(-0.35 + 0.30 * cut) * rx(0.06) };
+            plant_legs(&mut q, hips, 0.06, 0.14, 0.22);
+            q.torso.r = Quat::from_rotation_y(0.15 - 0.35 * cut + 0.10 * parry) * rx(0.10 + 0.12 * cut);
+            q.head.r = Quat::from_rotation_y(0.20 - 0.10 * cut) * rx(0.05);
+            let guard = [-1.35, 0.0, 0.30, -1.20];
+            let wind = [-2.55, 0.0, 0.45, -0.85];
+            let strike = [-0.80, 0.0, -0.20, -0.15];
+            let block = [-1.55, 0.0, -0.55, -1.55];
+            let r = if cut > 0.0 {
+                if c < 0.35 { mix(lerp4(guard, wind, (cut * 2.0).min(1.0)), strike, ((cut - 0.5) * 2.0).max(0.0)) } else { mix(guard, strike, cut) }
+            } else {
+                mix(guard, block, parry)
+            };
+            set_arms(&mut q, arm([-0.55, 0.0, -0.45, -1.10]), r);
+            return base.lerp(&q, k);
         }
         Act::Browse => {
             // Leaning in over the counter, a hand hovering over the goods.
