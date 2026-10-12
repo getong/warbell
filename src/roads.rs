@@ -445,6 +445,20 @@ fn build_curves() -> Vec<(Vec<Vec2>, f32)> {
     let gates = crate::castle::Gate::ALL.map(crate::castle::Gate::center);
     let biomes = biome_centres();
     let seed = 0x51ED_2A37u32;
+    // Every road is ROUTED over the real ground (slope-capped A*, `road_route`) — contour-following,
+    // switchbacking where it must climb, never up a cliff. Through-routes keep clear of the ork
+    // camps (the old `avoid_clearings` detour, folded into the search cost).
+    let t0 = std::time::Instant::now();
+    let grid = crate::road_route::Grid::build();
+    let camps: Vec<Vec2> = crate::camps::cage_positions().iter().map(|(_, c)| *c).collect();
+    let through = crate::road_route::Opts { water: true, keep_out: &camps, keep_r: CAMP_KEEP_OUT, max_expand: usize::MAX };
+    let spur = crate::road_route::Opts { keep_out: &[], ..through };
+    let route = |a: Vec2, b: Vec2, o: crate::road_route::Opts, salt: u32| -> Vec<Vec2> {
+        grid.route(a, b, o).unwrap_or_else(|| {
+            warn!("roads: no slope-safe route {a:?} -> {b:?}; falling back to a straight wander");
+            avoid_clearings(wander(a, b, seed ^ salt))
+        })
+    };
     let mut curves: Vec<Vec<Vec2>> = Vec::new();
     // The King's Road out of the W gate runs through the street village first (layout v3: the
     // houses line it, `castle::houses`), so it's a FIXED curve; trunks leaving by the W gate set
@@ -463,7 +477,7 @@ fn build_curves() -> Vec<(Vec<Vec2>, f32)> {
         let target = crate::worldmap::biome_road_target(i);
         note_junction(target);
         let from = if gate == crate::castle::Gate::West.center() { street_end } else { gate };
-        curves.push(avoid_clearings(wander(from, target, seed ^ (i as u32).wrapping_mul(0x9E37_79B9))));
+        curves.push(route(from, target, through, (i as u32).wrapping_mul(0x9E37_79B9)));
     }
 
     // Coast reaches: from each FLAT biome's road target, one artery out toward the nearest shore
@@ -478,7 +492,7 @@ fn build_curves() -> Vec<(Vec<Vec2>, f32)> {
         let target = crate::worldmap::biome_road_target(i);
         if let Some(coast) = crate::worldmap::coast_reach_world(target) {
             note_junction(coast);
-            curves.push(avoid_clearings(wander(target, coast, seed ^ (0x00E0_0000 + i as u32))));
+            curves.push(route(target, coast, through, 0x00E0_0000 + i as u32));
         }
     }
 
@@ -495,7 +509,7 @@ fn build_curves() -> Vec<(Vec<Vec2>, f32)> {
         let b = crate::worldmap::biome_ring_node(ib, ca);
         note_junction(a);
         note_junction(b);
-        curves.push(avoid_clearings(wander(a, b, seed ^ (0x00B5_0000 + i as u32))));
+        curves.push(route(a, b, through, 0x00B5_0000 + i as u32));
     }
 
     // Fortress + rival keep: reached as a SPUR off the NEAREST existing road, NOT a separate gate
@@ -511,7 +525,7 @@ fn build_curves() -> Vec<(Vec<Vec2>, f32)> {
                 .min_by(|a, b| a.distance(t).partial_cmp(&b.distance(t)).unwrap())
                 .unwrap();
             note_junction(near);
-            curves.push(avoid_clearings(wander(near, t, seed ^ (0x00A0_0000 + k as u32))));
+            curves.push(route(near, t, through, 0x00A0_0000 + k as u32));
         }
     }
 
@@ -525,7 +539,7 @@ fn build_curves() -> Vec<(Vec<Vec2>, f32)> {
             .min_by(|a, b| a.distance(site.pos).partial_cmp(&b.distance(site.pos)).unwrap())
             .unwrap();
         note_junction(near);
-        curves.push(avoid_clearings(wander(near, site.pos, seed ^ (0x00C0_0000 + k as u32))));
+        curves.push(route(near, site.pos, through, 0x00C0_0000 + k as u32));
     }
 
     // Spurs: shortest connections from the network to nearby camps, capped to stay organic-not-busy.
@@ -548,13 +562,14 @@ fn build_curves() -> Vec<(Vec<Vec2>, f32)> {
         note_junction(near);
         // NB: no `avoid_clearings` here — the camp IS the destination; the spur is supposed to
         // end inside its clearing.
-        curves.push(wander(near, camp, seed ^ (0x0077_0000 + k as u32)));
+        curves.push(route(near, camp, spur, 0x0077_0000 + k as u32));
     }
 
     // Everything built so far is an ARTERY (wide). Now sprout the thin capillary layer off them,
     // then tag widths and return the combined typed list. Capillaries that blunder into a camp
     // clearing are dropped outright (they're space-fillers; no detour is worth it).
-    let mut caps = sprout_capillaries(&curves, seed ^ 0x0CA9_F00D);
+    let mut caps = sprout_capillaries(&curves, seed ^ 0x0CA9_F00D, &grid);
+
     caps.retain(|c| !polyline_hits_clearing(c));
     let mut out: Vec<(Vec<Vec2>, f32)> = curves.into_iter().map(|c| (c, HALF_W)).collect();
     out.extend(caps.into_iter().map(|c| (c, CAP_HALF_W)));
@@ -564,6 +579,7 @@ fn build_curves() -> Vec<(Vec<Vec2>, f32)> {
     // corridors get a painted mid-width track (mouth → summit), but nothing may branch off one
     // sideways — a spur or capillary sprouting off a ramp would paint straight up a cliff face.
     out.extend(crate::worldmap::pass_trails_world().into_iter().map(|c| (c, 1.4)));
+    info!("roads: {} curves routed over the terrain in {:.0} ms", out.len(), t0.elapsed().as_secs_f64() * 1000.0);
     out
 }
 
@@ -572,7 +588,7 @@ fn build_curves() -> Vec<(Vec<Vec2>, f32)> {
 /// one shorter second-generation branch off their tip, pushing coverage into the pockets between
 /// arteries — like a river delta. Endpoints are nudged back onto walkable land; degenerate (all-
 /// water) branches are dropped. Capped at [`CAP_CAP`] for a bounded bake.
-fn sprout_capillaries(arteries: &[Vec<Vec2>], seed: u32) -> Vec<Vec<Vec2>> {
+fn sprout_capillaries(arteries: &[Vec<Vec2>], seed: u32, grid: &crate::road_route::Grid) -> Vec<Vec<Vec2>> {
     let mut rng = Rng(seed);
     let mut caps: Vec<Vec<Vec2>> = Vec::new();
 
@@ -601,7 +617,8 @@ fn sprout_capillaries(arteries: &[Vec<Vec2>], seed: u32) -> Vec<Vec<Vec2>> {
                 let tilt = (rng.next() - 0.5) * 1.1;
                 let dir = perp * side + tan * tilt;
                 let salt = (0xC0_0000 ^ (li as u32) << 8) ^ ri;
-                if let Some((poly, _tip)) = cap_branch(&mut rng, pt, dir, seed, salt) {
+                let _ = salt;
+                if let Some((poly, _tip)) = cap_branch(&mut rng, pt, dir, grid) {
                     caps.push(poly);
                 }
                 ri += 1;
@@ -615,13 +632,20 @@ fn sprout_capillaries(arteries: &[Vec<Vec2>], seed: u32) -> Vec<Vec<Vec2>> {
 /// One short capillary branch from `pt` leaving along `dir`, length in [`CAP_LEN`]. Returns the
 /// built centreline plus its tip (for a possible second generation), or `None` if the endpoint
 /// nudged back onto the start (surrounded by water / off-map), which would be a degenerate stub.
-fn cap_branch(rng: &mut Rng, pt: Vec2, dir: Vec2, seed: u32, salt: u32) -> Option<(Vec<Vec2>, Vec2)> {
+fn cap_branch(rng: &mut Rng, pt: Vec2, dir: Vec2, grid: &crate::road_route::Grid) -> Option<(Vec<Vec2>, Vec2)> {
     let len = CAP_LEN.0 + rng.next() * (CAP_LEN.1 - CAP_LEN.0);
     let end = nudge(pt + dir.normalize_or_zero() * len, pt);
     if end.distance(pt) < 5.0 {
         return None;
     }
-    let poly = wander(pt, end, seed ^ salt.wrapping_mul(0x9E37_79B9));
+    // Routed like the arteries (slope-capped, no water), with a small search budget; a trail that
+    // can only reach its end by a long detour (the end is up a cliff / across a ravine) is dropped.
+    let o = crate::road_route::Opts { water: false, keep_out: &[], keep_r: 0.0, max_expand: 6000 };
+    let poly = grid.route(pt, end, o)?;
+    let run: f32 = poly.windows(2).map(|w| w[0].distance(w[1])).sum();
+    if run > end.distance(pt) * 1.8 {
+        return None;
+    }
     // Capillaries never get a bridge/boardwalk (only arteries are decked), so a trail must not
     // cross a river or a swamp bog pool — it would dead-end at the water or read as a path
     // plunging in. Drop any that touches water.
@@ -720,6 +744,51 @@ fn build_field() -> RoadField {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Playtest: "paths often run over unnatural steep slopes". Every routed road (arteries AND
+    /// capillaries; the authored mesa pass ramps excepted) must hold a footpath grade: measured
+    /// over 2u of path, never steeper than the router's cap plus smoothing slack.
+    #[test]
+    fn roads_follow_the_terrain() {
+        let _ = crate::worldmap::ground_at_world(0.0, 0.0);
+        let _ = crate::camps::cage_positions();
+        let _ = crate::ruins::landmark_sites();
+        let t = std::time::Instant::now();
+        let net = network();
+        println!("network built in {:?} ({} curves)", t.elapsed(), net.len());
+        let g = crate::worldmap::ground_at_world;
+        let (mut worst, mut at, mut n, mut over) = (0.0f32, Vec2::ZERO, 0usize, 0usize);
+        for (c, half) in net {
+            if (*half - 1.4).abs() < 1e-3 {
+                continue; // authored pass-trail ramps
+            }
+            // Resample the polyline at 0.5u, then take the grade over 4-sample (2u) spans.
+            let mut pts = Vec::new();
+            for w in c.windows(2) {
+                let steps = (w[0].distance(w[1]) / 0.5).ceil().max(1.0) as usize;
+                pts.extend((0..steps).map(|k| w[0].lerp(w[1], k as f32 / steps as f32)));
+            }
+            for w in pts.windows(5) {
+                let (Some(a), Some(b)) = (g(w[0].x, w[0].y), g(w[4].x, w[4].y)) else { continue };
+                let run = w[0].distance(w[4]);
+                if run < 1.0 {
+                    continue;
+                }
+                let grade = (b - a).abs() / run;
+                n += 1;
+                if grade > 0.36 {
+                    over += 1;
+                }
+                if grade > worst {
+                    (worst, at) = (grade, w[2]);
+                }
+            }
+        }
+        println!("{n} road spans, steepest grade {worst:.2} at {at:?}, {over} spans over 0.36");
+        assert!(n > 5000);
+        assert!(over * 1000 <= n, "{over}/{n} road spans steeper than 0.36 (worst {worst:.2} at {at:?})");
+        assert!(worst < 0.6, "a road climbs grade {worst:.2} at {at:?}");
+    }
 
     #[test]
     fn catmull_hits_endpoints() {
