@@ -557,16 +557,22 @@ pub fn populate_defenders(
     // A real low-poly ballista (vertex-coloured): wheeled sled, A-frame, stock, bow limbs +
     // string and a loaded bolt — aimed outward (−Z) away from the gate. One white material so the
     // mesh's vertex colours show. Yaw it slightly so it points out along its placement radius.
-    let mesh = meshes.add(ballista_mesh());
-    let mat = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        perceptual_roughness: 0.82,
-        ..default()
-    });
-    commands.spawn((
-        Mesh3d(mesh),
-        MeshMaterial3d(mat),
-        Transform::from_xyz(bx, y, bz).with_rotation(Quat::from_rotation_y(0.18)),
+    // The Blender torsion ballista (town_kit `castle_ballista`, fires toward local -Z like this
+    // mesh) when the kit is loaded; the vertex-coloured fallback otherwise.
+    let tf = Transform::from_xyz(bx, y, bz).with_rotation(Quat::from_rotation_y(0.18));
+    let e = match crate::town_kit::spawn_piece(commands, "castle_ballista", tf) {
+        Some(e) => e,
+        None => {
+            let mesh = meshes.add(ballista_mesh());
+            let mat = materials.add(StandardMaterial {
+                base_color: Color::WHITE,
+                perceptual_roughness: 0.82,
+                ..default()
+            });
+            commands.spawn((Mesh3d(mesh), MeshMaterial3d(mat), tf)).id()
+        }
+    };
+    commands.entity(e).insert((
         Defender {
             kind: Kind::Ballista,
             profile: BALLISTA,

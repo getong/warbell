@@ -2125,7 +2125,12 @@ fn brazier_spots(gate: Gate) -> [Vec3; 2] {
     let perp = Vec2::new(-out.y, out.x);
     let half = GATE_GAP / 2.0 + 1.9;
     [-half, half].map(|s| {
-        let p = c + out * 5.2 + perp * s;
+        let mut p = c + out * 5.2 + perp * s;
+        // The W gate's market side: the merchant's shop stands there — pull that cresset back
+        // toward the wall so it lights the shop front instead of standing in it.
+        if p.distance(MERCHANT_SHOP) < 2.8 {
+            p -= out * 2.0;
+        }
         Vec3::new(p.x, 0.0, p.y)
     })
 }

@@ -34,7 +34,7 @@ impl Plugin for TownKitPlugin {
 }
 
 /// The pieces `town_kit.glb` carries, in the script's priority order.
-pub const PIECES: [&str; 55] = [
+pub const PIECES: [&str; 77] = [
     "town_granary",
     "town_smithy",
     "town_tavern",
@@ -95,6 +95,29 @@ pub const PIECES: [&str; 55] = [
     "meadow_beehive",
     "meadow_firewood_rack",
     "meadow_crates",
+    // The last procedural pieces (`tools/blender_forest/town_finish.py`).
+    "meadow_fence",
+    "meadow_fence_post",
+    "castle_lantern",
+    "castle_ballista",
+    "town_plot",
+    "town_house_site",
+    "town_rubble",
+    "gate_leaf",
+    "gate_barricade",
+    "decor_armory",
+    "decor_armory_veteran",
+    "decor_axe_display",
+    "decor_sword_display",
+    "decor_grindstone",
+    "decor_tax_booth",
+    "decor_shrine",
+    "decor_bounty_board",
+    "decor_scaffold",
+    "decor_stone_pile",
+    "decor_guild_banner",
+    "decor_guild_goods",
+    "decor_laundry",
 ];
 
 /// A spawned town-kit model root.
@@ -122,7 +145,7 @@ pub fn spawn_piece(commands: &mut Commands, name: &str, tf: Transform) -> Option
 /// x 14..20), and the four lean-tos against the OUTSIDE face of the east curtain (x 28.65), fronts
 /// east: stand-ins for their place inside the walls (backs flat on the stone, the same fit; the
 /// curtain shows once the walls are built, e.g. `FOREST_DEFEND=1`).
-pub const SHOWCASE: [(&str, Vec2, f32, Vec2); 61] = [
+pub const SHOWCASE: [(&str, Vec2, f32, Vec2); 83] = [
     ("town_granary", Vec2::new(-25.0, -29.0), 0.0, Vec2::new(1.75, 2.25)),
     ("town_smithy", Vec2::new(-16.0, -29.0), 0.0, Vec2::ZERO),
     ("town_tavern", Vec2::new(-5.5, -29.0), 0.0, Vec2::new(3.3, 2.5)),
@@ -190,6 +213,29 @@ pub const SHOWCASE: [(&str, Vec2, f32, Vec2); 61] = [
     ("meadow_beehive", Vec2::new(1.5, -61.0), 0.0, Vec2::ZERO),
     ("meadow_firewood_rack", Vec2::new(4.0, -61.0), 0.0, Vec2::ZERO),
     ("meadow_crates", Vec2::new(7.0, -61.0), 0.0, Vec2::ZERO),
+    // town_finish.py: rows at z -67 (fence, lantern, ballista, plots, ruin, gate) and z -74 (decor).
+    ("meadow_fence", Vec2::new(-8e+00, -67.0), 0.0, Vec2::ZERO),
+    ("meadow_fence_post", Vec2::new(-6e+00, -67.0), 0.0, Vec2::ZERO),
+    ("castle_lantern", Vec2::new(-4e+00, -67.0), 0.0, Vec2::ZERO),
+    ("castle_ballista", Vec2::new(-1e+00, -67.0), 0.0, Vec2::ZERO),
+    ("town_plot", Vec2::new(4e+00, -67.0), 0.0, Vec2::ZERO),
+    ("town_house_site", Vec2::new(1e+01, -67.0), 0.0, Vec2::ZERO),
+    ("town_rubble", Vec2::new(2e+01, -67.0), 0.0, Vec2::ZERO),
+    ("gate_leaf", Vec2::new(2e+01, -67.0), 0.0, Vec2::ZERO),
+    ("gate_barricade", Vec2::new(3e+01, -67.0), 0.0, Vec2::ZERO),
+    ("decor_armory", Vec2::new(-8e+00, -74.0), 0.0, Vec2::ZERO),
+    ("decor_armory_veteran", Vec2::new(-4e+00, -74.0), 0.0, Vec2::ZERO),
+    ("decor_axe_display", Vec2::new(-2e+00, -74.0), 0.0, Vec2::ZERO),
+    ("decor_sword_display", Vec2::new(-0.5, -74.0), 0.0, Vec2::ZERO),
+    ("decor_grindstone", Vec2::new(2e+00, -74.0), 0.0, Vec2::ZERO),
+    ("decor_tax_booth", Vec2::new(4e+00, -74.0), 0.0, Vec2::ZERO),
+    ("decor_shrine", Vec2::new(8e+00, -74.0), 0.0, Vec2::ZERO),
+    ("decor_bounty_board", Vec2::new(1e+01, -74.0), 0.0, Vec2::ZERO),
+    ("decor_scaffold", Vec2::new(1e+01, -74.0), 0.0, Vec2::ZERO),
+    ("decor_stone_pile", Vec2::new(2e+01, -74.0), 0.0, Vec2::ZERO),
+    ("decor_guild_banner", Vec2::new(2e+01, -74.0), 0.0, Vec2::ZERO),
+    ("decor_guild_goods", Vec2::new(2e+01, -74.0), 0.0, Vec2::ZERO),
+    ("decor_laundry", Vec2::new(2e+01, -74.0), 0.0, Vec2::ZERO),
 ];
 
 /// Lays the showcase out once the kit has loaded; a world rebuild clears it (`BiomeEntity`) and

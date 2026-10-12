@@ -39,6 +39,9 @@ exec(compile(_src[:_src.index("\nMODELS = {")], str(HERE / "wayside_models.py"),
 
 M_PLASTER = len(MATS)
 MATS = MATS + ["s_plaster"]
+M_TMATTE = len(MATS)
+MATS = MATS + ["s_timber_matte"]   # matte twin of s_timber: the gate leaves (no slate-grey sky sheen)
+BOARD_CENTRES[M_TMATTE] = BOARD_CENTRES[M_TIMBER]
 UP = V(0, 1, 0)
 VOID = (0.03, 0.027, 0.025)
 MUD = (0.98, 0.78, 0.56)           # ochre earthen render (on the off-white plaster scan)
@@ -547,7 +550,7 @@ def rival_walls(rng):
             xa = hs - d
             ya = cy + math.sqrt(max(0.0, R * R - xa * xa)) - 0.08
             board(g, V(hx, ya / 2 + 0.04, zh - d), (0, 1, 0), (-sx, 0, 0), ya - 0.04, lw / n_pl - 0.01, 0.07,
-                  mat=M_TIMBER, col=scale((1.0, 0.7, 0.44), rng.uniform(0.9, 1.0)), rng=rng)
+                  mat=M_TMATTE, col=scale((1.0, 0.7, 0.44), rng.uniform(0.9, 1.0)), rng=rng)
         for y in (0.5, 1.45, 2.35):
             lbox(g, V(hx - sx * 0.07, y, zh - lw / 2), (0.04, 0.13, lw - 0.15), quat_y(0.0), M_TIMBER,
                  scale(BEAMC, 0.55), tile=0.5)

@@ -227,6 +227,9 @@ const MATERIALS: [(&str, &str, bool); 38] = [
     ("s_mosswood", "s_mosswood", false),
     ("s_clay", "s_clay", false),
     ("s_mossrock", "s_mossrock", false),
+    // The s_timber scan made matte (no roughness map, low F0) for broad weathered board walls that
+    // read slate-grey in shade from the sky reflection: the village barn, the rival gate leaves.
+    ("s_timber_matte", "s_timber", false),
 ];
 
 impl Kit {
@@ -1274,7 +1277,13 @@ fn try_build(
     let mut mat_index = HashMap::new();
     for (name, set, card) in MATERIALS {
         mat_index.insert(name.to_string(), mats.len());
-        let m = pbr_material(images, set, card)?;
+        let mut m = pbr_material(images, set, card)?;
+        if name == "s_timber_matte" {
+            m.metallic_roughness_texture = None;
+            m.metallic = 0.0;
+            m.perceptual_roughness = 0.93;
+            m.reflectance = 0.16;
+        }
         // Snow-dusted twin for the snow biome (`alpine::snowkit`): same textures, crown tint kept.
         let tint = match name {
             "canopy" => 0.6,

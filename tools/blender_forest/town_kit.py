@@ -2066,6 +2066,8 @@ _vh = HERE / "village_huts.py"
 exec(compile(_vh.read_text(encoding="utf-8"), str(_vh), "exec"))
 _yp = HERE / "yard_props.py"
 exec(compile(_yp.read_text(encoding="utf-8"), str(_yp), "exec"))
+_tf = HERE / "town_finish.py"
+exec(compile(_tf.read_text(encoding="utf-8"), str(_tf), "exec"))
 
 
 MODELS = {
@@ -2128,6 +2130,9 @@ MODELS = {
     "meadow_beehive": meadow_beehive,
     "meadow_firewood_rack": meadow_firewood_rack,
     "meadow_crates": meadow_crates,
+    # The last procedural town pieces (town_finish.py): paddock fence, lantern, ballista, plots,
+    # ruins, the castle upgrade set-pieces, gate leaves + barricades.
+    **TOWN_FINISH,
 }
 
 ONLY = [a for a in sys.argv[sys.argv.index("--") + 1:]] if "--" in sys.argv else []
