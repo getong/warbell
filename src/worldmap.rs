@@ -3549,6 +3549,7 @@ pub fn build_step(
         crate::vignettes::reset_plan();
         crate::wayside::reset_plan();
         crate::stories_cold::reset_plan();
+        crate::sites_warm::reset_plan();
         crate::realforest::reset_cover_stream();
         // Warm the per-map sampling bakes ([`tiles`] → [`water_near`] → [`tile_centre_ground`])
         // behind the loading veil: the first caller would otherwise pay the one-time bake as a
@@ -3649,6 +3650,8 @@ pub fn build_step(
             crate::stories_warm::populate(commands);
             // Cold-biome story set-pieces (snow / rocky), planned at phase 4 with the POIs.
             crate::stories_cold::populate(commands, meshes, std_mats);
+            // Desert / forest one-off story sites (sites_warm.glb), planned at phase 4.
+            crate::sites_warm::populate(commands);
             crate::castle_kit::populate(commands);
         }
         // Vista pass (pass 5): the lake waterfall off the mesa wall + three framed overlooks.
@@ -3873,6 +3876,8 @@ fn bs_sea_and_boats(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: 
     crate::wayside::plan();
     // After every other planned piece, before the scatter: the snow / rocky story scenes.
     crate::stories_cold::plan();
+    // Then the desert / forest one-off story sites.
+    crate::sites_warm::plan();
     // FOREST_CASTLEKIT_SHOWCASE: reserve open ground for the castle-kit showcase rows.
     crate::castle_kit::plan();
 }

@@ -195,6 +195,7 @@ fn drive_story_seq(
     if clock.seq.is_none() {
         clock.seq = Some(match std::env::var("FOREST_SHOT_CAMS") {
             Ok(spec) => parse_shot_cams(&spec),
+            Err(_) if std::env::var("FOREST_SHOT_STORIES").as_deref() == Ok("sites") => crate::sites_warm::shot_cams(),
             Err(_) => crate::stories_cold::shot_cams(),
         });
     }

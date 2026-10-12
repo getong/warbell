@@ -134,6 +134,7 @@ mod verbs;
 mod vignettes;
 mod bog;
 mod poi;
+mod sites_warm;
 mod stories_cold;
 mod castle_kit;
 mod stories_warm;
