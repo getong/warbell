@@ -421,7 +421,7 @@ pub fn populate_chests(commands: &mut Commands, meshes: &mut Assets<Mesh>, mater
     const HOARD_SPOTS: [(f32, f32); 5] = [
         (-69.0, -45.0), // snow massif
         (60.0, -39.0),  // desert deep
-        (66.0, 4.0),    // rocky highlands
+        (68.2, 10.6),   // rocky highlands (moved with the range, see `boss::region_center`)
         (-60.0, 39.0),  // forest heart
         (0.0, 57.0),    // swamp mire
     ];
