@@ -631,17 +631,26 @@ pub fn populate_landmarks(
             .with_scale(Vec3::splat(scale));
         let (id, parts) = spawn_landmark_model_parts(commands, meshes, materials, &white, model, xf);
         commands.entity(id).insert(BiomeEntity);
-        // Realistic forest: the Blender mill (same footprint, door, window and sail hub) replaces
-        // the low-poly body and sail cross; the vane and the lit window keep their parts.
-        if biome == Biome::Forest {
-            if let Some(k) = crate::realforest::get().filter(|k| k.has("mill_body")) {
-                let mut root = commands.entity(id);
-                root.remove::<Mesh3d>();
-                k.attach_static(&mut root, "mill_body", Transform::IDENTITY);
-                if let Some(&sail) = parts.first() {
-                    let mut s = commands.entity(sail);
+        // Realistic kit: the Blender body (same footprint, and the same faces / anchors the animated
+        // parts sit on) replaces the low-poly base; solid moving parts that have a model swap too
+        // (the mill's sail cross + vane, the stones' hovering keystone). Glows, wisps and smoke keep
+        // their procedural parts. `landmarks.glb`: tools/blender_forest/landmarks_kit.py.
+        let (body, part_swaps): (&str, &[(usize, &str)]) = match biome {
+            Biome::Forest => ("mill_body", &[(0, "mill_sails"), (1, "lm_mill_vane")]),
+            Biome::Snow => ("lm_frozen_spire", &[]),
+            Biome::Desert => ("lm_sunken_pyramid", &[]),
+            Biome::Rocky => ("lm_standing_stones", &[(crate::landmark_models::STONE_COUNT, "lm_keystone")]),
+            Biome::Swamp => ("lm_witch_hut", &[]),
+        };
+        if let Some(k) = crate::realforest::get().filter(|k| k.has(body)) {
+            let mut root = commands.entity(id);
+            root.remove::<Mesh3d>();
+            k.attach_static(&mut root, body, Transform::IDENTITY);
+            for &(i, name) in part_swaps {
+                if let (Some(&part), true) = (parts.get(i), k.has(name)) {
+                    let mut s = commands.entity(part);
                     s.remove::<Mesh3d>();
-                    k.attach_static(&mut s, "mill_sails", Transform::IDENTITY);
+                    k.attach_static(&mut s, name, Transform::IDENTITY);
                 }
             }
         }

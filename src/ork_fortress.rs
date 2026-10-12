@@ -970,13 +970,19 @@ pub fn build(
         {
             continue;
         }
-        let m = match next_u32(&mut rng) % 4 {
+        let kind = next_u32(&mut rng) % 4;
+        let m = match kind {
             0 => bone_pile_mesh(&mut rng),
             1 => stump_mesh(&mut rng),
             2 => mud_pool_mesh(&mut rng),
             _ => spikes_mesh(&mut rng),
         };
-        spawn_solid(commands, meshes, &mat, m, at(p), ry(rng_range(&mut rng, 0.0, TAU)));
+        let rot = ry(rng_range(&mut rng, 0.0, TAU));
+        // The procedural mesh is still built above so the hold's RNG stream (and every later
+        // placement) stays identical with or without the kit.
+        if !kit_clutter(commands, kind, at(p), rot, p) {
+            spawn_solid(commands, meshes, &mat, m, at(p), rot);
+        }
         placed += 1;
     }
 
@@ -1072,23 +1078,36 @@ pub fn build(
             // density kept SPARSE (was ~16% of heart tiles → a wall of trunks); the orks
             // ate the forest, the mire should read open and littered, not wooded.
             let trees = 0.075 * f;
+            // With the realistic kit loaded the dead wood is the scanned-bark Blender trees: the
+            // forest's dead oak, and the swamp's bleached drowned snags for the claw / snag shapes.
             if roll < 0.04 * f {
-                spawn_stand(commands, &tree_meshes, &mat, at(p), 0.9, 2.1, &mut s);
+                if !kit_tree(commands, "dead_a_lod0", at(p), 1.05, 1.55, &mut s) {
+                    spawn_stand(commands, &tree_meshes, &mat, at(p), 0.9, 2.1, &mut s);
+                }
                 crate::blockers::add(p.x, p.y, 0.3);
             } else if roll < 0.06 * f {
-                spawn_stand(commands, &claw_meshes, &mat, at(p), 0.85, 1.7, &mut s);
+                if !kit_tree(commands, "snag_a_lod0", at(p), 0.95, 1.3, &mut s) {
+                    spawn_stand(commands, &claw_meshes, &mat, at(p), 0.85, 1.7, &mut s);
+                }
                 crate::blockers::add(p.x, p.y, 0.3);
             } else if roll < trees {
-                spawn_stand(commands, &snag_meshes, &mat, at(p), 0.9, 1.5, &mut s);
+                if !kit_tree(commands, "snag_b_lod0", at(p), 0.9, 1.3, &mut s) {
+                    spawn_stand(commands, &snag_meshes, &mat, at(p), 0.9, 1.5, &mut s);
+                }
                 crate::blockers::add(p.x, p.y, 0.3);
             } else if roll < trees + 0.06 {
-                let m = match next_u32(&mut s) % 4 {
-                    0 => bone_pile_mesh(&mut s),
-                    1 => spikes_mesh(&mut s),
-                    2 => stump_mesh(&mut s),
-                    _ => mud_pool_mesh(&mut s),
-                };
-                spawn_solid(commands, meshes, &mat, m, at(p), ry(rng_range(&mut s, 0.0, TAU)));
+                // Same kind order as the hold-yard dressing (bones, stump, mud, spikes).
+                let kind = [0, 3, 1, 2][(next_u32(&mut s) % 4) as usize];
+                let rot = ry(rng_range(&mut s, 0.0, TAU));
+                if !kit_clutter(commands, kind, at(p), rot, p) {
+                    let m = match kind {
+                        0 => bone_pile_mesh(&mut s),
+                        3 => spikes_mesh(&mut s),
+                        1 => stump_mesh(&mut s),
+                        _ => mud_pool_mesh(&mut s),
+                    };
+                    spawn_solid(commands, meshes, &mat, m, at(p), rot);
+                }
             } else if roll < trees + 0.08 {
                 spawn_stand(commands, &shroom_meshes, &mat, at(p), 0.8, 1.5, &mut s);
             } else if roll < trees + 0.088 {
@@ -1448,6 +1467,58 @@ fn blight_rescue(
 }
 
 /// Spawn one static prop against the shared vertex-colour material (batches with the rest).
+/// Draw distance of the kit-swapped Blight clutter (the trees use the kit's own LOD ranges).
+const KIT_PROP_FAR: f32 = 95.0;
+
+/// Spawn kit model `name` (when the realistic kit is loaded) as a static, distance-culled prop.
+/// False = no kit / no such model: the caller falls back to its procedural mesh.
+fn kit_prop(commands: &mut Commands, name: &str, pos: Vec3, rot: Quat, scale: f32) -> bool {
+    let Some(k) = crate::realforest::get() else { return false };
+    let range = bevy::camera::visibility::VisibilityRange {
+        start_margin: 0.0..0.0,
+        end_margin: KIT_PROP_FAR..KIT_PROP_FAR + 15.0,
+        use_aabb: true,
+    };
+    let tf = Transform { translation: pos, rotation: rot, scale: Vec3::splat(scale) };
+    let Some(e) = k.spawn_static_with(commands, name, tf, range) else { return false };
+    commands.entity(e).insert(BiomeEntity);
+    true
+}
+
+/// Plant kit tree `lod0` (LOD0 + LOD1 crossfade, far cull) at `pos`, random yaw, scale `lo..hi`.
+fn kit_tree(commands: &mut Commands, lod0: &str, pos: Vec3, lo: f32, hi: f32, s: &mut u32) -> bool {
+    let Some((k, m)) = crate::realforest::get().and_then(|k| k.pick_named(&[lod0], 0.0).map(|m| (k, m))) else {
+        return false;
+    };
+    let tf = Transform { translation: pos, rotation: ry(rng_range(s, 0.0, TAU)), scale: Vec3::splat(rng_range(s, lo, hi)) };
+    let mut e = commands.spawn((tf, BiomeEntity));
+    k.attach_tree(&mut e, m, true);
+    true
+}
+
+/// The trampled-ground clutter kinds (0 bones, 1 stump, 2 mud, 3 spikes) as kit models: the
+/// desert's scanned bone scatter (doubled up into a midden), the forest stump, the camps' skull
+/// stakes. Mud pools stay procedural (a flat wet decal, nothing to model). Scale / sink hashed
+/// from the spot so it never touches the scatter RNG.
+fn kit_clutter(commands: &mut Commands, kind: u32, pos: Vec3, rot: Quat, p: Vec2) -> bool {
+    let (r1, r2) = crate::realforest::rolls(p.x, p.y);
+    match kind {
+        0 => {
+            // A midden, not one stray bone: two scattered heaps, the second turned and offset.
+            let s = 1.7 + 0.7 * r1;
+            let ok = kit_prop(commands, "ds_bones", pos - Vec3::Y * 0.03, rot, s);
+            if ok {
+                let off = rot * Vec3::new(0.35 * s, 0.0, -0.2 * s);
+                kit_prop(commands, "ds_bones", pos + off - Vec3::Y * 0.04, rot * ry(2.1 + r2), s * 0.8);
+            }
+            ok
+        }
+        1 => kit_prop(commands, "stump_a", pos - Vec3::Y * 0.06, rot, 0.85 + 0.5 * r1),
+        3 => kit_prop(commands, "ork_spikes", pos, rot, 0.8 + 0.25 * r2),
+        _ => false,
+    }
+}
+
 fn spawn_solid(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,

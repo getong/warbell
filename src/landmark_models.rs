@@ -784,8 +784,11 @@ const RUNE_AMBER: Color = Color::srgb(1.0, 0.72, 0.28);
 /// gate pair (+Z side, where the road spur arrives); the gap near angle ~0.2 is where
 /// the fallen seventh lies. KEEP IN SYNC with [`stone_blockers`].
 const RING_R: f32 = 2.9;
-const STONES: [(f32, f32); 6] =
+const STONES: [(f32, f32); STONE_COUNT] =
     [(1.19, 3.25), (1.95, 3.25), (2.85, 2.6), (3.75, 2.4), (4.65, 2.8), (5.5, 2.55)];
+/// Monoliths in the ring; also the index of the keystone in [`standing_stones`]' parts (it follows
+/// one rune strip per stone) — `ruins::populate_landmarks` swaps that part for the kit keystone.
+pub const STONE_COUNT: usize = 6;
 /// Where the broken seventh monolith lies (angle, radius).
 const FALLEN: (f32, f32) = (0.22, 3.35);
 
