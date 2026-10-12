@@ -590,7 +590,7 @@ fn build_inv_panel(
                                         if slot.count > 1 {
                                             cell.spawn((
                                                 Node { position_type: PositionType::Absolute, right: Val::Px(2.0), bottom: Val::Px(0.0), ..default() },
-                                                label(&fonts.extrabold, format!("{}", slot.count), 12.0, Color::WHITE),
+                                                label(&fonts.extrabold, format!("{}", slot.count), 12.0, TEXT),
                                                 TextShadow { offset: Vec2::ZERO, color: rgba(0, 0, 0, 0.9) },
                                             ));
                                         }

@@ -16,7 +16,7 @@ use bevy::prelude::*;
 // back empty, so focus reset to None each frame and hover/arrows/tooltips were all dead.
 use bevy::ui::UiGlobalTransform;
 
-use super::theme::{rgba, GOLD};
+use super::theme::{GOLD, PANEL};
 
 /// Marker: this node participates in arrow-key/d-pad focus navigation.
 #[derive(Component, Default)]
@@ -188,7 +188,7 @@ fn spawn_tip(mut commands: Commands, fonts: Res<super::fonts::UiFonts>) {
                 max_width: Val::Px(260.0),
                 ..default()
             },
-            BackgroundColor(rgba(20, 16, 11, 0.96)),
+            BackgroundColor(PANEL),
             BorderColor::all(super::theme::GOLD_HAIRLINE),
             GlobalZIndex(220),
             Visibility::Hidden,

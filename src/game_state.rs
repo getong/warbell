@@ -1600,7 +1600,7 @@ fn update_diff_seg(
         bg.0 = if on { GOLD_DEEP } else { Color::NONE };
         for child in children.iter() {
             if let Ok(mut tc) = text_q.get_mut(child) {
-                tc.0 = if on { Color::WHITE } else { TEXT_FAINT };
+                tc.0 = if on { TEXT } else { TEXT_FAINT };
             }
         }
     }
@@ -1731,7 +1731,7 @@ fn spawn_confirm(commands: &mut Commands, fonts: &UiFonts) {
                     anim_btn(AnimKind::PopIn, 0.05, 0.26),
                 ))
                 .with_children(|b| {
-                    b.spawn(label(&fonts.extrabold, "OVERWRITE", 16.0, Color::WHITE));
+                    b.spawn(label(&fonts.extrabold, "OVERWRITE", 16.0, TEXT));
                 });
                 row.spawn((
                     Node {

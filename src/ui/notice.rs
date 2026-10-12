@@ -108,12 +108,12 @@ fn update_notice(
                     border_radius: radius(R_CARD),
                     ..default()
                 },
-                BackgroundColor(rgba(26, 21, 15, 0.88)),
-                BorderColor::all(rgba(224, 164, 88, 0.5)),
+                BackgroundColor(PANEL_HUD),
+                BorderColor::all(GOLD_HAIRLINE),
                 shadow_card(),
             ))
             .with_children(|p| {
-                p.spawn(label(&fonts.bold, text.to_string(), 13.0, rgb(243, 230, 200)));
+                p.spawn(label(&fonts.semibold, text.to_string(), FONT_BODY, TEXT));
             });
         }
     });

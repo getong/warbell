@@ -299,7 +299,7 @@ pub fn player_arts(
             floats.0.push(crate::combat_fx::FloatReq {
                 world: Vec3::new(p.x, p.y + 2.0, p.z),
                 text: format!("+{}", SWEEP_ALLY_HEAL as i32),
-                color: Color::srgb(0.5, 1.0, 0.6),
+                color: crate::ui::theme::GOOD,
                 scale: 0.9,
             });
         }
@@ -309,7 +309,7 @@ pub fn player_arts(
         floats.0.push(crate::combat_fx::FloatReq {
             world: Vec3::new(hero.pos.x, hero.y + 2.4, hero.pos.y),
             text: format!("+{}", sweep_heal as i32),
-            color: Color::srgb(0.5, 1.0, 0.6),
+            color: crate::ui::theme::GOOD,
             scale: 1.1,
         });
     }

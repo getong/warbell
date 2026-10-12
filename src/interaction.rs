@@ -319,9 +319,9 @@ fn drive_interaction(
 }
 
 /// Default chip border (gold hairline) — `update_prompt` flips to `RED_BORDER` when blocked.
-const PROMPT_BORDER: Color = rgba(255, 213, 140, 0.5);
+const PROMPT_BORDER: Color = GOLD_HAIRLINE;
 /// Keycap glyph foreground (cream on the dark keycap).
-const KEYCAP_FG: Color = rgba(255, 224, 170, 0.92);
+const KEYCAP_FG: Color = GOLD;
 
 /// The bordered chip box — a flex row holding a keycap + a label. Starts hidden; `update_prompt`
 /// toggles each chip's `display`.
@@ -514,7 +514,7 @@ fn update_prompt(
     if let Ok((mut bc, mut bg)) = chip_q.single_mut() {
         if blocked.is_some() {
             *bc = BorderColor::all(RED_BORDER);
-            bg.0 = rgba(64, 18, 18, 0.88); // red-tinted HUD chrome — reads "can't"
+            bg.0 = rgba(58, 22, 16, 0.86); // brick-tinted HUD chrome — reads "can't"
         } else {
             *bc = BorderColor::all(PROMPT_BORDER);
             bg.0 = PANEL_HUD;

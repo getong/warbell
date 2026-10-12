@@ -439,7 +439,7 @@ fn panel_section(
         BorderColor::all(BORDER_SOFT),
     ))
     .with_children(|c| {
-        c.spawn(label(&fonts.display, title, 11.0, rgb(216, 178, 114)));
+        c.spawn(label(&fonts.display, title, FONT_CAPTION, GOLD));
         f(c);
     });
 }

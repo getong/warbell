@@ -9,6 +9,7 @@
 
 use bevy::prelude::*;
 
+use crate::ui::theme::*;
 use crate::ui::{label, UiFonts};
 
 /// Caption size (px) of an ordinary line, and of a muffled aside.
@@ -81,8 +82,15 @@ pub fn read_secs(text: &str) -> f32 {
     (1.6 + text.chars().count() as f32 / 14.0).clamp(2.5, 8.0)
 }
 
+/// The caption plate (soft dark band behind the line — fades with it).
 #[derive(Component)]
-struct SubtitleText;
+struct SubtitlePlate;
+/// The speaker-name span ("Townsfolk") — antique gold, so who's talking reads at a glance.
+#[derive(Component)]
+struct SubtitleSpeaker;
+/// The spoken-line span — warm parchment-white.
+#[derive(Component)]
+struct SubtitleLine;
 
 pub struct SubtitlePlugin;
 
@@ -99,7 +107,7 @@ fn setup(mut commands: Commands, fonts: Res<UiFonts>) {
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                bottom: Val::Percent(16.0),
+                bottom: Val::Percent(14.0),
                 width: Val::Percent(100.0),
                 justify_content: JustifyContent::Center,
                 ..default()
@@ -107,40 +115,103 @@ fn setup(mut commands: Commands, fonts: Res<UiFonts>) {
             GlobalZIndex(40),
         ))
         .with_children(|p| {
+            // A soft, borderless dark band (the film-subtitle read): legible over bright snow or
+            // sky without a hard UI box. Invisible until a line is up.
             p.spawn((
-                label(&fonts.semibold, "", SIZE, Color::NONE),
-                Node { max_width: Val::Px(760.0), ..default() },
-                TextShadow { offset: Vec2::splat(2.0), color: Color::srgba(0.0, 0.0, 0.0, 0.85) },
-                SubtitleText,
-            ));
+                Node {
+                    max_width: Val::Px(780.0),
+                    padding: UiRect::axes(Val::Px(SP_L), Val::Px(SP_XS + 2.0)),
+                    border_radius: radius(R_CARD),
+                    ..default()
+                },
+                BackgroundColor(Color::NONE),
+                SubtitlePlate,
+            ))
+            .with_children(|plate| {
+                plate
+                    .spawn((
+                        label(&fonts.semibold, "", SIZE, Color::NONE),
+                        TextShadow { offset: Vec2::splat(1.5), color: TEXT_SHADOW },
+                        TextLayout { justify: Justify::Center, ..default() },
+                    ))
+                    .with_children(|t| {
+                        t.spawn((
+                            TextSpan::new(""),
+                            TextFont { font: fonts.semibold.clone().into(), font_size: SIZE.into(), ..default() },
+                            TextColor(Color::NONE),
+                            SubtitleSpeaker,
+                        ));
+                        t.spawn((
+                            TextSpan::new(""),
+                            TextFont { font: fonts.regular.clone().into(), font_size: SIZE.into(), ..default() },
+                            TextColor(Color::NONE),
+                            SubtitleLine,
+                        ));
+                    });
+            });
         });
 }
 
+/// Split a caption into its "Speaker: " prefix (if it has one) and the spoken line. Only a short,
+/// name-like prefix counts, so a line that merely contains a colon isn't split mid-sentence.
+fn split_speaker(text: &str) -> (&str, &str) {
+    if let Some(i) = text.find(": ") {
+        let head = &text[..i];
+        if !head.is_empty() && head.chars().count() <= 28 && !head.contains(['.', '!', '?', '*']) {
+            return (&text[..i + 2], &text[i + 2..]);
+        }
+    }
+    ("", text)
+}
+
+#[allow(clippy::type_complexity)]
 fn update(
     time: Res<Time>,
     subs: Res<Subtitles>,
     fonts: Res<UiFonts>,
-    mut q: Query<(&mut Text, &mut TextColor, &mut TextFont), With<SubtitleText>>,
+    mut plate: Query<&mut BackgroundColor, With<SubtitlePlate>>,
+    mut speaker: Query<(&mut TextSpan, &mut TextColor, &mut TextFont), (With<SubtitleSpeaker>, Without<SubtitleLine>)>,
+    mut line: Query<(&mut TextSpan, &mut TextColor, &mut TextFont), (With<SubtitleLine>, Without<SubtitleSpeaker>)>,
+    mut shown: Local<String>,
 ) {
-    let Ok((mut text, mut color, mut font)) = q.single_mut() else { return };
+    let (Ok(mut bg), Ok((mut sp, mut sp_col, mut sp_font)), Ok((mut ln, mut ln_col, mut ln_font))) =
+        (plate.single_mut(), speaker.single_mut(), line.single_mut())
+    else {
+        return;
+    };
     let remaining = subs.until - time.elapsed_secs();
     if remaining <= 0.0 {
-        if !text.0.is_empty() {
-            *text = Text::new("");
+        if !shown.is_empty() {
+            shown.clear();
+            sp.0.clear();
+            ln.0.clear();
+            sp_col.0 = Color::NONE;
+            ln_col.0 = Color::NONE;
+            bg.0 = Color::NONE;
         }
-        color.0 = Color::NONE;
         return;
     }
-    if text.0 != subs.text {
-        *text = Text::new(subs.text.clone());
+    if *shown != subs.text {
+        *shown = subs.text.clone();
+        let (who, said) = split_speaker(&subs.text);
+        sp.0 = who.to_string();
+        ln.0 = said.to_string();
         // Restyle only when the caption changes: a muffled aside in the lighter face, smaller.
-        let (face, size) = if subs.muffled { (&fonts.regular, MUFFLED_SIZE) } else { (&fonts.semibold, SIZE) };
-        *font = TextFont { font: face.clone().into(), font_size: size.into(), ..default() };
+        let size = if subs.muffled { MUFFLED_SIZE } else { SIZE };
+        *sp_font = TextFont { font: fonts.semibold.clone().into(), font_size: size.into(), ..default() };
+        let face = if subs.muffled { &fonts.regular } else { &fonts.semibold };
+        *ln_font = TextFont { font: face.clone().into(), font_size: size.into(), ..default() };
     }
     // Fade the final 0.6s out so lines don't pop off.
     let a = (remaining / 0.6).min(1.0);
-    color.0 = if subs.muffled { Color::srgba(0.78, 0.82, 0.88, 0.82 * a) } else { Color::srgba(0.95, 0.97, 1.0, a) };
+    let k = if subs.muffled { 0.8 } else { 1.0 };
+    sp_col.0 = GOLD.with_alpha(a * k);
+    ln_col.0 = if subs.muffled { TEXT_DIM.with_alpha(a * k) } else { TEXT.with_alpha(a) };
+    bg.0 = SUBTITLE_PLATE.with_alpha(SUBTITLE_PLATE.alpha() * a);
 }
+
+/// The caption plate tint — the HUD chrome's warm iron, kept faint (it's a reading aid, not a box).
+const SUBTITLE_PLATE: Color = rgba(14, 11, 8, 0.46);
 
 #[cfg(test)]
 mod tests {

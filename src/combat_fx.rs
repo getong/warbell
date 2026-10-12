@@ -77,21 +77,22 @@ const HP_BAR_CONE_SLOPE: f32 = 0.36;
 const HP_BAR_NEAR: f32 = 4.0;
 
 // ── Ported float colours ────────────────────────────────────────────────────
-/// Red `-N` when the hero is struck (`#ff5a4a`).
+// Muted to the UI kit's semantic tones (`ui::theme`) — the old candy red/blue/green read arcade.
+/// Brick `-N` when the hero is struck.
 pub fn col_hero_hit() -> Color {
-    Color::srgb(1.0, 0.353, 0.290)
+    crate::ui::theme::BAD
 }
-/// Blue `BLOCK` (`#bcd4ff`).
+/// Pale-steel `BLOCK`.
 pub fn col_block() -> Color {
-    Color::srgb(0.737, 0.831, 1.0)
+    crate::ui::theme::INFO
 }
-/// White `N` on a struck enemy.
+/// Parchment-white `N` on a struck enemy.
 pub fn col_ork_hit() -> Color {
-    Color::WHITE
+    crate::ui::theme::TEXT
 }
-/// Green `☠` on a kill (`#9be38a`).
+/// Sage `†` on a kill.
 pub fn col_kill() -> Color {
-    Color::srgb(0.608, 0.890, 0.541)
+    crate::ui::theme::GOOD
 }
 
 // ── 1. Floating damage numbers (screen-space UI text) ───────────────────────
@@ -230,7 +231,7 @@ fn float_test(
     }
     *t = 0.5;
     let base = Vec3::new(hero.pos.x, 2.2, hero.pos.y);
-    let amber = Color::srgb(0.96, 0.78, 0.30);
+    let amber = crate::ui::theme::GOLD;
     let samples: [(&str, Color, f32, Vec3); 6] = [
         ("25", col_ork_hit(), 1.0, Vec3::new(-1.4, 0.4, 0.0)),
         ("48", col_ork_hit(), 1.5, Vec3::new(-0.4, 1.1, 0.0)),
