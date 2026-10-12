@@ -82,16 +82,16 @@ fn setup_orb_assets(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let mesh = meshes.add(Sphere::new(0.13).mesh().ico(2).unwrap());
+    let mesh = meshes.add(Sphere::new(0.09).mesh().ico(2).unwrap());
+    // Muted reward motes (the unlit base colour IS the output — HDR gain feeds a soft bloom):
+    // a dull tarnished-gold glint and a pale cold wisp for XP, instead of saturated candy orbs.
     let gold = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 0.82, 0.25),
-        emissive: LinearRgba::rgb(3.0, 2.0, 0.3),
+        base_color: Color::LinearRgba(LinearRgba::rgb(1.5, 1.0, 0.38)),
         unlit: true,
         ..default()
     });
     let xp = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.42, 0.8, 1.0),
-        emissive: LinearRgba::rgb(0.6, 1.6, 3.0),
+        base_color: Color::LinearRgba(LinearRgba::rgb(0.85, 0.95, 1.05)),
         unlit: true,
         ..default()
     });

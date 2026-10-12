@@ -149,7 +149,7 @@ fn setup_build_assets(
         ..default()
     });
     let ghost_body = std_mats.add(StandardMaterial {
-        base_color: Color::srgba(0.3, 1.0, 0.35, 0.5),
+        base_color: GHOST_OK,
         alpha_mode: AlphaMode::Blend,
         unlit: true,
         cull_mode: None,
@@ -252,8 +252,9 @@ struct GhostState {
 }
 
 /// The ghost tint colours.
-const GHOST_OK: Color = Color::srgba(0.32, 1.0, 0.38, 0.5);
-const GHOST_BAD: Color = Color::srgba(1.0, 0.32, 0.3, 0.5);
+/// Muted to the grounded look: a pale bone ghost when the spot is valid, a dull rust when not.
+const GHOST_OK: Color = Color::srgba(0.80, 0.80, 0.70, 0.42);
+const GHOST_BAD: Color = Color::srgba(0.70, 0.28, 0.22, 0.48);
 /// Wall segments step by their footprint so a dragged run abuts cleanly; cap the run length.
 const WALL_STEP: f32 = 2.0;
 const WALL_RUN_MAX: i32 = 30;
@@ -352,8 +353,12 @@ fn ghost_placement(
             None => vec![snapped],
         };
         let all_ok = line.iter().all(|t| placement_valid(kind, Side::Player, *t, &deposits));
-        if let Some(mut m) = mats.get_mut(&assets.ghost_body) {
-            m.base_color = if all_ok { GHOST_OK } else { GHOST_BAD };
+        // Only touch the material when validity flips — `get_mut` re-uploads it every call.
+        let tint = if all_ok { GHOST_OK } else { GHOST_BAD };
+        if mats.get(&assets.ghost_body).is_some_and(|m| m.base_color != tint) {
+            if let Some(mut m) = mats.get_mut(&assets.ghost_body) {
+                m.base_color = tint;
+            }
         }
         // Pool the preview segments to the run length; park each on its tile, hide extras.
         while ghost.wall_ghosts.len() < line.len() {
@@ -398,8 +403,12 @@ fn ghost_placement(
             ghost.root = Some(spawn_ghost(&mut commands, &assets, kind));
         }
         let valid = placement_valid(kind, Side::Player, snapped, &deposits);
-        if let Some(mut m) = mats.get_mut(&assets.ghost_body) {
-            m.base_color = if valid { GHOST_OK } else { GHOST_BAD };
+        // Only touch the material when validity flips — `get_mut` re-uploads it every call.
+        let tint = if valid { GHOST_OK } else { GHOST_BAD };
+        if mats.get(&assets.ghost_body).is_some_and(|m| m.base_color != tint) {
+            if let Some(mut m) = mats.get_mut(&assets.ghost_body) {
+                m.base_color = tint;
+            }
         }
         let y = crate::worldmap::ground_at_world(snapped.x, snapped.y).unwrap_or(0.0);
         if let Some(e) = ghost.root {
@@ -435,7 +444,7 @@ fn clear_ghost(commands: &mut Commands, ghost: &mut GhostState) {
     ghost.kind = None;
 }
 
-/// A faint blue ring on the ground marking your castle's build territory ([`BUILD_TERRITORY_R`]) —
+/// A faint chalk survey line on the ground marking your castle's build territory ([`BUILD_TERRITORY_R`]) —
 /// shown only while you're placing a building, so the "why is the ghost red out here" boundary is
 /// visible ("granice zamku"). Spawned lazily once, then just toggled visible/hidden.
 fn territory_ring(
@@ -443,7 +452,7 @@ fn territory_ring(
     mut ring: Local<Option<Entity>>,
     placing: Res<Placing>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut mats: ResMut<Assets<StandardMaterial>>,
+    marks: Option<Res<crate::combat_marks::MarkAssets>>,
     mut vis_q: Query<&mut Visibility>,
 ) {
     let want = placing.0.is_some();
@@ -451,25 +460,20 @@ fn territory_ring(
         if !want {
             return; // don't spawn until first needed
         }
-        let mesh = meshes.add(
-            Annulus::new(BUILD_TERRITORY_R - 0.6, BUILD_TERRITORY_R).mesh().resolution(96).build(),
-        );
-        let mat = mats.add(StandardMaterial {
-            base_color: Color::srgba(0.35, 0.72, 1.0, 0.5),
-            emissive: LinearRgba::rgb(0.12, 0.4, 0.85),
-            unlit: true,
-            alpha_mode: AlphaMode::Blend,
-            cull_mode: None,
-            ..default()
-        });
-        let y = crate::worldmap::ground_at_world(PLAYER_BASE.x, PLAYER_BASE.y).unwrap_or(0.0) + 0.15;
+        // The territory edge is a surveyed-plot ground mark (`combat_marks::MarkKind::Plot`:
+        // dashed, pegged chalk line) draped over the terrain — 72u is far too wide to lie flat.
+        let Some(marks) = marks.as_deref() else { return };
+        let (disc, at) = crate::combat_marks::draped_disc(PLAYER_BASE, BUILD_TERRITORY_R * 2.0 / 0.86, 96, 0.06);
+        let mesh = meshes.add(disc);
+        let mat = marks.light.clone();
         *ring = Some(
             commands
                 .spawn((
                     Mesh3d(mesh),
                     MeshMaterial3d(mat),
-                    Transform::from_xyz(PLAYER_BASE.x, y, PLAYER_BASE.y)
-                        .with_rotation(Quat::from_rotation_x(-FRAC_PI_2)),
+                    Transform::from_translation(at),
+                    crate::combat_marks::tag(crate::combat_marks::MarkKind::Plot, 0.8, 11, 0.0),
+                    bevy::light::NotShadowCaster,
                     // `RtsUi` (hide-don't-despawn): the `Local<Option<Entity>>` above caches this
                     // id for the process lifetime, so the generation sweep must not reap it.
                     super::RtsUi,

@@ -32,6 +32,11 @@ const KIND_SHOCK: u32 = 1u;
 const KIND_BLOOD: u32 = 2u;
 const KIND_BLOOD_DRY: u32 = 3u;
 const KIND_SCORCH: u32 = 4u;
+const KIND_RUNE: u32 = 5u;    // guardian-trial rune circle (aux = hold progress)
+const KIND_PLOT: u32 = 6u;    // surveyed build plot (aux ≥ 0.5 = the targeted plot)
+const KIND_ORDER: u32 = 7u;   // RTS move-order click-mark (aux = age)
+const KIND_ORDER_ATK: u32 = 9u; // RTS attack-order click-mark (aux = age)
+const KIND_SELECT: u32 = 8u;  // RTS selected-unit ring (aux ≥ 0.5 = rival side)
 
 const TAU: f32 = 6.28318530718;
 
@@ -133,6 +138,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     var albedo = vec3<f32>(0.0);
     var light_a = 0.0; // coverage of the pale line
     var dark_a = 0.0;  // coverage of the darkening halo
+    var ember = 0.0;   // rune circle only: smouldering-glyph glow (emissive, 0..1)
     if kind == KIND_RING {
         // Soft-lock target ring: a thin feathered line broken into four arcs (soft-ended gaps on
         // the diagonals) with a short inward tick at each arc's centre — a quiet focus mark, not
@@ -148,6 +154,72 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         // A broad, faint shadow just outside the line grounds it (reads pressed INTO the earth).
         dark_a = line(r, 0.84, 0.07) * 0.22 + line(r, 0.80, 0.03) * 0.12;
         albedo = vec3<f32>(0.80, 0.74, 0.62); // pale bone / chalk
+    } else if kind == KIND_RUNE {
+        // Guardian-trial rune circle: two thin chalk-and-ash lines framing a band of scratched,
+        // seeded rune glyphs, over a faint scorched wash — a worn ritual circle cut into the
+        // ground, not a neon hoop. `aux` (the hold meter) kindles the glyphs one by one into a dim
+        // ember glow, sweeping round from the north, so progress reads in the world too.
+        // Scale: the disc's half-width is RUNE_R / 0.865 ≈ 9.25u, so 0.001 in `p` ≈ 1cm.
+        let ang = atan2(p.y, p.x);
+        let u = fract(ang / TAU + 0.25);                         // 0..1 round the circle
+        // Worn / broken chalk: patchy, with whole stretches scuffed away.
+        let wear = smoothstep(0.30, 0.62, fbm(p * 11.0 + vec2<f32>(seed))) * 0.85 + 0.15;
+        // The hold line itself (r = RUNE_R) and a fainter outer line ~0.6m beyond it.
+        let lines = line(r, 0.865, 0.0032) * 0.8 + line(r, 0.93, 0.0024) * 0.45;
+        // Glyph band between the two lines: 54 cells (~1m apart), each a small seeded rune — a
+        // stem plus a slanted branch — about 40cm tall, scratched ~3cm wide.
+        let cells = 54.0;
+        let cu = u * cells;
+        let ci = floor(cu);
+        let cf = fract(cu) - 0.5;                                 // -0.5..0.5 across the cell
+        let rb = (r - 0.8975) / 0.020;                            // -1..1 across the band
+        let h1 = hash2(vec2<f32>(ci, seed));
+        let h2 = hash2(vec2<f32>(ci * 1.7, seed + 4.0));
+        let x_px = cf * (TAU * r / cells);                        // arc-length across the cell (p units)
+        let band = 1.0 - smoothstep(0.8, 1.0, abs(rb));
+        let stem = (1.0 - smoothstep(0.0012, 0.0030, abs(x_px - (h1 - 0.5) * 0.02))) * band;
+        let slope = select(-1.0, 1.0, h2 > 0.5);
+        let diag_x = x_px - slope * rb * 0.012 * (0.6 + h2);
+        let diag = (1.0 - smoothstep(0.0010, 0.0026, abs(diag_x))) * (1.0 - smoothstep(0.3, 0.8, abs(rb - (h1 - 0.5))));
+        let glyph = clamp(stem + diag * 0.85, 0.0, 1.0) * step(0.15, h2);
+        light_a = clamp(lines + glyph * 0.6, 0.0, 1.0) * wear * 0.7;
+        // Scorched earth along the band + a very faint ash wash over the whole floor.
+        dark_a = (1.0 - smoothstep(0.01, 0.06, abs(r - 0.8975))) * 0.22
+            + (1.0 - smoothstep(0.70, 0.96, r)) * 0.06 * fbm(p * 4.0 + vec2<f32>(seed * 2.0));
+        albedo = vec3<f32>(0.60, 0.57, 0.51); // ash / old chalk
+        // Kindled glyphs: those whose angle is behind the hold meter smoulder like banked embers.
+        let lit_cell = 1.0 - smoothstep(aux - 0.002, aux + 0.002, (ci + 0.5) / cells);
+        ember = glyph * lit_cell * wear;
+    } else if kind == KIND_PLOT {
+        // Surveyed building plot: a dashed chalk line (pegged + strung) round a softly trampled pad.
+        let ang = atan2(p.y, p.x);
+        let dash = smoothstep(0.18, 0.30, abs(fract(ang / TAU * 28.0) - 0.5) * 2.0);
+        let sel = step(0.5, aux);
+        let wear = 0.6 + 0.4 * fbm(p * 8.0 + vec2<f32>(seed));
+        light_a = line(r, 0.86, 0.012) * dash * wear * mix(0.7, 1.0, sel);
+        // Four survey pegs at the quarter points.
+        let q = fract(ang / (TAU * 0.25) + 0.5) - 0.5;
+        let peg = (1.0 - smoothstep(0.012, 0.024, abs(q) * TAU * 0.25 * r)) * line(r, 0.86, 0.035);
+        light_a = max(light_a, peg);
+        // The targeted plot also gets a faint inner line, so "this one" reads without a glow.
+        light_a = max(light_a, line(r, 0.78, 0.008) * sel * 0.6 * wear);
+        dark_a = (1.0 - smoothstep(0.55, 0.90, r)) * 0.10 * fbm(p * 3.0) * sel + line(r, 0.88, 0.03) * 0.18;
+        albedo = vec3<f32>(0.80, 0.76, 0.66);
+    } else if kind == KIND_ORDER || kind == KIND_ORDER_ATK {
+        // RTS order confirmation: four short inward chevrons, a centre dot, chalk (move) or a
+        // muted rust (attack) — a quiet "heard you, here", not a neon hoop.
+        let ang = atan2(p.y, p.x);
+        let q = fract(ang / (TAU * 0.25) + 0.5) - 0.5;
+        let chev_r = 0.62 + abs(q) * 0.9;
+        let chev = line(r, chev_r, 0.025) * (1.0 - smoothstep(0.16, 0.22, abs(q)));
+        light_a = chev + line(r, 0.0, 0.08) * 0.6;
+        dark_a = chev * 0.25;
+        albedo = select(vec3<f32>(0.80, 0.77, 0.68), vec3<f32>(0.62, 0.26, 0.20), kind == KIND_ORDER_ATK);
+    } else if kind == KIND_SELECT {
+        // Selected unit: a thin, slightly worn line + soft contact shadow (muted side tint).
+        light_a = line(r, 0.84, 0.03) * (0.75 + 0.25 * fbm(p * 6.0 + vec2<f32>(seed)));
+        dark_a = line(r, 0.90, 0.06) * 0.25;
+        albedo = mix(vec3<f32>(0.70, 0.74, 0.76), vec3<f32>(0.62, 0.30, 0.22), step(0.5, aux));
     } else {
         // Kill / slam shockwave: a ring of thrown dust that rushes out (CPU scale) and frays as it
         // goes — soft and broken by noise, with darker scuffed earth along its leading edge.
@@ -167,6 +239,10 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // would paint the transparent corners of the quad with haze.
     var pbr_input = pbr_input_from_standard_material(in, is_front);
     pbr_input.material.base_color = vec4<f32>(albedo, 1.0);
+    // Banked-ember glow on kindled rune glyphs: a low, deep orange (no white core) so bloom only
+    // kisses it — legible at night without turning the circle into a light source.
+    pbr_input.material.emissive = vec4<f32>(vec3<f32>(1.6, 0.55, 0.16) * ember * strength, 1.0);
+    light_a = max(light_a, ember * 0.9 * strength);
     var lit = apply_pbr_lighting(pbr_input);
     lit = main_pass_post_lighting_processing(pbr_input, vec4<f32>(lit.rgb, 1.0));
     let total_a = clamp(light_a + dark_a * (1.0 - light_a), 0.0, 1.0);

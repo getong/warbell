@@ -411,48 +411,25 @@ pub fn setup_combat_fx(
     marks: Res<crate::combat_marks::MarkAssets>,
 ) {
     let mesh = meshes.add(Sphere::new(0.07).mesh().ico(1).unwrap());
-    let hit = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 0.81, 0.42),
-        emissive: LinearRgba::rgb(3.0, 1.6, 0.4),
+    // Sparks are hot metal: small HDR ember-orange points (an unlit material outputs `base_color`
+    // verbatim — `emissive` is ignored — so the HDR gain rides the base colour), deep enough that
+    // bloom gives a short glint, never a white/yellow cartoon star.
+    let ember = |r: f32, g: f32, b: f32| StandardMaterial {
+        base_color: Color::LinearRgba(LinearRgba::rgb(r, g, b)),
         unlit: true,
         ..default()
-    });
-    let kill = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 0.94, 0.7),
-        emissive: LinearRgba::rgb(5.0, 4.0, 1.6),
-        unlit: true,
-        ..default()
-    });
-    let heal = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.5, 1.0, 0.6),
-        emissive: LinearRgba::rgb(0.8, 3.0, 1.2),
-        unlit: true,
-        ..default()
-    });
-    // Blood: dark, lightless — it must NOT glow under the scene's bloom (sparks do).
-    let blood = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.54, 0.10, 0.10),
-        unlit: true,
-        ..default()
-    });
-    let chip = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.62, 0.62, 0.66),
-        unlit: true,
-        ..default()
-    });
-    // Sand-dash dust: warm tan, no glow (it's dust, not energy).
-    let dust = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.80, 0.67, 0.42),
-        unlit: true,
-        ..default()
-    });
-    // Bramble leaves: green with a faint glow so they pop against foliage.
-    let leaf = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.34, 0.60, 0.24),
-        emissive: LinearRgba::rgb(0.22, 0.55, 0.12),
-        unlit: true,
-        ..default()
-    });
+    };
+    let hit = materials.add(ember(2.2, 0.85, 0.22));
+    let kill = materials.add(ember(2.8, 1.3, 0.45));
+    // Healing motes: a faint pale-sage shimmer, not a neon-green burst.
+    let heal = materials.add(ember(0.55, 0.75, 0.5));
+    // Debris is real matter: PBR-LIT (matte), so blood, stone chips, dust and leaves take the
+    // scene's sun / shade / torchlight instead of drawing as flat-colour beads.
+    let matte = |c: Color| StandardMaterial { base_color: c, perceptual_roughness: 0.95, reflectance: 0.25, ..default() };
+    let blood = materials.add(StandardMaterial { perceptual_roughness: 0.35, ..matte(Color::srgb(0.36, 0.05, 0.04)) });
+    let chip = materials.add(matte(Color::srgb(0.46, 0.44, 0.42)));
+    let dust = materials.add(matte(Color::srgb(0.62, 0.54, 0.40)));
+    let leaf = materials.add(matte(Color::srgb(0.26, 0.36, 0.16)));
     let quad = meshes.add(Rectangle::new(1.0, 1.0).mesh().build());
     // Planar flashes blend over the scene (alpha-faded each frame) and carry an emissive so
     // bloom picks them up while they're bright. Double-sided so they read from either face.

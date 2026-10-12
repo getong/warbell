@@ -50,7 +50,7 @@ const BEACON_MOTES: u32 = 22;
 /// reach comes from its HDR glow + bloom ([`BEACON_GLOW`]), not from mote size.
 const BEACON_MOTE_R: f32 = 0.08;
 /// Linear HDR gain on a beacon's tint — what makes a mote glow (see `spawn_beacon`).
-const BEACON_GLOW: f32 = 8.0;
+const BEACON_GLOW: f32 = 5.0;
 
 // ── Rune-Trial — the gear gate ──────────────────────────────────────────────────────
 // Each biome landmark hoards one signature gear piece, SEALED until the hero earns it with a
@@ -325,7 +325,18 @@ fn spawn_beacon(
     // "large orange discs floating over the forest camp"). Now each mote is a small point of
     // light: values > 1 feed the bloom, and additive blending sums overlapping motes like light
     // instead of stacking discs.
-    let glow = LinearRgba::from(color) * BEACON_GLOW;
+    // Muted to fit the grounded look: the biome hue keeps 40% of its saturation over a warm
+    // candle-white of equal luminance, so a column reads as pale witch-light (still telling
+    // biomes apart) rather than a neon cyan/violet laser.
+    let lin = LinearRgba::from(color);
+    let lum = 0.2126 * lin.red + 0.7152 * lin.green + 0.0722 * lin.blue;
+    let warm = LinearRgba::rgb(lum * 1.08, lum * 0.98, lum * 0.82);
+    let muted = LinearRgba::rgb(
+        warm.red + (lin.red - warm.red) * 0.4,
+        warm.green + (lin.green - warm.green) * 0.4,
+        warm.blue + (lin.blue - warm.blue) * 0.4,
+    );
+    let glow = muted * BEACON_GLOW;
     let mat = materials.add(StandardMaterial {
         base_color: Color::LinearRgba(glow.with_alpha(1.0)),
         unlit: true,
@@ -391,7 +402,7 @@ impl Plugin for LandmarksPlugin {
             .add_systems(Update, sync_beacons)
             // The trial HUD + rune ring draw ungated (like the rest of the HUD) so they show + clean
             // up through any frame.
-            .add_systems(Update, (sync_rune_hud, sync_rune_ring))
+            .add_systems(Update, (sync_rune_hud, sync_rune_ring, stage_rune_test))
             // Fell trees crowding the landmarks once they've spawned (runs once, then idles).
             .add_systems(Update, clear_around_landmarks)
             .add_sim_systems(
@@ -820,8 +831,8 @@ fn drive_rune_trial(
     guardians: Query<Entity, With<TrialGuardian>>,
     alive_guardians: Query<&TrialGuardian, Without<crate::dying::Dying>>,
 ) {
-    if trial.0.is_none() {
-        return;
+    if trial.0.is_none() || rune_test().is_some() {
+        return; // (a FOREST_RUNETEST staging freezes the trial: no abort, no guardians)
     }
     let now = time.elapsed_secs();
     let dt = time.delta_secs();
@@ -993,7 +1004,7 @@ fn sync_rune_hud(
             .spawn((
                 Node {
                     position_type: PositionType::Absolute,
-                    bottom: Val::Px(96.0),
+                    top: Val::Px(86.0), // under the compass + goal chip, clear of the bottom hint chips
                     left: Val::Percent(50.0),
                     margin: UiRect::left(Val::Px(-150.0)),
                     width: Val::Px(300.0),
@@ -1006,25 +1017,22 @@ fn sync_rune_hud(
                 RuneHud,
             ))
             .with_children(|root| {
-                root.spawn((label(&fonts.display, "Hold the Rune", FONT_LABEL, Color::srgb(0.85, 0.95, 1.0)), RuneHudLabel));
-                // Bar track.
+                use crate::ui::theme::{FONT_CAPTION, GOLD, TEXT_DIM, TEXT_SHADOW, XP_BOT, XP_TOP};
+                // Landmark name in the Cinzel heading face, the instruction + percent beneath in
+                // small caption type, over a thin iron-framed bronze meter (the shared vitals bar
+                // look) — no cyan box.
                 root.spawn((
-                    Node {
-                        width: Val::Percent(100.0),
-                        height: Val::Px(12.0),
-                        border: UiRect::all(Val::Px(2.0)),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgb(0.08, 0.10, 0.13)),
-                    BorderColor::all(Color::srgb(0.45, 0.65, 0.8)),
-                ))
-                .with_children(|track| {
-                    track.spawn((
-                        Node { width: Val::Percent(0.0), height: Val::Percent(100.0), ..default() },
-                        BackgroundColor(Color::srgb(0.35, 0.85, 1.0)),
-                        RuneHudFill,
-                    ));
+                    label(&fonts.display, active.name, FONT_LABEL, GOLD),
+                    TextShadow { offset: Vec2::splat(1.5), color: TEXT_SHADOW },
+                ));
+                root.spawn(crate::ui::vitals::track(Val::Percent(100.0), 7.0)).with_children(|track| {
+                    track.spawn(crate::ui::vitals::fill(XP_TOP, XP_BOT, active.progress, RuneHudFill));
                 });
+                root.spawn((
+                    label(&fonts.semibold, "", FONT_CAPTION, TEXT_DIM),
+                    TextShadow { offset: Vec2::splat(1.0), color: TEXT_SHADOW },
+                    RuneHudLabel,
+                ));
             });
     }
     let pct = (active.progress * 100.0).round();
@@ -1032,54 +1040,91 @@ fn sync_rune_hud(
         n.width = Val::Percent(active.progress * 100.0);
     }
     if let Ok(mut t) = labels.single_mut() {
-        t.0 = format!("{} — hold the rune  {pct:.0}%", active.name);
+        t.0 = format!("Hold the circle  ·  {pct:.0}%");
     }
 }
 
-/// A glowing marker on the rune circle — spawned in a ring while a trial runs so the hold zone is
-/// unmistakable, swept when it ends.
+/// `FOREST_RUNETEST="x,z,progress"` — stage a frozen Hold-the-Rune trial (its ground circle + HUD
+/// meter at `progress`) centred at world `(x, z)` so a shot frames the trial look without a
+/// landmark walk + keypress. The trial never ticks, aborts or spawns guardians while set.
+fn rune_test() -> Option<(Vec2, f32)> {
+    static T: std::sync::OnceLock<Option<(Vec2, f32)>> = std::sync::OnceLock::new();
+    *T.get_or_init(|| {
+        let v = std::env::var("FOREST_RUNETEST").ok()?;
+        let n: Vec<f32> = v.split(',').filter_map(|t| t.trim().parse().ok()).collect();
+        (n.len() >= 2).then(|| (Vec2::new(n[0], n[1]), n.get(2).copied().unwrap_or(0.4)))
+    })
+}
+
+fn stage_rune_test(mut trial: ResMut<RuneTrial>, mut done: Local<bool>) {
+    if *done {
+        return;
+    }
+    let Some((center, progress)) = rune_test() else {
+        *done = true;
+        return;
+    };
+    if crate::worldmap::ground_at_world(center.x, center.y).is_none() {
+        return; // world not built yet
+    }
+    *done = true;
+    trial.0 = Some(ActiveTrial {
+        landmark: Entity::PLACEHOLDER,
+        name: "The Old Mill",
+        gear: "",
+        center,
+        progress,
+        won: false,
+        next_spawn: f32::MAX,
+        spawn_i: 0,
+    });
+}
+
+/// The trial's rune circle on the ground — one terrain-draped ground-mark disc
+/// (`combat_marks::MarkKind::Rune`): a worn chalk-and-ash ritual circle whose glyphs kindle into
+/// a dim ember glow as the hold meter fills. Spawned when a trial begins, swept when it ends.
 #[derive(Component)]
 struct RuneRing;
 
-/// Spawn a ring of glowing markers around the rune circle while a trial runs (so the hero SEES
-/// exactly where to stand to hold), and sweep them the instant it ends.
+/// Raise the rune circle while a trial runs (so the hero SEES exactly where to stand to hold),
+/// feed the hold progress into its `MeshTag` each frame (a u32 write — the shared mark material is
+/// never touched), and sweep it the instant the trial ends.
 fn sync_rune_ring(
     trial: Res<RuneTrial>,
+    marks: Option<Res<crate::combat_marks::MarkAssets>>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    existing: Query<Entity, With<RuneRing>>,
+    mut existing: Query<(Entity, &mut bevy::mesh::MeshTag), With<RuneRing>>,
 ) {
+    use crate::combat_marks::{draped_disc, tag, MarkKind};
     let Some(active) = &trial.0 else {
-        for e in &existing {
+        for (e, _) in &existing {
             commands.entity(e).try_despawn();
         }
         return;
     };
+    // The rune band sits at r ≈ 0.865 of the disc's half-width (see `ground_mark.wgsl` KIND_RUNE).
+    let seed = (active.center.x * 13.0 + active.center.y * 7.0).abs() as u32;
+    let want = tag(MarkKind::Rune, 0.95, seed, active.progress);
     if !existing.is_empty() {
-        return; // ring already raised
+        for (_, mut mt) in &mut existing {
+            if mt.0 != want.0 {
+                mt.0 = want.0;
+            }
+        }
+        return;
     }
-    let mesh = meshes.add(Sphere::new(0.17).mesh().ico(2).unwrap());
-    let mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.35, 0.9, 1.0),
-        emissive: LinearRgba::rgb(0.4, 1.8, 2.6), // bright cyan glow — punches through the scene
-        unlit: true,
-        ..default()
-    });
-    let cy = crate::worldmap::ground_at_world(active.center.x, active.center.y).unwrap_or(0.0) + 0.3;
-    const N: u32 = 48;
-    for i in 0..N {
-        let a = i as f32 / N as f32 * std::f32::consts::TAU;
-        let x = active.center.x + a.cos() * RUNE_R;
-        let z = active.center.y + a.sin() * RUNE_R;
-        commands.spawn((
-            Mesh3d(mesh.clone()),
-            MeshMaterial3d(mat.clone()),
-            Transform::from_xyz(x, cy, z),
-            RuneRing,
-            NotShadowCaster,
-        ));
-    }
+    let Some(marks) = marks else { return };
+    let diameter = RUNE_R * 2.0 / 0.865;
+    let (mesh, at) = draped_disc(active.center, diameter, 40, 0.05);
+    commands.spawn((
+        Mesh3d(meshes.add(mesh)),
+        MeshMaterial3d(marks.light.clone()),
+        Transform::from_translation(at),
+        want,
+        RuneRing,
+        NotShadowCaster,
+    ));
 }
 
 // ── Frontier gradient (the small discovery purse scales with distance from the castle) ────
