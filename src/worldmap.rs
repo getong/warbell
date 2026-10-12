@@ -3690,6 +3690,8 @@ pub fn build_step(
         crate::wild_sites::reset_plan();
         crate::stashes::reset_plan();
         crate::castaway::reset_plan();
+        crate::ork_graveyard::reset_plan();
+        crate::witch::reset_plan();
         crate::realforest::reset_cover_stream();
         // Warm the per-map sampling bakes ([`tiles`] → [`water_near`] → [`tile_centre_ground`])
         // behind the loading veil: the first caller would otherwise pay the one-time bake as a
@@ -3796,6 +3798,7 @@ pub fn build_step(
             crate::wild_sites::populate(commands);
             crate::stashes::populate(commands);
             crate::castaway::populate(commands, meshes, std_mats);
+            crate::ork_graveyard::populate(commands); // the Field of the Answered (WP2)
             crate::castle_kit::populate(commands);
         }
         // Vista pass (pass 5): the lake waterfall off the mesa wall + three framed overlooks.
@@ -4028,6 +4031,8 @@ fn bs_sea_and_boats(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: 
     // WP3: Tobin's grotto (needs the castaways' igloo) and the biome stashes + wolverine dens.
     crate::castaway::plan();
     crate::stashes::plan();
+    crate::ork_graveyard::plan(); // the Field of the Answered, after every story layer (WP2)
+    crate::witch::plan(); // Old Seffa's trodden yard by the Witch's Hut (WP2)
     // FOREST_CASTLEKIT_SHOWCASE: reserve open ground for the castle-kit showcase rows.
     crate::castle_kit::plan();
 }

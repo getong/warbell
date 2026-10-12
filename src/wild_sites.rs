@@ -15,7 +15,8 @@
 //!   colony's **sunken mission chapel** at the swamp's edge — empty bell-cote, the lectern with
 //!   **Anselm's last page** and the sketch of the bell; the **ork barrows** (orks as a people:
 //!   graves, fish offerings, two fresh mounds); an **ork eel weir** and the colony's **causeway
-//!   ending in open water**, both facing a bog pool; a **peat cutting**.
+//!   ending in open water**, both facing a bog pool; a **peat cutting**. (The ork barrows grew into
+//!   their own module, the Field of the Answered: `ork_graveyard.rs`.)
 //!
 //! Models: `wild_sites.glb` (`tools/blender_forest/wild_sites.py`), real scale, base y=0, the
 //! scene's front (its story / its water / its drop) toward local -Z.
@@ -69,16 +70,12 @@ struct Scene {
     seat: Seat,
 }
 
-const SCENES: [Scene; 10] = [
+const SCENES: [Scene; 9] = [
     // ── Swamp ──
     Scene { model: "site_mission_chapel", biome: Biome::Swamp, foot: 4.3, seat: Seat::Rim,
         solids: &[(0.0, 0.2, 2.0, 3.0, 0.0), (2.6, -2.7, 0.7, 0.35, 0.9)],
         name: "Anselm's Journal \u{2014} The Last Page",
         lore: "Drowned on the lectern beside a sketch of the bell: \"...came only after we rang...\" \u{2014} \"...the Governor will not let us stop...\"" },
-    Scene { model: "site_ork_barrows", biome: Biome::Swamp, foot: 3.6, seat: Seat::Open,
-        solids: &[(0.0, 0.3, 2.4, 1.3, 0.0), (-2.7, -1.4, 0.25, 0.25, 0.0)],
-        name: "The Ork Barrows",
-        lore: "The orks bury their dead here with fish and iron for the road; the two newest graves were dug this year." },
     Scene { model: "site_eel_weir", biome: Biome::Swamp, foot: 3.4, seat: Seat::Shore,
         solids: &[(1.6, 1.9, 0.85, 0.2, 0.0), (-1.55, 2.25, 0.5, 0.45, 0.0)],
         name: "The Ork Eel Weir",
@@ -115,7 +112,7 @@ const SCENES: [Scene; 10] = [
 ];
 
 /// Seating order: the most constrained first (shore / gap / backed / high), then the open ones.
-const SEAT_ORDER: [usize; 10] = [3, 2, 7, 5, 6, 8, 9, 0, 1, 4];
+const SEAT_ORDER: [usize; 9] = [2, 1, 6, 4, 5, 7, 8, 0, 3];
 /// Two sites stand at least this far past their footprints from each other.
 const MIN_GAP: f32 = 10.0;
 /// Sites of the same biome spread at least this far apart (centre to centre).
@@ -420,6 +417,12 @@ fn clear_of_others(q: Vec2, scene: usize, planned: &[Site], visual: bool) -> boo
 
 /// Candidate spots in the scene's biome, a deterministic jittered grid, in a stable order picked by
 /// the seat: shuffled for open ground, outermost first for a rim scene, highest first for a high one.
+/// A scene's RNG seed index: its index from before the ork barrows (old index 1) moved out to
+/// `ork_graveyard.rs`, so every other site keeps the spot it always had.
+fn seed_idx(scene: usize) -> usize {
+    scene + usize::from(scene >= 1)
+}
+
 fn candidates(scene: usize, trails: &[Vec<Vec2>]) -> Vec<Vec2> {
     let s = &SCENES[scene];
     if s.seat == Seat::High {
@@ -434,7 +437,7 @@ fn candidates(scene: usize, trails: &[Vec<Vec2>]) -> Vec<Vec2> {
     let (gx, gz) = (crate::worldmap::GX, crate::worldmap::GZ);
     let (cols, rows) = (crate::worldmap::COLS as f32, crate::worldmap::ROWS as f32);
     let zones = crate::worldmap::swamp_zones_world();
-    let mut rng = 0x7a11_d5e5 ^ (scene as u32).wrapping_mul(0x85eb_ca6b);
+    let mut rng = 0x7a11_d5e5 ^ (seed_idx(scene) as u32).wrapping_mul(0x85eb_ca6b);
     let mut out: Vec<(f32, Vec2)> = Vec::new();
     let mut z = -gz + step * 0.5;
     while z < rows - gz {
@@ -481,7 +484,7 @@ fn at_edge(p: Vec2) -> bool {
 /// the pass, a spur above it).
 fn trail_candidates(scene: usize, trails: &[Vec<Vec2>]) -> Vec<Vec2> {
     let s = &SCENES[scene];
-    let mut rng = 0x3c6e_f372 ^ (scene as u32).wrapping_mul(0x85eb_ca6b);
+    let mut rng = 0x3c6e_f372 ^ (seed_idx(scene) as u32).wrapping_mul(0x85eb_ca6b);
     let mut out: Vec<(f32, Vec2)> = Vec::new();
     for t in trails {
         for w in t.windows(2) {
@@ -517,7 +520,7 @@ fn trail_candidates(scene: usize, trails: &[Vec<Vec2>]) -> Vec<Vec2> {
 
 /// The yaws to try at a spot: 12 headings, starting from a stable per-spot hash.
 fn yaws(scene: usize, q: Vec2) -> impl Iterator<Item = f32> {
-    let mut s = q.x.to_bits() ^ q.y.to_bits().rotate_left(16) ^ (scene as u32).wrapping_mul(0x9e37_79b9);
+    let mut s = q.x.to_bits() ^ q.y.to_bits().rotate_left(16) ^ (seed_idx(scene) as u32).wrapping_mul(0x9e37_79b9);
     let y0 = rng_next(&mut s) * TAU;
     (0..24).map(move |k| (y0 + k as f32 * TAU / 24.0) % TAU)
 }
@@ -748,6 +751,9 @@ pub fn shot_cams() -> Vec<(String, Transform)> {
             out.push((format!("wild_{name}_{tag}"), Transform::from_translation(eye).looking_at(aim, Vec3::Y)));
         }
     }
+    // The swamp's lived-in places (their own modules).
+    out.extend(crate::ork_graveyard::shot_cams());
+    out.extend(crate::witch::shot_cams());
     out
 }
 
@@ -821,7 +827,7 @@ mod tests {
         let _g = crate::blockers::TEST_LOCK.lock().unwrap();
         crate::blockers::reset();
         let p = Vec2::new(40.0, 40.0);
-        register_blockers(5, p, std::f32::consts::FRAC_PI_2);
+        register_blockers(4, p, std::f32::consts::FRAC_PI_2);
         // The clan gong's left menhir (local -1.55, 0) stays blocked with the model turned.
         let o = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2) * Vec3::new(-1.55, 0.0, 0.0);
         assert!(crate::blockers::is_blocked(p.x + o.x, p.y + o.z));

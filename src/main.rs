@@ -149,6 +149,8 @@ mod castle_kit;
 mod stories_warm;
 mod wild_sites;
 mod war_party;
+mod witch; // Old Seffa at the Witch's Hut: chores, the silent-trade stone, her shop (living-island WP2)
+mod ork_graveyard; // the Field of the Answered: a fixed field of ork graves, mourners, offering vs grave goods
 mod villagers;
 mod village_life; // daily life of the courtyard + street village: schedule, benches, chores, market, chats
 mod vista;
@@ -270,6 +272,7 @@ fn main() {
         .add_plugins(market::MarketPlugin) // the living market on the west lane: stalls, vendors, vendor greetings
         .add_plugins(flame_fx::FlameFxPlugin) // brazier / fire-basket flame cards
         .add_plugins(town_kit::TownKitPlugin) // town-kit pieces (showcase only until the phase-4 layout)
+        .add_plugins((witch::WitchPlugin, ork_graveyard::OrkGraveyardPlugin)) // WP2 swamp: Old Seffa + the ork graveyard
         .add_plugins(bog::BogPlugin) // swamp-pool will-o'-wisp hover anim (dressing spawned at build)
         .add_plugins(poi::PoiPlugin) // micro-POI flags: fortress smoke column + wheeling crows
         .add_plugins(vista::VistaPlugin) // waterfall foam/mist animation

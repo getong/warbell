@@ -863,6 +863,80 @@ fn kit_tools(kit: &crate::realforest::Kit, kind: PeasantKind, desert: bool) -> (
     (weapon, shield)
 }
 
+/// An old desert-born woman in her own clothes (Old Seffa, `witch.rs`): the women's kirtle, sleeves
+/// down, a sun-faded headscarf (the desert head-wrap) and a shawl (the desert cloak) over the
+/// shoulders — colours from the caller. Her own build (look 11, the stout grey elder) so
+/// [`person_rig`]`(Unemployed, false, 11)` matches. `None` without the kit (no box fallback: she
+/// is simply not spawned).
+pub fn elder_woman_meshes(skin: u32, dress: u32, scarf: u32, shawl: u32) -> Option<BipedMeshes> {
+    let kit = kit_people()?;
+    if !kit.has("hu_dress") || !kit.has("hu_hat_headwrap") {
+        return None;
+    }
+    const LOOK: u32 = 11;
+    let skin = tan_skin(skin);
+    let c = |hex: u32, s: Surf| (lin(hex), s);
+    let palette = [
+        c(skin, Surf::Skin),
+        c(mix_hex(skin, 0x7a3a34, 0.3), Surf::Skin),
+        c(0x2a1e17, Surf::Skin),
+        c(HAIR_TONES[9], Surf::Fur),
+        c(dress, Surf::Cloth),
+        (crate::palette::lin_scaled(dress, 0.62), Surf::Cloth),
+        c(mix_hex(dress, 0x000000, 0.25), Surf::Cloth),
+        c(LEATHER, Surf::Scale),
+        c(BOOT, Surf::Scale),
+        c(IRON, Surf::Metal),
+        c(scarf, Surf::Cloth),
+        c(mix_hex(scarf, 0x000000, 0.4), Surf::Cloth),
+        c(PATCH, Surf::Cloth),
+        c(FLETCH, Surf::Cloth),
+        c(shawl, Surf::Cloth),
+        c(PLATE, Surf::Metal),
+    ];
+    let names = [
+        "hu_dress", "hu_arm_sleeve_l", "hu_arm_sleeve_r", "hu_leg_l", "hu_leg_r", "hu_head_w", "hu_hat_headwrap", "hu_cloak",
+    ];
+    let head_frame = |n: &str| n.starts_with("hu_head") || n.starts_with("hu_hat");
+    let parts = names
+        .iter()
+        .map(|n| Some((kit.people_part(n, &palette, &KIT_WEATHER)?, head_frame(n))))
+        .collect::<Option<Vec<_>>>()?;
+    let kinds: Vec<f32> = names
+        .iter()
+        .flat_map(|n| {
+            use bevy::mesh::VertexAttributeValues as V;
+            match kit.raw_part(n).as_ref().and_then(|m| m.attribute(Mesh::ATTRIBUTE_COLOR)) {
+                Some(V::Float32x4(c)) => c.iter().map(|c| cloth_kind((c[0] * 16.0).floor() as usize, n)).collect(),
+                _ => Vec::new(),
+            }
+        })
+        .collect();
+    let mut body = skinned_body(parts, &kit_build(false, true, LOOK))?;
+    set_cloth_kinds(&mut body, &kinds);
+    let empty = || Mesh::new(bevy::mesh::PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default());
+    Some(BipedMeshes {
+        hips: empty(),
+        torso: empty(),
+        neck: empty(),
+        head: empty(),
+        shoulder_l: empty(),
+        shoulder_r: empty(),
+        elbow_l: empty(),
+        elbow_r: empty(),
+        hip_l: empty(),
+        hip_r: empty(),
+        knee_l: empty(),
+        knee_r: empty(),
+        foot_l: empty(),
+        foot_r: empty(),
+        weapon: None,
+        shield: None,
+        lion: None,
+        skin: Some(body),
+    })
+}
+
 /// Build the per-joint peasant meshes for `kind` with the given body colours. `look` (any u32,
 /// used mod [`LOOKS`]) picks the face / hair / beard / everyday headgear of the realistic kit
 /// body; the box-built fallback ignores it.
