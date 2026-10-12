@@ -110,6 +110,8 @@ mod quest;
 mod phototrees; // FOREST_PHOTOTREES=1: experimental procedural/photographic trees (off by default)
 mod realforest; // Blender-authored PBR forest kit (trees / undergrowth / props / ground); FOREST_PBR=0 disables
 mod rc;
+mod traps; // trap-pocket analysis + rim mask (ground you can drop into but not climb out of)
+mod road_route; // slope-aware A* footpath planner for the road network
 mod roads;
 mod rival;
 mod rts;

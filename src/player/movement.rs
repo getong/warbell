@@ -246,7 +246,7 @@ pub fn player_roll(
     for k in 1..=8 {
         let cand = from + dir * (ROLL_DIST * k as f32 / 8.0);
         let footing_ok = hero_can_stand(cand.x, cand.y, PLAYER_R, ref_y) && slope_ok(cand.x, cand.y, ref_y);
-        if !footing_ok || blockers::any_within(cand.x, cand.y, PLAYER_R) {
+        if !footing_ok || blockers::any_within(cand.x, cand.y, PLAYER_R) || crate::traps::blocks_entry(to, cand) {
             break;
         }
         to = cand;
@@ -380,6 +380,12 @@ mod slope_tests {
             (pos, vel, side) = slide_step(pos, v * dt, v, side, free);
         }
         pos
+    }
+
+    #[test]
+    fn trap_lattice_mirrors_the_walk_limit() {
+        assert_eq!(crate::traps::WALK_TAN, MAX_WALK_TAN);
+        assert!((MAX_WALK_TAN - MAX_WALK_SLOPE_DEG.to_radians().tan()).abs() < 1e-3);
     }
 
     #[test]
@@ -946,13 +952,21 @@ pub fn player_move(
         // rests overlapping one, so it stays false except when a solid materialised around him).
         let escaping = blockers::any_within(hero.pos.x, hero.pos.y, PLAYER_R);
         let hy = hero.y;
+        // Trap pockets (`traps`): ground you could drop into but never climb out of. Its rim is
+        // an edge you can't step over; a hero already inside one (old save, knock-back, the mask
+        // still baking) scrambles out past the slope limit and up to a hop's height of ledge.
+        let from = hero.pos;
+        let trapped = crate::traps::in_trap(from);
         let free = |p: Vec2| {
-            hero_can_step(p.x, p.y, PLAYER_R, hy)
-                && slope_ok(p.x, p.y, hy)
-                && (escaping || !blockers::any_within(p.x, p.y, PLAYER_R))
+            let climb_ok = if trapped {
+                hero_can_step(p.x, p.y, PLAYER_R, hy + 1.0)
+            } else {
+                hero_can_step(p.x, p.y, PLAYER_R, hy) && slope_ok(p.x, p.y, hy) && !crate::traps::blocks_entry(from, p)
+            };
+            climb_ok && (escaping || !blockers::any_within(p.x, p.y, PLAYER_R))
         };
         // Too-steep ground ahead: glide along its contour rather than up it (see `slope_deflect_with`).
-        let vel_in = if crate::bridges::deck_y_at(nx, nz).is_some() {
+        let vel_in = if trapped || crate::bridges::deck_y_at(nx, nz).is_some() {
             hero.vel // on/onto a bridge deck: the planks are footing, not a slope
         } else {
             slope_deflect_with(worldmap::ground_at_world, hero.pos, hero.vel, dt, hy)
@@ -1024,7 +1038,10 @@ pub fn player_move(
     let ground_y = footing(hero.pos.x, hero.pos.y).unwrap_or(0.0);
     let was_on_ground = hero.on_ground;
     // No pushing off a too-steep face: a hop per landing would otherwise climb any rock wall.
-    if keys.just_pressed(KeyCode::Space) && hero.on_ground && !too_steep(hero.pos.x, hero.pos.y) {
+    if keys.just_pressed(KeyCode::Space)
+        && hero.on_ground
+        && (!too_steep(hero.pos.x, hero.pos.y) || crate::traps::in_trap(hero.pos))
+    {
         hero.vel_y = JUMP_SPEED;
         hero.on_ground = false;
         cues.write(AudioCue::HeroJump); // voice decides (~40% + canGrunt); no other jump sfx
