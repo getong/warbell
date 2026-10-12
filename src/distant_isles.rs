@@ -340,7 +340,7 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, std_mats: &mut 
         // from the castle, fading in only as the hero reaches a coast facing them. Our island
         // reaches ~106×80, so this leaves a wide band of open sea between us and them.
         let base_angle = TAU * (i as f32 / COUNT as f32) + rng_range(&mut s, -0.38, 0.38);
-        let mut dist = 200.0 + isle.radius + rng_range(&mut s, 10.0, 50.0);
+        let mut dist = 200.0 * crate::worldmap::MAP_SCALE / 2.6 + isle.radius + rng_range(&mut s, 10.0, 50.0);
         let yaw = rng_range(&mut s, 0.0, TAU);
 
         // Nudge outward if the island (centre or its near edge) would land on the southern
