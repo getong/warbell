@@ -1,0 +1,1890 @@
+//! **Village life** — the castle courtyard and the street village outside the W gate, lived in.
+//!
+//! Residents ([`LifeAgent`]: men, women, grey elders and children, each mapped to one of the
+//! recorded village voices) follow a day driven by the sky clock: out of the door at dawn with a
+//! yawn and a stretch; chores and errands through the morning (draw water at the well and carry
+//! the bucket home, sweep the doorstep, scatter grain for the hens, weed the garden on the knees,
+//! saw and hammer at the woodpile, hang laundry, buy at the market); the noon meal on a bench
+//! (sit down → eat / drink → stand up, the pelvis landing ON the seat and the feet planted by IK);
+//! chats in the afternoon (two neighbours meet, face each other and trade talk / listen / nod /
+//! laugh beats with a two-line exchange), elders whittling and dozing on the benches, kids playing
+//! tag; at dusk everyone heads home through their own door (a mother calls her child in); at
+//! night and through a siege the streets are empty.
+//!
+//! **Smart objects:** every activity is a [`Spot`] — a bench seat, the well winch, a stall
+//! counter, a doorstep, a hen coop, a garden bed, a woodpile, the fire — with an approach pose
+//! and one occupant. Benches are the town kit's `decor_bench` (new ones round the fire pit, by the
+//! well, before the tavern and beside the village doors); the village gets its own well.
+//!
+//! **Market:** a buyer walks to a counter, browses, haggles (the vendor counters with gestures of
+//! her own), pays (coins), and carries a basket or a sack home. Vendors call their wares.
+//!
+//! **The hero:** standing folk turn their heads to watch him, wave or bow as he passes; kids drop
+//! their game to gather and stare. **Voices:** `audio::lines` `Concept::Life(voice, cue)` — spatial
+//! at the speaker, only when he is in earshot, globally spaced, and silent until a clip exists.
+//!
+//! **Perf:** decisions only when a timer runs out (or on a staggered 0.5 s social pass); walking
+//! is one steer step per frame; poses are computed only within the biped cull radius; props are
+//! spawned once per person and only their `Visibility` flips. No per-frame allocation.
+
+use std::f32::consts::{FRAC_PI_2, PI, TAU};
+
+use bevy::audio::{PlaybackMode, Volume};
+use bevy::prelude::*;
+
+use crate::audio::director::Speak;
+use crate::audio::lines::{Concept, LifeCue, LifeVoice};
+use crate::biome::BiomeEntity;
+use crate::biped::{BipedPart, PoseOverride};
+use crate::player::anim::village::{self as clip, Act, Carry, SitAct};
+use crate::player::anim::Pose;
+use crate::player::Joint;
+use crate::villagers::Villager;
+
+pub struct VillageLifePlugin;
+
+impl Plugin for VillageLifePlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<LifeWorld>()
+            .init_resource::<LifeSfx>()
+            .init_resource::<LifeTalk>()
+            .init_resource::<Stalls>()
+            .add_systems(Startup, load_life_sfx)
+            .add_systems(Update, (life_setup, life_houses, life_props).chain())
+            .add_systems(
+                Update,
+                (life_brain, life_social, vendor_life, guard_barks)
+                    .chain()
+                    .run_if(in_state(crate::game_state::Modal::None)),
+            )
+            // Ungated (like `animate_biped`) so a paused world still draws its people posed.
+            .add_systems(Update, life_animate.before(crate::biped::animate_biped));
+    }
+}
+
+// ── Data ─────────────────────────────────────────────────────────────────────────────────
+
+/// A resident's body — picks the model look, the walk speed and the voice.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Body {
+    Man,
+    Woman,
+    Elder,
+    Kid,
+}
+
+impl Body {
+    fn voice(self) -> LifeVoice {
+        match self {
+            Body::Man => LifeVoice::Man,
+            Body::Woman => LifeVoice::Woman,
+            Body::Elder => LifeVoice::Elder,
+            Body::Kid => LifeVoice::Child,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Zone {
+    Courtyard,
+    Village,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SpotKind {
+    Seat,
+    Well,
+    Laundry,
+    Sweep,
+    Hens,
+    Garden,
+    Wood,
+    Fire,
+    Play,
+}
+
+/// One smart object: where the user's ROOT goes, the yaw it faces while busy, and its occupant.
+#[derive(Clone, Copy, Debug)]
+struct Spot {
+    kind: SpotKind,
+    pos: Vec2,
+    face: f32,
+    zone: Zone,
+    /// Bench id (seats on one bench share it → seated neighbours chat).
+    bench: u16,
+    /// Seat top height above the ground (world units), seats only.
+    seat_h: f32,
+    /// The house it belongs to (doorstep / garden / hens / woodpile), if any.
+    house: Option<u8>,
+    /// Only usable once this many houses stand (house-gated castle dressing).
+    need_houses: u32,
+    taken: Option<Entity>,
+}
+
+/// Seat top of the kit's split-log bench (`village_huts.py::decor_bench`: slab centre 0.42 + 0.04).
+const BENCH_TOP: f32 = 0.46;
+
+/// The world's activity spots + bookkeeping (rebuilt with the world).
+#[derive(Resource, Default)]
+struct LifeWorld {
+    built: bool,
+    spots: Vec<Spot>,
+    /// Houses already populated (their residents + spots exist).
+    houses: u32,
+    next_bench: u16,
+    seed: u32,
+    /// Door (outside), inside (hidden park) and outward yaw per populated house.
+    doors: Vec<(Vec2, Vec2, f32)>,
+    keep_door: Option<(Vec2, Vec2, f32)>,
+    play: [Vec2; 2],
+}
+
+/// The market counters: who's buying at each, and what the vendor should be doing.
+#[derive(Resource, Default)]
+struct Stalls {
+    slots: Vec<(Vec2, f32, Vec2)>,
+    buyer: [Option<Entity>; 4],
+    /// The vendor's cue from its buyer: act + until.
+    cue: [(Act, f32); 4],
+}
+
+/// Global pacing of the residents' voices (one line at a time, spaced) + the SFX set.
+#[derive(Resource, Default)]
+struct LifeTalk {
+    next: f32,
+    sfx_next: f32,
+}
+
+#[derive(Resource, Default)]
+struct LifeSfx(Vec<(&'static str, Handle<AudioSource>)>);
+
+const SFX_KEYS: [&str; 22] = [
+    "life_sfx_coins",
+    "life_sfx_purse",
+    "life_sfx_bench_sit",
+    "life_sfx_bench_stand",
+    "life_sfx_bread",
+    "life_sfx_mug",
+    "life_sfx_well",
+    "life_sfx_bucket",
+    "life_sfx_sweep",
+    "life_sfx_laundry",
+    "life_sfx_hammer",
+    "life_sfx_saw",
+    "life_sfx_whittle",
+    "life_sfx_grain",
+    "life_sfx_sack",
+    "life_sfx_basket",
+    "life_sfx_door",
+    "life_sfx_door_shut",
+    "life_sfx_shutters",
+    "life_sfx_hen",
+    "life_sfx_dice",
+    "life_sfx_pour",
+];
+
+/// Only the SFX actually on disk get a handle — a missing one stays silent without an asset error.
+fn load_life_sfx(mut commands: Commands, assets: Res<AssetServer>) {
+    let mut v = Vec::new();
+    for k in SFX_KEYS {
+        let rel = format!("audio/sfx/life/{k}.ogg");
+        if crate::realforest::load::asset_path(&rel).is_file() {
+            v.push((k, assets.load(rel)));
+        }
+    }
+    commands.insert_resource(LifeSfx(v));
+}
+
+/// What the brain is doing.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum St {
+    /// Inside the house (hidden, parked within the walls).
+    Indoors,
+    Walk,
+    Idle,
+    SitDown,
+    Sit(SitAct),
+    StandUp,
+    Do(Act),
+    /// Talking with `partner` (turns alternate).
+    Chat,
+    /// A wave / bow for the passing knight.
+    Greet(Act),
+    /// At a market counter: browse → haggle → pay.
+    Buy(u8),
+    /// A child at play (tag).
+    Play,
+}
+
+/// What to do on arrival.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum After {
+    Nothing,
+    Spot,
+    Enter,
+    Chat,
+    Buy(u8),
+    Stare,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Held {
+    None,
+    Bread,
+    Mug,
+    Broom,
+    Bucket,
+    Basket,
+    Sack,
+    Hammer,
+    Saw,
+    Stick,
+}
+
+/// A village-life resident. Its [`Villager`] carries the shared pose/locomotion fields; this is
+/// the daily-life brain on top.
+#[derive(Component)]
+pub struct LifeAgent {
+    body: Body,
+    zone: Zone,
+    /// (door outside, park point inside, outward yaw)
+    home: (Vec2, Vec2, f32),
+    house: Option<u8>,
+    st: St,
+    t0: f32,
+    until: f32,
+    spot: Option<usize>,
+    after: After,
+    goal: Vec2,
+    path: Vec<Vec2>,
+    path_i: usize,
+    carry: Carry,
+    held: Held,
+    rng: u32,
+    root_scale: f32,
+    rig_off: f32,
+    /// Hips height (rig units) that rests the backside on the current seat.
+    seat: f32,
+    look: f32,
+    greet_cd: f32,
+    stare_cd: f32,
+    want_chat: bool,
+    partner: Option<Entity>,
+    /// Chat: does this one talk on even beats?
+    lead: bool,
+    /// A queued line (a reply in an exchange): fire at `.0`.
+    vo: Option<(f32, LifeCue)>,
+    /// Kid at play: chasing (it) or fleeing.
+    it: bool,
+    /// Pending root shift for the animator's cross-fade (rig units, +Z) after a seat move.
+    shift: f32,
+    /// The yaw a busy (non-walking) resident turns to face — eased, never snapped.
+    face: f32,
+    inited: bool,
+}
+
+/// The pose cross-fade state (written by [`life_animate`]).
+#[derive(Component)]
+pub(crate) struct LifeAnim {
+    key: u32,
+    from: Pose,
+    last: Pose,
+    t0: f32,
+    moving: f32,
+}
+
+/// The hand props of one resident (children of the rig's joints), shown per activity.
+#[derive(Component)]
+struct LifeProps {
+    items: [(Held, Entity); 9],
+    shown: Held,
+}
+
+/// A market vendor's little life (call out, haggle, hand over the goods).
+#[derive(Component)]
+struct VendorLife {
+    stall: usize,
+    act: Act,
+    t0: f32,
+    until: f32,
+    next_hawk: f32,
+    /// A queued answer to the buyer: (at, cue).
+    say: Option<(f32, LifeCue)>,
+}
+
+/// Marks a bench / well this module placed (world-rebuild detection).
+#[derive(Component)]
+struct LifeFixture;
+
+// ── Small helpers ───────────────────────────────────────────────────────────────────────
+
+fn hash(s: &mut u32) -> u32 {
+    *s ^= *s << 13;
+    *s ^= *s >> 17;
+    *s ^= *s << 5;
+    *s
+}
+fn r01(s: &mut u32) -> f32 {
+    (hash(s) & 0x00ff_ffff) as f32 / 16_777_216.0
+}
+fn rr(s: &mut u32, a: f32, b: f32) -> f32 {
+    a + (b - a) * r01(s)
+}
+fn fwd(yaw: f32) -> Vec2 {
+    Vec2::new(yaw.sin(), yaw.cos())
+}
+fn yaw_to(from: Vec2, to: Vec2) -> f32 {
+    let d = to - from;
+    d.x.atan2(d.y)
+}
+fn rot2(v: Vec2, yaw: f32) -> Vec2 {
+    let r = Quat::from_rotation_y(yaw) * Vec3::new(v.x, 0.0, v.y);
+    Vec2::new(r.x, r.z)
+}
+
+/// The day, from the sky clock (`t` 0 dawn · 0.25 noon · 0.5 dusk · 0.75 midnight).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Phase {
+    Dawn,
+    Work,
+    Noon,
+    Afternoon,
+    Dusk,
+    Night,
+}
+
+fn phase_of(t: f32, wave: bool) -> Phase {
+    if wave {
+        return Phase::Night;
+    }
+    match t {
+        t if t < 0.07 => Phase::Dawn,
+        t if t < 0.19 => Phase::Work,
+        t if t < 0.31 => Phase::Noon,
+        t if t < 0.45 => Phase::Afternoon,
+        t if t < 0.56 => Phase::Dusk,
+        t if t < 0.965 => Phase::Night,
+        _ => Phase::Dawn,
+    }
+}
+
+// ── Setup: spots, benches, the village well, residents ──────────────────────────────────
+
+/// The kit bench at `pos`/`yaw` with two seats (both facing `face`), plus its blocker.
+fn add_bench(commands: &mut Commands, w: &mut LifeWorld, pos: Vec2, yaw: f32, face: f32, zone: Zone, need: u32, spawn: bool) {
+    if spawn {
+        let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
+        let tf = Transform::from_xyz(pos.x, y - 0.03, pos.y).with_rotation(Quat::from_rotation_y(yaw));
+        if let Some(e) = crate::town_kit::spawn_piece(commands, "decor_bench", tf) {
+            commands.entity(e).insert((BiomeEntity, LifeFixture));
+        }
+        crate::blockers::add_obb(pos.x, pos.y, 0.60, 0.17, yaw);
+    }
+    let id = w.next_bench;
+    w.next_bench += 1;
+    for s in [-0.3, 0.3] {
+        let p = pos + rot2(Vec2::new(s, 0.0), yaw);
+        w.spots.push(Spot { kind: SpotKind::Seat, pos: p, face, zone, bench: id, seat_h: BENCH_TOP, house: None, need_houses: need, taken: None });
+    }
+}
+
+fn add_spot(w: &mut LifeWorld, kind: SpotKind, pos: Vec2, face: f32, zone: Zone, house: Option<u8>, need: u32) {
+    w.spots.push(Spot { kind, pos, face, zone, bench: u16::MAX, seat_h: 0.0, house, need_houses: need, taken: None });
+}
+
+/// A clear spot for the village's own well: on the lane mouth's open ground, off the road and
+/// clear of every house plot and reserved plot.
+pub(crate) fn village_well_pos() -> Option<Vec2> {
+    let houses = crate::castle::houses();
+    let clear = |p: Vec2| {
+        crate::castle::plot_clear(p.x, p.y, 1.6)
+            && crate::castle::village_dist(p.x, p.y) > 3.2
+            && crate::castle::village_dist(p.x, p.y) < 6.5
+            && crate::castle::outside_dist(p.x, p.y) > 8.0
+            && houses.iter().all(|h| {
+                let (c, half, yaw) = h.plot();
+                let l = rot2(p - c, -yaw);
+                l.x.abs() > half.x + 1.4 || l.y.abs() > half.y + 1.4
+            })
+    };
+    let mut s = 20.0;
+    while s < 52.0 {
+        let (p, dir) = crate::castle::polyline_at(&crate::castle::STREET, s);
+        let left = Vec2::new(-dir.y, dir.x);
+        for side in [-1.0, 1.0] {
+            for off in [4.2, 5.0] {
+                let q = p + left * side * off;
+                if clear(q) {
+                    return Some(q);
+                }
+            }
+        }
+        s += 1.0;
+    }
+    None
+}
+
+#[allow(clippy::too_many_arguments)]
+fn life_setup(
+    mut commands: Commands,
+    mut w: ResMut<LifeWorld>,
+    mut stalls: ResMut<Stalls>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut creature_mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
+    castle: Query<(), With<crate::castle::CastlePart>>,
+    fixtures: Query<(), With<LifeFixture>>,
+    agents: Query<Entity, With<LifeAgent>>,
+) {
+    // A world rebuild cleared our fixtures (BiomeEntity) → lay everything out again.
+    if w.built && fixtures.is_empty() && !castle.is_empty() {
+        for e in &agents {
+            commands.entity(e).try_despawn();
+        }
+        *w = LifeWorld::default();
+    }
+    if w.built || castle.is_empty() || crate::realforest::get().filter(|k| k.has("decor_bench")).is_none() {
+        return;
+    }
+    w.built = true;
+    w.seed = 0x11fe_5eed;
+    use crate::castle::{KEEP_FRONT, KEEP_HALF, KEEP_POS, KEEP_STEPS};
+    let c = Zone::Courtyard;
+    // The existing keep bench (castle_decor) — seats only, it already stands.
+    add_bench(&mut commands, &mut w, Vec2::new(KEEP_POS.x - KEEP_HALF.x - 1.6, KEEP_FRONT + 0.4), 0.0, 0.0, c, 0, false);
+    if let Some(fire) = crate::castle::town_plot("fire_pit") {
+        let f = fire.pos;
+        add_bench(&mut commands, &mut w, f + Vec2::new(0.0, 2.35), 0.0, PI, c, 0, true);
+        add_bench(&mut commands, &mut w, f + Vec2::new(-2.45, 0.2), FRAC_PI_2, FRAC_PI_2, c, 0, true);
+        for a in [0.6_f32, -0.9, 2.2] {
+            let p = f + fwd(a) * 1.75;
+            add_spot(&mut w, SpotKind::Fire, p, yaw_to(p, f), c, None, 0);
+        }
+    }
+    if let Some(well) = crate::castle::town_plot("well") {
+        let p = well.pos + Vec2::new(0.0, 1.0);
+        add_spot(&mut w, SpotKind::Well, p, PI, c, None, 0);
+        add_bench(&mut commands, &mut w, well.pos + Vec2::new(2.3, 0.9), FRAC_PI_2, -FRAC_PI_2, c, 0, true);
+    }
+    let wood = Vec2::new(crate::castle::WOOD_YARD.0, crate::castle::WOOD_YARD.1);
+    let wy = crate::castle::WOOD_YARD.2;
+    let p = wood + rot2(Vec2::new(0.0, 0.85), wy);
+    add_spot(&mut w, SpotKind::Wood, p, yaw_to(p, wood), c, None, 0);
+    let p = wood + rot2(Vec2::new(1.25, -0.6), wy);
+    add_spot(&mut w, SpotKind::Wood, p, yaw_to(p, wood + rot2(Vec2::new(0.0, -0.9), wy)), c, None, 0);
+    // The courtyard laundry line + garden (castle_decor, shown once a second house stands).
+    for x in [-22.2, -20.8] {
+        add_spot(&mut w, SpotKind::Laundry, Vec2::new(x, 11.75), PI, c, None, 2);
+    }
+    add_spot(&mut w, SpotKind::Garden, Vec2::new(-16.8, 14.1), yaw_to(Vec2::new(-16.8, 14.1), Vec2::new(-17.6, 13.2)), c, None, 2);
+    add_spot(&mut w, SpotKind::Sweep, KEEP_STEPS + Vec2::new(1.6, 0.5), FRAC_PI_2, c, None, 0);
+    w.keep_door = Some((KEEP_STEPS + Vec2::new(0.0, 0.3), KEEP_POS, 0.0));
+    // The tavern bench on the market square + the village's own well.
+    add_bench(&mut commands, &mut w, Vec2::new(-42.6, -5.15), 0.0, 0.0, Zone::Village, 0, true);
+    if let Some(vw) = village_well_pos() {
+        let y = crate::worldmap::ground_at_world(vw.x, vw.y).unwrap_or(0.0);
+        let tf = Transform::from_xyz(vw.x, y - 0.03, vw.y);
+        if let Some(e) = crate::town_kit::spawn_piece(&mut commands, "yard_well", tf) {
+            commands.entity(e).insert((BiomeEntity, LifeFixture));
+            crate::blockers::add(vw.x, vw.y, 0.62);
+            let p = vw + Vec2::new(0.0, 1.0);
+            add_spot(&mut w, SpotKind::Well, p, PI, Zone::Village, None, 0);
+            info!("village_life: village well at {:.1},{:.1}", vw.x, vw.y);
+        }
+    }
+    w.play = [crate::castle::Gate::South.interior(9.0) + Vec2::new(-5.0, 0.0), crate::castle::LANE[1] + Vec2::new(2.6, 0.0)];
+    let play = w.play;
+    add_spot(&mut w, SpotKind::Play, play[0], 0.0, c, None, 0);
+    add_spot(&mut w, SpotKind::Play, play[1], 0.0, Zone::Village, None, 0);
+    stalls.slots = crate::market::stall_slots().to_vec();
+
+    // The courtyard crew: two elders for the benches, two women, two men, two kids — they live
+    // in the keep (in and out through its door).
+    let crew = [Body::Elder, Body::Elder, Body::Woman, Body::Woman, Body::Man, Body::Man, Body::Kid, Body::Kid];
+    let starts: Vec<Vec2> = w.spots.iter().filter(|s| s.zone == c && s.need_houses == 0).map(|s| s.pos).collect();
+    let door = w.keep_door.unwrap();
+    for (i, b) in crew.into_iter().enumerate() {
+        let seed = hash(&mut w.seed);
+        let at = starts[(seed as usize) % starts.len()] + fwd(i as f32 * 2.1) * 1.6;
+        spawn_resident(&mut commands, &mut meshes, &mut creature_mats, b, at, c, door, None, seed);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_resident(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
+    body: Body,
+    at: Vec2,
+    zone: Zone,
+    home: (Vec2, Vec2, f32),
+    house: Option<u8>,
+    seed: u32,
+) {
+    let (e, root_scale, rig_off) = crate::villagers::spawn_life_peasant(commands, meshes, creature_mats, at, body, seed);
+    let mut rng = seed | 1;
+    let agent = LifeAgent {
+        body,
+        zone,
+        home,
+        house,
+        st: St::Idle,
+        t0: 0.0,
+        until: rr(&mut rng, 0.2, 2.5),
+        spot: None,
+        after: After::Nothing,
+        goal: at,
+        path: Vec::with_capacity(32),
+        path_i: 0,
+        carry: Carry::None,
+        held: Held::None,
+        rng,
+        root_scale,
+        rig_off,
+        seat: 0.7,
+        look: 0.0,
+        greet_cd: 0.0,
+        stare_cd: 0.0,
+        want_chat: false,
+        partner: None,
+        lead: false,
+        vo: None,
+        it: false,
+        shift: 0.0,
+        face: 0.0,
+        inited: false,
+    };
+    let mut ec = commands.entity(e);
+    ec.insert((agent, PoseOverride(clip::stand(Act::Stand, 0.0, 0.0))));
+    if body == Body::Kid {
+        ec.insert(crate::villagers::Kid);
+    }
+}
+
+/// Populate each newly raised house: its residents, its doorstep / garden / hens / woodpile
+/// spots and a bench by the door.
+fn life_houses(
+    mut commands: Commands,
+    mut w: ResMut<LifeWorld>,
+    town: Res<crate::town::TownRes>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut creature_mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
+    agents: Query<(Entity, &LifeAgent)>,
+) {
+    if !w.built {
+        return;
+    }
+    let built = (town.0.houses as usize).min(crate::castle::houses().len()) as u32;
+    if built < w.houses {
+        // A load / new run shrank the village: drop the residents of the lost houses.
+        for (e, a) in &agents {
+            if a.house.is_some_and(|h| h as u32 >= built) {
+                commands.entity(e).try_despawn();
+            }
+        }
+        w.spots.retain(|s| s.house.is_none_or(|h| (h as u32) < built));
+        w.doors.truncate(built as usize);
+        w.houses = built;
+        return;
+    }
+    // One house per frame — spreads the spawn cost.
+    if built == w.houses {
+        return;
+    }
+    let i = w.houses as usize;
+    w.houses += 1;
+    let h = crate::castle::houses()[i];
+    let v = Zone::Village;
+    let flip = if h.dress() < 2 { 1.0 } else { -1.0 };
+    let back = -h.half.y;
+    let yard = crate::castle::YARD;
+    let door = h.local(0.0, h.half.y + 0.55);
+    w.doors.push((door, h.pos, h.yaw));
+    let hi = Some(i as u8);
+    add_spot(&mut w, SpotKind::Sweep, h.local(0.95, h.half.y + 0.6), h.yaw + FRAC_PI_2, v, hi, 0);
+    let g = h.local(-1.1 * flip, back - 0.85);
+    add_spot(&mut w, SpotKind::Garden, g, h.yaw + PI, v, hi, 0);
+    match h.dress() {
+        1 => {
+            add_spot(&mut w, SpotKind::Hens, h.local(1.6 * flip, back - yard + 2.75), h.yaw + PI, v, hi, 0);
+            add_spot(&mut w, SpotKind::Wood, h.local(1.5 * flip, back - 1.75), h.yaw, v, hi, 0);
+        }
+        _ => {
+            let bench = h.local(-1.35 * flip, h.half.y + 0.42);
+            add_bench(&mut commands, &mut w, bench, h.yaw, h.yaw, v, 0, true);
+        }
+    }
+    // A man and a woman in every house; a child in every third, a grey elder in every fourth.
+    let mut folk = vec![Body::Man, Body::Woman];
+    if i % 3 == 1 {
+        folk.push(Body::Kid);
+    }
+    if i % 4 == 2 {
+        folk.push(Body::Elder);
+    }
+    for (k, b) in folk.into_iter().enumerate() {
+        let seed = hash(&mut w.seed) ^ (i as u32 * 7919);
+        let at = door + fwd(h.yaw) * 1.2 + fwd(h.yaw + FRAC_PI_2) * (k as f32 - 1.0) * 0.9;
+        spawn_resident(&mut commands, &mut meshes, &mut creature_mats, b, at, v, (door, h.pos, h.yaw), hi, seed);
+    }
+}
+
+// ── Hand props ───────────────────────────────────────────────────────────────────────────
+
+#[derive(Resource)]
+struct PropAssets {
+    parts: Vec<(Held, Handle<Mesh>, Handle<StandardMaterial>, Joint, Transform)>,
+}
+
+fn prop_assets(meshes: &mut Assets<Mesh>, mats: &mut Assets<StandardMaterial>) -> PropAssets {
+    let mat = |mats: &mut Assets<StandardMaterial>, hex: u32, rough: f32, metal: f32| {
+        mats.add(StandardMaterial {
+            base_color: Color::srgb_u8((hex >> 16) as u8, (hex >> 8) as u8, hex as u8),
+            perceptual_roughness: rough,
+            metallic: metal,
+            ..default()
+        })
+    };
+    let wood = mat(mats, 0x6e4c2c, 0.85, 0.0);
+    let straw = mat(mats, 0xa88e52, 0.95, 0.0);
+    let bread = mat(mats, 0xa8692e, 0.9, 0.0);
+    let clay = mat(mats, 0x7c5236, 0.7, 0.0);
+    let cloth = mat(mats, 0x9a8862, 0.95, 0.0);
+    let wicker = mat(mats, 0x8a6a3c, 0.9, 0.0);
+    let iron = mat(mats, 0x4c4f53, 0.45, 0.7);
+    let hand = |x: f32, y: f32, z: f32| Transform::from_xyz(x, y, z);
+    // Elbow-joint frame: the forearm runs down local −Y, the fist sits at y −0.25.
+    let parts = vec![
+        (Held::Bread, meshes.add(Capsule3d::new(0.042, 0.11)), bread.clone(), Joint::ElbowR, hand(0.0, -0.29, 0.03).with_rotation(Quat::from_rotation_z(FRAC_PI_2))),
+        (Held::Mug, meshes.add(Cylinder::new(0.042, 0.11)), clay.clone(), Joint::ElbowR, hand(0.0, -0.28, 0.06)),
+        // Broom: the handle continues the forearm line down to the floor; the head at its end.
+        (Held::Broom, meshes.add(Cylinder::new(0.017, 1.35)), wood.clone(), Joint::ElbowR, hand(0.0, -0.62, 0.0)),
+        (Held::Broom, meshes.add(Cone { radius: 0.10, height: 0.32 }), straw.clone(), Joint::ElbowR, hand(0.0, -1.28, 0.0)),
+        (Held::Bucket, meshes.add(Cylinder::new(0.12, 0.22)), wood.clone(), Joint::ElbowR, hand(0.0, -0.42, 0.0)),
+        (Held::Basket, meshes.add(Cylinder::new(0.15, 0.15)), wicker.clone(), Joint::ElbowL, hand(0.0, -0.14, -0.13).with_rotation(Quat::from_rotation_x(FRAC_PI_2))),
+        (Held::Sack, meshes.add(Sphere::new(0.16)), cloth.clone(), Joint::Torso, Transform { translation: Vec3::new(0.16, 0.42, -0.04), scale: Vec3::new(0.9, 0.75, 1.7), ..default() }),
+        (Held::Hammer, meshes.add(Cuboid::new(0.03, 0.03, 0.30)), wood.clone(), Joint::ElbowR, hand(0.0, -0.27, 0.12)),
+        (Held::Hammer, meshes.add(Cuboid::new(0.05, 0.12, 0.05)), iron.clone(), Joint::ElbowR, hand(0.0, -0.27, 0.27)),
+        (Held::Saw, meshes.add(Cuboid::new(0.008, 0.11, 0.55)), iron, Joint::ElbowR, hand(0.0, -0.30, 0.30)),
+        (Held::Stick, meshes.add(Cylinder::new(0.016, 0.16)), wood, Joint::ElbowL, hand(0.0, -0.28, 0.03).with_rotation(Quat::from_rotation_x(FRAC_PI_2))),
+    ];
+    let _ = (clay, cloth);
+    PropAssets { parts }
+}
+
+/// Give every new resident its hand props once its rig exists (hidden until an act shows them).
+#[allow(clippy::type_complexity)]
+fn life_props(
+    mut commands: Commands,
+    mut assets: Local<Option<PropAssets>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut mats: ResMut<Assets<StandardMaterial>>,
+    pending: Query<Entity, (With<LifeAgent>, Without<LifeProps>)>,
+    parts: Query<(Entity, &BipedPart)>,
+    mut found: Local<Vec<(Entity, Joint, Entity)>>,
+) {
+    if pending.is_empty() {
+        return;
+    }
+    let a = assets.get_or_insert_with(|| prop_assets(&mut meshes, &mut mats));
+    found.clear();
+    for (e, p) in &parts {
+        if matches!(p.joint, Joint::ElbowR | Joint::ElbowL | Joint::Torso) && pending.contains(p.root) {
+            found.push((p.root, p.joint, e));
+        }
+    }
+    for root in &pending {
+        let joint = |j: Joint| found.iter().find(|(r, jj, _)| *r == root && *jj == j).map(|f| f.2);
+        let (Some(er), Some(el), Some(to)) = (joint(Joint::ElbowR), joint(Joint::ElbowL), joint(Joint::Torso)) else { continue };
+        let mut items = [(Held::None, Entity::PLACEHOLDER); 9];
+        let mut n = 0;
+        // Group meshes per Held under one carrier entity per joint.
+        let mut carriers: Vec<(Held, Joint, Entity)> = Vec::new();
+        for (held, mesh, mat, j, tf) in &a.parts {
+            let parent = match j {
+                Joint::ElbowL => el,
+                Joint::Torso => to,
+                _ => er,
+            };
+            let carrier = match carriers.iter().find(|(h, jj, _)| h == held && jj == j) {
+                Some(c) => c.2,
+                None => {
+                    let c = commands.spawn((Transform::default(), Visibility::Hidden)).id();
+                    commands.entity(parent).add_child(c);
+                    carriers.push((*held, *j, c));
+                    if n < items.len() {
+                        items[n] = (*held, c);
+                        n += 1;
+                    }
+                    c
+                }
+            };
+            let m = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(mat.clone()), *tf)).id();
+            commands.entity(carrier).add_child(m);
+        }
+        commands.entity(root).insert(LifeProps { items, shown: Held::None });
+    }
+}
+
+// ── The brain ────────────────────────────────────────────────────────────────────────────
+
+/// Where the resident's ROOT goes to sit on a seat spot, and where it stands to start sitting.
+fn seat_root(s: &Spot, scale: f32) -> (Vec2, Vec2) {
+    let f = fwd(s.face);
+    let root = s.pos + f * 0.04 * scale;
+    (root, root + f * clip::RISE_DZ * scale)
+}
+
+/// The spot's approach point (where the root walks to before the act starts).
+fn approach(s: &Spot, scale: f32) -> Vec2 {
+    if s.kind == SpotKind::Seat {
+        seat_root(s, scale).1
+    } else {
+        s.pos
+    }
+}
+
+fn act_for(kind: SpotKind, body: Body, rng: &mut u32) -> (Act, f32, Held) {
+    match kind {
+        SpotKind::Well => (Act::Draw, rr(rng, 5.5, 8.0), Held::None),
+        SpotKind::Laundry => (Act::Hang, rr(rng, 8.0, 14.0), Held::None),
+        SpotKind::Sweep => (Act::Sweep, rr(rng, 8.0, 14.0), Held::Broom),
+        SpotKind::Hens => (Act::Scatter, rr(rng, 6.0, 10.0), Held::Basket),
+        SpotKind::Garden => (Act::Weed, rr(rng, 9.0, 16.0), Held::None),
+        SpotKind::Wood => {
+            if r01(rng) < 0.5 {
+                (Act::Saw, rr(rng, 7.0, 12.0), Held::Saw)
+            } else {
+                (Act::Hammer, rr(rng, 6.0, 10.0), Held::Hammer)
+            }
+        }
+        SpotKind::Fire => (if body == Body::Kid { Act::Stand } else { Act::Warm }, rr(rng, 8.0, 15.0), Held::None),
+        SpotKind::Play | SpotKind::Seat => (Act::Stand, 3.0, Held::None),
+    }
+}
+
+/// The resident's chore wish-list for this time of day (weights).
+fn chores(body: Body, phase: Phase) -> &'static [(SpotKind, f32)] {
+    use SpotKind::*;
+    match (body, phase) {
+        (Body::Kid, _) => &[(Play, 1.0)],
+        (Body::Elder, _) => &[(Seat, 4.0), (Fire, 1.0)],
+        (_, Phase::Noon) => &[(Seat, 5.0), (Fire, 0.6)],
+        (Body::Woman, _) => &[(Well, 1.4), (Sweep, 1.2), (Hens, 1.0), (Garden, 1.0), (Laundry, 1.2), (Seat, 0.5)],
+        (Body::Man, _) => &[(Wood, 1.6), (Garden, 1.0), (Well, 0.6), (Fire, 0.5), (Seat, 0.4)],
+    }
+}
+
+/// Find a free spot of `kind` for this resident: its own house's first, else the nearest in its
+/// zone (a little randomness so the same bench isn't always picked).
+fn find_spot(w: &LifeWorld, a: &LifeAgent, pos: Vec2, kind: SpotKind, rng: &mut u32) -> Option<usize> {
+    let mut best: Option<(usize, f32)> = None;
+    for (i, s) in w.spots.iter().enumerate() {
+        if s.kind != kind || s.taken.is_some() || s.zone != a.zone || s.need_houses > w.houses {
+            continue;
+        }
+        if s.house.is_some() && s.house != a.house && kind != SpotKind::Seat {
+            continue; // someone else's garden / hens / doorstep
+        }
+        let own = if s.house.is_some() && s.house == a.house { -12.0 } else { 0.0 };
+        let d = s.pos.distance(pos) + own + rr(rng, 0.0, 6.0);
+        if best.is_none_or(|b| d < b.1) {
+            best = Some((i, d));
+        }
+    }
+    best.map(|b| b.0)
+}
+
+fn release(w: &mut LifeWorld, a: &mut LifeAgent, me: Entity) {
+    if let Some(i) = a.spot.take() {
+        if let Some(s) = w.spots.get_mut(i) {
+            if s.taken == Some(me) {
+                s.taken = None;
+            }
+        }
+    }
+}
+
+/// Plan a walk to `goal` (A* through the gates when far, else straight).
+fn walk_to(a: &mut LifeAgent, from: Vec2, goal: Vec2, after: After, now: f32) {
+    a.goal = goal;
+    a.after = after;
+    a.path.clear();
+    a.path_i = 0;
+    if from.distance(goal) > 7.0 {
+        let p = crate::navgrid::path_to(from, goal);
+        a.path.extend(p);
+    }
+    a.path.push(goal);
+    a.st = St::Walk;
+    a.t0 = now;
+    a.until = now + 90.0;
+}
+
+fn go_home(a: &mut LifeAgent, from: Vec2, now: f32) {
+    let door = a.home.0;
+    walk_to(a, from, door, After::Enter, now);
+}
+
+/// Speak a life line at `pos` if the knight is in earshot and the street isn't mid-line.
+fn say(talk: &mut LifeTalk, speak: &mut MessageWriter<Speak>, now: f32, hero: Vec2, pos: Vec2, y: f32, voice: LifeVoice, cue: LifeCue, gap: f32) -> bool {
+    if now < talk.next || pos.distance(hero) > 15.0 {
+        return false;
+    }
+    speak.write(Speak::at(Concept::Life(voice, cue), Vec3::new(pos.x, y + 1.5, pos.y)));
+    talk.next = now + gap;
+    true
+}
+
+fn sfx(commands: &mut Commands, bank: &LifeSfx, talk: &mut LifeTalk, cfg: &crate::audio::AudioConfig, now: f32, hero: Vec2, key: &str, pos: Vec3) {
+    if now < talk.sfx_next || pos.xz().distance(hero) > 22.0 {
+        return;
+    }
+    let Some((_, h)) = bank.0.iter().find(|(k, _)| *k == key) else { return };
+    talk.sfx_next = now + 0.25;
+    commands.spawn((
+        AudioPlayer(h.clone()),
+        PlaybackSettings { mode: PlaybackMode::Despawn, volume: Volume::Linear(cfg.sfx_vol * 0.8), spatial: true, ..default() },
+        Transform::from_translation(pos),
+    ));
+}
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn life_brain(
+    time: Res<Time>,
+    mut commands: Commands,
+    clock: Option<Res<crate::scene::SkyClock>>,
+    siege: Option<Res<crate::siege::Siege>>,
+    hero_q: Query<&crate::player::Hero>,
+    mut w: ResMut<LifeWorld>,
+    mut stalls: ResMut<Stalls>,
+    mut talk: ResMut<LifeTalk>,
+    bank: Res<LifeSfx>,
+    cfg: Res<crate::audio::AudioConfig>,
+    mut speak: MessageWriter<Speak>,
+    mut q: Query<(Entity, &mut LifeAgent, &mut Villager, &mut Transform, &mut Visibility), Without<crate::dying::Dying>>,
+) {
+    let now = time.elapsed_secs();
+    let dt = time.delta_secs().min(0.05);
+    let wave = siege.as_ref().is_some_and(|s| s.phase == crate::siege::GamePhase::Wave);
+    let phase = phase_of(clock.as_ref().map_or(0.25, |c| c.t), wave);
+    let (hero, hero_alive) = hero_q.single().map(|h| (h.pos, true)).unwrap_or((Vec2::splat(1e6), false));
+    let w = &mut *w;
+
+    for (me, mut a, mut v, mut tf, mut vis) in &mut q {
+        let a = &mut *a;
+        if !a.inited {
+            a.inited = true;
+            // Match the walk clip's cadence to this person's pace (elders shuffle, kids run).
+            if a.body != Body::Kid {
+                v.gait = 8.0 * v.speed / 1.4;
+            }
+            a.face = v.facing;
+        }
+        let pos = v.pos;
+        let gy = crate::steer::footing(pos.x, pos.y).unwrap_or(tf.translation.y);
+        let night = matches!(phase, Phase::Night);
+        let home_time = night || (phase == Phase::Dusk);
+
+        // ── Queued reply line (the second half of an exchange) ──
+        if let Some((at, cue)) = a.vo {
+            if now >= at {
+                a.vo = None;
+                // Replies skip the gap the opener set, but still need the knight in earshot.
+                if pos.distance(hero) < 15.0 {
+                    speak.write(Speak::at(Concept::Life(a.body.voice(), cue), Vec3::new(pos.x, gy + 1.5, pos.y)));
+                    talk.next = talk.next.max(now + 3.0);
+                }
+            }
+        }
+
+        // ── Bedtime: drop whatever is going on and head home (stand up first if seated) ──
+        if home_time && !matches!(a.st, St::Indoors | St::SitDown | St::StandUp) && a.after != After::Enter {
+            match a.st {
+                St::Sit(_) => {
+                    a.st = St::StandUp;
+                    a.t0 = now;
+                }
+                _ => {
+                    release(w, a, me);
+                    if let Some(i) = stalls.buyer.iter().position(|b| *b == Some(me)) {
+                        stalls.buyer[i] = None;
+                    }
+                    a.partner = None;
+                    a.carry = Carry::None;
+                    a.held = Held::None;
+                    // A word as they go: the dusk call, a mother for her child.
+                    if phase == Phase::Dusk && r01(&mut a.rng) < 0.35 {
+                        let cue = if a.body == Body::Woman && r01(&mut a.rng) < 0.5 { LifeCue::CallKid } else { LifeCue::Dusk };
+                        say(&mut talk, &mut speak, now, hero, pos, gy, a.body.voice(), cue, 6.0);
+                    }
+                    go_home(a, pos, now);
+                }
+            }
+        }
+
+        // ── Hero awareness: heads turn; standing folk wave or bow once as he passes ──
+        let hd = pos.distance(hero);
+        let watching = hero_alive && hd < 7.0 && !matches!(a.st, St::Indoors | St::Chat);
+        let want_look = if watching { crate::steer::wrap_pi(yaw_to(pos, hero) - v.facing).clamp(-1.1, 1.1) } else { 0.0 };
+        a.look += crate::steer::wrap_pi(want_look - a.look) * (dt * 4.0).min(1.0);
+        if hero_alive && hd < 4.2 && now > a.greet_cd && matches!(a.st, St::Idle | St::Walk) && a.body != Body::Kid && a.carry == Carry::None {
+            a.greet_cd = now + rr(&mut a.rng, 70.0, 120.0);
+            let act = if a.body == Body::Man && r01(&mut a.rng) < 0.6 { Act::Wave } else { Act::Bow };
+            // Resume the walk afterwards (the path is kept).
+            a.st = St::Greet(act);
+            a.t0 = now;
+            a.until = now + 1.9;
+            a.face = yaw_to(pos, hero);
+            say(&mut talk, &mut speak, now, hero, pos, gy, a.body.voice(), LifeCue::Greet, 5.0);
+        }
+        // Kids drop their game to come and stare at the knight.
+        if a.body == Body::Kid && hero_alive && hd < 9.0 && hd > 2.6 && now > a.stare_cd && matches!(a.st, St::Play | St::Idle) && !home_time {
+            a.stare_cd = now + rr(&mut a.rng, 45.0, 80.0);
+            let to = hero + (pos - hero).normalize_or(Vec2::X) * 2.3;
+            walk_to(a, pos, to, After::Stare, now);
+        }
+
+        // ── State machine ──
+        match a.st {
+            St::Indoors => {
+                v.moving = false;
+                if !home_time && now >= a.until {
+                    // Out of the door: a stretch and a yawn in the morning.
+                    v.pos = a.home.0;
+                    v.facing = a.home.2;
+                    a.face = a.home.2;
+                    a.st = if phase == Phase::Dawn || r01(&mut a.rng) < 0.25 { St::Do(Act::Yawn) } else { St::Idle };
+                    a.t0 = now;
+                    a.until = now + if a.st == St::Idle { 0.5 } else { 3.2 };
+                    let p = v.pos;
+                    sfx(&mut commands, &bank, &mut talk, &cfg, now, hero, "life_sfx_door", Vec3::new(p.x, gy + 1.0, p.y));
+                    if a.st != St::Idle && r01(&mut a.rng) < 0.5 {
+                        say(&mut talk, &mut speak, now, hero, p, gy, a.body.voice(), LifeCue::Yawn, 6.0);
+                    }
+                }
+            }
+            St::Walk => {
+                let target = a.path.get(a.path_i).copied().unwrap_or(a.goal);
+                let last = a.path_i + 1 >= a.path.len();
+                let reach = if last { 0.18 } else { 0.9 };
+                if v.pos.distance(target) < reach || now > a.until {
+                    if !last && now <= a.until {
+                        a.path_i += 1;
+                    } else {
+                        v.moving = false;
+                        arrive(a, &mut v, w, &mut stalls, me, now, phase, hero, gy, &mut talk, &mut speak, &mut commands, &bank, &cfg);
+                    }
+                } else {
+                    let near = v.pos.distance(hero) < crate::steer::LOD_R;
+                    let speed = if a.body == Body::Kid && a.after == After::Nothing && a.it { v.speed * 1.25 } else { v.speed };
+                    match crate::steer::advance_lod(near, v.pos, v.facing, target, speed * dt, v.body_r, gy, 3.0 * dt) {
+                        Some(s) => {
+                            v.facing = s.facing;
+                            v.pos = s.pos;
+                            v.moving = s.moving;
+                        }
+                        None => {
+                            // Boxed in: nudge the goal round the obstacle next frame.
+                            v.moving = false;
+                            v.facing += 0.6;
+                        }
+                    }
+                }
+            }
+            St::Idle => {
+                v.moving = false;
+                if now >= a.until {
+                    a.want_chat = false;
+                    think(a, &v, w, &mut stalls, me, now, phase);
+                }
+            }
+            St::SitDown => {
+                v.moving = false;
+                if now - a.t0 >= 1.5 {
+                    let act = pick_sit_act(a.body, phase, &mut a.rng);
+                    a.st = St::Sit(act);
+                    a.t0 = now;
+                    a.until = now + if a.body == Body::Elder { rr(&mut a.rng, 30.0, 60.0) } else { rr(&mut a.rng, 16.0, 30.0) };
+                    a.held = match act {
+                        SitAct::Eat => Held::Bread,
+                        SitAct::Drink => Held::Mug,
+                        SitAct::Whittle => Held::Stick,
+                        _ => Held::None,
+                    };
+                    let p = Vec3::new(v.pos.x, gy + 0.5, v.pos.y);
+                    let key = match act {
+                        SitAct::Eat => "life_sfx_bread",
+                        SitAct::Drink => "life_sfx_mug",
+                        SitAct::Whittle => "life_sfx_whittle",
+                        _ => "life_sfx_bench_sit",
+                    };
+                    sfx(&mut commands, &bank, &mut talk, &cfg, now, hero, key, p);
+                    let cue = match (a.body, act) {
+                        (Body::Elder, SitAct::Doze) => LifeCue::Doze,
+                        (Body::Elder, SitAct::Whittle) => LifeCue::Whittle,
+                        (Body::Elder, _) => LifeCue::Cough,
+                        (_, SitAct::Eat) => LifeCue::Eat,
+                        _ => LifeCue::Sit,
+                    };
+                    if r01(&mut a.rng) < 0.5 {
+                        say(&mut talk, &mut speak, now, hero, v.pos, gy, a.body.voice(), cue, 6.0);
+                    }
+                }
+            }
+            St::Sit(act) => {
+                v.moving = false;
+                if now >= a.until {
+                    a.st = St::StandUp;
+                    a.t0 = now;
+                    a.held = Held::None;
+                    sfx(&mut commands, &bank, &mut talk, &cfg, now, hero, "life_sfx_bench_stand", Vec3::new(v.pos.x, gy + 0.5, v.pos.y));
+                    if r01(&mut a.rng) < 0.35 {
+                        say(&mut talk, &mut speak, now, hero, v.pos, gy, a.body.voice(), LifeCue::Stand, 6.0);
+                    }
+                } else if matches!(act, SitAct::Talk | SitAct::Laugh) && a.partner.is_none() && now - a.t0 > 6.0 {
+                    // The neighbour left: settle back.
+                    a.st = St::Sit(SitAct::Rest);
+                }
+            }
+            St::StandUp => {
+                v.moving = false;
+                if now - a.t0 >= 1.5 {
+                    // The hips stood RISE_DZ ahead of the seated root: move the root there.
+                    let step = fwd(v.facing) * clip::RISE_DZ * a.root_scale;
+                    v.pos += step;
+                    a.shift -= clip::RISE_DZ;
+                    release(w, a, me);
+                    a.partner = None;
+                    a.st = St::Idle;
+                    a.t0 = now;
+                    a.until = now + rr(&mut a.rng, 0.5, 2.0);
+                }
+            }
+            St::Do(act) => {
+                v.moving = false;
+                if act == Act::Stare {
+                    a.face = yaw_to(v.pos, hero);
+                }
+                if now >= a.until {
+                    finish_act(a, &v, w, me, now, act, hero, gy, &mut talk, &mut speak, &mut commands, &bank, &cfg);
+                }
+            }
+            St::Greet(_) => {
+                v.moving = false;
+                if now >= a.until {
+                    if a.path_i < a.path.len() && a.after != After::Nothing {
+                        a.st = St::Walk;
+                        a.until = now + 60.0;
+                    } else {
+                        a.st = St::Idle;
+                        a.until = now + 0.5;
+                    }
+                    a.t0 = now;
+                }
+            }
+            St::Chat => {
+                v.moving = false;
+                if now >= a.until || a.partner.is_none() {
+                    a.partner = None;
+                    a.st = St::Idle;
+                    a.t0 = now;
+                    a.until = now + rr(&mut a.rng, 0.5, 2.0);
+                }
+            }
+            St::Buy(stage) => {
+                v.moving = false;
+                let i = a.spot.unwrap_or(0).min(3);
+                a.face = stalls.slots.get(i).map_or(a.face, |s| s.1);
+                if now >= a.until {
+                    let (voice, vp) = (a.body.voice(), v.pos);
+                    match stage {
+                        0 => {
+                            // Ask the price; the vendor names it, the buyer balks, then pays.
+                            a.st = St::Buy(1);
+                            a.until = now + rr(&mut a.rng, 6.5, 8.0);
+                            stalls.cue[i] = (Act::Haggle, a.until);
+                            if say(&mut talk, &mut speak, now, hero, vp, gy, voice, LifeCue::Ask, 2.4) {
+                                a.vo = Some((now + 5.0, LifeCue::Haggle));
+                            }
+                        }
+                        1 => {
+                            a.st = St::Buy(2);
+                            a.until = now + 2.4;
+                            stalls.cue[i] = (Act::Pay, a.until);
+                            sfx(&mut commands, &bank, &mut talk, &cfg, now, hero, "life_sfx_coins", Vec3::new(vp.x, gy + 1.0, vp.y));
+                            say(&mut talk, &mut speak, now, hero, vp, gy, voice, LifeCue::Agree, 3.0);
+                        }
+                        _ => {
+                            stalls.buyer[i] = None;
+                            stalls.cue[i] = (Act::Stand, now);
+                            a.spot = None;
+                            a.carry = if a.body == Body::Man || r01(&mut a.rng) < 0.3 { Carry::Sack } else { Carry::Basket };
+                            a.held = if a.carry == Carry::Sack { Held::Sack } else { Held::Basket };
+                            let key = if a.carry == Carry::Sack { "life_sfx_sack" } else { "life_sfx_basket" };
+                            sfx(&mut commands, &bank, &mut talk, &cfg, now, hero, key, Vec3::new(vp.x, gy + 1.0, vp.y));
+                            go_home(a, vp, now);
+                        }
+                    }
+                    a.t0 = now;
+                }
+            }
+            St::Play => {
+                // The play brain lives in `life_social` (it needs the other kids); here just the
+                // timeout back to a fresh think.
+                if now >= a.until {
+                    a.st = St::Idle;
+                    a.until = now;
+                }
+            }
+        }
+
+        // A busy resident turns to its act's facing (seat, counter, partner, the knight).
+        if matches!(a.st, St::SitDown | St::Sit(_) | St::Do(_) | St::Chat | St::Greet(_) | St::Buy(_)) {
+            v.facing += crate::steer::wrap_pi(a.face - v.facing) * (dt * 7.0).min(1.0);
+        }
+
+        // ── Visibility + transform ──
+        let want = if a.st == St::Indoors { Visibility::Hidden } else { Visibility::Inherited };
+        if *vis != want {
+            *vis = want;
+        }
+        let bob = if v.moving { ((now + v.phase) * v.gait).sin().abs() * v.bob } else { 0.0 };
+        let gy = crate::steer::footing(v.pos.x, v.pos.y).unwrap_or(gy);
+        tf.translation = Vec3::new(v.pos.x, gy + bob, v.pos.y);
+        tf.rotation = Quat::from_rotation_y(v.facing);
+    }
+}
+
+fn pick_sit_act(body: Body, phase: Phase, rng: &mut u32) -> SitAct {
+    let x = r01(rng);
+    match (body, phase) {
+        (Body::Elder, _) => {
+            if x < 0.4 {
+                SitAct::Whittle
+            } else if x < 0.75 {
+                SitAct::Doze
+            } else {
+                SitAct::Rest
+            }
+        }
+        (_, Phase::Noon) => {
+            if x < 0.55 {
+                SitAct::Eat
+            } else if x < 0.9 {
+                SitAct::Drink
+            } else {
+                SitAct::Rest
+            }
+        }
+        _ => {
+            if x < 0.3 {
+                SitAct::Drink
+            } else if x < 0.5 {
+                SitAct::Eat
+            } else {
+                SitAct::Rest
+            }
+        }
+    }
+}
+
+/// Choose the next thing to do (only when a timer runs out — the time-slicing).
+fn think(a: &mut LifeAgent, v: &Villager, w: &mut LifeWorld, stalls: &mut Stalls, me: Entity, now: f32, phase: Phase) {
+    let pos = v.pos;
+    a.t0 = now;
+    if matches!(phase, Phase::Night | Phase::Dusk) {
+        go_home(a, pos, now);
+        return;
+    }
+    // Carrying the shopping / a bucket: take it home first.
+    if a.carry != Carry::None {
+        go_home(a, pos, now);
+        return;
+    }
+    if a.body == Body::Kid {
+        a.st = St::Play;
+        a.until = now + rr(&mut a.rng, 25.0, 50.0);
+        return;
+    }
+    let x = r01(&mut a.rng);
+    // A chat with a neighbour (paired up by `life_social`).
+    let chatty = match phase {
+        Phase::Afternoon => 0.30,
+        Phase::Noon => 0.12,
+        _ => 0.14,
+    };
+    if a.body != Body::Kid && x < chatty {
+        a.want_chat = true;
+        a.st = St::Idle;
+        a.until = now + 6.0;
+        return;
+    }
+    // An errand to the market (village folk mostly; courtyard folk now and then).
+    let market_p = if a.zone == Zone::Village { 0.22 } else { 0.06 };
+    if a.body != Body::Elder && matches!(phase, Phase::Work | Phase::Afternoon) && r01(&mut a.rng) < market_p {
+        if let Some(i) = (0..stalls.slots.len().min(4)).find(|i| stalls.buyer[*i].is_none() && (me.to_bits() as usize + *i) % 2 == 0)
+            .or_else(|| (0..stalls.slots.len().min(4)).find(|i| stalls.buyer[*i].is_none()))
+        {
+            stalls.buyer[i] = Some(me);
+            a.spot = Some(i);
+            let slot = stalls.slots[i].0;
+            walk_to(a, pos, slot, After::Buy(i as u8), now);
+            return;
+        }
+    }
+    // A chore / a sit from the wish-list.
+    let list = chores(a.body, phase);
+    let total: f32 = list.iter().map(|c| c.1).sum();
+    let mut pick = r01(&mut a.rng) * total;
+    let mut kind = list[0].0;
+    for (k, wgt) in list {
+        if pick < *wgt {
+            kind = *k;
+            break;
+        }
+        pick -= wgt;
+    }
+    let mut rng = a.rng;
+    let found = find_spot(w, a, pos, kind, &mut rng).or_else(|| find_spot(w, a, pos, SpotKind::Seat, &mut rng));
+    a.rng = rng;
+    if let Some(i) = found {
+        w.spots[i].taken = Some(me);
+        a.spot = Some(i);
+        let to = approach(&w.spots[i], a.root_scale);
+        walk_to(a, pos, to, After::Spot, now);
+        return;
+    }
+    // Nothing free: a stroll near home.
+    let to = a.home.0 + fwd(r01(&mut a.rng) * TAU) * rr(&mut a.rng, 2.0, 6.0);
+    walk_to(a, pos, to, After::Nothing, now);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn arrive(
+    a: &mut LifeAgent,
+    v: &mut Villager,
+    w: &mut LifeWorld,
+    stalls: &mut Stalls,
+    me: Entity,
+    now: f32,
+    phase: Phase,
+    hero: Vec2,
+    gy: f32,
+    talk: &mut LifeTalk,
+    speak: &mut MessageWriter<Speak>,
+    commands: &mut Commands,
+    bank: &LifeSfx,
+    cfg: &crate::audio::AudioConfig,
+) {
+    a.t0 = now;
+    match a.after {
+        After::Enter => {
+            // In through the door (the shutters bang at dusk).
+            let key = if matches!(phase, Phase::Dusk | Phase::Night) { "life_sfx_shutters" } else { "life_sfx_door_shut" };
+            sfx(commands, bank, talk, cfg, now, hero, key, Vec3::new(v.pos.x, gy + 1.0, v.pos.y));
+            v.pos = a.home.1;
+            a.st = St::Indoors;
+            a.carry = Carry::None;
+            a.held = Held::None;
+            a.after = After::Nothing;
+            a.until = if matches!(phase, Phase::Dusk | Phase::Night) { now + 5.0 } else { now + rr(&mut a.rng, 6.0, 20.0) };
+        }
+        After::Spot => {
+            a.after = After::Nothing;
+            let Some(i) = a.spot else {
+                a.st = St::Idle;
+                a.until = now + 1.0;
+                return;
+            };
+            let s = w.spots[i];
+            a.face = s.face;
+            if s.kind == SpotKind::Seat {
+                let (root, _) = seat_root(&s, a.root_scale);
+                v.pos = root;
+                a.shift += clip::RISE_DZ;
+                // Hips height that rests the pelvis on the seat top (the pelvis sits ~0.12 rig
+                // units under the hips joint).
+                a.seat = s.seat_h / a.root_scale + 0.12 - a.rig_off;
+                a.st = St::SitDown;
+            } else if s.kind == SpotKind::Play {
+                a.st = St::Play;
+                a.until = now + 30.0;
+            } else {
+                let (act, dur, held) = act_for(s.kind, a.body, &mut a.rng);
+                a.st = St::Do(act);
+                a.until = now + dur;
+                a.held = held;
+                let key = match act {
+                    Act::Draw => Some("life_sfx_well"),
+                    Act::Sweep => Some("life_sfx_sweep"),
+                    Act::Hang => Some("life_sfx_laundry"),
+                    Act::Scatter => Some("life_sfx_grain"),
+                    Act::Hammer => Some("life_sfx_hammer"),
+                    Act::Saw => Some("life_sfx_saw"),
+                    _ => None,
+                };
+                if let Some(k) = key {
+                    sfx(commands, bank, talk, cfg, now, hero, k, Vec3::new(v.pos.x, gy + 1.0, v.pos.y));
+                }
+                let cue = match (a.body, act) {
+                    (Body::Woman, Act::Sweep) => Some(LifeCue::Sweep),
+                    (Body::Woman, Act::Hang) => Some(LifeCue::Laundry),
+                    (_, Act::Hammer | Act::Saw) => Some(LifeCue::Work),
+                    _ => None,
+                };
+                if let Some(c) = cue {
+                    if r01(&mut a.rng) < 0.5 {
+                        say(talk, speak, now, hero, v.pos, gy, a.body.voice(), c, 6.0);
+                    }
+                }
+            }
+        }
+        After::Buy(i) => {
+            a.after = After::Nothing;
+            let i = i as usize;
+            if let Some(s) = stalls.slots.get(i) {
+                a.face = s.1;
+            }
+            a.spot = Some(i);
+            a.st = St::Buy(0);
+            a.until = now + rr(&mut a.rng, 2.0, 3.5);
+            stalls.cue[i] = (Act::Stand, now);
+            let _ = me;
+        }
+        After::Chat => {
+            a.after = After::Nothing;
+            if let Some(_p) = a.partner {
+                a.st = St::Chat;
+                a.until = now + rr(&mut a.rng, 12.0, 18.0);
+            } else {
+                a.st = St::Idle;
+                a.until = now + 1.0;
+            }
+        }
+        After::Stare => {
+            a.after = After::Nothing;
+            a.st = St::Do(Act::Stare);
+            a.until = now + rr(&mut a.rng, 5.0, 9.0);
+            a.face = yaw_to(v.pos, hero);
+            say(talk, speak, now, hero, v.pos, gy, LifeVoice::Child, LifeCue::Knight, 5.0);
+        }
+        After::Nothing => {
+            a.st = St::Idle;
+            a.until = now + rr(&mut a.rng, 1.0, 3.5);
+        }
+    }
+}
+
+/// An act ran its course: what comes next (a full bucket goes home, the doorstep is swept…).
+#[allow(clippy::too_many_arguments)]
+fn finish_act(
+    a: &mut LifeAgent,
+    v: &Villager,
+    w: &mut LifeWorld,
+    me: Entity,
+    now: f32,
+    act: Act,
+    hero: Vec2,
+    gy: f32,
+    talk: &mut LifeTalk,
+    speak: &mut MessageWriter<Speak>,
+    commands: &mut Commands,
+    bank: &LifeSfx,
+    cfg: &crate::audio::AudioConfig,
+) {
+    release(w, a, me);
+    a.held = Held::None;
+    a.t0 = now;
+    match act {
+        Act::Draw => {
+            a.carry = Carry::Bucket;
+            a.held = Held::Bucket;
+            sfx(commands, bank, talk, cfg, now, hero, "life_sfx_bucket", Vec3::new(v.pos.x, gy + 0.6, v.pos.y));
+            if a.body == Body::Woman && r01(&mut a.rng) < 0.5 {
+                say(talk, speak, now, hero, v.pos, gy, a.body.voice(), LifeCue::Water, 6.0);
+            }
+            go_home(a, v.pos, now);
+        }
+        Act::Hammer | Act::Saw if r01(&mut a.rng) < 0.3 => {
+            say(talk, speak, now, hero, v.pos, gy, a.body.voice(), LifeCue::WorkDone, 6.0);
+            a.st = St::Idle;
+            a.until = now + 1.0;
+        }
+        _ => {
+            a.st = St::Idle;
+            a.until = now + rr(&mut a.rng, 0.4, 2.0);
+        }
+    }
+}
+
+// ── Social pass: chats, bench neighbours, kids at play ────────────────────────────────
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn life_social(
+    time: Res<Time>,
+    mut tick: Local<f32>,
+    hero_q: Query<&crate::player::Hero>,
+    w: Res<LifeWorld>,
+    mut talk: ResMut<LifeTalk>,
+    mut speak: MessageWriter<Speak>,
+    mut q: Query<(Entity, &mut LifeAgent, &Villager), Without<crate::dying::Dying>>,
+    mut scratch: Local<Vec<(Entity, Vec2, St, bool, Zone, bool, Option<usize>, Body)>>,
+) {
+    let now = time.elapsed_secs();
+    let hero = hero_q.single().map(|h| h.pos).unwrap_or(Vec2::splat(1e6));
+    // Kids chase every frame-ish (cheap: a handful); the pairing pass every 0.5 s.
+    scratch.clear();
+    for (e, a, v) in &q {
+        scratch.push((e, v.pos, a.st, a.want_chat, a.zone, a.it, a.spot, a.body));
+    }
+
+    // ── Kids: tag. `it` chases the nearest playing kid; the others keep away from it. ──
+    for (e, mut a, v) in &mut q {
+        if a.st != St::Play && !(a.st == St::Walk && a.after == After::Nothing && a.body == Body::Kid && a.it) {
+            continue;
+        }
+        if a.st == St::Walk && now - a.t0 < 0.35 {
+            continue;
+        }
+        let me_pos = v.pos;
+        let play = w.play[if a.zone == Zone::Courtyard { 0 } else { 1 }];
+        let mut near: Option<(Entity, Vec2, f32)> = None;
+        let mut it_pos: Option<Vec2> = None;
+        for &(o, p, st, _, z, it, _, body) in scratch.iter() {
+            if o == e || z != a.zone || body != Body::Kid || !matches!(st, St::Play | St::Walk) {
+                continue;
+            }
+            let d = p.distance(me_pos);
+            if near.is_none_or(|n| d < n.2) {
+                near = Some((o, p, d));
+            }
+            if it && d < 6.0 {
+                it_pos = Some(p);
+            }
+        }
+        let mut rng_v = a.rng;
+        let rng = &mut rng_v;
+        let target = if a.it {
+            match near {
+                Some((_, p, d)) if d < 0.75 => {
+                    // Tagged! Swap: I flee now (the other kid becomes "it" on its own pass when it
+                    // sees nobody else is).
+                    a.it = false;
+                    say(&mut talk, &mut speak, now, hero, me_pos, 0.0, LifeVoice::Child, LifeCue::Tag, 4.0);
+                    me_pos + (me_pos - p).normalize_or(Vec2::X) * 3.0
+                }
+                Some((_, p, _)) => p,
+                None => play + fwd(r01(rng) * TAU) * 2.0,
+            }
+        } else if let Some(ip) = it_pos {
+            let away = (me_pos - ip).normalize_or(Vec2::Y);
+            let mut t = me_pos + away * 3.0 + fwd(r01(rng) * TAU) * 0.8;
+            if t.distance(play) > 7.0 {
+                t = play + (t - play).normalize_or(Vec2::X) * 6.0;
+            }
+            if r01(rng) < 0.02 {
+                say(&mut talk, &mut speak, now, hero, me_pos, 0.0, LifeVoice::Child, LifeCue::Run, 5.0);
+            }
+            t
+        } else {
+            // Nobody chasing: one of us becomes "it" (and counts it out loud).
+            if r01(rng) < 0.01 {
+                a.it = true;
+                say(&mut talk, &mut speak, now, hero, me_pos, 0.0, LifeVoice::Child, LifeCue::Count, 5.0);
+            }
+            play + fwd(r01(rng) * TAU) * rr(rng, 1.0, 5.0)
+        };
+        a.rng = rng_v;
+        let until = a.until;
+        if a.st == St::Play || a.goal.distance(target) > 1.0 {
+            walk_to(&mut a, me_pos, target, After::Nothing, now);
+            a.until = until.max(now + 3.0);
+            a.st = St::Walk;
+        }
+    }
+
+    if now < *tick {
+        return;
+    }
+    *tick = now + 0.5;
+
+    // ── Pair up idle neighbours who want a chat ──
+    let n = scratch.len();
+    for i in 0..n {
+        let (ea, pa, sta, wa, za, ..) = scratch[i];
+        if !(wa && sta == St::Idle) {
+            continue;
+        }
+        let mut best: Option<(usize, f32)> = None;
+        for (j, &(eb, pb, stb, _, zb, _, _, bb)) in scratch.iter().enumerate() {
+            if j == i || eb == ea || zb != za || bb == Body::Kid || !matches!(stb, St::Idle) {
+                continue;
+            }
+            let d = pa.distance(pb);
+            if d < 14.0 && best.is_none_or(|b| d < b.1) {
+                best = Some((j, d));
+            }
+        }
+        let Some((j, _)) = best else { continue };
+        let eb = scratch[j].0;
+        let pb = scratch[j].1;
+        let Ok([(_, mut a, _), (_, mut b, _)]) = q.get_many_mut([ea, eb]) else { continue };
+        let mid = (pa + pb) * 0.5;
+        let dir = (pb - pa).normalize_or(Vec2::X);
+        a.partner = Some(eb);
+        b.partner = Some(ea);
+        a.want_chat = false;
+        b.want_chat = false;
+        a.lead = true;
+        b.lead = false;
+        walk_to(&mut a, pa, mid - dir * 0.55, After::Chat, now);
+        walk_to(&mut b, pb, mid + dir * 0.55, After::Chat, now);
+        a.face = dir.x.atan2(dir.y);
+        b.face = (-dir.x).atan2(-dir.y);
+        scratch[i].2 = St::Walk;
+        scratch[j].2 = St::Walk;
+    }
+
+    // ── Chat beats: the lead opens with a line, the partner answers a beat later ──
+    for i in 0..n {
+        let (ea, pa, sta, ..) = scratch[i];
+        if sta != St::Chat {
+            continue;
+        }
+        let Ok((_, a, _)) = q.get(ea) else { continue };
+        let (partner, lead, started) = (a.partner, a.lead, a.t0);
+        let Some(pe) = partner else { continue };
+        let Some(&(_, _, stb, ..)) = scratch.iter().find(|s| s.0 == pe) else {
+            if let Ok((_, mut a, _)) = q.get_mut(ea) {
+                a.partner = None;
+            }
+            continue;
+        };
+        if !(lead && stb == St::Chat && now - started < 0.6 && pa.distance(hero) < 15.0 && now >= talk.next) {
+            continue;
+        }
+        let Ok([(_, a, _), (_, mut b, _)]) = q.get_many_mut([ea, pe]) else { continue };
+        if say(&mut talk, &mut speak, now, hero, pa, 0.0, a.body.voice(), LifeCue::Chat, 4.5) {
+            let reply = if r01(&mut b.rng) < 0.4 { LifeCue::Laugh } else { LifeCue::Chat };
+            b.vo = Some((now + 4.6, reply));
+        }
+    }
+    // Bench neighbours: two seated on the same bench → one talks, the other laughs / listens.
+    for i in 0..n {
+        let (ea, pa, sta, _, _, _, sa, _) = scratch[i];
+        let St::Sit(_) = sta else { continue };
+        let Some(bench) = sa.and_then(|s| w.spots.get(s)).map(|s| s.bench) else { continue };
+        if bench == u16::MAX {
+            continue;
+        }
+        let Some(&(eb, ..)) = scratch.iter().find(|s| {
+            s.0 != ea && matches!(s.2, St::Sit(_)) && s.6.and_then(|x| w.spots.get(x)).is_some_and(|x| x.bench == bench)
+        }) else {
+            continue;
+        };
+        if ea.to_bits() > eb.to_bits() {
+            continue; // handle each pair once
+        }
+        let Ok([(_, mut a, _), (_, mut b, _)]) = q.get_many_mut([ea, eb]) else { continue };
+        if a.partner == Some(eb) {
+            continue;
+        }
+        a.partner = Some(eb);
+        b.partner = Some(ea);
+        let (ka, kb) = (a.st, b.st);
+        if matches!(ka, St::Sit(SitAct::Rest | SitAct::Drink)) {
+            a.st = St::Sit(SitAct::Talk);
+        }
+        if matches!(kb, St::Sit(SitAct::Rest)) {
+            b.st = St::Sit(SitAct::Laugh);
+        }
+        if say(&mut talk, &mut speak, now, hero, pa, 0.0, a.body.voice(), LifeCue::Chat, 4.5) {
+            b.vo = Some((now + 4.6, LifeCue::Laugh));
+        }
+    }
+}
+
+// ── Vendors ───────────────────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn vendor_life(
+    time: Res<Time>,
+    mut commands: Commands,
+    stalls: Res<Stalls>,
+    hero_q: Query<&crate::player::Hero>,
+    clock: Option<Res<crate::scene::SkyClock>>,
+    mut talk: ResMut<LifeTalk>,
+    mut speak: MessageWriter<Speak>,
+    fresh: Query<(Entity, &GlobalTransform), (With<crate::market::MarketVendor>, Without<VendorLife>)>,
+    mut vendors: Query<(&mut VendorLife, &GlobalTransform, &Visibility)>,
+) {
+    let now = time.elapsed_secs();
+    for (e, gt) in &fresh {
+        let p = gt.translation().xz();
+        if p == Vec2::ZERO || stalls.slots.is_empty() {
+            continue;
+        }
+        let stall = (0..stalls.slots.len()).min_by(|a, b| stalls.slots[*a].2.distance(p).total_cmp(&stalls.slots[*b].2.distance(p))).unwrap_or(0);
+        let seed = e.to_bits() as u32;
+        commands.entity(e).insert((
+            VendorLife { stall, act: Act::Stand, t0: now, until: now, next_hawk: now + 8.0 + (seed % 23) as f32, say: None },
+            PoseOverride(clip::stand(Act::Stand, 0.0, 0.0)),
+        ));
+    }
+    let hero = hero_q.single().map(|h| h.pos).unwrap_or(Vec2::splat(1e6));
+    let day = clock.as_ref().is_none_or(|c| c.t < 0.5 || c.t > 0.97);
+    for (mut vl, gt, vis) in &mut vendors {
+        if *vis == Visibility::Hidden {
+            continue;
+        }
+        let p = gt.translation();
+        if let Some((at, c)) = vl.say {
+            if now >= at {
+                vl.say = None;
+                if p.xz().distance(hero) < 15.0 {
+                    speak.write(Speak::at(Concept::Life(LifeVoice::Vendor, c), p + Vec3::Y * 1.5));
+                    talk.next = talk.next.max(now + 3.0);
+                }
+            }
+        }
+        let cue = stalls.cue.get(vl.stall).copied().unwrap_or((Act::Stand, 0.0));
+        let busy = stalls.buyer.get(vl.stall).is_some_and(|b| b.is_some());
+        if busy && cue.1 > now && cue.0 != vl.act {
+            // The buyer haggles → the vendor names her price; pays → she hands the goods over.
+            vl.act = cue.0;
+            vl.t0 = now;
+            vl.until = cue.1;
+            // Answer the buyer a beat after she speaks: the price, then (once paid) the close.
+            vl.say = match cue.0 {
+                Act::Haggle => Some((now + 2.5, LifeCue::Price)),
+                Act::Pay => Some((now + 1.6, if (now * 5.3).fract() < 0.4 { LifeCue::Counter } else { LifeCue::Sold })),
+                _ => None,
+            };
+        } else if now >= vl.until && vl.act != Act::Stand {
+            vl.act = Act::Stand;
+            vl.t0 = now;
+        } else if !busy && now >= vl.next_hawk && day {
+            vl.next_hawk = now + 25.0 + (now * 7.3).fract() * 30.0;
+            vl.act = Act::Call;
+            vl.t0 = now;
+            vl.until = now + 2.6;
+            let near = p.xz().distance(hero);
+            let c = if near < 5.0 { LifeCue::Tease } else if (now * 3.1).fract() < 0.15 { LifeCue::Slow } else { LifeCue::Hawk };
+            say(&mut talk, &mut speak, now, hero, p.xz(), p.y - 1.5, LifeVoice::Vendor, c, 5.0);
+        }
+    }
+}
+
+/// The wall guards mutter now and then when the knight passes, and call the dusk.
+fn guard_barks(
+    time: Res<Time>,
+    mut tick: Local<f32>,
+    mut last_phase: Local<Option<Phase>>,
+    clock: Option<Res<crate::scene::SkyClock>>,
+    siege: Option<Res<crate::siege::Siege>>,
+    hero_q: Query<&crate::player::Hero>,
+    guards: Query<&GlobalTransform, (With<crate::villagers::Guard>, Without<crate::dying::Dying>)>,
+    mut talk: ResMut<LifeTalk>,
+    mut speak: MessageWriter<Speak>,
+) {
+    let now = time.elapsed_secs();
+    if now < *tick {
+        return;
+    }
+    *tick = now + 1.5;
+    let Ok(hero) = hero_q.single() else { return };
+    let wave = siege.as_ref().is_some_and(|s| s.phase == crate::siege::GamePhase::Wave);
+    let phase = phase_of(clock.as_ref().map_or(0.25, |c| c.t), wave);
+    let Some(g) = guards.iter().map(|g| g.translation()).min_by(|a, b| a.xz().distance(hero.pos).total_cmp(&b.xz().distance(hero.pos))) else { return };
+    let d = g.xz().distance(hero.pos);
+    let cue = if *last_phase != Some(phase) && phase == Phase::Dusk {
+        Some(if (now * 1.7).fract() < 0.5 { LifeCue::Dusk } else { LifeCue::Gate })
+    } else if phase == Phase::Dawn && *last_phase != Some(Phase::Dawn) {
+        Some(LifeCue::Yawn)
+    } else if d < 5.0 && (now * 0.37).fract() < 0.06 {
+        Some(if (now * 2.3).fract() < 0.5 { LifeCue::Greet } else { LifeCue::Patrol })
+    } else {
+        None
+    };
+    *last_phase = Some(phase);
+    if let Some(c) = cue {
+        say(&mut talk, &mut speak, now, hero.pos, g.xz(), g.y, LifeVoice::Guard, c, 6.0);
+    }
+}
+
+// ── The animator ──────────────────────────────────────────────────────────────────────
+
+/// Squared camera distance past which nobody is posed (= `biped::LIMB_CULL2`).
+const POSE_CULL2: f32 = 70.0 * 70.0;
+const FADE: f32 = 0.35;
+
+fn state_key(st: St) -> u32 {
+    match st {
+        St::Indoors => 0,
+        St::Walk => 1,
+        St::Idle => 2,
+        St::SitDown => 3,
+        St::Sit(a) => 10 + a as u32,
+        St::StandUp => 4,
+        St::Do(a) => 40 + a as u32,
+        St::Chat => 5,
+        St::Greet(a) => 80 + a as u32,
+        St::Buy(s) => 120 + s as u32,
+        St::Play => 1,
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn life_animate(
+    time: Res<Time>,
+    mut commands: Commands,
+    cam: Query<&GlobalTransform, With<Camera3d>>,
+    mut q: Query<(Entity, &mut LifeAgent, &Villager, &GlobalTransform, &mut PoseOverride, Option<&mut LifeAnim>, Option<&mut LifeProps>)>,
+    mut vendors: Query<(&VendorLife, &GlobalTransform, &mut PoseOverride, &crate::villagers::Villager), Without<LifeAgent>>,
+    mut vis: Query<&mut Visibility>,
+) {
+    let now = time.elapsed_secs();
+    let dt = time.delta_secs();
+    let cam_p = cam.iter().next().map(|g| g.translation());
+    for (e, mut a, v, gt, mut over, anim, props) in &mut q {
+        if a.st == St::Indoors {
+            continue;
+        }
+        if let (Some(cp), true) = (cam_p, gt.translation() != Vec3::ZERO) {
+            if gt.translation().distance_squared(cp) > POSE_CULL2 {
+                continue;
+            }
+        }
+        let t = now + v.phase * 2.5;
+        let age = now - a.t0;
+        let kid = a.body == Body::Kid;
+        let pose = match a.st {
+            St::Indoors => continue,
+            St::Walk | St::Idle | St::Play => {
+                let m = anim.as_ref().map_or(0.0, |x| x.moving);
+                let run = if kid { 1.0 } else { 0.0 };
+                clip::carry_walk(t, (now + v.phase) * v.gait, m, run, a.carry)
+            }
+            St::SitDown => clip::rise(1.0 - (age / 1.5).clamp(0.0, 1.0), a.seat),
+            St::StandUp => clip::rise((age / 1.5).clamp(0.0, 1.0), a.seat),
+            St::Sit(act) => clip::seated(act, a.seat, t),
+            St::Do(act) => {
+                let len = (a.until - a.t0).max(0.5);
+                let k = if act == Act::Yawn { clip::envelope(age, len, 0.9) } else { 1.0 };
+                clip::stand(act, t, k)
+            }
+            St::Greet(act) => {
+                let k = clip::envelope(age, 1.9, 0.5);
+                clip::stand(act, t, if act == Act::Bow { k } else { 1.0 })
+            }
+            St::Chat => {
+                // Turns: the lead talks on even 3-second beats, the partner on odd ones; the
+                // listener crosses arms, nods, now and then laughs.
+                let beat = ((age / 3.2) as i32 + if a.lead { 0 } else { 1 }) % 2 == 0;
+                let flavour = ((age / 3.2) as u32 + (v.phase * 10.0) as u32) % 4;
+                let act = if beat {
+                    Act::Talk
+                } else if flavour == 0 {
+                    Act::Laugh
+                } else if flavour == 1 {
+                    Act::Nod
+                } else {
+                    Act::Listen
+                };
+                clip::stand(act, t, 1.0)
+            }
+            St::Buy(stage) => {
+                let act = match stage {
+                    0 => Act::Browse,
+                    1 => Act::Haggle,
+                    _ => Act::Pay,
+                };
+                clip::stand(act, t, 1.0)
+            }
+        };
+        let mut pose = pose;
+        if a.look.abs() > 0.01 && !matches!(a.st, St::SitDown | St::StandUp) {
+            clip::look(&mut pose, a.look, -0.05);
+        }
+        let key = state_key(a.st);
+        match anim {
+            Some(mut an) => {
+                let target = if v.moving { 1.0 } else { 0.0 };
+                an.moving += (target - an.moving) * (dt * 8.0).min(1.0);
+                if a.shift.abs() > 1e-4 {
+                    clip::shift(&mut an.last, a.shift);
+                    a.shift = 0.0;
+                }
+                if an.key != key {
+                    an.from = an.last;
+                    an.t0 = now;
+                    an.key = key;
+                }
+                let s = ((now - an.t0) / FADE).clamp(0.0, 1.0);
+                let out = if s < 1.0 { clip::blend(&an.from, &pose, s * s * (3.0 - 2.0 * s)) } else { pose };
+                an.last = out;
+                over.0 = out;
+            }
+            None => {
+                a.shift = 0.0;
+                commands.entity(e).insert(LifeAnim { key, from: pose, last: pose, t0: now, moving: 0.0 });
+                over.0 = pose;
+            }
+        }
+        // Hand props follow the act.
+        if let Some(mut pr) = props {
+            if pr.shown != a.held {
+                for (h, pe) in pr.items {
+                    if h == Held::None {
+                        continue;
+                    }
+                    if let Ok(mut vv) = vis.get_mut(pe) {
+                        let want = if h == a.held { Visibility::Inherited } else { Visibility::Hidden };
+                        if *vv != want {
+                            *vv = want;
+                        }
+                    }
+                }
+                pr.shown = a.held;
+            }
+        }
+    }
+    for (vl, gt, mut over, v) in &mut vendors {
+        if let Some(cp) = cam_p {
+            if gt.translation().distance_squared(cp) > POSE_CULL2 {
+                continue;
+            }
+        }
+        let t = now + v.phase * 2.5;
+        let len = (vl.until - vl.t0).max(0.5);
+        let k = if vl.act == Act::Stand { 1.0 } else { clip::envelope(now - vl.t0, len, 0.4) };
+        over.0 = clip::stand(vl.act, t, k);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_day_runs_dawn_to_night_and_a_siege_is_night() {
+        assert_eq!(phase_of(0.02, false), Phase::Dawn);
+        assert_eq!(phase_of(0.12, false), Phase::Work);
+        assert_eq!(phase_of(0.25, false), Phase::Noon);
+        assert_eq!(phase_of(0.4, false), Phase::Afternoon);
+        assert_eq!(phase_of(0.5, false), Phase::Dusk);
+        assert_eq!(phase_of(0.75, false), Phase::Night);
+        assert_eq!(phase_of(0.25, true), Phase::Night);
+    }
+
+    #[test]
+    fn a_seated_root_stands_up_exactly_where_it_sat_down_from() {
+        let s = Spot { kind: SpotKind::Seat, pos: Vec2::new(3.0, -2.0), face: 0.7, zone: Zone::Village, bench: 0, seat_h: BENCH_TOP, house: None, need_houses: 0, taken: None };
+        let scale = 0.8;
+        let (root, stand) = seat_root(&s, scale);
+        let risen = root + fwd(s.face) * clip::RISE_DZ * scale;
+        assert!(risen.distance(stand) < 1e-5);
+        assert!(root.distance(s.pos) < 0.05);
+    }
+}

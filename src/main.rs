@@ -141,6 +141,7 @@ mod castle_kit;
 mod stories_warm;
 mod wild_sites;
 mod villagers;
+mod village_life; // daily life of the courtyard + street village: schedule, benches, chores, market, chats
 mod vista;
 mod visual;
 mod viewer;
@@ -264,6 +265,7 @@ fn main() {
         .add_plugins(poi::PoiPlugin) // micro-POI flags: fortress smoke column + wheeling crows
         .add_plugins(vista::VistaPlugin) // waterfall foam/mist animation
         .add_plugins(ambient_life::AmbientLifePlugin) // daytime butterflies + sky bird flock (visual charm)
+        .add_plugins(village_life::VillageLifePlugin) // residents' daily life: benches, chores, market, chats, kids
         .add_plugins(fish::FishPlugin) // fish that glide under water near the hero + occasionally leap
         .add_plugins((
             wind::WindPlugin,

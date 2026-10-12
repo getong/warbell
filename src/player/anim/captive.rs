@@ -76,16 +76,16 @@ impl Default for Life {
 }
 
 /// One arm as solved offline: shoulder euler (x, y, z) + elbow flex.
-type Arm = [f32; 4];
+pub(super) type Arm = [f32; 4];
 
-fn arm(a: Arm) -> (Quat, Quat) {
+pub(super) fn arm(a: Arm) -> (Quat, Quat) {
     (e3(a[0], a[1], a[2]), rx(a[3]))
 }
-fn mix(a: Arm, b: Arm, s: f32) -> (Quat, Quat) {
+pub(super) fn mix(a: Arm, b: Arm, s: f32) -> (Quat, Quat) {
     let (a, b) = (arm(a), arm(b));
     (a.0.slerp(b.0, s), a.1.slerp(b.1, s))
 }
-fn set_arms(p: &mut Pose, l: (Quat, Quat), r: (Quat, Quat)) {
+pub(super) fn set_arms(p: &mut Pose, l: (Quat, Quat), r: (Quat, Quat)) {
     p.sh_l = Jp::r(l.0);
     p.el_l = Jp::r(l.1);
     p.sh_r = Jp::r(r.0);
@@ -136,7 +136,7 @@ pub(crate) fn solve_leg(hips: Vec3, pitch: f32, ankle_z: f32) -> (f32, f32, f32)
 /// fall open. The splay turns each whole leg about its own hip→ankle line, so the knee swings out
 /// while the planted ankle stays exactly where the IK put it; the sole is then re-levelled with
 /// the toes turned out a little after the knee.
-fn plant_legs(p: &mut Pose, hips: Vec3, pitch: f32, feet: f32, splay: f32) {
+pub(super) fn plant_legs(p: &mut Pose, hips: Vec3, pitch: f32, feet: f32, splay: f32) {
     let (h, k, _) = solve_leg(hips, pitch, feet);
     let thigh = rx(h);
     let reach = thigh * (Vec3::new(0.0, -THIGH, 0.0) + rx(k) * Vec3::new(0.0, -SHIN, 0.0));

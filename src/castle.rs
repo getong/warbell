@@ -1656,7 +1656,7 @@ pub(crate) struct HouseSite {
 }
 
 /// Depth of a burgage yard behind the house (garden, shed, back fence).
-const YARD: f32 = 5.0;
+pub(crate) const YARD: f32 = 5.0;
 
 impl HouseSite {
     /// The whole burgage plot `(centre, half, yaw)`: the house + its yard behind, a stride either side.
@@ -1665,8 +1665,12 @@ impl HouseSite {
         let back = Quat::from_rotation_y(self.yaw) * Vec3::new(0.0, 0.0, -YARD / 2.0);
         (self.pos + Vec2::new(back.x, back.z), half, self.yaw)
     }
+    /// The yard-dressing variant (0/2 shed · 1 woodpile + hen coop · 3 hayrick; `house_yard`).
+    pub(crate) fn dress(&self) -> u8 {
+        self.dress
+    }
     /// World XZ of a point in the house's frame.
-    fn local(&self, x: f32, z: f32) -> Vec2 {
+    pub(crate) fn local(&self, x: f32, z: f32) -> Vec2 {
         let w = Quat::from_rotation_y(self.yaw) * Vec3::new(x, 0.0, z);
         self.pos + Vec2::new(w.x, w.z)
     }

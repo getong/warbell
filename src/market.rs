@@ -97,8 +97,21 @@ const PROPS: [(&str, Vec2, f32, f32); 2] = [
     ("market_barrels", Vec2::new(MC.x, MC.y - 4.4), 0.3, 0.75),
 ];
 
+/// Every stall's customer slot for the village-life shoppers (`village_life`): where a buyer stands
+/// before the counter (world XZ), the yaw that faces the counter, and the vendor's own spot.
+pub(crate) fn stall_slots() -> [(Vec2, f32, Vec2); 4] {
+    STALLS.map(|s| {
+        let rot = Quat::from_rotation_y(s.yaw);
+        let front = s.pos + (rot * Vec3::new(s.vendor_x * 0.6, 0.0, 1.12)).xz();
+        let vendor = s.pos + (rot * Vec3::new(s.vendor_x, 0.0, VENDOR_Z)).xz();
+        (front, s.yaw + PI, vendor)
+    })
+}
+
 /// Townsfolk pausing at a counter: (world XZ, facing yaw).
-const SHOPPERS: [(Vec2, f32); 2] = [(Vec2::new(MC.x + 1.35, MC.y - 1.65), PI), (Vec2::new(MC.x - 1.85, MC.y + 1.65), 0.0)];
+/// (Empty since `village_life`: living customers now walk up to the counters, haggle and pay —
+/// a parked shopper would stand in their slot.)
+const SHOPPERS: [(Vec2, f32); 0] = [];
 
 fn spawn_market(
     mut commands: Commands,

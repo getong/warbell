@@ -64,7 +64,29 @@ pub fn run() {
         // Orks own their drive (gait phase included) — posed the same frame, as in game.
         app.add_systems(Update, ork_anim_drive.before(crate::biped::animate_biped));
     }
+    // `FOREST_VIEW=life` — the village-life clips on a row of townsfolk (`FOREST_VIEW_LIFE=sit|
+    // rise|carry|bow|yawn|hide`, default the standing acts), posed straight from `anim::village`.
+    if std::env::var("FOREST_VIEW").is_ok_and(|v| v == "life") {
+        app.add_systems(Update, view_life_drive.before(crate::biped::animate_biped));
+    }
     app.run();
+}
+
+/// Pose every previewed rig with one village-life clip each (left → right = clip index).
+fn view_life_drive(
+    time: Res<Time>,
+    mut commands: Commands,
+    q: Query<(Entity, &GlobalTransform), With<crate::biped::BipedDrive>>,
+    mut order: Local<Vec<(f32, Entity)>>,
+) {
+    order.clear();
+    order.extend(q.iter().map(|(e, g)| (g.translation().x, e)));
+    order.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let now = time.elapsed_secs();
+    for (i, (_, e)) in order.iter().enumerate() {
+        let pose = crate::player::anim::village::preview(i, now + i as f32 * 0.7, 0.76);
+        commands.entity(*e).insert(crate::biped::PoseOverride(pose));
+    }
 }
 
 /// Synthesise `Hero`/`HeroHealth` state from `FOREST_VIEW_ANIM` so `hero_anim` plays that clip.
@@ -343,7 +365,7 @@ fn setup(
     // Camera — framed on a ~1.8u-tall model standing at the origin (chest-height look-at).
     // The landmark path below re-frames from the model's real bounds instead.
     let view_name = std::env::var("FOREST_VIEW").unwrap_or_default();
-    let default_cam = if matches!(view_name.as_str(), "peasant:lineup" | "people") {
+    let default_cam = if matches!(view_name.as_str(), "peasant:lineup" | "people" | "life") {
         (Vec3::new(1.2, 1.3, 7.6), Vec3::new(0.0, 0.85, 0.0))
     } else {
         (Vec3::new(0.0, 1.0, 3.0), Vec3::new(0.0, 0.85, 0.0))
@@ -556,6 +578,29 @@ fn spawn_model(
                     .spawn((Transform::from_xyz(x, 0.0, 0.0).with_scale(Vec3::splat(crate::villagers::SCALE)), Visibility::Visible))
                     .id();
                 spawn_viewer_peasant(commands, e, meshes, mat, Unemployed, false, kid, look, skin, tunic);
+            }
+        }
+        // The village-life clip review row (see `view_life_drive`): eight townsfolk, men, women,
+        // an elder and a kid, with a bench-height slab under them for the seated clips.
+        "life" => {
+            use crate::peasant_model::PeasantKind::Unemployed;
+            let looks = [0u32, 2, 4, 5, 1, 8, 11, 3];
+            let n = looks.len() as f32;
+            for (i, look) in looks.into_iter().enumerate() {
+                let x = (i as f32 - (n - 1.0) * 0.5) * 0.85;
+                let e = commands.spawn((Transform::from_xyz(x, 0.0, 0.0), Visibility::Visible)).id();
+                commands.entity(root).add_child(e);
+                spawn_viewer_peasant(commands, e, meshes, mat, Unemployed, false, i == 7, look, 0xd8a06a, [0x6a4a2a, 0x5a8fc8, 0x7a3a26, 0x3a7a72][i % 4]);
+            }
+            if std::env::var("FOREST_VIEW_LIFE").is_ok_and(|m| m == "sit") {
+                let slab = commands
+                    .spawn((
+                        Mesh3d(meshes.add(Cuboid::new(n * 0.85, 0.06, 0.3))),
+                        MeshMaterial3d(mat.clone()),
+                        Transform::from_xyz(0.0, 0.53, -0.04),
+                    ))
+                    .id();
+                commands.entity(root).add_child(slab);
             }
         }
         // A row of townsfolk (every trade + desert + a kid, varied looks) for one-shot review of
