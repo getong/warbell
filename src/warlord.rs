@@ -8,7 +8,7 @@
 //!
 //! He is NOT a biome [`Boss`](crate::boss::Boss) — that type is keyed to the five biome wardens with
 //! their dawn-leveling + boon rewards. The Warlord is a standalone entity built from the oversized
-//! berserker ork model ([`Armory::spawn_prop`]) plus a [`Warlord`] marker + [`Health`]. He's made
+//! berserker biped ork ([`Armory::spawn_prop`]) plus a [`Warlord`] marker + [`Health`]. He's made
 //! hittable by adding `With<Warlord>` to the hero cone-scan in `player/combat.rs` + `player/arts.rs`,
 //! so the hero's swings, arts, cleave and the Frostbite/Venom boons all land on him for free; the
 //! kill itself (the `Dying` fade) is the shared combat path, and [`warlord_death`] watches for it.
@@ -16,10 +16,9 @@
 use bevy::prelude::*;
 
 use crate::boss::Slowed;
-use crate::critters::PartKind;
 use crate::dying::Dying;
 use crate::game_state::AppState;
-use crate::orks::{Armory, Faction, OrkPart, OrkVariant};
+use crate::orks::{Armory, Faction, OrkPuppet, OrkVariant};
 use crate::player::{CombatFx, Health, HeroState, PendingCrit, PendingHeroDamage, PlayerRes};
 use crate::siege::{GamePhase, Siege};
 use crate::ui::anim::{anim, AnimKind};
@@ -86,7 +85,7 @@ pub struct WarlordPlugin;
 
 impl Plugin for WarlordPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, warlord_limbs) // limb sway runs even while frozen
+        app.add_systems(Update, warlord_limbs.before(crate::orks::puppet_drive)) // anim runs even while frozen
             .add_systems(Update, sync_warlord_bar.run_if(in_state(AppState::Playing)))
             .add_systems(OnExit(AppState::Playing), despawn_warlord_bar)
             .add_sim_systems((warlord_brain, warlord_death));
@@ -115,6 +114,7 @@ pub fn spawn(commands: &mut Commands, armory: &Armory, at: Vec2, facing: f32, he
             crit_at: 0.0,
         },
         Health { hp, max: hp },
+        CritStamp::default(),
     ));
     root
 }
@@ -271,44 +271,37 @@ fn warlord_brain(
     }
 }
 
-/// Animate the warlord's ork limbs (stride / counter-swinging arms / crit-rear), reusing the
-/// shared [`OrkPart`] limb markers exactly like `ork_fortress::denizen_limbs` + `boss::boss_limbs`.
-fn warlord_limbs(
-    time: Res<Time>,
-    warlords: Query<(&Warlord, &Children)>,
-    mut parts: Query<(&OrkPart, &mut Transform)>,
-) {
-    let tw = time.elapsed_secs_wrapped();
+/// Feed the warlord's biped ork animator ([`crate::orks::OrkPuppet`]): his blows land on the
+/// brain's `atk_anim` stamp, wound up off the swing cooldown (or the crit telegraph), and the
+/// telegraphed killing blow is stamped the instant it drops.
+fn warlord_limbs(time: Res<Time>, mut warlords: Query<(&Warlord, &mut OrkPuppet, &mut CritStamp)>) {
     let now = time.elapsed_secs();
-    for (w, children) in &warlords {
-        let t = tw + w.phase;
-        let strike = w.atk_anim > 0.0 && (now - w.atk_anim) < 0.45;
-        let crit_wind = w.crit_at > 0.0 && now < w.crit_at;
-        let crit_p = if crit_wind { (1.0 - (w.crit_at - now) / CRIT_TELEGRAPH).clamp(0.0, 1.0) } else { 0.0 };
-        for &child in children {
-            let Ok((part, mut tf)) = parts.get_mut(child) else { continue };
-            tf.rotation = match part.kind {
-                PartKind::Leg(sign) => {
-                    let s = if w.moving { (t * 4.8).sin() * 0.5 } else { (t * 0.7).sin() * 0.03 };
-                    Quat::from_rotation_x(sign * s)
-                }
-                PartKind::Arm(sign) => {
-                    if crit_wind {
-                        Quat::from_rotation_x(-1.0 - 2.0 * crit_p) // haul overhead across the windup
-                    } else if sign > 0.0 && strike {
-                        let p = (now - w.atk_anim) / 0.45;
-                        Quat::from_rotation_x(-1.4 + 3.0 * (p * std::f32::consts::PI).sin())
-                    } else {
-                        let s = if w.moving { -(t * 4.8).sin() * 0.4 } else { (t * 0.7).sin() * 0.05 };
-                        Quat::from_rotation_x(sign * s)
-                    }
-                }
-                PartKind::Head => Quat::from_rotation_y((t * 0.5).sin() * 0.15),
-                PartKind::Tail => Quat::IDENTITY,
-            };
+    for (w, mut p, mut c) in &mut warlords {
+        if w.crit_at > 0.0 {
+            c.0 = w.crit_at;
+        } else if c.0 > 0.0 {
+            // The crit dropped (or was abandoned) this frame: play it as a blow.
+            if now >= c.0 - 0.05 {
+                p.atk_anim = now;
+            }
+            c.0 = 0.0;
         }
+        if w.atk_anim > p.atk_anim {
+            p.atk_anim = w.atk_anim;
+        }
+        p.strike_in = if w.crit_at > 0.0 {
+            (w.crit_at - now).max(0.0)
+        } else if w.atk_cd > 0.0 {
+            w.atk_cd
+        } else {
+            crate::player::anim::ork::STRIKE_HOLD
+        };
     }
 }
+
+/// The crit the warlord is winding up (`Warlord::crit_at`, 0 = none) as last seen by [`warlord_limbs`].
+#[derive(Component, Default)]
+struct CritStamp(f32);
 
 /// The Warlord fell (the shared combat kill inserted `Dying`): record the win on the `Player`, flip
 /// the run to `Victory` (which `game_state` turns into the gold VICTORY screen), and bellow a death

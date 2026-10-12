@@ -12,7 +12,7 @@
 //! - **Arms by hand targets.** Hands are placed in the chest frame (or the rig frame for the blows) and
 //!   the arm is solved with the elbow pointed where an arm would put it ([`arm`]); the club is laid
 //!   along a wanted direction by forearm twist + wrist deviation, within a hammer grip's range
-//!   ([`grip`]) — so the club rests ON the shoulder at ease, stands up in the guard, and whips
+//!   ([`grip`]) — so the club hangs from the fist at ease, stands up in the guard, and whips
 //!   through the blow without the fist ever bending backwards.
 //! - **Blows land on the hit.** The brains report how long until the next blow lands
 //!   (`Ork::strike_in`: the swing cooldown, or the closing time while charging) and stamp the instant
@@ -370,13 +370,16 @@ struct Arms {
     w: Vec3,
 }
 
-/// At ease: the off arm hangs heavy off the lats; the club is propped on the right shoulder (the
-/// staff stood upright beside it).
+/// At ease: the off arm hangs heavy off the lats; the club hangs from the right fist (the staff
+/// stood upright beside it).
 fn arms_ease(staff: bool) -> Arms {
     if staff {
         Arms { l: Vec3::new(-0.109, -0.24, 0.19), le: Vec3::new(-0.3, -0.25, -0.92), r: Vec3::new(0.14, -0.03, 0.24), re: Vec3::new(0.5, -0.34, -0.8), w: Vec3::new(0.0, 0.99, -0.16) }
     } else {
-        Arms { l: Vec3::new(-0.109, -0.22, 0.187), le: Vec3::new(-0.29, -0.29, -0.91), r: Vec3::new(0.023, 0.153, 0.148), re: Vec3::new(0.35, -0.94, 0.02), w: Vec3::new(-0.05, 0.58, -0.81) }
+        // The club hangs loose in the fist beside the right thigh, head down by the knee and
+        // canted out and forward — clear of the leg's swing and of the skinned body's heavy
+        // deltoid (propped on the shoulder, its head sank through it: `club_clears_the_shoulder`).
+        Arms { l: Vec3::new(-0.109, -0.22, 0.187), le: Vec3::new(-0.29, -0.29, -0.91), r: Vec3::new(0.06, -0.2, 0.17), re: Vec3::new(0.35, -0.2, -0.92), w: Vec3::new(0.4, -0.36, 0.84) }
     }
 }
 
@@ -783,6 +786,52 @@ mod tests {
         }
     }
 
+    /// The carried club never runs through its own shoulder (the skinned body's deltoid + the
+    /// trapezius beside the neck): at ease, through the walk and the charge, on guard. Measured
+    /// from the club head (grip + 0.13..0.53 along the haft, r ≈ 0.09 with the spikes' roots) and
+    /// the upper haft to the deltoid (r ≈ 0.08 round the upper arm's first 0.12) and the trapezius.
+    #[test]
+    fn club_clears_the_shoulder() {
+        let b = HEAVY;
+        let x = |jp: Jp, t: Vec3| Transform { translation: jp.t.unwrap_or(t), rotation: jp.r, ..default() }.to_matrix();
+        let seg = |p: Vec3, a: Vec3, bb: Vec3| {
+            let ab = bb - a;
+            let t = ((p - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0);
+            p.distance(a + ab * t)
+        };
+        // Closest approach between two segments, sampled (plenty for a test).
+        let segseg = |a0: Vec3, a1: Vec3, b0: Vec3, b1: Vec3| (0..=24).map(|i| seg(a0.lerp(a1, i as f32 / 24.0), b0, b1)).fold(f32::INFINITY, f32::min);
+        let mut poses: Vec<(String, Pose)> = vec![("idle0".into(), idle(0.0, &b)), ("idle7".into(), idle(7.3, &b)), ("guard".into(), guard(1.0, &b))];
+        for i in 0..8 {
+            let c = i as f32 / 8.0 * TAU;
+            poses.push((format!("walk{i}"), gait(c, 0.0, 0.5, 0.0, &b)));
+            poses.push((format!("run{i}"), gait(c, 1.0, 0.9, 0.0, &b)));
+        }
+        for blow in [OrkBlow::Smash, OrkBlow::Swipe] {
+            for (i, k) in keys(&b)[blow as usize].iter().enumerate() {
+                poses.push((format!("{blow:?}{i}"), k.clone()));
+            }
+        }
+        let mut worst = f32::INFINITY;
+        for (name, p) in &poses {
+            let hips = x(p.hips, Vec3::new(0.0, 1.05, 0.0));
+            let chest = hips * x(p.torso, Vec3::new(0.0, 0.15, 0.0));
+            let sh = chest * x(p.sh_r, Vec3::new(b.sdx, 0.27, 0.01));
+            let hand = sh * x(p.el_r, Vec3::new(0.0, -0.3, 0.0)) * Mat4::from_translation(Vec3::new(0.0, -0.25, 0.0));
+            let club = hand * x(p.sword, Vec3::ZERO);
+            let at = |d: f32| club.transform_point3(Vec3::Y * d);
+            let delt = (sh.transform_point3(Vec3::new(0.0, -0.01, 0.0)), sh.transform_point3(Vec3::new(0.0, -0.12, 0.0)));
+            let trap = (chest.transform_point3(Vec3::new(0.06, 0.3, -0.02)), chest.transform_point3(Vec3::new(b.sdx - 0.05, 0.3, -0.02)));
+            let head = segseg(at(0.16), at(0.5), delt.0, delt.1) - 0.08 - 0.09;
+            let haft = segseg(at(0.08), at(0.16), delt.0, delt.1) - 0.08 - 0.045;
+            let trap_c = segseg(at(0.1), at(0.5), trap.0, trap.1) - 0.05 - 0.09;
+            let m = head.min(haft).min(trap_c);
+            eprintln!("{name}: head {head:.3} haft {haft:.3} trap {trap_c:.3}");
+            worst = worst.min(m);
+        }
+        assert!(worst > -0.005, "club runs through the shoulder by {:.3}", -worst);
+    }
+
     /// Every authored club / staff direction is actually reached by the grip solver.
     #[test]
     fn weapons_point_where_authored() {
@@ -794,9 +843,9 @@ mod tests {
                 }
             }
         }
-        // At ease the club lies back over the shoulder; on guard it stands up.
+        // At ease the club hangs down beside the leg, head forward; on guard it stands up.
         let (_, _, _, w) = fk(&idle(0.0, &HEAVY), &HEAVY);
-        assert!(w.y > 0.4 && w.z < -0.4, "{w}");
+        assert!(w.y < -0.3 && w.z > 0.2 && w.x > 0.1, "{w}");
         let (_, _, _, w) = fk(&guard(0.0, &HEAVY), &HEAVY);
         assert!(w.y > 0.8, "{w}");
     }

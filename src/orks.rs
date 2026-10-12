@@ -294,9 +294,6 @@ pub(crate) struct OrkPart {
 #[derive(Component)]
 pub(crate) struct OrkEye;
 
-/// Tree-local eye positions on the ork root (the head's eye boxes lifted to the root frame).
-const EYE_OFFS: [Vec3; 2] = [Vec3::new(-0.08, 1.12, 0.24), Vec3::new(0.08, 1.12, 0.24)];
-
 /// Tags a night-wave invader (vs a leashed camp ork). Spawned + driven by `siege.rs`; the
 /// camp [`ork_brain`] skips these via `Without<WaveInvader>` so the two AIs stay separate.
 /// Carries the stuck-cull progress tracking (no keep-ward progress for too long → reaped so a
@@ -324,6 +321,7 @@ impl Plugin for OrksPlugin {
             Update,
             ork_drive.after(ork_brain).after(ork_brawl).after(crate::siege::invader_brain).before(crate::biped::animate_biped),
         );
+        app.add_systems(Update, puppet_drive.before(crate::biped::animate_biped));
         // Ungated + before both brains: hand a slain striker's token straight back, so the horde
         // can't be frozen out of the ring for a full TOKEN_TIME (see `melee_ring`).
         app.add_systems(
@@ -1135,16 +1133,6 @@ fn pick_patrol(o: &mut Ork) {
 
 // ── Models (ported from Ork.tsx) ────────────────────────────────────────────────────
 
-struct PartDef {
-    kind: PartKind,
-    pivot: Vec3,
-    mesh: Mesh,
-}
-struct OrkSpec {
-    torso: Mesh,
-    parts: Vec<PartDef>,
-}
-
 fn v(x: f32, y: f32, z: f32) -> Vec3 {
     Vec3::new(x, y, z)
 }
@@ -1240,11 +1228,6 @@ fn cyl(r: f32, h: f32, off: Vec3, rot: Quat, c: [f32; 4]) -> Mesh {
 }
 fn orb(r: f32, off: Vec3, c: [f32; 4]) -> Mesh {
     tinted(Sphere::new(r).mesh().ico(2).unwrap().translated_by(off), c)
-}
-/// Bake a part built in a sub-group's local space into the parent: rotate about the group
-/// origin, then translate to the group's offset (matches three.js `<group rotation pos>`).
-fn baked(m: Mesh, rot: Quat, off: Vec3) -> Mesh {
-    m.rotated_by(rot).translated_by(off)
 }
 
 /// Tapered cylinder (three.js `CylinderGeometry(rt,rb,h)`) — for the studio-rig ork limbs/torso.
@@ -1705,177 +1688,11 @@ fn kit_ork_meshes(variant: OrkVariant, faction: Faction) -> Option<crate::biped:
     })
 }
 
-fn spec(variant: OrkVariant, faction: Faction) -> OrkSpec {
-    let st = stats(variant);
-    let skin = lin(st.skin);
-    let dark = lin_scaled(st.skin, 0.62); // SKIN_DARK_ACCENT
-    let belly = lin_scaled(st.skin, 1.18); // lighter underbelly plate
-    let fac = lin(faction.hex());
-    const BELT: u32 = 0x3a2616;
-    const TUSK: u32 = 0xece1c2;
-    const EYE: u32 = 0xe6c828;
-    const CLUB_WOOD: u32 = 0x4a2a16;
-    const CLUB_BAND: u32 = 0x1a1008;
-    const STAFF_WOOD: u32 = 0x6a4a2a;
-    const ORB: u32 = 0xc89cff;
-    const BONE: u32 = 0xd8cfae;
-    const WRAP: u32 = 0x2e1f12; // leather wrist/ankle wraps
-    const RING: u32 = 0xc9a24a; // crude gold earring
-    let hair = lin(CLUB_BAND);
-    let body_rot = Quat::from_rotation_x(0.2);
-    let body_off = v(0.0, 0.74, 0.05);
-    const PI: f32 = std::f32::consts::PI;
-    const HPI: f32 = std::f32::consts::FRAC_PI_2;
-
-    // Static torso: loincloth (faction) + belt + the pitched body group (torso + underbelly +
-    // war-paint + a leather shoulder strap + a trophy tooth-necklace) — the TS silhouette with
-    // Bevy-side savage dressing on top.
-    let mut torso_parts = vec![
-        bx(0.55, 0.2, 0.3, v(0.0, 0.4, 0.0), fac), // loincloth
-        bx(0.15, 0.08, 0.29, v(-0.14, 0.27, 0.0), fac), // ragged hem tatters
-        bx(0.12, 0.06, 0.29, v(0.05, 0.28, 0.0), fac),
-        bx(0.10, 0.07, 0.29, v(0.19, 0.275, 0.0), fac),
-        bx(0.56, 0.06, 0.31, v(0.0, 0.49, 0.0), lin(BELT)),
-        bx(0.07, 0.06, 0.02, v(0.0, 0.49, 0.155), lin(BONE)), // belt skull trophy
-        baked(bx(0.55, 0.42, 0.34, Vec3::ZERO, skin), body_rot, body_off), // torso
-        baked(bx(0.40, 0.28, 0.014, v(0.0, -0.06, 0.168), belly), body_rot, body_off), // underbelly
-        baked(bx(0.12, 0.32, 0.022, v(0.0, 0.0, 0.175), fac), body_rot, body_off), // war-paint vert
-        baked(bx(0.4, 0.06, 0.016, v(0.0, 0.0, 0.176), dark), body_rot, body_off), // war-paint horiz
-        baked(bxr(0.07, 0.50, 0.018, v(0.0, 0.0, 0.18), rz(0.65), lin(BELT)), body_rot, body_off), // shoulder strap
-        baked(bx(0.34, 0.018, 0.012, v(0.0, 0.185, 0.183), lin(BELT)), body_rot, body_off), // necklace cord
-    ];
-    for i in -2i32..=2 {
-        // trophy teeth strung on the cord, drooping toward the centre
-        let x = i as f32 * 0.07;
-        let y = 0.15 - (2 - i.abs()) as f32 * 0.012;
-        torso_parts.push(baked(cone(0.018, 0.07, v(x, y, 0.185), rx(PI), lin(TUSK)), body_rot, body_off));
-    }
-    let torso = group(torso_parts);
-
-    // Head: skull + jutting underbite jaw (the tusks rise from it) + brow + eyes + nostrils +
-    // ears (one with a crude gold ring), topped by per-variant headgear: grunt topknot, scout
-    // faction headband + bone feather, berserker faction-dyed mohawk + cheek war-paint, shaman
-    // bone half-skull headdress with horns.
-    let mut head_parts = vec![
-        bx(0.36, 0.34, 0.34, Vec3::ZERO, skin),
-        bx(0.30, 0.11, 0.30, v(0.0, -0.16, 0.05), skin), // underbite jaw
-        bx(0.26, 0.04, 0.02, v(0.0, -0.125, 0.195), dark), // mouth shadow above the jaw lip
-        bx(0.32, 0.06, 0.01, v(0.0, 0.06, 0.175), dark),
-        bx(0.05, 0.04, 0.008, v(-0.08, 0.02, 0.175), lin(EYE)),
-        bx(0.05, 0.04, 0.008, v(0.08, 0.02, 0.175), lin(EYE)),
-        bx(0.02, 0.025, 0.008, v(-0.035, -0.055, 0.176), dark), // nostrils
-        bx(0.02, 0.025, 0.008, v(0.035, -0.055, 0.176), dark),
-        cone(0.028, 0.15, v(-0.09, -0.10, 0.19), rz(-0.15), lin(TUSK)), // tusks (from the jaw)
-        cone(0.028, 0.15, v(0.09, -0.10, 0.19), rz(0.15), lin(TUSK)),
-        bx(0.06, 0.12, 0.14, v(-0.2, 0.0, 0.0), skin),
-        bx(0.06, 0.12, 0.14, v(0.2, 0.0, 0.0), skin),
-        bx(0.03, 0.05, 0.012, v(-0.2, -0.085, 0.0), lin(RING)), // earring, left ear
-    ];
-    match variant {
-        OrkVariant::Grunt => {
-            head_parts.push(cyl(0.045, 0.10, v(0.0, 0.21, -0.02), Quat::IDENTITY, hair)); // topknot
-            head_parts.push(orb(0.06, v(0.0, 0.28, -0.02), hair));
-        }
-        OrkVariant::Scout => {
-            head_parts.push(bx(0.37, 0.05, 0.35, v(0.0, 0.10, 0.0), fac)); // faction headband
-            head_parts.push(cone(0.02, 0.16, v(0.17, 0.21, -0.05), rz(-0.3), lin(BONE))); // bone feather
-        }
-        OrkVariant::Berserker => {
-            for i in 0..4 {
-                // faction-dyed mohawk, raked back
-                head_parts.push(cone(0.035, 0.15, v(0.0, 0.21, 0.10 - i as f32 * 0.08), rx(-0.15), fac));
-            }
-            head_parts.push(bx(0.04, 0.13, 0.012, v(-0.13, -0.03, 0.174), fac)); // cheek war-paint
-            head_parts.push(bx(0.04, 0.13, 0.012, v(0.13, -0.03, 0.174), fac));
-        }
-        OrkVariant::Shaman => {
-            head_parts.push(bx(0.30, 0.10, 0.30, v(0.0, 0.19, 0.02), lin(BONE))); // half-skull headdress
-            head_parts.push(cone(0.035, 0.18, v(-0.13, 0.26, 0.0), rz(0.5), lin(TUSK))); // horns
-            head_parts.push(cone(0.035, 0.18, v(0.13, 0.26, 0.0), rz(-0.5), lin(TUSK)));
-        }
-    }
-    let head = group(head_parts);
-
-    // Right arm + baked weapon (club for melee, staff + orb for shaman): fur-trimmed spiked
-    // shoulder pad, wrist wrap, then the weapon.
-    let mut arm_r = vec![
-        bx(0.2, 0.1, 0.3, v(0.0, -0.02, 0.0), dark), // shoulder
-        bx(0.22, 0.05, 0.32, v(0.0, 0.045, 0.0), hair), // fur trim
-        bxr(0.17, 0.5, 0.24, v(0.02, -0.25, 0.04), xyz(0.2, 0.0, 0.05), skin), // upper
-        bxr(0.17, 0.06, 0.24, v(0.035, -0.44, 0.065), xyz(0.2, 0.0, 0.05), lin(WRAP)), // wrist wrap
-        bxr(0.16, 0.1, 0.22, v(0.04, -0.52, 0.08), xyz(0.2, 0.0, 0.05), dark), // forearm
-    ];
-    if !st.shaman {
-        arm_r.push(cone(0.04, 0.13, v(0.0, 0.09, 0.0), xyz(0.0, 0.0, 0.25), lin(CLUB_BAND))); // shoulder spike
-    }
-    if st.shaman {
-        let wr = xyz(0.1, 0.0, 0.08);
-        let wo = v(0.05, -0.5, 0.1);
-        arm_r.push(baked(cyl(0.033, 1.1, v(0.0, -0.1, 0.0), Quat::IDENTITY, lin(STAFF_WOOD)), wr, wo));
-        arm_r.push(baked(cyl(0.04, 0.06, v(0.0, -0.45, 0.0), Quat::IDENTITY, lin(WRAP)), wr, wo)); // grip wrap
-        arm_r.push(baked(orb(0.1, v(0.0, 0.5, 0.0), lin(ORB)), wr, wo));
-        // bone claw cradling the orb + a faction tassel under it
-        arm_r.push(baked(cone(0.02, 0.13, v(-0.06, 0.42, 0.0), rz(0.35), lin(TUSK)), wr, wo));
-        arm_r.push(baked(cone(0.02, 0.13, v(0.06, 0.42, 0.0), rz(-0.35), lin(TUSK)), wr, wo));
-        arm_r.push(baked(cone(0.02, 0.13, v(0.0, 0.42, 0.06), rx(-0.35), lin(TUSK)), wr, wo));
-        arm_r.push(baked(bx(0.03, 0.10, 0.03, v(0.07, 0.32, 0.0), fac), wr, wo));
-    } else {
-        let wr = xyz(0.4, 0.0, 0.1);
-        let wo = v(0.05, -0.65, 0.1);
-        arm_r.push(baked(cyl(0.04, 0.26, v(0.0, -0.1, 0.0), Quat::IDENTITY, lin(CLUB_WOOD)), wr, wo));
-        arm_r.push(baked(cyl(0.05, 0.07, v(0.0, -0.16, 0.0), Quat::IDENTITY, lin(WRAP)), wr, wo)); // grip wrap
-        arm_r.push(baked(cyl(0.09, 0.34, v(0.0, -0.36, 0.0), Quat::IDENTITY, lin(CLUB_WOOD)), wr, wo));
-        for i in 0..4 {
-            let a = i as f32 * HPI;
-            let spike = cone(0.03, 0.09, v(a.cos() * 0.1, -0.36, a.sin() * 0.1), xyz(0.0, a, HPI), lin(CLUB_BAND));
-            arm_r.push(baked(spike, wr, wo));
-            // second offset spike ring higher on the head
-            let b = a + std::f32::consts::FRAC_PI_4;
-            let spike2 = cone(0.025, 0.08, v(b.cos() * 0.1, -0.26, b.sin() * 0.1), xyz(0.0, b, HPI), lin(CLUB_BAND));
-            arm_r.push(baked(spike2, wr, wo));
-        }
-        arm_r.push(baked(cone(0.04, 0.10, v(0.0, -0.57, 0.0), rx(PI), lin(CLUB_BAND)), wr, wo)); // crown spike
-    }
-    let arm_r = group(arm_r);
-
-    // Left arm: matching fur shoulder + a spiked leather bracer on the forearm.
-    let arm_l = group(vec![
-        bx(0.2, 0.1, 0.3, v(0.0, -0.02, 0.0), dark),
-        bx(0.22, 0.05, 0.32, v(0.0, 0.045, 0.0), hair), // fur trim
-        bxr(0.17, 0.5, 0.24, v(-0.02, -0.25, 0.04), xyz(0.2, 0.0, -0.05), skin),
-        bxr(0.18, 0.13, 0.26, v(-0.04, -0.52, 0.08), xyz(0.2, 0.0, -0.05), dark),
-        bxr(0.19, 0.06, 0.27, v(-0.045, -0.475, 0.075), xyz(0.2, 0.0, -0.05), lin(WRAP)), // bracer strap
-        cone(0.025, 0.09, v(-0.14, -0.52, 0.0), rz(HPI), lin(CLUB_BAND)), // bracer spikes
-        cone(0.025, 0.09, v(-0.14, -0.52, 0.14), rz(HPI), lin(CLUB_BAND)),
-    ]);
-
-    // Legs (built top-at-origin so the hip pivot sits at the top; feet rest at root y≈0):
-    // shin + leather ankle wrap + a toed foot jutting forward.
-    let leg = || {
-        group(vec![
-            bx(0.2, 0.36, 0.22, v(0.0, -0.18, 0.0), skin),
-            bx(0.21, 0.07, 0.23, v(0.0, -0.28, 0.0), lin(WRAP)), // ankle wrap
-            bx(0.18, 0.08, 0.12, v(0.0, -0.32, 0.15), skin), // foot / toes
-        ])
-    };
-
-    let parts = vec![
-        PartDef { kind: PartKind::Leg(1.0), pivot: v(-0.13, 0.36, 0.0), mesh: leg() },
-        PartDef { kind: PartKind::Leg(-1.0), pivot: v(0.13, 0.36, 0.0), mesh: leg() },
-        PartDef { kind: PartKind::Arm(1.0), pivot: v(0.36, 0.95, 0.05), mesh: arm_r },
-        PartDef { kind: PartKind::Arm(-1.0), pivot: v(-0.36, 0.95, 0.05), mesh: arm_l },
-        PartDef { kind: PartKind::Head, pivot: v(0.0, 1.1, 0.06), mesh: head },
-    ];
-    OrkSpec { torso, parts }
-}
-
 // ── Armory: all variant×faction meshes uploaded once, clone-spawned per camp ─────────
 
 struct Template {
-    torso: Handle<Mesh>,
-    parts: Vec<(PartKind, Vec3, Handle<Mesh>)>,
-    /// The shared-biped re-rig handles (used by `spawn` — camps/patrols/waves). The old
-    /// `torso`/`parts` above stay for `spawn_prop` (fortress decor + the Warlord boss).
+    /// The shared-biped handles every ork spawns with (camps, patrols, waves, the fortress
+    /// denizens and the Warlord via `spawn_prop`).
     biped: crate::biped::BipedHandles,
     st: Stats,
 }
@@ -1904,13 +1721,10 @@ impl Armory {
         let mut tmpl = Vec::new();
         for faction in [Faction::Red, Faction::Blue] {
             for variant in VARIANTS {
-                let s = spec(variant, faction);
                 let st = stats(variant);
                 tmpl.push((
                     (variant, faction),
                     Template {
-                        torso: meshes.add(s.torso),
-                        parts: s.parts.into_iter().map(|p| (p.kind, p.pivot, meshes.add(p.mesh))).collect(),
                         biped: ork_biped_meshes(variant, faction).upload(meshes),
                         st,
                     },
@@ -2115,12 +1929,14 @@ impl Armory {
         root
     }
 
-    /// Spawn a DECORATIVE ork — the full variant mesh hierarchy (torso, limbs tagged
-    /// [`OrkPart`], glowing eyes) with **no** [`Ork`] brain and no `Health`, so it can't
-    /// aggro, path, or be targeted by the hero. The fortress population (`ork_fortress.rs`)
-    /// drives these with its own wander + limb systems; the caller tags lifecycle
-    /// (`BiomeEntity`) and inserts its own driver component on the returned root.
-    /// `extra_scale` multiplies the variant's own scale (the warlord is an oversized 1.55×).
+    /// Spawn a DECORATIVE ork — the same skinned biped body as the camp warbands (orks.glb via
+    /// [`ork_biped_meshes`], else the per-joint parts), glowing eyes, with **no** [`Ork`] brain and
+    /// no `Health`, so it can't aggro, path, or be targeted by the hero. The fortress population
+    /// (`ork_fortress.rs`) and the Warlord move the root themselves; [`OrkPuppet`] (+ the ork
+    /// animator) turns that ground motion into the waddle / idle, and a stamped
+    /// [`OrkPuppet::atk_anim`] into a blow. The caller tags lifecycle (`BiomeEntity`) and inserts
+    /// its own driver component on the returned root.
+    /// `extra_scale` multiplies the variant's own scale (the warlord is oversized).
     pub fn spawn_prop(
         &self,
         commands: &mut Commands,
@@ -2131,37 +1947,70 @@ impl Armory {
         extra_scale: f32,
     ) -> Entity {
         let t = self.template(variant, faction);
-        let scale = BASE_SCALE * t.st.scale * extra_scale;
+        let scale = BASE_SCALE * t.st.scale * BIPED_SIZE_FIX * extra_scale;
+        let seed = pos.x.to_bits().wrapping_mul(2_654_435_761) ^ pos.z.to_bits().wrapping_mul(40_503);
         let root = commands
             .spawn((
-                Transform {
-                    translation: pos,
-                    rotation: Quat::from_rotation_y(facing),
-                    scale: Vec3::splat(scale),
-                },
+                Transform { translation: pos, rotation: Quat::from_rotation_y(facing), scale: Vec3::splat(scale) },
                 Visibility::Visible,
+                crate::biped::BipedDrive::default(),
+                ork_motion(variant, seed),
+                OrkPuppet::default(),
             ))
             .id();
-        commands.entity(root).with_children(|p| {
-            p.spawn((Mesh3d(t.torso.clone()), MeshMaterial3d(self.mat.clone()), Transform::default()));
-            for (kind, pivot, mesh) in &t.parts {
-                p.spawn((
-                    Mesh3d(mesh.clone()),
-                    MeshMaterial3d(self.mat.clone()),
-                    Transform::from_translation(*pivot),
-                    OrkPart { kind: *kind },
-                ));
-            }
-            for off in EYE_OFFS {
-                p.spawn((
-                    Mesh3d(self.eye_mesh.clone()),
-                    MeshMaterial3d(self.eye_mat.clone()),
-                    Transform::from_translation(off),
-                    OrkEye,
-                ));
+        let (hip_dx, shoulder_dx, head_scale) = rig_dims(variant);
+        let head = crate::biped::spawn_biped(commands, root, &self.mat, t.biped.clone(), head_scale, 1.0, hip_dx, shoulder_dx, ORK_RIG_OFF, Some(ork_shield_xf())).0;
+        commands.entity(head).with_children(|p| {
+            for xf in ork_eye_xfs(variant) {
+                p.spawn((Mesh3d(self.eye_mesh.clone()), MeshMaterial3d(self.eye_mat.clone()), xf, OrkEye));
             }
         });
         root
+    }
+}
+
+/// A brainless biped ork ([`Armory::spawn_prop`]: fortress denizens, the Warlord) whose owner moves
+/// the root itself. [`puppet_drive`] reads the root's ground motion for the gait; the owner may stamp
+/// a blow (`atk_anim`, like [`Ork::atk_anim`]) and report the countdown to the next (`strike_in`).
+#[derive(Component)]
+pub struct OrkPuppet {
+    pub atk_anim: f32,
+    pub strike_in: f32,
+    last: Vec2,
+    moving: f32,
+}
+
+impl Default for OrkPuppet {
+    fn default() -> Self {
+        OrkPuppet { atk_anim: 0.0, strike_in: f32::INFINITY, last: Vec2::NAN, moving: 0.0 }
+    }
+}
+
+/// Feed the ork animator for [`OrkPuppet`]s (the `ork_drive` of brainless orks).
+pub(crate) fn puppet_drive(
+    time: Res<Time>,
+    mut q: Query<
+        (&mut OrkPuppet, &mut crate::biped::BipedDrive, &mut crate::player::anim::ork::OrkMotion, &Transform),
+        (Without<Ork>, Without<crate::dying::Dying>),
+    >,
+) {
+    let now = time.elapsed_secs();
+    let dt = time.delta_secs();
+    for (mut p, mut d, mut m, tf) in &mut q {
+        let pos = Vec2::new(tf.translation.x, tf.translation.z);
+        if dt > 0.0 {
+            let v = if p.last.is_nan() { 0.0 } else { (pos - p.last).length() / dt };
+            if p.last.is_nan() {
+                d.phase = (pos.x * 0.73 + pos.y * 1.31).rem_euclid(TAU); // own idle clock
+            }
+            // Hysteresis-free ease: a pacing denizen reads as moving above a slow amble.
+            let target = if v > 0.25 { 1.0 } else { 0.0 };
+            p.moving += (target - p.moving) * (dt * 6.0).min(1.0);
+        }
+        p.last = pos;
+        d.moving_amt = p.moving;
+        d.attacking = false;
+        m.track(&mut d, p.atk_anim, p.strike_in, pos, tf.scale.x, now, dt);
     }
 }
 
