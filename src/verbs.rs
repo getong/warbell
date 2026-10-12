@@ -654,6 +654,10 @@ pub fn populate_ore(
     let crystal_mats: Vec<Handle<StandardMaterial>> = gem
         .iter()
         .map(|&(base_color, emissive)| {
+            // Half the authored glow: at full strength the teal / emerald shards bloomed into
+            // bright cyan-green specks across the rock range (player: "dots"). The point light
+            // still marks each ore boulder.
+            let emissive = emissive * 0.45;
             materials.add(StandardMaterial { base_color, emissive, perceptual_roughness: 0.2, ..default() })
         })
         .collect();
@@ -880,7 +884,10 @@ pub fn populate_forage(
     let herb_mesh = meshes.add(marsh_herb_mesh());
     let herb_mat = materials.add(StandardMaterial {
         base_color: Color::WHITE,
-        emissive: LinearRgba::rgb(0.16, 0.52, 0.20), // soft green glow → "shiny" healing herb
+        // A faint fresh-green lift, not a glow: at (0.16, 0.52, 0.20) the 55 herbs bloomed into
+        // neon green specks dotted all over the swamp from any height (player: "dots"). The
+        // bright young sprig still pops off the dark peat up close, where you gather it.
+        emissive: LinearRgba::rgb(0.03, 0.09, 0.035),
         perceptual_roughness: 0.55,
         ..default()
     });
@@ -1383,7 +1390,7 @@ fn apple_tree_mesh() -> Mesh {
 fn marsh_herb_mesh() -> Mesh {
     let stem = lin(0x5aa84a); // fresh green stalk
     let leaf = lin(0x3f8a30); // deeper green blade
-    let bud = lin(0xcaffa0); // bright tip — reads luminous under the emissive lift
+    let bud = lin(0xa8d878); // pale fresh tip (was a luminous 0xcaffa0 bead)
     let mut parts = vec![csph(0.12, v(0.0, 0.06, 0.0), leaf)]; // root tuft
     const N: usize = 6;
     for i in 0..N {

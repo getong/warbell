@@ -34,6 +34,8 @@ use crate::terrain::TerrainMaterial;
 /// LOD0 → LOD1 cross-fade distance (world units, dithered over ±[`LOD_BAND`]).
 pub const LOD_NEAR: f32 = 30.0;
 const LOD_BAND: f32 = 2.0;
+/// The swamp's narrower crossfade half-width (see [`Kit::attach_tree_narrow`]).
+pub const LOD_BAND_NARROW: f32 = 0.5;
 /// Far cull, same as the low-poly trees (fog has them by then).
 const TREE_FAR: f32 = 180.0;
 /// A kit prop only blocks when it's at least this tall (scaled, ~knee height on the 1.3u hero)…
@@ -326,6 +328,17 @@ impl Kit {
         self.attach_tree_tagged(e, lod0, cull, ());
     }
 
+    /// [`Self::attach_tree`] with the LOD0 → LOD1 dither crossfade squeezed to ±[`LOD_BAND_NARROW`].
+    /// The swamp's feathery cypress / willow crowns are LOD0 sprays vs. far fewer, bigger LOD1
+    /// cards, so mid-fade most of the crown is covered by only ONE of the two complementary
+    /// dither masks: every tree whose base sat 28–32u from the camera wore a crisp, screen-stable
+    /// 4×4 checkerboard (SMAA can't resolve it) — the "dots" over the swamp canopy. A 1u band
+    /// keeps the hand-off soft for the frame or two a walking camera spends crossing it, and is
+    /// no dearer than the wide one (the dither pipeline only runs inside the band).
+    pub fn attach_tree_narrow(&self, e: &mut EntityCommands, lod0: usize, cull: bool) {
+        self.attach_tree_with(e, lod0, cull, (), false, LOD_BAND_NARROW);
+    }
+
     /// Collision radius for a kit tree `lod0` planted at scale `s` (the trunk you see, not the old
     /// low-poly tree's footprint).
     pub fn trunk_radius(&self, lod0: usize, s: f32) -> f32 {
@@ -509,26 +522,26 @@ impl Kit {
     /// [`Self::attach_tree`], also inserting `fruit_tag` on every fruit part (both LODs) so
     /// gameplay can hide / show the apples (harvest + regrow).
     pub fn attach_tree_tagged<B: Bundle + Clone>(&self, e: &mut EntityCommands, lod0: usize, cull: bool, fruit_tag: B) {
-        self.attach_tree_with(e, lod0, cull, fruit_tag, false);
+        self.attach_tree_with(e, lod0, cull, fruit_tag, false, LOD_BAND);
     }
 
     /// [`Self::attach_tree`] with the snow-dusted material twins when `snow` (snow biome).
     pub fn attach_tree_snowy(&self, e: &mut EntityCommands, lod0: usize, cull: bool, snow: bool) {
-        self.attach_tree_with(e, lod0, cull, (), snow);
+        self.attach_tree_with(e, lod0, cull, (), snow, LOD_BAND);
     }
 
-    fn attach_tree_with<B: Bundle + Clone>(&self, e: &mut EntityCommands, lod0: usize, cull: bool, fruit_tag: B, snow: bool) {
+    fn attach_tree_with<B: Bundle + Clone>(&self, e: &mut EntityCommands, lod0: usize, cull: bool, fruit_tag: B, snow: bool, band: f32) {
         let fruit = self.mat_by_name("fruit");
         let lod1 = self.models.get(lod0 + 1);
         e.insert(Visibility::default());
         let near = VisibilityRange {
             start_margin: 0.0..0.0,
-            end_margin: (LOD_NEAR - LOD_BAND)..(LOD_NEAR + LOD_BAND),
+            end_margin: (LOD_NEAR - band)..(LOD_NEAR + band),
             use_aabb: false,
         };
         let far_end = if cull { TREE_FAR } else { 1.0e6 };
         let far = VisibilityRange {
-            start_margin: (LOD_NEAR - LOD_BAND)..(LOD_NEAR + LOD_BAND),
+            start_margin: (LOD_NEAR - band)..(LOD_NEAR + band),
             end_margin: far_end..far_end,
             use_aabb: false,
         };
@@ -1289,6 +1302,12 @@ fn try_build(
             for p in prims {
                 let mat = *mat_index.get(&p.material).ok_or_else(|| format!("{name}: unknown material {}", p.material))?;
                 raw.push((p.mesh, mat));
+            }
+            // Swamp crowns: thinner, gappier, olive / rust — see `biomekit::thin_swamp_crown`.
+            for (mesh, mat) in raw.iter_mut() {
+                if *mat == mat_index["swamp_cards"] {
+                    biomekit::thin_swamp_crown(&name, mesh);
+                }
             }
             {
                 let mut view: Vec<(&mut Mesh, bool)> = raw.iter_mut().map(|(m, i)| (m, wind.contains(i))).collect();

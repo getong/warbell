@@ -166,9 +166,11 @@ fn stilt_hut() -> Mesh {
 pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) {
     use crate::worldmap::{ground_at_world, pool_sd_world};
     let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.95, ..default() });
+    // Faint marsh-light, not a neon bead: at ×55 bloom every wisp read as a glowing green speck
+    // from across the bog (player: "dots"). Only one in four RNG-walk spots is lit (below).
     let wisp_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.75, 1.0, 0.8),
-        emissive: LinearRgba::from(Color::srgb(0.45, 1.0, 0.55)) * 55.0,
+        base_color: Color::srgb(0.30, 0.42, 0.33),
+        emissive: LinearRgba::from(Color::srgb(0.45, 1.0, 0.55)) * 4.0,
         unlit: true,
         ..default()
     });
@@ -234,14 +236,17 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
             // cypresses and knee clusters rising out of the pool instead of the low-poly set.
             if let Some(k) = swamp_kit {
                 let at = Transform::from_xyz(x, WATER_Y - sink * 0.6, z).with_rotation(rot);
+                // Out in the pools it is mostly DEAD wood: bleached drowned snags, a living
+                // cypress only for one in three of the old "mangrove" draws.
                 let tree = match kind {
                     0 => k.pick_named(&[["snag_a_lod0", "snag_b_lod0"][(scale * 10.0) as usize % 2]], 0.0),
-                    1 => k.pick_named(&[["cypress_a_lod0", "cypress_b_lod0", "cypress_a_lod0"][var]], 0.0),
+                    1 if var == 0 => k.pick_named(&["cypress_b_lod0"], 0.0),
+                    1 => k.pick_named(&[["snag_b_lod0", "snag_a_lod0"][(scale * 10.0) as usize % 2]], 0.0),
                     _ => None,
                 };
                 if let Some(lod0) = tree {
                     let mut e = commands.spawn((at.with_scale(Vec3::splat(scale * 1.25)), BiomeEntity));
-                    k.attach_tree(&mut e, lod0, true);
+                    k.attach_tree_narrow(&mut e, lod0, true);
                 } else {
                     let name = ["knees_a", "knees_b"][var];
                     if let Some(e) = k.spawn_static_with(commands, name, at.with_scale(Vec3::splat(scale * 0.6)), range.clone()) {
@@ -281,16 +286,22 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
                 continue;
             }
             let base = Vec3::new(x, WATER_Y + 0.9 + rng_next(&mut rng) * 0.7, z);
+            let phase = rng_next(&mut rng) * TAU;
+            placed_wisps += 1;
+            // Rare: one lit wisp per four walk spots (the RNG walk itself is unchanged, so the
+            // mushrooms / tower / hut below keep their places), and only seen from near by.
+            if placed_wisps % 4 != 1 {
+                continue;
+            }
             commands.spawn((
                 Mesh3d(wisp_mesh.clone()),
                 MeshMaterial3d(wisp_mat.clone()),
                 Transform::from_translation(base),
-                Wisp { base, phase: rng_next(&mut rng) * TAU },
+                Wisp { base, phase },
                 NotShadowCaster,
                 BiomeEntity,
-                range.clone(),
+                VisibilityRange { start_margin: 0.0..0.0, end_margin: 45.0..45.0, use_aabb: true },
             ));
-            placed_wisps += 1;
             wisps += 1;
         }
 
@@ -327,6 +338,35 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
                 BiomeEntity,
                 range.clone(),
             ));
+        }
+
+        // 3b. Lily pads + duckweed rafts floating on the blackwater (kit `sw_lily_a` cards),
+        //     drifting in loose clusters near the shores where the water is calm. Own RNG walk,
+        //     so nothing above / below moves; one shared mesh → batched instances.
+        if let Some(k) = swamp_kit.filter(|k| k.has("sw_lily_a")) {
+            let mut lr: u32 = 0x711_7bad ^ (zx.to_bits() >> 3);
+            let lily_range = VisibilityRange { start_margin: 0.0..0.0, end_margin: 70.0..70.0, use_aabb: true };
+            let mut placed = 0;
+            for _ in 0..4000 {
+                if placed >= 70 {
+                    break;
+                }
+                let a = rng_next(&mut lr) * TAU;
+                let r = rng_next(&mut lr).sqrt() * zr;
+                let (x, z) = (zx + a.cos() * r, zz + a.sin() * r);
+                let sd = pool_sd_world(x, z);
+                // On open water only, thickest a little in from the bank.
+                if !(-3.5..-0.35).contains(&sd) || rng_next(&mut lr) > 0.35 + 0.65 * (1.0 + sd / 3.5) {
+                    continue;
+                }
+                let tf = Transform::from_xyz(x, WATER_Y + 0.025, z)
+                    .with_rotation(Quat::from_rotation_y(rng_next(&mut lr) * TAU))
+                    .with_scale(Vec3::splat(0.45 + rng_next(&mut lr) * 0.45));
+                if let Some(e) = k.spawn_static_with(commands, "sw_lily_a", tf, (lily_range.clone(), NotShadowCaster)) {
+                    commands.entity(e).insert(BiomeEntity);
+                    placed += 1;
+                }
+            }
         }
     }
 
