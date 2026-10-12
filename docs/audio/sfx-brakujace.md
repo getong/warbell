@@ -23,6 +23,7 @@ Dopisuj tu każdy nowy brakujący odgłos; po dostarczeniu zmień status na ✅.
 | ⬜ | `life_sfx_whittle` | knife whittling a small piece of wood, soft scrapes | 2.5 s, loop |
 | ⬜ | `life_sfx_grain` | handful of grain scattered on dirt, chickens clucking and pecking | 3.0 s |
 | ⬜ | `life_sfx_sack` | heavy grain sack thrown onto a shoulder, thump and cloth | 1.0 s |
+| ⬜ | `life_sfx_spar` | two wooden practice swords clacking in a slow drill, shuffling boots on packed earth, a grunt | 4.0 s, loop |
 | ⬜ | `life_sfx_basket` | wicker basket set down on the ground, creak | 0.8 s |
 | ⬜ | `life_sfx_door` | heavy medieval wooden cottage door opening on iron hinges | 1.5 s |
 | ⬜ | `life_sfx_door_shut` | heavy wooden cottage door closing with a latch | 1.2 s |

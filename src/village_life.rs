@@ -101,6 +101,10 @@ enum SpotKind {
     Wood,
     Fire,
     Play,
+    /// Unload the courtyard cart / the hay corner: lift a sack and carry it into the keep.
+    Haul,
+    /// Guard drill: two men with wooden wasters face each other in the open yard.
+    Spar,
 }
 
 /// One smart object: where the user's ROOT goes, the yaw it faces while busy, and its occupant.
@@ -123,6 +127,12 @@ struct Spot {
 
 /// Seat top of the kit's split-log bench (`village_huts.py::decor_bench`: slab centre 0.42 + 0.04).
 const BENCH_TOP: f32 = 0.46;
+/// Seat top of a plank bench baked into a building (`town_kit.py::bench`: board centre 0.42 + 0.03).
+const PLANK_TOP: f32 = 0.45;
+/// Seat top of the fire pit's split logs (`town_kit.py::town_firepit`: log axis 0.36 + r 0.165).
+const LOG_TOP: f32 = 0.52;
+/// Narrowest centre-to-centre spacing of two sitters on one seat (shoulders + elbows clear).
+const SEAT_GAP: f32 = 0.6;
 
 /// The world's activity spots + bookkeeping (rebuilt with the world).
 #[derive(Resource, Default)]
@@ -158,7 +168,8 @@ struct LifeTalk {
 #[derive(Resource, Default)]
 struct LifeSfx(Vec<(&'static str, Handle<AudioSource>)>);
 
-const SFX_KEYS: [&str; 22] = [
+const SFX_KEYS: [&str; 23] = [
+    "life_sfx_spar",
     "life_sfx_coins",
     "life_sfx_purse",
     "life_sfx_bench_sit",
@@ -239,6 +250,7 @@ enum Held {
     Hammer,
     Saw,
     Stick,
+    Waster,
 }
 
 /// A village-life resident. Its [`Villager`] carries the shared pose/locomotion fields; this is
@@ -296,7 +308,7 @@ pub(crate) struct LifeAnim {
 /// The hand props of one resident (children of the rig's joints), shown per activity.
 #[derive(Component)]
 struct LifeProps {
-    items: [(Held, Entity); 9],
+    items: [(Held, Entity); 10],
     shown: Held,
 }
 
@@ -370,21 +382,119 @@ fn phase_of(t: f32, wave: bool) -> Phase {
 
 // ── Setup: spots, benches, the village well, residents ──────────────────────────────────
 
-/// The kit bench at `pos`/`yaw` with two seats (both facing `face`), plus its blocker.
-fn add_bench(commands: &mut Commands, w: &mut LifeWorld, pos: Vec2, yaw: f32, face: f32, zone: Zone, need: u32, spawn: bool) {
-    if spawn {
-        let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
-        let tf = Transform::from_xyz(pos.x, y - 0.03, pos.y).with_rotation(Quat::from_rotation_y(yaw));
-        if let Some(e) = crate::town_kit::spawn_piece(commands, "decor_bench", tf) {
-            commands.entity(e).insert((BiomeEntity, LifeFixture));
-        }
-        crate::blockers::add_obb(pos.x, pos.y, 0.60, 0.17, yaw);
-    }
+/// Sitters on one piece of furniture: the seat line centred at `c` running along local +X of
+/// `yaw`, `offs` along it, each sitter facing `face` with the hips `fwd_off` toward the face off the
+/// line (a round log is sat on just forward of its crown). The spot is the HIPS anchor — the pelvis
+/// rests on the seat top `h`, the thighs over the seat, the feet planted on the ground in front.
+/// A seat whose leg room (the strip the shins and feet need in front) is blocked is dropped.
+#[allow(clippy::too_many_arguments)]
+fn add_seats(w: &mut LifeWorld, c: Vec2, yaw: f32, face: f32, h: f32, offs: &[f32], fwd_off: f32, zone: Zone, need: u32) {
     let id = w.next_bench;
     w.next_bench += 1;
-    for s in [-0.3, 0.3] {
-        let p = pos + rot2(Vec2::new(s, 0.0), yaw);
-        w.spots.push(Spot { kind: SpotKind::Seat, pos: p, face, zone, bench: id, seat_h: BENCH_TOP, house: None, need_houses: need, taken: None });
+    let f = fwd(face);
+    let view = crate::blockers::read();
+    for &o in offs {
+        let p = c + rot2(Vec2::new(o, 0.0), yaw) + f * fwd_off;
+        if !leg_room(&view, p, face) {
+            info!("village_life: seat at {:.1},{:.1} dropped (leg room blocked)", p.x, p.y);
+            continue;
+        }
+        w.spots.push(Spot { kind: SpotKind::Seat, pos: p, face, zone, bench: id, seat_h: h, house: None, need_houses: need, taken: None });
+    }
+}
+
+/// The strip in front of a seat the shins and feet occupy (0.3–0.65 ahead, ±0.2 wide) is clear of
+/// every solid (walls, houses, plots, yard props, other benches).
+fn leg_room(view: &crate::blockers::BlockView, p: Vec2, face: f32) -> bool {
+    let f = fwd(face);
+    let side = Vec2::new(f.y, -f.x);
+    [0.3_f32, 0.48, 0.65].iter().all(|&d| [-0.2_f32, 0.0, 0.2].iter().all(|&s| {
+        let q = p + f * d + side * s;
+        !view.any_within(q.x, q.y, 0.0)
+    }))
+}
+
+/// Props that are NOT in the blocker grid (walk-through or visual-only) but still own their
+/// ground: the fire pit with its log benches and tripod, every bench seat already placed.
+fn fixed_props(w: &LifeWorld) -> Vec<(Vec2, f32)> {
+    let mut v: Vec<(Vec2, f32)> = w.spots.iter().filter(|s| s.kind == SpotKind::Seat).map(|s| (s.pos, 0.45)).collect();
+    if let Some(fire) = crate::castle::town_plot("fire_pit") {
+        v.push((fire.pos, 2.45));
+    }
+    for name in ["well"] {
+        if let Some(tp) = crate::castle::town_plot(name) {
+            v.push((tp.pos, 0.9));
+        }
+    }
+    v
+}
+
+/// Can a NEW split-log bench stand at `pos`/`yaw` (sitters facing `face`)? Its whole footprint
+/// (1.2 × 0.3 + a hand's margin) and the sitters' leg room must be clear of every solid and of
+/// every walk-through prop (fire pit, seats already placed) — a new bench never goes where
+/// something already stands; reuse that thing's own seat instead.
+fn bench_fits(w: &LifeWorld, pos: Vec2, yaw: f32, face: f32) -> bool {
+    let view = crate::blockers::read();
+    let props = fixed_props(w);
+    let free = |q: Vec2| !view.any_visual_within(q.x, q.y, 0.05) && props.iter().all(|(c, r)| q.distance(*c) > *r);
+    for x in [-0.66_f32, -0.33, 0.0, 0.33, 0.66] {
+        for z in [-0.2_f32, 0.0, 0.2] {
+            if !free(pos + rot2(Vec2::new(x, z), yaw)) {
+                return false;
+            }
+        }
+    }
+    let f = fwd(face);
+    [-0.3_f32, 0.3].iter().all(|&o| {
+        let p = pos + rot2(Vec2::new(o, 0.0), yaw);
+        leg_room(&view, p, face) && [0.35_f32, 0.6].iter().all(|&d| free(p + f * d))
+    })
+}
+
+/// A NEW split-log bench (`decor_bench`) at `pos`/`yaw`, sitters facing `face` — only where it
+/// fits ([`bench_fits`]); else nothing. Returns whether it was placed.
+#[allow(clippy::too_many_arguments)]
+fn add_bench(commands: &mut Commands, w: &mut LifeWorld, pos: Vec2, yaw: f32, face: f32, zone: Zone, need: u32) -> bool {
+    if !bench_fits(w, pos, yaw, face) {
+        info!("village_life: no bench at {:.1},{:.1} (something already stands there)", pos.x, pos.y);
+        return false;
+    }
+    let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
+    let tf = Transform::from_xyz(pos.x, y - 0.03, pos.y).with_rotation(Quat::from_rotation_y(yaw));
+    if let Some(e) = crate::town_kit::spawn_piece(commands, "decor_bench", tf) {
+        commands.entity(e).insert((BiomeEntity, LifeFixture));
+    }
+    crate::blockers::add_obb(pos.x, pos.y, 0.60, 0.17, yaw);
+    add_seats(w, pos, yaw, face, BENCH_TOP, &[-0.3, 0.3], 0.0, zone, need);
+    true
+}
+
+/// The seats a house's own model already has by its door (`village_huts.py`, house-local frame:
+/// centre, axis yaw, facing, seat top, offsets along the axis) — `None` for a house without one.
+fn house_seats(piece: &str) -> Option<(Vec2, f32, f32, f32, &'static [f32])> {
+    match piece {
+        // bench(V(W/2 + 0.45, 0, -0.9), π/2, L=1.1) built along X, then the whole cottage turned
+        // −π/2 (+X → +Z): (x, z) → (−z, x) — so 0.45 before the road-end wall, along X.
+        "town_street_house_a" => Some((Vec2::new(0.9, 4.05), 0.0, 0.0, PLANK_TOP, &[-0.28, 0.28])),
+        // bench(V(1.05, 0, D/2 + 0.45), L=1.0), the whole cottage then shifted +0.65 (ox).
+        "town_house_a" => Some((Vec2::new(1.70, 1.95), 0.0, 0.0, PLANK_TOP, &[0.0])),
+        // bench(V(2.0 − W/2 + 0.35, 0, D/2 + 0.45), L=0.9).
+        "town_house_c" => Some((Vec2::new(0.65, 1.85), 0.0, 0.0, PLANK_TOP, &[0.0])),
+        _ => None,
+    }
+}
+
+/// Where a house WITHOUT its own bench gets a split-log one (house-local: centre, yaw, facing) —
+/// chosen clear of its door, shop counter, barrel, chopping block and muck heap.
+fn house_new_bench(piece: &str) -> Option<(Vec2, f32, f32)> {
+    match piece {
+        // Road end: door x −1.6..−0.8, shop counter x 0.1..1.4, barrel x 1.85 → along the bare −X
+        // side wall near the front corner, facing out.
+        "town_street_house_b" => Some((Vec2::new(-2.66, 2.3), FRAC_PI_2, -FRAC_PI_2)),
+        // Between the door (x −2.0..−1.2) and the barrel (x 0.14..0.66), against the front wall.
+        "town_house_b" => Some((Vec2::new(-0.56, 2.03), 0.0, 0.0)),
+        // The dug-in hovel: its earth bank runs right round the front — no room for a bench.
+        _ => None,
     }
 }
 
@@ -449,21 +559,30 @@ fn life_setup(
     w.seed = 0x11fe_5eed;
     use crate::castle::{KEEP_FRONT, KEEP_HALF, KEEP_POS, KEEP_STEPS};
     let c = Zone::Courtyard;
-    // The existing keep bench (castle_decor) — seats only, it already stands.
-    add_bench(&mut commands, &mut w, Vec2::new(KEEP_POS.x - KEEP_HALF.x - 1.6, KEEP_FRONT + 0.4), 0.0, 0.0, c, 0, false);
+    // The existing keep bench (castle_decor `decor_bench`) — seats only, it already stands.
+    add_seats(&mut w, Vec2::new(KEEP_POS.x - KEEP_HALF.x - 1.6, KEEP_FRONT + 0.4), 0.0, 0.0, BENCH_TOP, &[-0.3, 0.3], 0.0, c, 0);
     if let Some(fire) = crate::castle::town_plot("fire_pit") {
+        // The fire pit's OWN three split-log benches (`town_kit.py::town_firepit`: centres at
+        // r 2.05, angle a = 1.0 + k·2π/3, i.e. (2.05 cos a, 2.05 sin a), log axis tangent) — two
+        // sitters on each, facing the fire, hips just forward of the log's crown.
         let f = fire.pos;
-        add_bench(&mut commands, &mut w, f + Vec2::new(0.0, 2.35), 0.0, PI, c, 0, true);
-        add_bench(&mut commands, &mut w, f + Vec2::new(-2.45, 0.2), FRAC_PI_2, FRAC_PI_2, c, 0, true);
-        for a in [0.6_f32, -0.9, 2.2] {
-            let p = f + fwd(a) * 1.75;
+        for k in 0..3 {
+            let a = 1.0 + k as f32 * TAU / 3.0;
+            let lc = f + Vec2::new(a.cos(), a.sin()) * 2.05;
+            // rot2(+X, yaw) = (cos yaw, −sin yaw) = the tangent (−sin a, cos a).
+            let tangent_yaw = (-a.cos()).atan2(-a.sin());
+            add_seats(&mut w, lc, tangent_yaw, yaw_to(lc, f), LOG_TOP, &[-0.4, 0.4], 0.04, c, 0);
+            // Standing room to warm the hands: in the gap between this log and the next, inside the
+            // ring of logs and outside the tripod's legs (r 1.0).
+            let g = a + TAU / 6.0;
+            let p = f + Vec2::new(g.cos(), g.sin()) * 1.45;
             add_spot(&mut w, SpotKind::Fire, p, yaw_to(p, f), c, None, 0);
         }
     }
     if let Some(well) = crate::castle::town_plot("well") {
         let p = well.pos + Vec2::new(0.0, 1.0);
         add_spot(&mut w, SpotKind::Well, p, PI, c, None, 0);
-        add_bench(&mut commands, &mut w, well.pos + Vec2::new(2.3, 0.9), FRAC_PI_2, -FRAC_PI_2, c, 0, true);
+        add_bench(&mut commands, &mut w, well.pos + Vec2::new(2.3, 0.9), FRAC_PI_2, -FRAC_PI_2, c, 0);
     }
     let wood = Vec2::new(crate::castle::WOOD_YARD.0, crate::castle::WOOD_YARD.1);
     let wy = crate::castle::WOOD_YARD.2;
@@ -478,8 +597,33 @@ fn life_setup(
     add_spot(&mut w, SpotKind::Garden, Vec2::new(-16.8, 14.1), yaw_to(Vec2::new(-16.8, 14.1), Vec2::new(-17.6, 13.2)), c, None, 2);
     add_spot(&mut w, SpotKind::Sweep, KEEP_STEPS + Vec2::new(1.6, 0.5), FRAC_PI_2, c, None, 0);
     w.keep_door = Some((KEEP_STEPS + Vec2::new(0.0, 0.3), KEEP_POS, 0.0));
-    // The tavern bench on the market square + the village's own well.
-    add_bench(&mut commands, &mut w, Vec2::new(-42.6, -5.15), 0.0, 0.0, Zone::Village, 0, true);
+    // Unloading: beside the hand-cart's bed (its barrels stand on the other side) and at the hay
+    // corner's bales — lift a sack / a truss and carry it across the yard into the keep.
+    for ((x, z, yaw), lx, lz) in [(crate::castle::CART_CORNER, -0.2, 0.9), (crate::castle::HAY_CORNER, -0.2, 0.75)] {
+        let base = Vec2::new(x, z);
+        let p = base + rot2(Vec2::new(lx, lz), yaw);
+        add_spot(&mut w, SpotKind::Haul, p, yaw + PI, c, None, 0);
+    }
+    // The guard drill: two marks 1.7 apart on the open yard east of the keep lane, facing.
+    let id = w.next_bench;
+    w.next_bench += 1;
+    for (p, face) in [(Vec2::new(5.6, 2.6), FRAC_PI_2), (Vec2::new(7.3, 2.6), -FRAC_PI_2)] {
+        w.spots.push(Spot { kind: SpotKind::Spar, pos: p, face, zone: c, bench: id, seat_h: 0.0, house: None, need_houses: 0, taken: None });
+    }
+    // The tavern's OWN benches (`town_kit.py::town_tavern`, tavern-local): the long one against
+    // the front (centre (−1.6, HZ + 0.45), L 1.6 — its west end stops short of the barrels) and
+    // the two either side of the trestle table (centre (1.15, HZ + 1.45) turned 0.08, benches at
+    // ±0.6, legs under the board, clear of the trestle legs at ±0.65).
+    if let Some(tav) = crate::castle::outer_plots().iter().find(|p| p.name == "tavern") {
+        let at = |x: f32, z: f32| tav.pos + rot2(Vec2::new(x, z), tav.yaw);
+        let v = Zone::Village;
+        add_seats(&mut w, at(-1.6, 2.75), tav.yaw, tav.yaw, PLANK_TOP, &[-0.32, 0.38], 0.0, v, 0);
+        let ty = tav.yaw + 0.08;
+        let tc = at(1.15, 3.75);
+        add_seats(&mut w, tc + rot2(Vec2::new(0.0, 0.62), ty), ty, ty + PI, PLANK_TOP, &[-0.4, 0.4], 0.0, v, 0);
+        add_seats(&mut w, tc + rot2(Vec2::new(0.0, -0.6), ty), ty, ty, PLANK_TOP, &[-0.4, 0.4], 0.0, v, 0);
+    }
+    // The village's own well.
     if let Some(vw) = village_well_pos() {
         let y = crate::worldmap::ground_at_world(vw.x, vw.y).unwrap_or(0.0);
         let tf = Transform::from_xyz(vw.x, y - 0.03, vw.y);
@@ -499,7 +643,10 @@ fn life_setup(
 
     // The courtyard crew: two elders for the benches, two women, two men, two kids — they live
     // in the keep (in and out through its door).
-    let crew = [Body::Elder, Body::Elder, Body::Woman, Body::Woman, Body::Man, Body::Man, Body::Kid, Body::Kid];
+    let crew = [
+        Body::Elder, Body::Elder, Body::Woman, Body::Woman, Body::Woman, Body::Man, Body::Man, Body::Man, Body::Man, Body::Man,
+        Body::Kid, Body::Kid, Body::Kid,
+    ];
     let starts: Vec<Vec2> = w.spots.iter().filter(|s| s.zone == c && s.need_houses == 0).map(|s| s.pos).collect();
     let door = w.keep_door.unwrap();
     for (i, b) in crew.into_iter().enumerate() {
@@ -604,15 +751,16 @@ fn life_houses(
     add_spot(&mut w, SpotKind::Sweep, h.local(0.95, h.half.y + 0.6), h.yaw + FRAC_PI_2, v, hi, 0);
     let g = h.local(-1.1 * flip, back - 0.85);
     add_spot(&mut w, SpotKind::Garden, g, h.yaw + PI, v, hi, 0);
-    match h.dress() {
-        1 => {
-            add_spot(&mut w, SpotKind::Hens, h.local(1.6 * flip, back - yard + 2.75), h.yaw + PI, v, hi, 0);
-            add_spot(&mut w, SpotKind::Wood, h.local(1.5 * flip, back - 1.75), h.yaw, v, hi, 0);
-        }
-        _ => {
-            let bench = h.local(-1.35 * flip, h.half.y + 0.42);
-            add_bench(&mut commands, &mut w, bench, h.yaw, h.yaw, v, 0, true);
-        }
+    if h.dress() == 1 {
+        add_spot(&mut w, SpotKind::Hens, h.local(1.6 * flip, back - yard + 2.75), h.yaw + PI, v, hi, 0);
+        add_spot(&mut w, SpotKind::Wood, h.local(1.5 * flip, back - 1.75), h.yaw, v, hi, 0);
+    }
+    // A seat by the door: the house's own bench where its model has one, else a split-log bench
+    // where nothing of the house stands (never one on top of the other).
+    if let Some((c, yaw, face, top, offs)) = house_seats(h.piece) {
+        add_seats(&mut w, h.local(c.x, c.y), h.yaw + yaw, h.yaw + face, top, offs, 0.0, v, 0);
+    } else if let Some((c, yaw, face)) = house_new_bench(h.piece) {
+        add_bench(&mut commands, &mut w, h.local(c.x, c.y), h.yaw + yaw, h.yaw + face, v, 0);
     }
     // A man and a woman in every house; a child in every third, a grey elder in every fourth.
     let mut folk = vec![Body::Man, Body::Woman];
@@ -666,6 +814,9 @@ fn prop_assets(meshes: &mut Assets<Mesh>, mats: &mut Assets<StandardMaterial>) -
         (Held::Hammer, meshes.add(Cuboid::new(0.03, 0.03, 0.30)), wood.clone(), Joint::ElbowR, hand(0.0, -0.27, 0.12)),
         (Held::Hammer, meshes.add(Cuboid::new(0.05, 0.12, 0.05)), iron.clone(), Joint::ElbowR, hand(0.0, -0.27, 0.27)),
         (Held::Saw, meshes.add(Cuboid::new(0.008, 0.11, 0.55)), iron, Joint::ElbowR, hand(0.0, -0.30, 0.30)),
+        // A wooden practice sword (waster): blade along the fist's forward line + a short guard.
+        (Held::Waster, meshes.add(Cuboid::new(0.022, 0.045, 0.78)), wood.clone(), Joint::ElbowR, hand(0.0, -0.27, 0.43)),
+        (Held::Waster, meshes.add(Cuboid::new(0.16, 0.03, 0.03)), wood.clone(), Joint::ElbowR, hand(0.0, -0.27, 0.05)),
         (Held::Stick, meshes.add(Cylinder::new(0.016, 0.16)), wood, Joint::ElbowL, hand(0.0, -0.28, 0.03).with_rotation(Quat::from_rotation_x(FRAC_PI_2))),
     ];
     let _ = (clay, cloth);
@@ -696,7 +847,7 @@ fn life_props(
     for root in &pending {
         let joint = |j: Joint| found.iter().find(|(r, jj, _)| *r == root && *jj == j).map(|f| f.2);
         let (Some(er), Some(el), Some(to)) = (joint(Joint::ElbowR), joint(Joint::ElbowL), joint(Joint::Torso)) else { continue };
-        let mut items = [(Held::None, Entity::PLACEHOLDER); 9];
+        let mut items = [(Held::None, Entity::PLACEHOLDER); 10];
         let mut n = 0;
         // Group meshes per Held under one carrier entity per joint.
         let mut carriers: Vec<(Held, Joint, Entity)> = Vec::new();
@@ -759,17 +910,22 @@ fn act_for(kind: SpotKind, body: Body, rng: &mut u32) -> (Act, f32, Held) {
             }
         }
         SpotKind::Fire => (if body == Body::Kid { Act::Stand } else { Act::Warm }, rr(rng, 8.0, 15.0), Held::None),
+        SpotKind::Haul => (Act::Lift, 2.6, Held::None),
+        SpotKind::Spar => (Act::Spar, rr(rng, 14.0, 24.0), Held::Waster),
         SpotKind::Play | SpotKind::Seat => (Act::Stand, 3.0, Held::None),
     }
 }
 
 /// The resident's chore wish-list for this time of day (weights).
-fn chores(body: Body, phase: Phase) -> &'static [(SpotKind, f32)] {
+fn chores(body: Body, phase: Phase, zone: Zone) -> &'static [(SpotKind, f32)] {
     use SpotKind::*;
     match (body, phase) {
         (Body::Kid, _) => &[(Play, 1.0)],
         (Body::Elder, _) => &[(Seat, 4.0), (Fire, 1.0)],
         (_, Phase::Noon) => &[(Seat, 5.0), (Fire, 0.6)],
+        // The keep's own men: the cart and the hay to unload into the keep, the guard drill.
+        (Body::Man, _) if zone == Zone::Courtyard => &[(Haul, 1.8), (Spar, 1.6), (Wood, 1.2), (Well, 0.4), (Fire, 0.4), (Seat, 0.3)],
+        (Body::Woman, _) if zone == Zone::Courtyard => &[(Well, 1.4), (Sweep, 1.0), (Laundry, 1.0), (Haul, 0.6), (Garden, 0.8), (Seat, 0.5)],
         (Body::Woman, _) => &[(Well, 1.4), (Sweep, 1.2), (Hens, 1.0), (Garden, 1.0), (Laundry, 1.2), (Seat, 0.5)],
         (Body::Man, _) => &[(Wood, 1.6), (Garden, 1.0), (Well, 0.6), (Fire, 0.5), (Seat, 0.4)],
     }
@@ -787,6 +943,8 @@ fn find_spot(w: &LifeWorld, a: &LifeAgent, pos: Vec2, kind: SpotKind, rng: &mut 
             continue; // someone else's garden / hens / doorstep
         }
         let own = if s.house.is_some() && s.house == a.house { -12.0 } else { 0.0 };
+        // A sparring partner already waits on the other mark → join him.
+        let own = own + if kind == SpotKind::Spar && w.spots.iter().any(|o| o.kind == SpotKind::Spar && o.bench == s.bench && o.taken.is_some()) { -20.0 } else { 0.0 };
         let d = s.pos.distance(pos) + own + rr(rng, 0.0, 6.0);
         if best.is_none_or(|b| d < b.1) {
             best = Some((i, d));
@@ -1234,7 +1392,7 @@ fn think(a: &mut LifeAgent, v: &Villager, w: &mut LifeWorld, stalls: &mut Stalls
         }
     }
     // A chore / a sit from the wish-list.
-    let list = chores(a.body, phase);
+    let list = chores(a.body, phase, a.zone);
     let total: f32 = list.iter().map(|c| c.1).sum();
     let mut pick = r01(&mut a.rng) * total;
     let mut kind = list[0].0;
@@ -1322,6 +1480,8 @@ fn arrive(
                     Act::Scatter => Some("life_sfx_grain"),
                     Act::Hammer => Some("life_sfx_hammer"),
                     Act::Saw => Some("life_sfx_saw"),
+                    Act::Spar => Some("life_sfx_spar"),
+                    Act::Lift => Some("life_sfx_sack"),
                     _ => None,
                 };
                 if let Some(k) = key {
@@ -1330,7 +1490,7 @@ fn arrive(
                 let cue = match (a.body, act) {
                     (Body::Woman, Act::Sweep) => Some(LifeCue::Sweep),
                     (Body::Woman, Act::Hang) => Some(LifeCue::Laundry),
-                    (_, Act::Hammer | Act::Saw) => Some(LifeCue::Work),
+                    (_, Act::Hammer | Act::Saw | Act::Spar | Act::Lift) => Some(LifeCue::Work),
                     _ => None,
                 };
                 if let Some(c) = cue {
@@ -1406,7 +1566,13 @@ fn finish_act(
             }
             go_home(a, v.pos, now);
         }
-        Act::Hammer | Act::Saw if r01(&mut a.rng) < 0.3 => {
+        Act::Lift => {
+            // The sack is up on the shoulder: into the keep with it.
+            a.carry = Carry::Sack;
+            a.held = Held::Sack;
+            go_home(a, v.pos, now);
+        }
+        Act::Hammer | Act::Saw | Act::Spar if r01(&mut a.rng) < 0.3 => {
             say(talk, speak, now, hero, v.pos, gy, a.body.voice(), LifeCue::WorkDone, 6.0);
             a.st = St::Idle;
             a.until = now + 1.0;
@@ -1771,7 +1937,11 @@ fn life_animate(
             St::Sit(act) => clip::seated(act, a.seat, t),
             St::Do(act) => {
                 let len = (a.until - a.t0).max(0.5);
-                let k = if act == Act::Yawn { clip::envelope(age, len, 0.9) } else { 1.0 };
+                let k = match act {
+                    Act::Yawn => clip::envelope(age, len, 0.9),
+                    Act::Lift => (age / len).clamp(0.0, 1.0),
+                    _ => 1.0,
+                };
                 clip::stand(act, t, k)
             }
             St::Greet(act) => {
@@ -1866,6 +2036,80 @@ fn life_animate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Two sitters on one baked-in bench sit ≥ [`SEAT_GAP`] apart and both ON it (half a body
+    /// in from either end).
+    #[test]
+    fn house_bench_sitters_are_spaced_and_on_the_bench() {
+        for (piece, len) in [("town_street_house_a", 1.1), ("town_house_a", 1.0), ("town_house_c", 0.9)] {
+            let (_, _, _, top, offs) = house_seats(piece).unwrap();
+            assert!((0.4..0.6).contains(&top));
+            for (i, a) in offs.iter().enumerate() {
+                assert!(a.abs() + 0.2 <= len / 2.0 + 1e-3, "{piece}: sitter {a} hangs off the bench");
+                for b in &offs[i + 1..] {
+                    assert!((a - b).abs() >= SEAT_GAP * 0.9, "{piece}: sitters {a} / {b} overlap");
+                }
+            }
+        }
+    }
+
+    /// A new bench by a house never lands on what the house model already has by its door
+    /// (`village_huts.py`, house-local after the cottage's turn): doors, the shop counter, barrels.
+    #[test]
+    fn new_house_benches_clear_the_house_props() {
+        // (piece, [(centre, half)]) — door openings + 0.3 swing, counter, barrel, muck heap, bucket.
+        let props: [(&str, Vec<(Vec2, Vec2)>); 2] = [
+            ("town_street_house_b", vec![(Vec2::new(-1.2, 3.5), Vec2::new(0.4, 0.3)), (Vec2::new(0.75, 3.6), Vec2::new(0.65, 0.35)), (Vec2::new(1.85, 3.75), Vec2::splat(0.26)), (Vec2::new(0.0, 0.0), Vec2::new(2.2, 3.3))]),
+            ("town_house_b", vec![(Vec2::new(-1.6, 1.9), Vec2::new(0.4, 0.3)), (Vec2::new(1.75, 1.9), Vec2::new(0.58, 0.3)), (Vec2::new(0.4, 2.05), Vec2::splat(0.26)), (Vec2::new(2.7, 2.95), Vec2::new(0.95, 0.6)), (Vec2::new(0.0, 0.0), Vec2::new(3.0, 1.6))]),
+        ];
+        for (piece, boxes) in props {
+            let (c, yaw, face) = house_new_bench(piece).unwrap();
+            let f = fwd(face);
+            for x in [-0.6_f32, -0.3, 0.0, 0.3, 0.6] {
+                for z in [-0.15_f32, 0.15] {
+                    let q = c + rot2(Vec2::new(x, z), yaw);
+                    for (bc, bh) in &boxes {
+                        let d = (q - *bc).abs();
+                        assert!(d.x > bh.x || d.y > bh.y, "{piece}: bench point {q} inside a prop at {bc}");
+                    }
+                }
+            }
+            // the sitters face away from the wall, out over open ground
+            assert!((c + f * 0.6).length() > c.length(), "{piece}: the sitters face the wall");
+        }
+    }
+
+    /// The fire pit's log seats: on the logs (r 2.05), facing the fire, ≥ SEAT_GAP apart, and the
+    /// standing warm-up spots sit between the logs, clear of both the logs and the sitters' feet.
+    #[test]
+    fn fire_pit_seats_use_its_own_logs() {
+        let f = Vec2::ZERO;
+        let mut seats = Vec::new();
+        let mut logs = Vec::new();
+        for k in 0..3 {
+            let a = 1.0 + k as f32 * TAU / 3.0;
+            let lc = Vec2::new(a.cos(), a.sin()) * 2.05;
+            let ty = (-a.cos()).atan2(-a.sin());
+            assert!((rot2(Vec2::X, ty) - Vec2::new(-a.sin(), a.cos())).length() < 1e-4);
+            logs.push(lc);
+            for o in [-0.4_f32, 0.4] {
+                seats.push((lc + rot2(Vec2::new(o, 0.0), ty) + fwd(yaw_to(lc, f)) * 0.04, yaw_to(lc, f)));
+            }
+        }
+        for (i, (p, face)) in seats.iter().enumerate() {
+            assert!((fwd(*face) - (f - *p).normalize()).length() < 0.25, "seat {i} doesn't face the fire");
+            for (q, _) in &seats[i + 1..] {
+                assert!(p.distance(*q) >= SEAT_GAP);
+            }
+            let feet = *p + fwd(*face) * 0.4;
+            for k in 0..3 {
+                let g = 1.0 + k as f32 * TAU / 3.0 + TAU / 6.0;
+                let stand = Vec2::new(g.cos(), g.sin()) * 1.45;
+                assert!(stand.distance(feet) > 0.6, "warm-up spot {k} on seat {i}'s feet");
+                assert!(logs.iter().all(|l| l.distance(stand) > 0.95), "warm-up spot {k} in a log");
+            }
+        }
+    }
 
     #[test]
     fn the_day_runs_dawn_to_night_and_a_siege_is_night() {
