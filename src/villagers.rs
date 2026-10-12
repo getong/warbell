@@ -905,8 +905,8 @@ fn camp_rescue(
         rescued.seen = vec![false; cages.len()];
     }
     for (i, (cage, centre)) in cages.iter().enumerate() {
-        if rescued.done[i] {
-            continue;
+        if rescued.done[i] || !crate::camps::has_cage(i) {
+            continue; // freed already, or a camp that keeps no prisoners (shamans, hunters)
         }
         if orks.iter().any(|o| o.home().distance(*centre) < CAMP_HOME_R) {
             rescued.seen[i] = true; // warband still alive — this camp IS populated

@@ -1284,11 +1284,11 @@ fn try_build(
     let wind = [mat_index["canopy"], mat_index["undergrowth"], mat_index["swamp_cards"]];
     let mut models = Vec::new();
     let mut by_name = HashMap::new();
-    for glb in ["forest_pbr/trees.glb", "forest_pbr/undergrowth.glb", "forest_pbr/props.glb", "forest_pbr/structures.glb", "forest_pbr/wayside.glb", "forest_pbr/stories_warm.glb", "forest_pbr/creatures.glb", "forest_pbr/animals.glb", "forest_pbr/people.glb", "forest_pbr/orks.glb", "forest_pbr/stories_cold.glb", "forest_pbr/snowmen.glb", "forest_pbr/wardens.glb", "forest_pbr/alpine_flora.glb", "forest_pbr/market.glb", "forest_pbr/castle_kit.glb", "forest_pbr/town_kit.glb", "forest_pbr/biome_props.glb", "forest_pbr/swamp_flora.glb"] {
+    for glb in ["forest_pbr/trees.glb", "forest_pbr/undergrowth.glb", "forest_pbr/props.glb", "forest_pbr/structures.glb", "forest_pbr/wayside.glb", "forest_pbr/stories_warm.glb", "forest_pbr/creatures.glb", "forest_pbr/animals.glb", "forest_pbr/people.glb", "forest_pbr/orks.glb", "forest_pbr/stories_cold.glb", "forest_pbr/snowmen.glb", "forest_pbr/wardens.glb", "forest_pbr/alpine_flora.glb", "forest_pbr/market.glb", "forest_pbr/castle_kit.glb", "forest_pbr/town_kit.glb", "forest_pbr/biome_props.glb", "forest_pbr/swamp_flora.glb", "forest_pbr/ork_camps.glb"] {
         // The townsfolk parts (people.glb) and the skinned ork bodies (orks.glb) are optional:
         // without them the villagers keep their box-built bodies (`peasant_model`) and the orks
         // their per-joint creatures.glb parts; the rest of the kit still loads.
-        if (glb.ends_with("people.glb") || glb.ends_with("orks.glb") || glb.contains("/stories_") || glb.ends_with("snowmen.glb") || glb.ends_with("wardens.glb") || glb.ends_with("alpine_flora.glb") || glb.ends_with("market.glb") || glb.ends_with("castle_kit.glb") || glb.ends_with("town_kit.glb") || glb.ends_with("biome_props.glb") || glb.ends_with("swamp_flora.glb"))
+        if (glb.ends_with("people.glb") || glb.ends_with("orks.glb") || glb.contains("/stories_") || glb.ends_with("snowmen.glb") || glb.ends_with("wardens.glb") || glb.ends_with("alpine_flora.glb") || glb.ends_with("market.glb") || glb.ends_with("castle_kit.glb") || glb.ends_with("town_kit.glb") || glb.ends_with("biome_props.glb") || glb.ends_with("swamp_flora.glb") || glb.ends_with("ork_camps.glb"))
             && !load::asset_path(glb).exists()
         {
             warn!("realforest: {glb} missing — falling back to the older bodies");
