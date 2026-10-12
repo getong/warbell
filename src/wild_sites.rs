@@ -231,22 +231,59 @@ fn probes(foot: f32) -> impl Iterator<Item = Vec2> {
 /// Ground + keep-out rules for `scene` at `q` turned to `yaw`, with flatness `flat` over its seated
 /// part. Shared by the plan, the spawn re-check and the tests.
 fn ground_ok(scene: usize, q: Vec2, yaw: f32, flat: f32, trails: &[Vec<Vec2>]) -> bool {
+    ground_static_ok(scene, q, trails) && ground_yaw_ok(scene, q, yaw, flat)
+}
+
+/// The yaw-independent half of [`ground_ok`] (every check is a pure predicate, so the plan caches
+/// it per candidate instead of re-running it for each of the 24 headings and 3 flatness passes).
+fn ground_static_ok(scene: usize, q: Vec2, trails: &[Vec<Vec2>]) -> bool {
     let s = &SCENES[scene];
     let (x, z, foot) = (q.x, q.y, s.foot);
-    let Some(y0) = crate::worldmap::ground_at_world(x, z) else { return false };
+    if crate::worldmap::ground_at_world(x, z).is_none() {
+        return false;
+    }
     if crate::worldmap::tile_biome_world(x, z) != Some(s.biome) || crate::worldmap::is_pool_world(x, z) {
         return false;
     }
-    let swamp = s.biome == Biome::Swamp;
-    let rb = foot + if s.seat == Seat::High { BIOME_MARGIN * 0.5 } else { BIOME_MARGIN };
+    if !matches!(s.seat, Seat::Gap(_)) && !biome_ring_ok(s, q, 0.0) {
+        return false;
+    }
+    let r = foot + ROAD_MARGIN;
     if (0..12).any(|k| {
         let a = k as f32 * (TAU / 12.0);
+        crate::roads::on_road(x + a.cos() * r, z + a.sin() * r)
+    }) {
+        return false;
+    }
+    !crate::bridges::near_bridge(x, z, foot + 0.5)
+        && crate::ork_fortress::blight_edge_world(x, z) < -(foot + 6.0)
+        && q.length() > crate::worldmap::SAFE_R * crate::worldmap::MAP_SCALE + TOWN_KEEP + foot
+        && crate::camps::plan().iter().all(|c| c.centre.distance(q) > CAMP_KEEP + foot)
+        && crate::ruins::landmark_sites().iter().all(|l| l.pos.distance(q) > LANDMARK_KEEP + foot)
+        && trails.iter().all(|t| t.windows(2).all(|w| seg_dist(q, w[0], w[1]) > foot + TRAIL_KEEP))
+}
+
+/// The surrounding-biome ring: every compass point at `foot + margin` still in the scene's biome
+/// (or a pool). A gap scene's front (`yaw`) is exempt; the other seats ignore `yaw`.
+fn biome_ring_ok(s: &Scene, q: Vec2, yaw: f32) -> bool {
+    let rb = s.foot + if s.seat == Seat::High { BIOME_MARGIN * 0.5 } else { BIOME_MARGIN };
+    !(0..12).any(|k| {
+        let a = k as f32 * (TAU / 12.0);
         let d = Vec2::new(a.cos(), a.sin());
-        let (px, pz) = (x + d.x * rb, z + d.y * rb);
+        let (px, pz) = (q.x + d.x * rb, q.y + d.y * rb);
         // A gap scene's front is the gap: whatever lies down there (a stream, a sea inlet) is fine.
         let gap_side = matches!(s.seat, Seat::Gap(_)) && d.dot(front(yaw)) > -0.2;
         !gap_side && !crate::worldmap::is_pool_world(px, pz) && crate::worldmap::tile_biome_world(px, pz) != Some(s.biome)
-    }) {
+    })
+}
+
+/// The heading-dependent half of [`ground_ok`] (needs [`ground_static_ok`] too).
+fn ground_yaw_ok(scene: usize, q: Vec2, yaw: f32, flat: f32) -> bool {
+    let s = &SCENES[scene];
+    let (x, z, foot) = (q.x, q.y, s.foot);
+    let Some(y0) = crate::worldmap::ground_at_world(x, z) else { return false };
+    let swamp = s.biome == Biome::Swamp;
+    if matches!(s.seat, Seat::Gap(_)) && !biome_ring_ok(s, q, yaw) {
         return false;
     }
     let (mut lo, mut hi) = (y0, y0);
@@ -278,22 +315,7 @@ fn ground_ok(scene: usize, q: Vec2, yaw: f32, flat: f32, trails: &[Vec<Vec2>]) -
             return false;
         }
     }
-    let r = foot + ROAD_MARGIN;
-    if (0..12).any(|k| {
-        let a = k as f32 * (TAU / 12.0);
-        crate::roads::on_road(x + a.cos() * r, z + a.sin() * r)
-    }) {
-        return false;
-    }
-    if !seat_shape_ok(s.seat, q, yaw, foot, y0) {
-        return false;
-    }
-    !crate::bridges::near_bridge(x, z, foot + 0.5)
-        && crate::ork_fortress::blight_edge_world(x, z) < -(foot + 6.0)
-        && q.length() > crate::worldmap::SAFE_R * crate::worldmap::MAP_SCALE + TOWN_KEEP + foot
-        && crate::camps::plan().iter().all(|c| c.centre.distance(q) > CAMP_KEEP + foot)
-        && crate::ruins::landmark_sites().iter().all(|l| l.pos.distance(q) > LANDMARK_KEEP + foot)
-        && trails.iter().all(|t| t.windows(2).all(|w| seg_dist(q, w[0], w[1]) > foot + TRAIL_KEEP))
+    seat_shape_ok(s.seat, q, yaw, foot, y0)
 }
 
 /// High / gap / backed sites may stand up on a cliffy shelf: they are planned beside a pass trail
@@ -334,6 +356,10 @@ fn gap_span(q: Vec2, yaw: f32, y0: f32, drop: f32) -> Option<f32> {
     let f = front(yaw);
     let side = Vec2::new(-f.y, f.x);
     let h = |p: Vec2| crate::worldmap::ground_at_world(p.x, p.y);
+    // The near edge doesn't depend on the span: no drop 2.4u ahead, no span at all.
+    if !h(q + f * 2.4).is_some_and(|y| y < y0 - 2.0) {
+        return None;
+    }
     GAP_SPANS.into_iter().find(|&span| {
         let far = q + f * span;
         let Some(y1) = h(far) else { return false };
@@ -341,7 +367,7 @@ fn gap_span(q: Vec2, yaw: f32, y0: f32, drop: f32) -> Option<f32> {
             return false;
         }
         let rim = y0.min(y1);
-        let edges = h(q + f * 2.4).is_some_and(|y| y < y0 - 2.0) && h(far - f * 2.4).is_some_and(|y| y < y1 - 2.0);
+        let edges = h(far - f * 2.4).is_some_and(|y| y < y1 - 2.0);
         edges
             && [0.35f32, 0.5, 0.65].iter().all(|&t| {
                 [-0.9f32, 0.0, 0.9].iter().all(|&b| {
@@ -503,26 +529,37 @@ fn seat(scene: usize, planned: &mut Vec<Site>, trails: &[Vec<Vec2>], visual: boo
     // A high site takes the highest legal spot at all (flatness only as a gate), the others prefer
     // the flattest ground first.
     let flats: &[f32] = if SCENES[scene].seat == Seat::High { &[FLAT_DELTA_SEAT] } else { &[FLAT_DELTA, FLAT_DELTA_RELAXED, last] };
+    // Everything but the flatness bound is the same in all three passes (and `planned` is fixed
+    // for the whole call), so the per-candidate / per-heading verdicts are memoised.
+    let is_gap = matches!(SCENES[scene].seat, Seat::Gap(_));
+    let mut clear_memo: Vec<Option<bool>> = vec![None; cands.len()];
+    let mut static_memo: Vec<Option<bool>> = vec![None; cands.len()];
+    let mut gap_memo: Vec<Option<Option<f32>>> = vec![None; if is_gap { cands.len() * 24 } else { 0 }];
     for &flat in flats {
-        for &q in &cands {
-            if !clear_of_others(q, scene, planned, visual) {
+        for (ci, &q) in cands.iter().enumerate() {
+            if !*clear_memo[ci].get_or_insert_with(|| clear_of_others(q, scene, planned, visual)) {
                 continue;
             }
-            let seat_at = |yaw: f32| {
-                if !ground_ok(scene, q, yaw, flat, trails) {
-                    return None;
-                }
-                let Seat::Gap(drop) = SCENES[scene].seat else { return Some(0.0) };
-                let y0 = crate::worldmap::ground_at_world(q.x, q.y)?;
-                let span = gap_span(q, yaw, y0, drop)?;
-                let far = q + front(yaw) * span;
-                let free = !crate::poi::story_clearings().overlaps(far.x, far.y, FAR_FOOT + 1.0)
-                    && !crate::blockers::any_within(far.x, far.y, FAR_FOOT + 0.3)
-                    && !(visual && crate::blockers::any_visual_within(far.x, far.y, FAR_FOOT + 0.3))
-                    && planned.iter().all(|o| o.pos.distance(far) > FAR_FOOT + SCENES[o.scene].foot + MIN_GAP * 0.5);
-                free.then_some(span)
+            if !*static_memo[ci].get_or_insert_with(|| ground_static_ok(scene, q, trails)) {
+                continue;
+            }
+            let mut seat_at = |k: usize, yaw: f32| {
+                let Seat::Gap(drop) = SCENES[scene].seat else {
+                    return ground_yaw_ok(scene, q, yaw, flat).then_some(0.0);
+                };
+                let span = (*gap_memo[ci * 24 + k].get_or_insert_with(|| -> Option<f32> {
+                    let y0 = crate::worldmap::ground_at_world(q.x, q.y)?;
+                    let span = gap_span(q, yaw, y0, drop)?;
+                    let far = q + front(yaw) * span;
+                    let free = !crate::poi::story_clearings().overlaps(far.x, far.y, FAR_FOOT + 1.0)
+                        && !crate::blockers::any_within(far.x, far.y, FAR_FOOT + 0.3)
+                        && !(visual && crate::blockers::any_visual_within(far.x, far.y, FAR_FOOT + 0.3))
+                        && planned.iter().all(|o| o.pos.distance(far) > FAR_FOOT + SCENES[o.scene].foot + MIN_GAP * 0.5);
+                    free.then_some(span)
+                }))?;
+                ground_yaw_ok(scene, q, yaw, flat).then_some(span)
             };
-            if let Some((yaw, span)) = yaws(scene, q).find_map(|yaw| seat_at(yaw).map(|span| (yaw, span))) {
+            if let Some((yaw, span)) = yaws(scene, q).enumerate().find_map(|(k, yaw)| seat_at(k, yaw).map(|span| (yaw, span))) {
                 planned.push(Site { scene, pos: q, yaw, span });
                 return true;
             }
