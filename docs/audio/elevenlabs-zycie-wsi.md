@@ -10,7 +10,23 @@ Kodowi gry odpowiadają klucze `life_*`: pliki trafiają do `assets/audio/vo/lif
 - **Nieudana kwestia:** jeśli któraś wyjdzie źle, wygeneruj sam ten akapit osobno i dopisz w nazwie pliku jej klucz.
 - **Odgłosy (SFX):** generuj w *Sound Effects*, każdy osobno, z podaną długością. Prompt Influence ≈ 0.4.
 
-## Głosy
+## Użyte głosy (ElevenLabs, 2026-10-12) — NIE ZMIENIAĆ przy dogrywkach
+
+| ID | Głos ElevenLabs (biblioteka) |
+|---|---|
+| `man_a` | **Darby Skelm** — Witty and Sarcastic |
+| `woman_a` | **MoanElisa** — Sultry, Dark, Velvet |
+| `vendor` | **Luna** — bubbly BFF, bright, cheery |
+| `elder` | **Alder** — Warm, Raspy and Comforting |
+| `child` | **Omar J** — Very Young Storyteller |
+| `guard` | **Wilf** — Cheerful, Quirky & Northern |
+
+Model Eleven v3; ustawienia z nazwy pliku: speed 0.89, stability 0.34, similarity 0.75 (`sp89_s34_sb75_v4`).
+Ten sam spis jest w `assets/audio/vo/life/VOICES.md` i przy kluczach `life_*` w `src/audio/lines.rs`.
+
+**Brakujące w nagraniu (generator pominął, do dogrania tym samym głosem):** `life_m_chat_2` (Darby Skelm), `life_w_chat_2` (MoanElisa).
+
+## Głosy (pierwotny brief)
 
 | ID | Postać | Voice Design prompt (albo podobny głos z biblioteki) |
 |---|---|---|

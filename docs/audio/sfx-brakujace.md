@@ -1,0 +1,38 @@
+# Brakujące SFX
+
+Zbiorcza lista odgłosów do wygenerowania. Gotowe pliki: `assets/audio/sfx/life/<klucz>.ogg` (mono 44.1 kHz, ~-18 LUFS, peak ≤ -1 dBFS — konwersję robię ja, wystarczy wrzucić wav/mp3).
+Dopisuj tu każdy nowy brakujący odgłos; po dostarczeniu zmień status na ✅.
+
+| status | klucz | prompt | długość |
+|---|---|---|---|
+| ⬜ | `life_sfx_coins` | a few copper coins dropped and slid across a wooden market counter, close | 1.5 s |
+| ⬜ | `life_sfx_purse` | small leather coin purse jingling as it is tied shut | 1.2 s |
+| ⬜ | `life_sfx_bench_sit` | person sitting down heavily on an old wooden bench, wood creak | 1.0 s |
+| ⬜ | `life_sfx_bench_stand` | person getting up from a creaky wooden bench, cloth rustle | 1.0 s |
+| ⬜ | `life_sfx_stool` | wooden stool scraping on packed dirt floor | 0.8 s |
+| ⬜ | `life_sfx_bread` | tearing a crusty loaf of bread by hand | 1.0 s |
+| ⬜ | `life_sfx_mug` | wooden tankard set down on a wooden table, liquid slosh | 0.8 s |
+| ⬜ | `life_sfx_pour` | pouring ale from a clay jug into a wooden cup | 2.0 s |
+| ⬜ | `life_sfx_well` | medieval well winch cranking with rope creak, then bucket splash far below | 4.0 s |
+| ⬜ | `life_sfx_bucket` | carrying a full wooden bucket of water, sloshing, footsteps on dirt | 2.5 s |
+| ⬜ | `life_sfx_sweep` | straw broom sweeping a dirt doorstep, slow strokes | 3.0 s, loop |
+| ⬜ | `life_sfx_laundry` | shaking out a wet linen sheet and pinning it on a line, flap | 2.0 s |
+| ⬜ | `life_sfx_rug_beat` | beating a hanging rug with a wicker beater, three thumps | 2.0 s |
+| ✅ | `life_sfx_hammer` | hammering a nail into timber, four strikes | 2.0 s |
+| ⬜ | `life_sfx_saw` | hand saw cutting a wooden plank, steady strokes | 3.0 s, loop |
+| ⬜ | `life_sfx_whittle` | knife whittling a small piece of wood, soft scrapes | 2.5 s, loop |
+| ⬜ | `life_sfx_grain` | handful of grain scattered on dirt, chickens clucking and pecking | 3.0 s |
+| ⬜ | `life_sfx_sack` | heavy grain sack thrown onto a shoulder, thump and cloth | 1.0 s |
+| ⬜ | `life_sfx_basket` | wicker basket set down on the ground, creak | 0.8 s |
+| ⬜ | `life_sfx_door` | heavy medieval wooden cottage door opening on iron hinges | 1.5 s |
+| ⬜ | `life_sfx_door_shut` | heavy wooden cottage door closing with a latch | 1.2 s |
+| ⬜ | `life_sfx_shutters` | wooden window shutters swung closed and barred | 1.5 s |
+| ⬜ | `life_sfx_cart` | wooden hand cart rolling slowly on a dirt track, wheel creak | 4.0 s, loop |
+| ⬜ | `life_sfx_dice` | bone dice rolled on a wooden table, men murmur | 2.0 s |
+| ⬜ | `life_sfx_chatter` | small group of medieval villagers chatting and laughing quietly outdoors, no clear words | 8.0 s, loop |
+| ⬜ | `life_sfx_market` | busy small medieval village market, distant haggling, livestock, no clear words | 10.0 s, loop |
+| ⬜ | `life_sfx_hen` | single hen clucking nearby | 1.5 s |
+
+## Uwagi
+- `life_sfx_hammer` — Firefly, „hammering a nail into timber, four strikes, variation 2” (1.0 s).
+- Pętle (loop) muszą się bezszwowo zapętlać — poproś generator o „seamless loop” albo daj 2× dłuższy plik, przytnę sam.
