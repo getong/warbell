@@ -283,20 +283,20 @@ const SNOW_PASSES: [Pass; 2] = [
     Pass { ang: 0.578, half: 5.1 },  // SE, toward the castle (main ascent)
     Pass { ang: -0.184, half: 3.7 }, // E, toward the desert dunes
 ];
-/// Rock range passes: WNW main ascent (mouth at base ≈(87,38), ≈13 base units of open ground past
+/// Rock range passes: WNW main ascent (mouth at base ≈(85,38), ≈12 base units of open ground past
 /// the castle ring's NE corner — due-west would run the ramp straight into the castle safe-zone's
 /// grass fray, which force-flattens class-1 bays into the corridor) + the N slot canyon toward the
 /// desert (compression→release: the desert↔rock ring road runs its floor). The SW rim by the lake
 /// is deliberately passless — that wall is the waterfall cliff (vista pass).
 // Biome rebalance (Oct 2026, player: "the desert is too small"): the range moved (116,57) →
-// (118,62) and the grown desert took its low northern plateau. The radius is unchanged, so the
+// (117,60) and the grown desert took its low northern plateau. The radius is unchanged, so the
 // half-widths stay; the WNW angle turned −2.60 → −2.55 so the mouth keeps its old distance from
 // the castle ring (the centre moved south, which swung the old angle's mouth toward the walls).
 const ROCK_PASSES: [Pass; 2] = [
     Pass { ang: -2.55, half: 3.0 }, // WNW, toward the castle side (main ascent)
     // N canyon toward the desert. NOT straight at the desert centre: the rival stronghold's
     // forced-flat plateau (`rival::RIVAL_CENTRE`, base ≈(102,14), world r 30) sits on that line and
-    // cuts class-1 bays across the ramp; -1.60 exits the canyon at base ≈(115,23), ~60 world units
+    // cuts class-1 bays across the ramp; -1.60 exits the canyon at base ≈(116,21), ~60 world units
     // east of the fort — the ring road passes the rival's walls, then climbs the slot.
     Pass { ang: -1.60, half: 2.4 },
 ];
@@ -323,10 +323,10 @@ const REGIONS: [Region; 5] = [
     // shrinks from ~10 to ~4 base, and region_at's wobble/fray makes the two biomes meet on an
     // organic edge instead of a clean grass gutter.
     // (101,10) r38 → (109,20) r44 (biome rebalance, player: "the desert is too small now — take
-    // some from the mountains"): ~+40% area. The dune sea grows S/SE over the rock range's low
+    // some from the mountains"): +47% tiles (24.0k → 35.3k). The dune sea grows S/SE over the rock range's low
     // northern plateau (the DEM's summits sit in its southern half, so the range keeps them); the
     // centre moved E as much as S so the snow↔desert seam stays where it was tuned (the snow massif
-    // keeps every tile) and the dunes stop short of the castle ring's NE corner.
+    // keeps its footprint — ±0.3% of its tiles) and the dunes stop short of the castle ring's NE corner.
     Region { x: 109.0, z: 20.0, r: 44.0, biome: TB::Desert, peak: 0, cliffy: false, passes: &[] },
     // E rock range — pulled in toward the castle (122→116: the mine country starts just past
     // the safe-zone fray instead of a 33-unit trek). peak 18→22 + cliffy (pass 1): the tallest
@@ -335,10 +335,11 @@ const REGIONS: [Region; 5] = [
     // r 34→38: the tallest biome grows down toward the shrunk SE marsh — more mountain, less bog.
     // Now a continuous massif shaped by a REAL DEM (the Dolomites round Passo Sella,
     // `alpine_massif::rock_y`) — the island's tallest summits; ROCK_PASSES are its pass valleys.
-    // (116,57) → (118,62) (biome rebalance): the range yields its low northern plateau to the
-    // desert and slides S/SE over the old E marsh arm, so it loses ~10% area while the desert gains
-    // ~40%. The DEM rides the centre, so the summits, the pass valleys and the SW waterfall wall
-    // over the lake (`BLUE_STREAMS[0]`, ≈18 base W of the centre) keep their relief.
+    // (116,57) → (117,60) (biome rebalance): the range yields its low northern plateau to the
+    // desert and slides S/SE over the old E marsh arm, so it loses ~12% of its tiles (43.6k →
+    // 38.1k) while the desert gains 11k. (Not further S: at (118,62) too little low rock apron was
+    // left for the rocky story scenes — `stories_cold_plan_seats_every_scene_in_its_biome`.) The DEM rides the centre, so the summits, the pass valleys and the SW waterfall wall
+    // over the lake (`BLUE_STREAMS[0]`, ≈18 base WSW of the centre) keep their relief.
     Region { x: 117.0, z: 60.0, r: 38.0, biome: TB::Rock, peak: 22, cliffy: true, passes: &ROCK_PASSES },
     // SW forest + S swamp: r +2/+3 (pass 0, map-character overhaul) — the two most
     // "nothing left once you subtract the claims" biomes get extra interior on top of the
@@ -361,7 +362,7 @@ const PLATEAUS: [Plateau; 4] = [
     Plateau { x: 98.0, z: 72.0, r: 9.0, peak: 5 },
     Plateau { x: 52.0, z: 50.0, r: 7.0, peak: 4 },
     // NE mesa — a desert butte since the rebalance. (90,36) → (84,28): the grown desert's WNW rock
-    // pass mouth now opens at ≈(87,38), and a plateau cone standing on a corridor mouth breaks the
+    // pass mouth now opens at ≈(85,38), and a plateau cone standing on a corridor mouth breaks the
     // ramp (`mesa_passes_climb_to_the_summit`); here it stays a clear 10 base off the mouth and
     // outside the rock range's `in_cliffy` margin, so the whole butte rises (≤2.2u, desert-low).
     Plateau { x: 84.0, z: 28.0, r: 7.0, peak: 5 },
@@ -858,15 +859,15 @@ fn is_lake(x: f32, z: f32) -> bool {
 /// waves their SHORES. Offsets avoid the S-swamp warden's arena direction (region-local
 /// ≈(0,−0.42) — see the keep-out below, which still hard-guards it).
 // A FEW small, well-separated puddles (not the old 6-blob amoeba clusters): each swamp region
-// gets ~2–3 small pools reading as distinct kałuże. Biased AWAY from the E-marsh's western edge
-// (positive-x / southern offsets) so, in that region, they don't crowd the waterfall's blue lake
-// just west of it (the lake keep-out below also hard-guards it). Min radius fraction stays ≥ 0.11
-// (≈2.5 base at r23 / 2 base at r17) so a pool is never so small it renders as an all-white foam
-// plate. The deepest still clears the drowned-tower gate (`bog.rs`, sd < −1.1).
+// gets ~2–3 small pools reading as distinct kałuże. (Biased toward positive-x / southern offsets
+// from when an E marsh arm lapped the waterfall's blue lake; the lake keep-out below still
+// hard-guards it.) Min radius fraction stays ≥ 0.11 (≈2.2 base at the S swamp's r20) so a pool is
+// never so small it renders as an all-white foam plate. The deepest still clears the drowned-tower
+// gate (`bog.rs`, sd < −1.1).
 const POOL_BLOBS: [(f32, f32, f32, f32); 3] = [
     (0.28, -0.24, 0.15, 0.12), // NE puddle
     (0.14, 0.36, 0.14, 0.13),  // SE puddle
-    (-0.22, 0.12, 0.12, 0.11), // W-central (smallest; lake-side in the E-marsh — keep-out trims it)
+    (-0.22, 0.12, 0.12, 0.11), // W-central (smallest)
 ];
 
 /// World-space keep-out around the swamp warden's arena — a pool inside the boss glade would
@@ -951,8 +952,8 @@ fn pool_sd(x: f32, z: f32) -> f32 {
     let swamp_glade = world22(0.0, 57.0);
     let warden = (POOL_WARDEN_KEEPOUT - (wx - swamp_glade.x).hypot(wz - swamp_glade.y)) / MAP_SCALE;
     sd = smax_poly(sd, warden, 1.2);
-    // Keep the olive bog pools OFF the waterfall's BLUE plunge pool — the E-marsh laps right up to
-    // it, and an olive puddle bleeding onto the blue lake read as one muddy blob. Nothing inside the
+    // Keep the olive bog pools OFF the waterfall's BLUE plunge pool — an olive puddle bleeding onto
+    // the blue lake read as one muddy blob (from when the E marsh arm lapped right up to it). Nothing inside the
     // lake ellipse grown by a margin (so a pool can't even touch its shore).
     let (lx, lz, lrx, lrz) = DELIBERATE_LAKE;
     let (ex, ez) = ((x - lx) / (lrx + 4.0), (z - lz) / (lrz + 4.0));

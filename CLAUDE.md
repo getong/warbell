@@ -105,7 +105,7 @@ useless god/cloud-cam angles). Just drop the hero with `FOREST_HERO="x,z"`; tune
 **A HIGH god-cam to "see the whole island" washes out to flat white — don't fight it.** Three
 things compound at altitude and none is your bug: atmospheric **haze** fogs distant terrain to the
 sky colour (`FOREST_FOG="clear,full"`, bigger = thinner, only nibbles — it does NOT clear a
-whole-island view); the **cloud layer** sits ~y90 so a camera above it shoots cloud-tops; and
+whole-island view); the **cloud deck** sits at y≈650 so a camera above it shoots cloud-tops; and
 **midday bloom** (`FOREST_TIME≈0.25–0.35`) blows the bright/snow areas white. To actually see
 terrain, frame **low + oblique** (camera height **~15–40**, close, looking near-flat along the
 ground — the orbit examples below use *height 14* on purpose); a near-top-down at y≈25 over one
@@ -133,8 +133,14 @@ $env:FOREST_CLIP="target/clips/desert"; $env:FOREST_CLIP_ORBIT="71,1.5,-46,22,14
 $env:FOREST_CLIP="target/clips/siege"; $env:FOREST_WAVE="1"; $env:FOREST_DEFEND="1"; $env:FOREST_TOWN="1"; $env:FOREST_CAM="0,15,30,0,2,-8"; cargo run
 # stitch (per-clip mp4 + gif): ffmpeg -framerate 30 -i frame_%05d.png -pix_fmt yuv420p out.mp4
 ```
-Biome region centres (world XZ, at `MAP_SCALE` 3.9): snow (-123,-80) · desert (107,-69) · rock (117,8) ·
-forest (-107,69) · swamp (0,101) (×1.5 the 2.6-era numbers; the castle/village stay world-fixed). These scale with `MAP_SCALE` — code with a hand-authored world coord
+Biome region centres (world XZ, at `MAP_SCALE` 3.9): snow (-179,-117) · desert (145,-133) · rock (176,23) ·
+forest (-156,101) · swamp (0,148) (the castle/village stay world-fixed at the origin). Base space (`worldmap::REGIONS`,
+144×164, world = base·3.9 − (280.5, 210.6)): snow (26,24) r48 · desert (109,20) r44 · rock (117,60) r38 · forest
+(32,80) r36 · swamp (72,92) r20 — the Oct 2026 biome rebalance grew the desert ~47% over the rock range's old low
+northern plateau and dropped the E marsh arm (the lake is a tarn at the rock range's SW foot); the rival stronghold
+(`rival::RIVAL_CENTRE`, world (117,-156)) sits in the desert's NW. `BIOME_DUMP=<file.ppm> cargo test --release
+biome_footprints` writes a hillshaded biome map (pass trails, warden lairs, rival) + per-biome tile counts.
+These scale with `MAP_SCALE` — code with a hand-authored world coord
 should route it through `worldmap::world22` (rescales 2.2-era coords) instead of baking the scale in.
 Clip knobs: `FOREST_CLIP_FRAMES` (150) · `FOREST_CLIP_FPS` (30) · `FOREST_CLIP_WARMUP` (30).
 
