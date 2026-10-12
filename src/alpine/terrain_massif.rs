@@ -222,7 +222,8 @@ fn gorge_carve(x: f32, z: f32) -> f32 {
     let s = arc / total; // 0 at the plunge pool … 1 at the lake
     let half = p[seg].2 + (p[(seg + 1).min(p.len() - 1)].2 - p[seg].2) * t;
     let taper = 0.35 + 0.65 * smooth(0.0, 0.3, s); // calmer plan round the plunge pool
-    let wf = 0.6 + 3.0 * s; // the floor widens toward the lake
+    // The floor widens toward the lake, opening into a small delta flat at the mouth.
+    let wf = 0.6 + 3.0 * s + 8.0 * smooth(0.75, 1.0, s);
     let head = smooth(0.3, 1.5, pre); // behind the plunge pool: the head wall
     // Talus ~34° at the foot easing to ~24° near the lake; rock 50–60° up-valley, 36–47° at the
     // mouth, short crags to ~68°; the head wall ~77° over a thin debris foot.
@@ -231,7 +232,7 @@ fn gorge_carve(x: f32, z: f32) -> f32 {
     let main_at = |w: f32| {
         let d0 = (d * b + w * taper - half * b).max(0.0);
         let dd = (d0 - wf).max(0.0);
-        (0.14 * d0.min(wf) + side_rise(dd, lo, hi, 6.0), dd)
+        ((0.14 - 0.08 * smooth(0.75, 1.0, s)) * d0.min(wf) + side_rise(dd, lo, hi, 6.0), dd)
     };
     let (h0, _) = main_at(spur + butt(0.0));
     let (h1, dd) = main_at(spur + butt(h0));
@@ -249,11 +250,12 @@ fn gorge_carve(x: f32, z: f32) -> f32 {
     let (dx, dz) = (x - lx, z - lz);
     let r = dx.hypot(dz).max(1e-4);
     let re = 1.0 / ((dx / r / rx).powi(2) + (dz / r / rz).powi(2)).sqrt();
-    // The outlet (south) side keeps the broad, nearly level shore flat the old apron had — the
-    // rocky story scenes seat on it (`stories_cold_plan_seats_every_scene_in_its_biome`); under
-    // the mountain (north / the valley mouth) the slopes rise almost straight off the water.
-    let south = smooth(-0.1, 0.7, dz / r);
-    let (flat_w, flat_s) = (1.5 + 12.0 * south, 0.12 - 0.05 * south);
+    // The outlet (south) and delta (east) sides keep the broad, nearly level shore flat the old
+    // apron had — the rocky story scenes seat on it (`stories_cold_plan_seats_every_scene_in_its_biome`:
+    // a mine head E of the shore, a quarry S of it); under the mountain to the north the slopes
+    // rise almost straight off the water.
+    let open = smooth(-0.55, 0.1, dz / r);
+    let (flat_w, flat_s) = (1.5 + 12.0 * open, 0.10 - 0.06 * open);
     let lake_at = |w: f32| {
         let dl = ((r - re) * b + w).max(0.0);
         let rise = side_rise((dl - flat_w).max(0.0), 0.55, 1.05 * (0.8 + 0.4 * sn) + 0.8 * crag, 6.0);
