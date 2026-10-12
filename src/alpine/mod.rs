@@ -347,7 +347,14 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
     let mut data = vec![0u8; w * h * 4];
     let px = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
     for k in 0..w * h {
-        let meadow = if is_snow[k] { 1.0 } else { 1.0 - smoothstep(10.0 * RES, 24.0 * RES, d_snow[k]) };
+        let mut meadow = if is_snow[k] { 1.0 } else { 1.0 - smoothstep(10.0 * RES, 24.0 * RES, d_snow[k]) };
+        // The alpine meadow apron must not roll out over the dune sea: on the snow↔desert seam it
+        // painted lush turf under the saguaros. It yields to sand by the same ecotone the ground
+        // colour uses (`worldmap::biome_cover_world`), so the seam is ragged meadow ↔ sand.
+        if meadow > 0.0 && !is_snow[k] {
+            let (wx, wz) = (x0 + ((k % w) as f32 + 0.5) / RES, z0 + ((k / w) as f32 + 0.5) / RES);
+            meadow *= 1.0 - crate::worldmap::biome_cover_world(wx, wz, crate::biome::Biome::Desert);
+        }
         let crag_foot = (1.0 - smoothstep(0.0, 6.0 * RES, d_crag[k])) * smoothstep(0.3, 0.45, mount[k]);
         let foot = (1.0 - smoothstep(0.0, 5.0 * RES, d_foot[k])).max(crag_foot);
         data[k * 4] = px(snow[k]);

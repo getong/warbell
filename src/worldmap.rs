@@ -3093,20 +3093,69 @@ fn biome_col_at(b: TB, x: f32, z: f32) -> [f32; 3] {
     }
 }
 
-/// Ecotone cover weight of a biome region at base `(x, z)`, given the region's signed `edge`
-/// (base units, > 0 inside — the SAME wobbled/frayed distance `region_at` classifies by). The old
-/// colour ramp was a linear `smoothstep(-BLEND, BLEND)` over ~35 world units, which mixed the two
-/// palettes into one muddy average (green + sand = brown-orange smear, cacti on half-green ground)
-/// and drew the swamp's wet floor as a blurred halo far out into the meadow. Instead the edge is
-/// broken by two noise fields and then cut over a NARROW band:
-///  - broad tongues (~25u) so the border never runs as a smooth arc,
-///  - a hummock field (~5u) acting as micro-relief: the incoming biome fills the hollows first and
-///    the outgoing one survives on the rises (grass clumps standing in sand, sand pockets in turf).
-/// Net: a ~20–30u irregular, patchy ecotone where each vertex is clearly one ground or the other.
-fn ecotone(x: f32, z: f32, edge: f32) -> f32 {
-    let tongue = omottle(x, z, 11.0, 157.0);
-    let hum = omottle(x, z, 34.0, 211.0) * 0.72 + omottle(x, z, 62.0, 307.0) * 0.28;
-    smoothstep(-0.85, 0.85, edge + tongue * 1.25 + hum * 1.15)
+/// Max regions [`region_weights`] handles (the home island has 5).
+const MAX_REGIONS: usize = 8;
+
+/// Per-region ground-cover weights at base `(x, z)` — the biome ECOTONE. The old colour ramp was a
+/// linear `smoothstep(-BLEND, BLEND)` per region over ~35 world units, mixed in region order: it
+/// averaged the palettes into one muddy band (green + sand = brown-orange smear, cacti on
+/// half-green ground), drew the swamp's wet floor as a blurred halo far out into the meadow, and
+/// where two regions OVERLAP (desert ∩ rock, snow ∩ desert) the later one painted over tiles the
+/// earlier one owns (rock-grey under saguaros). Now:
+///  - each region's edge (the SAME wobbled/frayed distance `region_at` classifies by) is broken by
+///    its own noise: broad tongues (~25u) + a hummock field (~5u) acting as micro-relief, so the
+///    incoming ground fills the hollows first and the outgoing one survives on the rises;
+///  - regions COMPETE: a region's weight is cut against the best other biome's edge as well as
+///    its own, so two biomes meet on one ragged line with no grass gutter and no overpaint;
+///  - the cut is narrow (±0.85 base ≈ ±3.3u): each vertex is clearly one ground or the other.
+///    Net: a ~20–30u irregular, patchy ecotone instead of a blur.
+/// Weights sum to ≤ 1 (the remainder is the grass frontier); the castle's forced-grass ring and
+/// the swamp's `SAFE_R` cut (both `classify` rules) are applied.
+fn region_weights(x: f32, z: f32, out: &mut [f32; MAX_REGIONS]) -> usize {
+    let regs = active_map().regions;
+    let n = regs.len().min(MAX_REGIONS);
+    let wob = 2.4 * (x * 0.4 + 1.1).sin() + 2.4 * (z * 0.36 - 0.7).cos();
+    let mut e = [f32::NEG_INFINITY; MAX_REGIONS];
+    for (i, reg) in regs.iter().take(n).enumerate() {
+        let fray = if reg.peak > 0 { 0.0 } else { edge_fray(x, z) };
+        let edge = reg.r - ((x - reg.x).hypot(z - reg.z) + wob + fray);
+        // The jitter moves an edge by < ±4 base units: far from it, skip the noise.
+        e[i] = if edge.abs() > 6.0 {
+            edge
+        } else {
+            let k = i as f32;
+            let tongue = omottle(x, z, 11.0, 157.0 + k * 37.0);
+            let hum = omottle(x, z, 34.0, 211.0 + k * 41.0) * 0.72 + omottle(x, z, 62.0, 307.0 + k * 53.0) * 0.28;
+            edge + tongue * 1.25 + hum * 1.15
+        };
+    }
+    let mut sum = 0.0;
+    for i in 0..n {
+        out[i] = 0.0;
+        if e[i] < -0.85 {
+            continue;
+        }
+        let mut other = f32::NEG_INFINITY;
+        for j in 0..n {
+            if regs[j].biome != regs[i].biome {
+                other = other.max(e[j]);
+            }
+        }
+        let mut w = smoothstep(-0.85, 0.85, e[i].min((e[i] - other) * 0.5));
+        if regs[i].biome == TB::Swamp && w > 0.0 {
+            w *= smoothstep(SAFE_R - 0.6, SAFE_R + 0.6, dist_from_castle(x, z) + omottle(x, z, 34.0, 211.0) * 0.3);
+        }
+        out[i] = w;
+        sum += w;
+    }
+    if sum > 0.0 {
+        let ring = if is_arena() { 1.0 } else { outside_safe_ring(x, z) };
+        let k = ring / sum.max(1.0);
+        for w in out.iter_mut().take(n) {
+            *w *= k;
+        }
+    }
+    n
 }
 
 /// The castle's forced-grass ring as a 0..1 "outside the ring" weight (1 = biomes may show).
@@ -3116,11 +3165,13 @@ fn ecotone(x: f32, z: f32, edge: f32) -> f32 {
 fn outside_safe_ring(x: f32, z: f32) -> f32 {
     let ring = castle_ring_dist(x, z);
     let pad = SAFE_PAD + edge_fray(x, z).clamp(-SAFE_FRAY, SAFE_FRAY);
-    smoothstep(-0.6, 0.6, ring - pad + omottle(x, z, 34.0, 211.0) * 0.35)
+    // Ragged, not the walls' polygon offset: tongues + hummocks like the region ecotone (the
+    // meadow cover follows the painted ground, so the colour may cross the tile ring a little).
+    smoothstep(-0.6, 0.6, ring - pad + omottle(x, z, 11.0, 401.0) * 0.6 + omottle(x, z, 34.0, 211.0) * 0.55)
 }
 
 /// Ground-cover weight (0..1) of `biome`'s own ground at WORLD `(wx, wz)` — what the vertex colour
-/// actually paints there (the [`ecotone`] cut), for scatter rules that must agree with the ground:
+/// actually paints there (the [`region_weights`] ecotone), for scatter rules that must agree with the ground:
 /// no saguaro on ground that still reads as turf, no lush meadow flowers on sand.
 pub fn biome_cover_world(wx: f32, wz: f32, biome: Biome) -> f32 {
     let tb = match biome {
@@ -3164,30 +3215,14 @@ fn cover_of(wx: f32, wz: f32, want: impl Fn(TB) -> bool) -> f32 {
         return 0.0;
     }
     let (x, z) = ((wx + GX) / MAP_SCALE, (wz + GZ) / MAP_SCALE);
-    let wob = 2.4 * (x * 0.4 + 1.1).sin() + 2.4 * (z * 0.36 - 0.7).cos();
-    let mut w = 0.0f32;
-    for reg in active_map().regions {
-        if !want(reg.biome) {
-            continue;
-        }
-        let fray = if reg.peak > 0 { 0.0 } else { edge_fray(x, z) };
-        let edge = reg.r - ((x - reg.x).hypot(z - reg.z) + wob + fray);
-        // The ecotone's noise shifts the edge by < ±4 base units: past that it is saturated.
-        let e = if edge > 5.0 { 1.0 } else if edge < -5.0 { 0.0 } else { ecotone(x, z, edge) };
-        if reg.biome == TB::Swamp && e > 0.0 {
-            w = w.max(e * smoothstep(SAFE_R - 0.6, SAFE_R + 0.6, dist_from_castle(x, z) + omottle(x, z, 34.0, 211.0) * 0.3));
-        } else {
-            w = w.max(e);
-        }
-    }
-    if w > 0.0 {
-        w *= outside_safe_ring(x, z);
-    }
-    w
+    let mut w = [0.0f32; MAX_REGIONS];
+    let n = region_weights(x, z, &mut w);
+    let regs = active_map().regions;
+    (0..n).filter(|&i| want(regs[i].biome)).map(|i| w[i]).sum::<f32>().min(1.0)
 }
 
 /// Smooth blended ground colour at tile-space (x,z): grass base, each biome blob mixed in
-/// over a narrow noise-broken [`ecotone`] at its edge, plus a sandy coast fade.
+/// over a narrow noise-broken [`region_weights`] at its edge, plus a sandy coast fade.
 pub(crate) fn ground_color(x: f32, z: f32) -> [f32; 4] {
     if is_arena() {
         return ground_color_arena(x, z);
@@ -3207,7 +3242,6 @@ pub(crate) fn ground_color(x: f32, z: f32) -> [f32; 4] {
     // variety, not a sheet of it; the lush dark-green stays dominant.
     col = mix3(col, lin3(p.grass_dry), smoothstep(0.4, 1.5, p2) * 0.18);
     col = mix3(col, lin3(p.grass_gold), smoothstep(0.85, 1.6, p3) * 0.10);
-    let wob = 2.4 * (x * 0.4 + 1.1).sin() + 2.4 * (z * 0.36 - 0.7).cos();
     // Per-vertex WETNESS, carried out in the vertex-colour ALPHA (0 = dry ground, 1 = standing bog).
     // The terrain shader lowers roughness by this, so the marsh's wet sheen FEATHERS across the
     // swamp↔grass edge over the SAME `BLEND` band the colour already blends over — instead of the
@@ -3215,24 +3249,24 @@ pub(crate) fn ground_color(x: f32, z: f32) -> [f32; 4] {
     // staircased the boundary into the visible tile "kwadraty" a player reported. Only the Swamp
     // biome is wet; the Blight stays matte (its sheet sits near grass roughness).
     let mut wet = 0.0f32;
-    let ring_w = if is_arena() { 1.0 } else { outside_safe_ring(x, z) };
-    for reg in active_map().regions {
-        let fray = if reg.peak > 0 { 0.0 } else { edge_fray(x, z) };
-        let d = (x - reg.x).hypot(z - reg.z) + wob + fray;
-        let edge = reg.r - d; // >0 inside
-        // Narrow, noise-broken ecotone (was a linear ±BLEND smear); never inside the castle's
-        // forced-grass ring, and the swamp also stops at `SAFE_R` like `classify` does.
-        let mut w = ecotone(x, z, edge) * ring_w;
-        if reg.biome == TB::Swamp {
-            w *= smoothstep(SAFE_R - 0.6, SAFE_R + 0.6, dist_from_castle(x, z) + omottle(x, z, 34.0, 211.0) * 0.3);
+    let mut rw = [0.0f32; MAX_REGIONS];
+    let n = region_weights(x, z, &mut rw);
+    let total: f32 = rw[..n].iter().sum();
+    if total > 0.0 {
+        let mut acc = [0.0f32; 3];
+        for (i, reg) in active_map().regions.iter().take(n).enumerate() {
+            if rw[i] <= 0.0 {
+                continue;
+            }
+            let c = biome_col_at(reg.biome, x, z);
+            for ch in 0..3 {
+                acc[ch] += c[ch] * rw[i];
+            }
+            if reg.biome == TB::Swamp {
+                wet += rw[i];
+            }
         }
-        if w <= 0.0 {
-            continue;
-        }
-        col = mix3(col, biome_col_at(reg.biome, x, z), w);
-        if reg.biome == TB::Swamp {
-            wet = wet.max(w);
-        }
+        col = [0, 1, 2].map(|ch| col[ch] * (1.0 - total) + acc[ch]);
     }
     // The Blight blends in by its own shape (it's not a `Region` — the landmass lives in
     // `ork_fortress.rs`): the south-swamp green smears into the trampled mud over `BLEND`.
