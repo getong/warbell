@@ -167,7 +167,9 @@ fn spawn(
         // Desert: a dense, fast, ground-to-overhead sheet of blown sand streaming sideways — with
         // the gust in `drift` it surges and lulls so the desert reads as genuinely windy.
         ParticleKind::Dust => (420, 0.06, Color::srgb(0.85, 0.74, 0.52), 0.0, 0.8, Vec3::new(2.6, 0.06, 1.0), 0.9, 0.05, 5.5),
-        ParticleKind::Fireflies => (32, 0.08, Color::srgb(1.0, 0.95, 0.45), 7.0, 1.0, Vec3::ZERO, 0.9, 0.4, 2.2),
+        // Fewer, smaller and softer than the old 32 × 0.08 × 7.0: in daylight those bloomed into
+        // bright yellow specks peppering the open marsh (player: "dots").
+        ParticleKind::Fireflies => (16, 0.05, Color::srgb(1.0, 0.95, 0.45), 2.2, 0.85, Vec3::ZERO, 0.9, 0.4, 2.2),
         ParticleKind::Pollen => (150, 0.045, Color::srgb(1.0, 0.96, 0.7), 0.6, 0.9, Vec3::new(0.1, 0.28, 0.05), 0.6, 0.2, 6.0),
         // Blight ash: dark embery motes drifting sideways and slowly RISING off the mire (embers
         // rise), with a faint warm glow so they smoulder against the red haze.

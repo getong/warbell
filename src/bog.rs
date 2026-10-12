@@ -166,9 +166,11 @@ fn stilt_hut() -> Mesh {
 pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) {
     use crate::worldmap::{ground_at_world, pool_sd_world};
     let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.95, ..default() });
+    // Faint marsh-light, not a neon bead: at ×55 bloom every wisp read as a glowing green speck
+    // from across the bog (player: "dots"). Only one in four RNG-walk spots is lit (below).
     let wisp_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.75, 1.0, 0.8),
-        emissive: LinearRgba::from(Color::srgb(0.45, 1.0, 0.55)) * 55.0,
+        base_color: Color::srgb(0.30, 0.42, 0.33),
+        emissive: LinearRgba::from(Color::srgb(0.45, 1.0, 0.55)) * 4.0,
         unlit: true,
         ..default()
     });
@@ -190,11 +192,13 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
     let mush_stems = meshes.add(crate::biome_swamp::build_glowmush_stems_mesh());
     let mush_caps = meshes.add(crate::biome_swamp::build_glowmush_caps_mesh());
 
-    // The two swamp interiors (world coords, mirrors worldmap REGIONS): S swamp + E marsh arm.
-    // Authored at MAP_SCALE 2.2 — centres AND radii track the current scale (`world22`).
-    let zk = crate::worldmap::MAP_SCALE / 2.2;
-    let (zs, ze) = (crate::worldmap::world22(0.0, 83.6), crate::worldmap::world22(66.0, 52.8));
-    let zones: [(f32, f32, f32); 2] = [(zs.x, zs.y, 52.0 * zk), (ze.x, ze.y, 40.0 * zk)];
+    // The swamp interiors (world coords), straight from the worldmap's flat swamp REGIONS — so
+    // the dressing follows the map (the E marsh arm is gone, the S swamp shrank to r20) instead
+    // of a hard-coded copy that went stale on every rebalance.
+    let zones = crate::worldmap::swamp_zones_world();
+    // The tower / hut search the biggest swamp (the old hard-coded "S swamp" disc).
+    let (mx, mz, mr) = zones.iter().copied().fold((0.0, 0.0, 0.0), |b, z| if z.2 > b.2 { z } else { b });
+    info!("bog: swamp zones (world x, z, r) {zones:?}");
     let mut rng: u32 = 0xb06_d12e5;
     let clear = |x: f32, z: f32| {
         !crate::bridges::near_bridge(x, z, 1.6)
@@ -234,14 +238,17 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
             // cypresses and knee clusters rising out of the pool instead of the low-poly set.
             if let Some(k) = swamp_kit {
                 let at = Transform::from_xyz(x, WATER_Y - sink * 0.6, z).with_rotation(rot);
+                // Out in the pools it is mostly DEAD wood: bleached drowned snags, a living
+                // cypress only for one in three of the old "mangrove" draws.
                 let tree = match kind {
                     0 => k.pick_named(&[["snag_a_lod0", "snag_b_lod0"][(scale * 10.0) as usize % 2]], 0.0),
-                    1 => k.pick_named(&[["cypress_a_lod0", "cypress_b_lod0", "cypress_a_lod0"][var]], 0.0),
+                    1 if var == 0 => k.pick_named(&["cypress_b_lod0"], 0.0),
+                    1 => k.pick_named(&[["snag_b_lod0", "snag_a_lod0"][(scale * 10.0) as usize % 2]], 0.0),
                     _ => None,
                 };
                 if let Some(lod0) = tree {
                     let mut e = commands.spawn((at.with_scale(Vec3::splat(scale * 1.25)), BiomeEntity));
-                    k.attach_tree(&mut e, lod0, true);
+                    k.attach_tree_narrow(&mut e, lod0, true);
                 } else {
                     let name = ["knees_a", "knees_b"][var];
                     if let Some(e) = k.spawn_static_with(commands, name, at.with_scale(Vec3::splat(scale * 0.6)), range.clone()) {
@@ -281,16 +288,22 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
                 continue;
             }
             let base = Vec3::new(x, WATER_Y + 0.9 + rng_next(&mut rng) * 0.7, z);
+            let phase = rng_next(&mut rng) * TAU;
+            placed_wisps += 1;
+            // Rare: one lit wisp per four walk spots (the RNG walk itself is unchanged, so the
+            // mushrooms / tower / hut below keep their places), and only seen from near by.
+            if placed_wisps % 4 != 1 {
+                continue;
+            }
             commands.spawn((
                 Mesh3d(wisp_mesh.clone()),
                 MeshMaterial3d(wisp_mat.clone()),
                 Transform::from_translation(base),
-                Wisp { base, phase: rng_next(&mut rng) * TAU },
+                Wisp { base, phase },
                 NotShadowCaster,
                 BiomeEntity,
-                range.clone(),
+                VisibilityRange { start_margin: 0.0..0.0, end_margin: 45.0..45.0, use_aabb: true },
             ));
-            placed_wisps += 1;
             wisps += 1;
         }
 
@@ -328,6 +341,35 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
                 range.clone(),
             ));
         }
+
+        // 3b. Lily pads + duckweed rafts floating on the blackwater (kit `sw_lily_a` cards),
+        //     drifting in loose clusters near the shores where the water is calm. Own RNG walk,
+        //     so nothing above / below moves; one shared mesh → batched instances.
+        if let Some(k) = swamp_kit.filter(|k| k.has("sw_lily_a")) {
+            let mut lr: u32 = 0x711_7bad ^ (zx.to_bits() >> 3);
+            let lily_range = VisibilityRange { start_margin: 0.0..0.0, end_margin: 70.0..70.0, use_aabb: true };
+            let mut placed = 0;
+            for _ in 0..4000 {
+                if placed >= 70 {
+                    break;
+                }
+                let a = rng_next(&mut lr) * TAU;
+                let r = rng_next(&mut lr).sqrt() * zr;
+                let (x, z) = (zx + a.cos() * r, zz + a.sin() * r);
+                let sd = pool_sd_world(x, z);
+                // On open water only, thickest a little in from the bank.
+                if !(-3.5..-0.35).contains(&sd) || rng_next(&mut lr) > 0.35 + 0.65 * (1.0 + sd / 3.5) {
+                    continue;
+                }
+                let tf = Transform::from_xyz(x, WATER_Y + 0.025, z)
+                    .with_rotation(Quat::from_rotation_y(rng_next(&mut lr) * TAU))
+                    .with_scale(Vec3::splat(0.45 + rng_next(&mut lr) * 0.45));
+                if let Some(e) = k.spawn_static_with(commands, "sw_lily_a", tf, (lily_range.clone(), NotShadowCaster)) {
+                    commands.entity(e).insert(BiomeEntity);
+                    placed += 1;
+                }
+            }
+        }
     }
 
     // 4. The drowned tower — one, in the deepest spot of the S swamp's pool country. Reject-
@@ -335,8 +377,8 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
     let mut best: Option<(f32, f32, f32)> = None;
     for _ in 0..3000 {
         let a = rng_next(&mut rng) * TAU;
-        let r = rng_next(&mut rng).sqrt() * 50.0;
-        let (x, z) = (0.0 + a.cos() * r, 83.6 + a.sin() * r);
+        let r = rng_next(&mut rng).sqrt() * mr;
+        let (x, z) = (mx + a.cos() * r, mz + a.sin() * r);
         let sd = crate::worldmap::pool_sd_world(x, z);
         if sd < best.map_or(-1.1, |b| b.0) && clear(x, z) {
             best = Some((sd, x, z));
@@ -378,8 +420,8 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
     let mut hut: Option<(f32, f32, f32)> = None;
     for _ in 0..2500 {
         let a = rng_next(&mut rng) * TAU;
-        let r = rng_next(&mut rng).sqrt() * 50.0;
-        let (x, z) = (0.0 + a.cos() * r, 83.6 + a.sin() * r);
+        let r = rng_next(&mut rng).sqrt() * mr;
+        let (x, z) = (mx + a.cos() * r, mz + a.sin() * r);
         let sd = crate::worldmap::pool_sd_world(x, z);
         // Shoreline band, slightly wet side, clear of decks/roads.
         if (-0.7..-0.25).contains(&sd) && clear(x, z) {

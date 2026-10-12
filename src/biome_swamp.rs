@@ -925,7 +925,9 @@ pub fn config() -> BiomeConfig {
                     (build_reed_clump_mesh(0), 1.0),
                     (build_reed_clump_mesh(1), 1.0),
                 ],
-                chance: 0.04, // thinned ~35% — was 0.06
+                // The open marsh is the star now (the trees thinned to hammocks): denser reed /
+                // cattail beds. Was 0.04 (thinned from 0.06 when the swamp was a closed forest).
+                chance: 0.07,
                 scale: (0.85, 1.4),
                 tree: false,
                 block_radius: 0.0,

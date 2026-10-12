@@ -1086,6 +1086,10 @@ pub fn scatter_region(
     let desert_kit = crate::realforest::get().filter(|k| cfg.biome == Biome::Desert && bkit::desert(k));
     // Swamp: its own flora only (`swamp_flora.glb`: cypresses, willows, snags, knees, cattails).
     let swamp_kit = crate::realforest::get().filter(|k| cfg.biome == Biome::Swamp && bkit::swamp(k));
+    // Swamp tree-slot outcomes (crowned trees / snags / knees / open marsh / the old pick's
+    // crowns), logged after scatter.
+    let mut swamp_tally = [0u32; 5];
+    let swamp_snags = swamp_kit.map_or([None, None], |k| [k.pick_named(&["snag_a_lod0"], 0.0), k.pick_named(&["snag_b_lod0"], 0.0)]);
     let mut bk_chunks = crate::realforest::Chunks::default();
 
     // ── Main per-tile scatter ──
@@ -1309,16 +1313,46 @@ pub fn scatter_region(
                             .or_else(|| desert_kit.map(|k| (k, bkit::saguaro(vi / PROP_TINTS.len()))))
                             .or_else(|| swamp_kit.and_then(|k| bkit::swamp_tree(k, vi / PROP_TINTS.len(), cx, cz).map(|t| (k, t))));
                         if let Some((k, t)) = bk_tree {
+                            // Open swamp marsh: no tree, no trunk blocker — a merged reed / sedge
+                            // bed (or bare blackwater) where the slot fell between the hammocks.
+                            // What the pre-hammock pick drew here (a crown unless a knee slot or a
+                            // 22 % snag roll) — the before/after count in the log line below.
+                            if swamp_kit.is_some() && vi / PROP_TINTS.len() < 3 && crate::realforest::rolls(cx, cz).0 >= 0.22 {
+                                swamp_tally[4] += 1;
+                            }
+                            if let bkit::KitTree::Open(bed) = t {
+                                crate::blockers::remove_at(cx, cz);
+                                if let Some((m, sc)) = bed.and_then(|(name, sc)| k.pick_named(&[name], 0.0).map(|m| (m, sc))) {
+                                    // Swamp tree slots are scaled 0.85..1.25 × the swamp TREE_SCALE (1.7).
+                                    let rot = Quat::from_rotation_y(crate::realforest::rolls(cx, cz).1 * std::f32::consts::TAU);
+                                    bk_chunks.push(k, m, Vec3::new(cx, py, cz), rot, s / 1.7 * sc, crate::realforest::Tier::Props);
+                                }
+                                swamp_tally[3] += 1;
+                                gz += 1.0;
+                                continue;
+                            }
+                            if swamp_kit.is_some() {
+                                swamp_tally[match &t {
+                                    bkit::KitTree::Tree(m) if swamp_snags.contains(&Some(*m)) => 1,
+                                    bkit::KitTree::Tree(_) => 0,
+                                    _ => 2,
+                                }] += 1;
+                            }
                             let mut tree = commands.spawn((
                                 Transform { translation: Vec3::new(cx, py, cz), rotation: base, scale: Vec3::splat(s) },
                                 crate::verbs::ChopTree::new(trunk_r),
                                 BiomeEntity,
                             ));
                             match t {
+                                bkit::KitTree::Tree(lod0) if swamp_kit.is_some() => {
+                                    tree.insert(crate::wind::sway_for(cx, cz, base));
+                                    k.attach_tree_narrow(&mut tree, lod0, scatter_cull_enabled());
+                                }
                                 bkit::KitTree::Tree(lod0) => {
                                     tree.insert(crate::wind::sway_for(cx, cz, base));
                                     k.attach_tree(&mut tree, lod0, scatter_cull_enabled());
                                 }
+                                bkit::KitTree::Open(_) => {}
                                 bkit::KitTree::Static(name, sway, sc) => {
                                     if sway {
                                         tree.insert(crate::wind::sway_for(cx, cz, base));
@@ -1553,6 +1587,10 @@ pub fn scatter_region(
     }
     if let Some(k) = rocky_kit.or(desert_kit).or(swamp_kit) {
         bk_chunks.spawn(k, commands, meshes, scatter_cull_enabled());
+    }
+    if swamp_kit.is_some() {
+        let [crowns, snags, knees, open, old] = swamp_tally;
+        info!("swamp trees: {crowns} crowned (was {old}), {snags} snags, {knees} knee clusters, {open} open-marsh slots");
     }
 }
 
