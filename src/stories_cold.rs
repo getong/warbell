@@ -10,12 +10,16 @@
 //!   the mound, the stone chimney still standing); the colony's last muster (a cairn topped with a
 //!   helmet, a tattered banner, broken shields and spears); a ruined outlying homestead (a burned log
 //!   house, charred roof beams jutting from a drift, a broken palisade stub, the well with its winch
-//!   fallen, a tipped hand-cart). And three one-off sites: the **Crown Convoy** wrecked beside the
+//!   fallen, a tipped hand-cart). And four one-off sites: the **Crown Convoy** wrecked beside the
 //!   pass trail (the lead wagon broke under a bronze WAR BELL — its cradle snapped, the bell tipped
 //!   out on its side in a drift, mouth to the trail, the Crown cast on its flank, the clapper flung
 //!   clear; the second wagon thrown on its side), **Anselm's Hermitage** (a dry-stone
 //!   cell with an EMPTY bell-cote, two graves, his writing slope) and the **Old Ones' Ring** (carved
-//!   standing stones, ork offerings at the centre).
+//!   standing stones, ork offerings at the centre), and down on the snow COAST the **Castaways'
+//!   Snow-House** (a longboat from the wrecked ship drifted north in the storm: a cut-block igloo
+//!   with one side fallen in, the boat overturned as a windbreak, the ship's lantern on a planted
+//!   oar, another oar scratched with a day tally, a tarred sailcloth, empty casks, and sled tracks
+//!   leading inland — no bodies).
 //! - **Rocky** — an abandoned mine head (timber headframe over an open shaft, a tipped ore cart at
 //!   the end of its rail run); a rockfall that crushed a wagon on the track; a half-cut monolith in
 //!   a small quarry, the masons' tools dropped where they stood.
@@ -65,7 +69,7 @@ struct Scene {
     snow: f32,
 }
 
-const SCENES: [Scene; 10] = [
+const SCENES: [Scene; 11] = [
     // The drift + collapsed tent, the sled with its crates, the planted skis (+ the marker pole).
     Scene { model: "story_lost_camp", biome: Biome::Snow, snow: 0.45, foot: 2.6,
         solids: &[(-0.6, 0.2, 1.1, 1.0, 0.0), (1.15, -0.75, 1.0, 0.45, 0.35), (2.02, 0.35, 0.25, 0.3, 0.0)],
@@ -130,11 +134,47 @@ const SCENES: [Scene; 10] = [
         want: 3, names: &["The Outlying Steading", "The Burned Homestead", "The Palisade Farm"],
         lore: "They farmed beyond the reach of the chapel bell and raised a palisade instead; it was not enough.",
         trail: false },
+    // The castaways' snow-block igloo (+ its entrance tunnel), the overturned longboat windbreak, the
+    // oar planted by the door with the ship's lantern. On the snow COAST ([`COAST_SCENE`]): the model
+    // faces the sea (local -Z) and its sled tracks run inland (+Z).
+    Scene { model: COAST_SCENE, biome: Biome::Snow, snow: 0.0, foot: 3.6,
+        solids: &[(-0.5, 0.3, 1.35, 1.35, 0.0), (-0.5, -1.4, 0.55, 0.6, 0.0), (2.7, 0.4, 0.7, 2.25, 0.0),
+            (0.35, -2.7, 0.08, 0.08, 0.0)],
+        want: 1, names: &["The Castaways' Snow-House"],
+        lore: "The bosun's log: 'Rang the ship's bell till dawn. They came out of the fog at the second hour.'",
+        trail: false },
 ];
 
-/// Order the plan seats scenes in each round: the one-off discoverables first (the convoy, which
-/// needs the narrowest ground — beside a trail — leads), then the repeating scenes.
-const SEAT_ORDER: [usize; 10] = [6, 7, 8, 0, 1, 9, 2, 3, 4, 5];
+/// The one scene that must stand on the snow COAST: a longboat from the wrecked ship drifted north
+/// in the storm, and its crew dug in where it grounded.
+const COAST_SCENE: &str = "story_castaways";
+/// The coast scene needs open sea within this reach of its centre (and none under its footprint).
+const COAST_REACH: f32 = 22.0;
+
+/// Unit direction from `q` toward the nearest open sea within [`COAST_REACH`] (probing 24 bearings
+/// past the footprint), or `None` inland.
+fn sea_dir(q: Vec2, foot: f32) -> Option<Vec2> {
+    let mut best: Option<(f32, Vec2)> = None;
+    for k in 0..24 {
+        let a = k as f32 * (TAU / 24.0);
+        let d = Vec2::new(a.cos(), a.sin());
+        let mut r = foot + 2.0;
+        while r <= COAST_REACH && best.map_or(true, |(b, _)| r < b) {
+            let p = q + d * r;
+            if crate::worldmap::is_open_water_world(p.x, p.y) {
+                best = Some((r, d));
+                break;
+            }
+            r += 1.5;
+        }
+    }
+    best.map(|(_, d)| d)
+}
+
+/// Order the plan seats scenes in each round: the one-off discoverables first (the castaways, who
+/// need the snow coast, and the convoy, beside a trail — the narrowest ground — lead), then the
+/// repeating scenes.
+const SEAT_ORDER: [usize; 11] = [10, 6, 7, 8, 0, 1, 9, 2, 3, 4, 5];
 /// The one-off discoverables stand at least this far from each other, so they spread over the
 /// snow region instead of clustering on its best ground.
 const ONE_OFF_SPREAD: f32 = 35.0;
@@ -422,6 +462,13 @@ fn candidates(scene: usize, trails: &[Vec<Vec2>]) -> Vec<(Vec2, f32)> {
     if s.trail {
         return trail_candidates(s.foot, trails);
     }
+    if s.model == COAST_SCENE {
+        // Front (local -Z, mapped to (-sin yaw, -cos yaw)) turned to the sea; the tracks run inland.
+        return grid_candidates(s.biome, 0x51c0_1d00 ^ (scene as u32).wrapping_mul(0x85eb_ca6b))
+            .into_iter()
+            .filter_map(|q| sea_dir(q, s.foot).map(|d| (q, (-d.x).atan2(-d.y))))
+            .collect();
+    }
     grid_candidates(s.biome, 0x51c0_1d00 ^ (scene as u32).wrapping_mul(0x85eb_ca6b))
         .into_iter()
         .map(|q| (q, site_yaw(scene, q)))
@@ -582,8 +629,19 @@ pub fn populate(commands: &mut Commands, _meshes: &mut Assets<Mesh>, _materials:
 
 /// Screenshot cameras for every placed SNOW site (`FOREST_SHOT_STORIES`, see `capture.rs`): a
 /// near oblique from the scene's front (local -Z, the side its story faces) and a high one from the
-/// opposite quarter (over the trees), both aimed ~1u above the site centre.
+/// opposite quarter (over the trees), both aimed ~1u above the site centre. A
+/// `FOREST_SHOT_STORIES` value other than `1` keeps only the cams whose name contains it.
 pub fn shot_cams() -> Vec<(String, Transform)> {
+    let mut out = all_shot_cams();
+    if let Ok(f) = std::env::var("FOREST_SHOT_STORIES") {
+        if f != "1" {
+            out.retain(|(n, _)| n.contains(f.as_str()));
+        }
+    }
+    out
+}
+
+fn all_shot_cams() -> Vec<(String, Transform)> {
     let sites = SITES.lock().unwrap().clone();
     let mut out = Vec::new();
     let mut seen: Vec<usize> = Vec::new();
@@ -610,6 +668,13 @@ pub fn shot_cams() -> Vec<(String, Transform)> {
                 let eye = Vec3::new(e.x, gy + 1.7, e.y);
                 info!("story cam {name}_{tag}: {:.1},{:.1},{:.1} -> {:.1},{:.1},{:.1}", eye.x, eye.y, eye.z, bell.x, bell.y, bell.z);
                 out.push((format!("{name}_{tag}"), Transform::from_translation(eye).looking_at(bell, Vec3::Y)));
+            }
+        }
+        if SCENES[site.scene].model == COAST_SCENE {
+            // From inland down the sled tracks toward the sea, and at eye height by the tally oar.
+            for (tag, off) in [("inland", -front * 8.5 + side * 2.5 + Vec3::Y * 1.6), ("door", front * 4.2 + side * 2.6 + Vec3::Y * 0.5)] {
+                let eye = aim + off;
+                out.push((format!("{name}_{k}_{tag}"), Transform::from_translation(eye).looking_at(aim - Vec3::Y * 0.4, Vec3::Y)));
             }
         }
         for (tag, off) in [("near", front * 7.5 + side * 3.0 + Vec3::Y * 3.2), ("high", -front * 4.0 + side * 5.0 + Vec3::Y * 11.0)] {
@@ -698,6 +763,9 @@ mod tests {
             }
             for site in &mine {
                 assert!(crate::alpine::snow_cover(site.pos.x, site.pos.y) >= s.snow, "{} off the snow", s.model);
+                if s.model == COAST_SCENE {
+                    assert!(sea_dir(site.pos, s.foot).is_some(), "{} not on the coast at {}", s.model, site.pos);
+                }
                 if s.trail {
                     let d = trails
                         .iter()

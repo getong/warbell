@@ -921,8 +921,9 @@ pub(crate) fn ork_torch_mesh() -> Mesh {
     group(parts).rotated_by(ork_torch_bake())
 }
 
-/// Three asymmetrical tapered tongues with a hot inner core, shared by viewer and live flame.
-pub(crate) fn ork_torch_flame_mesh() -> Mesh {
+/// Three asymmetrical tapered tongues with a hot inner core: the viewer's vertex-coloured stand-in
+/// (it only carries the shared skin material). The live torch burns flame cards (`Armory::new`).
+fn ork_torch_flame_mesh() -> Mesh {
     let orange = [1.0, 0.20, 0.015, 1.0];
     let amber = [1.0, 0.55, 0.07, 1.0];
     let hot = [1.0, 0.88, 0.42, 1.0];
@@ -1887,7 +1888,7 @@ pub struct Armory {
     /// War-torch held in the off hand (shaft + lashing + pitch head; vertex-coloured
     /// so it rides the shared skin material and flashes with the body on a hit).
     torch_mesh: Handle<Mesh>,
-    /// Tapered, vertex-coloured torch tongues — emissive `StandardMaterial` like the eyes, so bloom catches it.
+    /// Crossed flame cards (`camps::flame_card_mesh`), HDR-bright so bloom catches them.
     flame_mesh: Handle<Mesh>,
     flame_mat: Handle<StandardMaterial>,
 }
@@ -1924,14 +1925,9 @@ impl Armory {
             ..default()
         });
         let torch_mesh = meshes.add(ork_torch_mesh());
-        let flame_mesh = meshes.add(ork_torch_flame_mesh());
-        // Matches the fire family (`firelight` embers / castle flames): warm base, strong emissive.
-        let flame_mat = materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            emissive: LinearRgba::rgb(3.2, 1.5, 0.35),
-            unlit: true,
-            ..default()
-        });
+        // Flame cards (the camp fires' painted flame, torch-sized), never solid cones.
+        let flame_mesh = meshes.add(crate::camps::flame_card_mesh(0.3));
+        let flame_mat = crate::camps::flame_card_material(materials);
         Armory { mat, tmpl, eye_mesh, eye_mat, torch_mesh, flame_mesh, flame_mat }
     }
 

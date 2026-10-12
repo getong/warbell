@@ -41,6 +41,7 @@ impl Plugin for CampsPlugin {
         // swing_cage_doors + reconcile_cages_on_load are UNGATED: the door swing is cosmetic
         // (a mid-swing door finishing under a pause is harmless), and the load reconcile must
         // fire on the GameLoaded message whenever it lands.
+        app.add_systems(PreStartup, insert_flame_card_tex);
         app.add_systems(Update, (flicker_flames, drift_smoke, swing_cage_doors, reconcile_cages_on_load));
         app.add_systems(Update, reconcile_warbands_on_load
             .after(crate::savegame::RestoreRunSet)
@@ -743,17 +744,11 @@ pub fn build(
     // Emissive flame (bloom-lit, like the castle torches) + translucent smoke.
     // Fire: crossed alpha flame cards (a painted tongue-of-flame texture, HDR-bright so it blooms),
     // never a solid cone. Double-sided, unlit, no shadows; the `Flicker` scale wobble animates it.
-    let flame_tex = images.add(flame_card_image());
-    let flame_mat = materials.add(StandardMaterial {
-        base_color: Color::linear_rgb(5.0, 2.6, 1.1),
-        base_color_texture: Some(flame_tex),
-        alpha_mode: AlphaMode::Blend,
-        unlit: true,
-        double_sided: true,
-        cull_mode: None,
-        ..default()
-    });
-    let flame_cards = meshes.add(flame_card_mesh());
+    if images.get(&FLAME_CARD_TEX).is_none() {
+        let _ = images.insert(&FLAME_CARD_TEX, flame_card_image());
+    }
+    let flame_mat = flame_card_material(materials);
+    let flame_cards = meshes.add(flame_card_mesh(1.0));
     let smoke_mat = materials.add(StandardMaterial {
         base_color: Color::srgba(0.55, 0.55, 0.57, 0.4),
         alpha_mode: AlphaMode::Blend,
@@ -1138,13 +1133,37 @@ fn sit_stump_mesh(mut seed: u32) -> Mesh {
     ])
 }
 
-/// The camp fire's flame cards: three vertical quads crossed at 60° plus a smaller inner set,
-/// 0.75 wide x 0.95 tall, base at y=0, UV v=1 at the base (the flame texture's root).
-fn flame_card_mesh() -> Mesh {
+/// The shared painted flame texture of every flame card (camp fires, the meadow fire, ork torches,
+/// the trailer torches): a fixed-id handle, filled once at startup ([`insert_flame_card_tex`]), so
+/// any builder can make a flame material without an `Assets<Image>`.
+pub(crate) const FLAME_CARD_TEX: Handle<Image> = bevy::asset::uuid_handle!("6b1f0c52-3c8e-4d4f-9a51-2f7e0b9d4a11");
+
+fn insert_flame_card_tex(mut images: ResMut<Assets<Image>>) {
+    let _ = images.insert(&FLAME_CARD_TEX, flame_card_image());
+}
+
+/// The flame cards' material: the painted flame, HDR-bright (blooms), alpha-blended, unlit,
+/// double-sided, never a solid cone.
+pub(crate) fn flame_card_material(materials: &mut Assets<StandardMaterial>) -> Handle<StandardMaterial> {
+    materials.add(StandardMaterial {
+        base_color: Color::linear_rgb(5.0, 2.6, 1.1),
+        base_color_texture: Some(FLAME_CARD_TEX),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        double_sided: true,
+        cull_mode: None,
+        ..default()
+    })
+}
+
+/// Flame cards: three vertical quads crossed at 60° plus a smaller inner set, `size` x (0.75 wide
+/// x 0.95 tall — a camp fire; ~0.3 is a torch), base at y=0, UV v=1 at the base (the flame root).
+/// Spawn with `bevy::light::NotShadowCaster`.
+pub(crate) fn flame_card_mesh(size: f32) -> Mesh {
     use bevy::asset::RenderAssetUsages;
     use bevy::mesh::{Indices, PrimitiveTopology};
     let (mut pos, mut uv, mut nrm, mut idx) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    for (w, h, phase) in [(0.75_f32, 0.95_f32, 0.0_f32), (0.42, 0.62, 0.5)] {
+    for (w, h, phase) in [(0.75 * size, 0.95 * size, 0.0_f32), (0.42 * size, 0.62 * size, 0.5)] {
         for k in 0..3 {
             let a = phase + k as f32 * std::f32::consts::FRAC_PI_3;
             let d = Vec3::new(a.cos(), 0.0, a.sin()) * (w / 2.0);

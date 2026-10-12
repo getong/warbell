@@ -1292,7 +1292,7 @@ fn try_build(
     let wind = [mat_index["canopy"], mat_index["undergrowth"], mat_index["swamp_cards"]];
     let mut models = Vec::new();
     let mut by_name = HashMap::new();
-    for glb in ["forest_pbr/trees.glb", "forest_pbr/undergrowth.glb", "forest_pbr/props.glb", "forest_pbr/structures.glb", "forest_pbr/wayside.glb", "forest_pbr/stories_warm.glb", "forest_pbr/creatures.glb", "forest_pbr/animals.glb", "forest_pbr/people.glb", "forest_pbr/orks.glb", "forest_pbr/stories_cold.glb", "forest_pbr/snowmen.glb", "forest_pbr/wardens.glb", "forest_pbr/alpine_flora.glb", "forest_pbr/market.glb", "forest_pbr/castle_kit.glb", "forest_pbr/town_kit.glb", "forest_pbr/biome_props.glb", "forest_pbr/swamp_flora.glb", "forest_pbr/ork_camps.glb", "forest_pbr/sites_warm.glb", "forest_pbr/rival_kit.glb"] {
+    for glb in ["forest_pbr/trees.glb", "forest_pbr/undergrowth.glb", "forest_pbr/props.glb", "forest_pbr/structures.glb", "forest_pbr/wayside.glb", "forest_pbr/stories_warm.glb", "forest_pbr/creatures.glb", "forest_pbr/animals.glb", "forest_pbr/people.glb", "forest_pbr/orks.glb", "forest_pbr/stories_cold.glb", "forest_pbr/snowmen.glb", "forest_pbr/wardens.glb", "forest_pbr/alpine_flora.glb", "forest_pbr/market.glb", "forest_pbr/castle_kit.glb", "forest_pbr/town_kit.glb", "forest_pbr/biome_props.glb", "forest_pbr/swamp_flora.glb", "forest_pbr/ork_camps.glb", "forest_pbr/sites_warm.glb", "forest_pbr/rival_kit.glb", "forest_pbr/stories_castaways.glb"] {
         // The townsfolk parts (people.glb) and the skinned ork bodies (orks.glb) are optional:
         // without them the villagers keep their box-built bodies (`peasant_model`) and the orks
         // their per-joint creatures.glb parts; the rest of the kit still loads.

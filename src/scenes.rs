@@ -121,6 +121,8 @@ struct SceneAssets {
     prop_mat: Handle<StandardMaterial>,
     bolt_mat: Handle<StandardMaterial>,
     bolt_mesh: Handle<Mesh>,
+    flame_mat: Handle<StandardMaterial>,
+    flame_mesh: Handle<Mesh>,
 }
 
 pub struct ScenesPlugin;
@@ -172,7 +174,9 @@ fn setup_scene_assets(
         ..default()
     });
     let bolt_mesh = meshes.add(Sphere::new(0.18).mesh().ico(2).unwrap());
-    commands.insert_resource(SceneAssets { prop_mat, bolt_mat, bolt_mesh });
+    let flame_mat = crate::camps::flame_card_material(&mut materials);
+    let flame_mesh = meshes.add(crate::camps::flame_card_mesh(0.34));
+    commands.insert_resource(SceneAssets { prop_mat, bolt_mat, bolt_mesh, flame_mat, flame_mesh });
 }
 
 // ── Scene change: teardown + setup ─────────────────────────────────────────────────────
@@ -582,8 +586,16 @@ fn spawn_prop_mesh(commands: &mut Commands, meshes: &mut Assets<Mesh>, assets: &
 }
 
 fn spawn_torch(commands: &mut Commands, meshes: &mut Assets<Mesh>, assets: &SceneAssets, pos: Vec3) {
-    // Post + a warm point light + a small emissive flame.
+    // Post + a warm point light + flame cards on its head.
     spawn_prop_mesh(commands, meshes, assets, torch_post_mesh(), pos, 0.0, 1.0);
+    commands.spawn((
+        Mesh3d(assets.flame_mesh.clone()),
+        MeshMaterial3d(assets.flame_mat.clone()),
+        Transform::from_translation(pos + Vec3::new(0.0, 1.2, 0.0)),
+        bevy::light::NotShadowCaster,
+        crate::camps::Flicker { phase: pos.x * 1.3 },
+        SceneProp,
+    ));
     commands.spawn((
         PointLight { color: Color::srgb(1.0, 0.6, 0.25), intensity: 18_000.0, range: 9.0, shadow_maps_enabled: false, ..default() },
         Transform::from_translation(pos + Vec3::new(0.0, 1.3, 0.0)),
@@ -678,11 +690,12 @@ fn campfire_mesh() -> Mesh {
     merged(p)
 }
 
-/// A wall torch — a short post; the flame is the point light spawned alongside.
+/// A wall torch — a short post with a pitch-wrapped head; the flame cards + point light are
+/// spawned alongside ([`spawn_torch`]).
 fn torch_post_mesh() -> Mesh {
     merged(vec![
         cylr(0.05, 1.2, Vec3::new(0.0, 0.6, 0.0), Quat::IDENTITY, WOOD_DARK),
-        cone_m(0.12, 0.22, Vec3::new(0.0, 1.32, 0.0), Quat::IDENTITY, 0xff8a2a), // flame nub
+        cylr(0.075, 0.14, Vec3::new(0.0, 1.17, 0.0), Quat::IDENTITY, 0x2c2019),
     ])
 }
 
