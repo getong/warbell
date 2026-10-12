@@ -36,8 +36,10 @@ struct Scene {
     boxes: &'static [(f32, f32, f32, f32, f32)],
 }
 
+// story_caravan / story_boat are capped at one here: the Lost Caravan and Sunken Wreck vignettes
+// (`vignettes.rs`) draw the same models, and no story model appears more than twice on the island.
 const SCENES: [Scene; 7] = [
-    Scene { model: "story_caravan", biome: Biome::Desert, foot: 3.0, count: 2, boxes: &[(-0.36, -0.15, 1.2, 0.45, 0.25)] },
+    Scene { model: "story_caravan", biome: Biome::Desert, foot: 3.0, count: 1, boxes: &[(-0.36, -0.15, 1.2, 0.45, 0.25)] },
     Scene { model: "story_ribs", biome: Biome::Desert, foot: 3.5, count: 2, boxes: &[(0.0, 0.0, 1.7, 1.2, 0.0)] },
     Scene {
         model: "story_oasis",
@@ -50,7 +52,7 @@ const SCENES: [Scene; 7] = [
         model: "story_boat",
         biome: Biome::Swamp,
         foot: 2.8,
-        count: 3,
+        count: 1,
         boxes: &[(0.9, 0.5, 1.25, 0.5, 0.45), (-1.0, -0.8, 0.8, 0.7, 0.0), (1.25, -1.5, 0.75, 0.08, 0.0)],
     },
     Scene {

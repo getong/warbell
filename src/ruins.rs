@@ -518,8 +518,10 @@ pub struct LandmarkSite {
 /// Each landmark is its biome's skyline FLAG — it has to break the treeline from the road, or
 /// the spur leading to it pulls nobody.
 const SITE_PARAMS: [(crate::biome::Biome, f32, f32); 5] = [
-    (crate::biome::Biome::Snow, 1.5, 1.4),
-    (crate::biome::Biome::Desert, 1.5, 2.4),
+    // Snow / Desert: the Blender ice-sheathed pinnacle in its snowfield and the monumental pyramid
+    // in its dunes (landmarks.glb) need far more room than the old low-poly pieces did.
+    (crate::biome::Biome::Snow, 1.5, 3.5),
+    (crate::biome::Biome::Desert, 1.5, 9.0),
     (crate::biome::Biome::Rocky, 1.45, 2.4),
     (crate::biome::Biome::Forest, 1.45, 1.5),
     (crate::biome::Biome::Swamp, 1.4, 1.5),
@@ -565,6 +567,7 @@ pub fn landmark_sites() -> &'static [LandmarkSite] {
         for (biome, scale, foot_r) in SITE_PARAMS {
             let probe_r = foot_r * scale;
             let mut best: Option<LandmarkSite> = None;
+            let mut best_score: Option<f32> = None;
             for _ in 0..4000 {
                 let x = crate::wildlife::rng_range(&mut rng, -crate::worldmap::GX + 6.0, crate::worldmap::GX - 6.0);
                 let z = crate::wildlife::rng_range(&mut rng, -crate::worldmap::GZ + 6.0, crate::worldmap::GZ - 6.0);
@@ -584,11 +587,16 @@ pub fn landmark_sites() -> &'static [LandmarkSite] {
                 let Some(spread) = footprint_spread(x, z, probe_r) else { continue };
                 let y = crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
                 let yaw = crate::wildlife::rng_range(&mut rng, 0.0, TAU);
-                if best.map_or(true, |b| spread < b.spread) {
+                // The frozen spire belongs up in the snow, not on the green valley floor: grade
+                // snow-poor spots down (a soft penalty, so a spot is always found).
+                let score = spread
+                    + if biome == crate::biome::Biome::Snow { (0.75 - crate::alpine::snow_cover(x, z)).max(0.0) * 4.0 } else { 0.0 };
+                if best_score.map_or(true, |b| score < b) {
+                    best_score = Some(score);
                     best = Some(LandmarkSite { biome, pos: Vec2::new(x, z), y, yaw, spread });
                 }
-                if spread <= 0.01 {
-                    break; // dead flat — done
+                if best_score.is_some_and(|b| b <= 0.01) {
+                    break; // dead flat (and snowy enough) — done
                 }
             }
             match best {
@@ -612,8 +620,8 @@ pub fn populate_landmarks(
     // block one box hugging the built mass, but the standing stones block PER-STONE so the circle
     // itself stays walkable (the rune trial plays out inside it).
     let specs: [(Biome, LandmarkModel, f32, Vec<(f32, f32, f32, f32)>); 5] = [
-        (Biome::Snow, crate::landmark_models::frozen_spire(), 1.5, vec![(0.0, 0.0, 1.0, 1.0)]),
-        (Biome::Desert, crate::landmark_models::sunken_pyramid(), 1.5, vec![(0.0, 0.0, 2.1, 2.1)]),
+        (Biome::Snow, crate::landmark_models::frozen_spire(), 1.5, vec![(0.0, 0.0, 1.5, 1.5), (0.0, 2.2, 1.6, 0.8)]),
+        (Biome::Desert, crate::landmark_models::sunken_pyramid(), 1.5, vec![(0.0, 0.0, 6.9, 6.9), (4.6, -4.6, 3.0, 3.0)]),
         (Biome::Rocky, crate::landmark_models::standing_stones(), 1.45, crate::landmark_models::stone_blockers()),
         (Biome::Forest, crate::landmark_models::old_mill(), 1.45, vec![(0.0, 0.0, 1.5, 1.5)]),
         (Biome::Swamp, crate::landmark_models::witch_hut(), 1.4, vec![(0.0, 0.3, 1.25, 1.1), (1.7, 1.2, 0.55, 0.55)]),
@@ -651,6 +659,27 @@ pub fn populate_landmarks(
                     let mut s = commands.entity(part);
                     s.remove::<Mesh3d>();
                     k.attach_static(&mut s, name, Transform::IDENTITY);
+                }
+            }
+            // Animated parts re-anchored onto the Blender body (`Some(pos)`) or dropped (`None`):
+            // the spire loses its floating splinters (the heart sits in the frozen waterfall), the
+            // pyramid its hovering gilt sun-disc (the glyph strips move onto the stair-side face).
+            let moves: &[(usize, Option<Vec3>)] = match biome {
+                Biome::Snow => &[
+                    (0, Some(Vec3::new(0.0, 2.3, 1.42))),
+                    (1, None), (2, None), (3, None), (4, None), (5, None), (6, None),
+                ],
+                Biome::Desert => &[(0, None), (1, Some(Vec3::new(-1.9, 3.35, 4.74))), (2, Some(Vec3::new(1.9, 3.35, 4.74)))],
+                _ => &[],
+            };
+            for &(i, to) in moves {
+                let Some(&part) = parts.get(i) else { continue };
+                match to {
+                    Some(p) => {
+                        let tf = Transform::from_translation(p);
+                        commands.entity(part).insert((tf, RestXf(tf)));
+                    }
+                    None => commands.entity(part).despawn(),
                 }
             }
         }
