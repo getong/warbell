@@ -131,6 +131,10 @@ const LANDMARK_KEEP: f32 = 14.0;
 const TRAIL_KEEP: f32 = 3.0;
 /// Extra keep-off from roads past the footprint (these are off-road finds).
 const ROAD_MARGIN: f32 = 3.0;
+/// Extra glade around each site kept free of scatter (see [`planned_footprints`]).
+const SIGHTLINE: f32 = 4.0;
+/// The biome must hold this far past the footprint (no cacti over the gong, no forest in the bog).
+const BIOME_MARGIN: f32 = 6.0;
 /// Shore seat: the water probes in front sit this deep in a pool (base-unit signed distance).
 const SHORE_WET: f32 = -0.25;
 
@@ -147,9 +151,11 @@ pub fn reset_plan() {
     SITES.lock().unwrap().clear();
 }
 
-/// `(centre, visual radius)` of every planned site (folded into `poi::story_clearings`).
+/// `(centre, cleared radius)` of every planned site (folded into `poi::story_clearings`): the
+/// footprint plus [`SIGHTLINE`], so the bog's cypresses / willows and the rocky scrub stand back and
+/// the scene reads from a distance instead of through a curtain of moss.
 pub fn planned_footprints() -> Vec<(Vec2, f32)> {
-    SITES.lock().unwrap().iter().map(|s| (s.pos, SCENES[s.scene].foot)).collect()
+    SITES.lock().unwrap().iter().map(|s| (s.pos, SCENES[s.scene].foot + SIGHTLINE)).collect()
 }
 
 /// Does a circle at `(x, z)` of radius `r` overlap a planned site?
@@ -209,6 +215,14 @@ fn ground_ok(scene: usize, q: Vec2, yaw: f32, flat: f32, trails: &[Vec<Vec2>]) -
         return false;
     }
     let swamp = s.biome == Biome::Swamp;
+    let rb = foot + if s.seat == Seat::High { BIOME_MARGIN * 0.5 } else { BIOME_MARGIN };
+    if (0..12).any(|k| {
+        let a = k as f32 * (TAU / 12.0);
+        let (px, pz) = (x + a.cos() * rb, z + a.sin() * rb);
+        !crate::worldmap::is_pool_world(px, pz) && crate::worldmap::tile_biome_world(px, pz) != Some(s.biome)
+    }) {
+        return false;
+    }
     let (mut lo, mut hi) = (y0, y0);
     for d in probes(foot) {
         let (px, pz) = (x + d.x, z + d.y);
