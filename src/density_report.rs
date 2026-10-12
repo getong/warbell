@@ -81,6 +81,7 @@ fn collect_sites() -> Vec<Site> {
     }
     for (p, _) in crate::castaway::planned_footprints() {
         push("castaway", p, true);
+    }
     for (p, _) in crate::ork_graveyard::planned_footprints() {
         push("ork_graveyard", p, true);
     }
