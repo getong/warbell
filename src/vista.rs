@@ -131,11 +131,18 @@ fn gy(p: Vec2) -> f32 {
 /// 2u) once it has risen ≥ 11u — the rim of the head wall — or where the climb reaches 24u.
 fn find_lip(head: Vec2, axis: Vec2, base_y: f32) -> Option<(f32, f32)> {
     let prof: Vec<f32> = (0..=90).map(|i| gy(head + axis * (i as f32 * 0.5))).collect();
+    let flat = |i: usize| (prof[i + 4] - prof[i]) / 2.0 < 0.45;
     for i in 2..prof.len() - 4 {
         let rise = prof[i] - base_y;
-        let ahead = (prof[i + 4] - prof[i]) / 2.0;
-        if (rise >= 11.0 && ahead < 0.45) || rise >= 24.0 {
+        if rise >= 11.0 && flat(i) {
             return Some((i as f32 * 0.5, prof[i]));
+        }
+        if rise >= 24.0 {
+            // Still climbing at 24u: take the real rim if it comes within the next 6u of height
+            // (so the feeder can reach the lip across the plateau), else spring from the face here.
+            let rim = (i..prof.len() - 4).take_while(|&k| prof[k] - base_y <= 30.0).find(|&k| flat(k));
+            let k = rim.unwrap_or(i);
+            return Some((k as f32 * 0.5, prof[k]));
         }
     }
     None
@@ -404,6 +411,8 @@ fn populate_falls(commands: &mut Commands, meshes: &mut Assets<Mesh>) {
     // 4. FEEDER — the brook that runs over the plateau to the lip.
     let path = feeder_path(lip, axis);
     let feeder_len: f32 = path.windows(2).map(|w| w[0].distance(w[1])).sum();
+    let behind: Vec<String> = (0..=8).map(|k| format!("{:.1}", gy(lip + axis * k as f32))).collect();
+    debug!("vista: ground behind the lip (1u steps): {}", behind.join(" "));
     if path.len() >= 3 {
         spawn_falls(commands, meshes.add(feeder_mesh(&path)), Vec4::new(3.0, 0.0, 0.0, 6.6));
     }
