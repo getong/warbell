@@ -1775,6 +1775,7 @@ fn confirm_input(
     app: Res<State<AppState>>,
     siege: Option<Res<crate::siege::Siege>>,
     run: Res<RunInProgress>,
+    active_map: Res<crate::worldmap::ActiveMap>,
     mut was_open: Local<bool>,
 ) {
     // Swallow input on the frame the dialog opens, so the very Enter/Space that opened it (from
@@ -1808,15 +1809,15 @@ fn confirm_input(
         crate::savegame::delete_save(0);
         crate::savegame::refresh_slots(&mut slots);
         confirm.0 = None;
-        if *app.get() == AppState::StartScreen && !run.0 {
-            // Cold-boot start screen — the world is already fresh, so start in-process directly.
-            // OnExit(StartScreen) runs the fresh-run resets.
-            pending.0 = None;
-            next_app.set(AppState::Playing);
+        let cur_diff = current_difficulty(siege.as_deref());
+        if *app.get() == AppState::StartScreen {
+            // From the title, route exactly like an unconfirmed New Game: cold boot on the built
+            // map starts directly (OnExit(StartScreen) runs the fresh-run resets); a live run OR a
+            // different map (e.g. the arena left behind by Potyczka → menu) rebuilds in-process.
+            begin_new_game(run.0, cur_diff, map_changed(&active_map), &mut pending, &mut next_app, &mut fresh);
         } else {
-            // Mid-session New Game / Restart (incl. a start screen reached mid-run) → full in-process
-            // reset, since the in-process world is dirty (drive_fresh_run rebuilds it).
-            let cur_diff = current_difficulty(siege.as_deref());
+            // Pause Restart / game-over Play Again → full in-process reset, since the in-process
+            // world is dirty (drive_fresh_run rebuilds it).
             fresh.0 = Some(cur_diff);
         }
     }

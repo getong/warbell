@@ -2308,6 +2308,35 @@ fn reconcile_castle_blockers_on_load(
     *built = CastleBuilt::default();
 }
 
+/// On every **fresh run** (New Game / pause Restart / game-over Play Again — all funnelled through
+/// `OnExit(StartScreen)`), drop the lazily-registered wall/tower/house boxes and re-arm
+/// [`CastleBuilt`]. `sync_castle` is ungated, so it keeps running on the title while the previous
+/// (or just-Continued) run's `Defenses` / `TownRes` are still live — including right after
+/// `drive_fresh_run`'s world rebuild has `blockers::reset()` the store, when it immediately
+/// re-registers the OLD run's walls + houses. The `reset_*` suite then lowers those flags and the
+/// meshes hide, but nothing removed the boxes: **invisible walls where the last save's houses /
+/// palisade stood**. (A no-rebuild New Game from a title reached after game over leaked the same
+/// way.) Clearing here lets `sync_castle` re-register only what the fresh run actually has.
+fn reset_castle_blockers_on_new_run(mut built: ResMut<CastleBuilt>) {
+    clear_castle_blockers();
+    *built = CastleBuilt::default();
+}
+
+/// The castle-collision lifecycle: lazy registration ([`sync_castle`]) plus its two re-arm paths
+/// (load, fresh run). Split out of [`CastlePlugin`] so the regression test runs the real wiring.
+fn add_castle_blocker_systems(app: &mut App) {
+    app.add_systems(
+        OnExit(crate::game_state::AppState::StartScreen),
+        reset_castle_blockers_on_new_run.run_if(crate::game_state::fresh_run_reset),
+    )
+    .add_systems(
+        Update,
+        // Reconcile-on-load runs before sync so the same frame re-registers from the loaded
+        // flags after last run's stale boxes are dropped.
+        (reconcile_castle_blockers_on_load, sync_castle).chain(),
+    );
+}
+
 // ── Drifting chimney smoke ───────────────────────────────────────────────────────
 #[derive(Component)]
 #[allow(dead_code)] // chimney anchors return with the town kit's chimneys
@@ -2391,7 +2420,8 @@ pub(crate) struct CastlePart {
 /// Which gated groups have had their (append-only) collision blockers registered, so each is
 /// added exactly once the first time it's revealed. **Must be reset whenever the matching boxes
 /// leave the obstacle set**, or the lazily-registered wall/tower/house boxes never come back — they
-/// read as "already built" while their collision is gone. Two reset paths: a full world rebuild /
+/// read as "already built" while their collision is gone — and whenever the run-state that earned
+/// them is wiped (a fresh run: `reset_castle_blockers_on_new_run`). Other reset paths: a full world rebuild /
 /// biome swap (`biome::apply_build` resets this right after `blockers::reset()`), and an in-process
 /// Continue/Load (`reconcile_castle_blockers_on_load` — a Load rebuilds nothing, so it drops last
 /// run's boxes by centre and re-arms this so `sync_castle` re-registers from the loaded flags).
@@ -2477,19 +2507,10 @@ fn window_glow(
 pub struct CastlePlugin;
 impl Plugin for CastlePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<CastleBuilt>().init_resource::<BellRing>().add_systems(
-            Update,
-            (
-                drift_smoke,
-                peck_hens,
-                swing_bell,
-                // Reconcile-on-load runs before sync so the same frame re-registers from the
-                // loaded flags after last run's stale boxes are dropped.
-                reconcile_castle_blockers_on_load.before(sync_castle),
-                sync_castle,
-                window_glow,
-            ),
-        );
+        app.init_resource::<CastleBuilt>()
+            .init_resource::<BellRing>()
+            .add_systems(Update, (drift_smoke, peck_hens, swing_bell, window_glow));
+        add_castle_blocker_systems(app);
     }
 }
 
@@ -2594,6 +2615,54 @@ mod tests {
                 assert!(gap.abs() < 1e-3 || gap > 1.9, "side {i}: modules {:?} {:?} neither abut nor leave a gate", w[0], w[1]);
             }
         }
+    }
+
+    /// Regression ("kolizje po budynkach z poprzedniego save zostają po kliknięciu nowa gra"): a
+    /// Continued run's houses + walls are registered by the ungated `sync_castle` while the title
+    /// is up; New Game's reset suite then hides them, and their boxes must go with them. RESUME
+    /// (no reset) must keep the live run's collision.
+    #[test]
+    fn fresh_run_drops_last_runs_castle_collision() {
+        use crate::game_state::{AppState, ResumingRun};
+        use crate::town::TownRes;
+        let _guard = crate::blockers::TEST_LOCK.lock().unwrap();
+        crate::blockers::reset();
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin)
+            .init_state::<AppState>()
+            .init_resource::<CastleBuilt>()
+            .init_resource::<ResumingRun>()
+            .init_resource::<TownRes>()
+            .insert_resource(Defenses { walls: true, ..Defenses::default() })
+            .add_message::<crate::savegame::GameLoaded>();
+        add_castle_blocker_systems(&mut app);
+        app.world_mut().resource_mut::<TownRes>().0.houses = 12;
+        app.update(); // title over the loaded run: walls + every house registered
+
+        let house = houses()[11].pos;
+        let (a, b) = wall_segments()[0];
+        let wall = (a + b) / 2.0;
+        assert!(crate::blockers::is_blocked(house.x, house.y), "last run's house is solid");
+        assert!(crate::blockers::is_blocked(wall.x, wall.y), "last run's wall is solid");
+
+        // New Game: the reset suite wipes the run-state on the StartScreen → Playing hop.
+        *app.world_mut().resource_mut::<Defenses>() = Defenses::default();
+        app.world_mut().resource_mut::<TownRes>().0.houses = 0;
+        app.world_mut().resource_mut::<NextState<AppState>>().set(AppState::Playing);
+        app.update();
+        assert!(!crate::blockers::is_blocked(house.x, house.y), "old house left an invisible wall");
+        assert!(!crate::blockers::is_blocked(wall.x, wall.y), "old palisade left an invisible wall");
+
+        // A live run builds walls again, goes to the title, and RESUMEs: no reset, walls stay solid.
+        app.world_mut().resource_mut::<Defenses>().walls = true;
+        app.world_mut().resource_mut::<NextState<AppState>>().set(AppState::StartScreen);
+        app.update();
+        assert!(crate::blockers::is_blocked(wall.x, wall.y), "newly built wall registers");
+        app.world_mut().resource_mut::<ResumingRun>().0 = true;
+        app.world_mut().resource_mut::<NextState<AppState>>().set(AppState::Playing);
+        app.update();
+        assert!(crate::blockers::is_blocked(wall.x, wall.y), "RESUME keeps the live run's walls");
+        crate::blockers::reset();
     }
 
     #[test]
