@@ -347,6 +347,11 @@ pub fn tick_chains(
 pub fn preload_voice_lines(asset: Res<AssetServer>, mut mgr: ResMut<VoiceManager>) {
     for line in super::lines::LINES {
         let Some(path) = super::lines::voice_clip_path(line) else { continue };
+        // Village-life clips are recorded piecemeal: only load the ones actually on disk, so a
+        // not-yet-recorded line stays silent (and uncaptioned) without an asset-error per file.
+        if line.speaker == Speaker::Life && !crate::realforest::load::asset_path(&path).is_file() {
+            continue;
+        }
         let handle = asset.load(path);
         mgr.clips.insert(line.id, handle);
     }

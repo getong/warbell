@@ -24,6 +24,76 @@ pub enum Speaker {
     /// subtitle is drawn as a muffled aside that never clobbers a real line
     /// (`Subtitles::say_muffled`). Paced by `audio::captive`.
     Captive,
+    /// A village-life resident (`village_life`): the six recorded village voices
+    /// ([`LifeVoice`]), spatial at whoever speaks. Clips live under `audio/vo/life/` and are
+    /// optional — a line whose `.ogg` isn't on disk yet is never loaded and stays silent (no
+    /// subtitle either), so the catalogue can be recorded piecemeal.
+    Life,
+}
+
+/// The recorded village voices of `docs/audio/elevenlabs-zycie-wsi.md` — each resident is mapped
+/// to one by body (man / woman / elder / child), plus the market vendors and the wall guards.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum LifeVoice {
+    Man,
+    Woman,
+    Vendor,
+    Elder,
+    Child,
+    Guard,
+}
+
+/// The everyday situations a village-life resident speaks in (`village_life` triggers them; each
+/// voice only has lines for the cues it can say).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum LifeCue {
+    /// The knight walks by.
+    Greet,
+    /// A buyer at a stall: asks the price, balks at it, gives in.
+    Ask,
+    Haggle,
+    Agree,
+    /// The vendor's side of a sale: names the price, counters, done.
+    Price,
+    Counter,
+    Sold,
+    /// Hawking wares across the square; teasing the knight; a slow day.
+    Hawk,
+    Tease,
+    Slow,
+    /// A line in a conversation (a two-line exchange between neighbours).
+    Chat,
+    Sit,
+    Stand,
+    Eat,
+    /// Effort at work, and the end of it.
+    Work,
+    WorkDone,
+    Yawn,
+    Laugh,
+    /// Sun's going — get inside.
+    Dusk,
+    /// Shooing a kid off something.
+    Scold,
+    /// A mother calling her child home.
+    CallKid,
+    Laundry,
+    Sweep,
+    Water,
+    Doze,
+    Whittle,
+    Cough,
+    /// Children at play.
+    Tag,
+    Unfair,
+    Run,
+    Knight,
+    Mum,
+    Hide,
+    Count,
+    /// The guards' mutter on the wall / at the gate.
+    Patrol,
+    Gate,
 }
 
 /// How a speaker's voice is routed. Looked up from [`SPEAKERS`] by the director.
@@ -52,6 +122,7 @@ pub const SPEAKERS: &[(Speaker, SpeakerVoice)] = &[
     // that back, so a captive stays the quietest voice in the world. A slight pitch spread keeps
     // the cages from sounding like one recorded prisoner.
     (Speaker::Captive,  SpeakerVoice { spatial: true,  gain: 1.6,  name: Some("Captive"),   pitch: (0.95, 1.05), muffled: true  }),
+    (Speaker::Life,     SpeakerVoice { spatial: true,  gain: 1.3,  name: Some("Townsfolk"), pitch: (1.0,  1.0),  muffled: false }),
 ];
 
 pub fn speaker_voice(s: Speaker) -> SpeakerVoice {
@@ -190,6 +261,9 @@ pub enum Concept {
     CaptiveFear,
     /// The hero is at the cage and no jailer is near — a direct plea to him.
     CaptivePlea,
+    // ── Village life (`village_life`) — the residents' everyday talk, keyed by voice + situation.
+    //    Peaceful: it all falls silent the moment the hero is in a fight. ──
+    Life(LifeVoice, LifeCue),
 }
 
 /// PEACEFUL concepts — ambient/exploration/economy lines that must fall silent the moment the hero
@@ -213,6 +287,7 @@ pub fn is_peaceful(c: Concept) -> bool {
             // combat/victory beats (WarlordSlain, GateBreached, WardenSlain, RivalFell, HeirRose,
             // KeepLost, FortressMuster, RuneTrial*) are deliberately ABSENT — they must cut through.
             | LandmarkFound | UpgradeBought | BuildRaised | QuestDone | VillagerBorn
+            | Life(..)
     )
 }
 
@@ -274,8 +349,99 @@ const fn line(id: &'static str, speaker: Speaker, concept: Concept, text: &'stat
     }
 }
 
+/// A village-life line (`village_life`): spatial at the speaker, low priority (anything real cuts
+/// it, and it never interrupts one), interruptible, with a long replay floor so the same quip
+/// doesn't come round twice in a visit. Transcripts are the catalogue text WITHOUT the v3 tags.
+const fn life(id: &'static str, voice: LifeVoice, cue: LifeCue, text: &'static str) -> Line {
+    Line { priority: 5, floor: 150.0, ..line(id, Speaker::Life, Concept::Life(voice, cue), text) }
+}
+
 /// THE catalog. Filled in across the migration tasks (Phase C).
 pub const LINES: &[Line] = &[
+    // ── Village life (`docs/audio/elevenlabs-zycie-wsi.md`; clips `audio/vo/life/<id>.ogg`) ──
+    // Voices (ElevenLabs v3, DO NOT change on re-takes): m=Darby Skelm, w=MoanElisa, v=Luna, e=Alder, c=Omar J, g=Wilf. See assets/audio/vo/life/VOICES.md.
+    // Man
+    life("life_m_greet_1", LifeVoice::Man, LifeCue::Greet, "M'lord."),
+    life("life_m_greet_2", LifeVoice::Man, LifeCue::Greet, "Morning, Ser Godric. Or what's left of it."),
+    life("life_m_greet_3", LifeVoice::Man, LifeCue::Greet, "Ah, the armour's out for a walk. Good day to it."),
+    life("life_m_buy_1", LifeVoice::Man, LifeCue::Ask, "How much for the bread?"),
+    life("life_m_buy_2", LifeVoice::Man, LifeCue::Haggle, "Three pennies? For that? It's mostly air!"),
+    life("life_m_buy_3", LifeVoice::Man, LifeCue::Agree, "Fine. Fine. Robbery, but fine."),
+    life("life_m_buy_4", LifeVoice::Man, LifeCue::Ask, "Any salt today?"),
+    life("life_m_chat_1", LifeVoice::Man, LifeCue::Chat, "Did you hear the bell last night? Course you did. Everyone hears the bell."),
+    life("life_m_chat_2", LifeVoice::Man, LifeCue::Chat, "Fence is down again by the barley. Third time."),
+    life("life_m_chat_3", LifeVoice::Man, LifeCue::Chat, "He fell asleep on the woodpile. Snoring like a bear."),
+    life("life_m_chat_4", LifeVoice::Man, LifeCue::Chat, "They say the knight never takes that helmet off. Not even to eat."),
+    life("life_m_sit", LifeVoice::Man, LifeCue::Sit, "Oh, my back. Oh, that's better."),
+    life("life_m_stand", LifeVoice::Man, LifeCue::Stand, "Right. Up we get."),
+    life("life_m_eat", LifeVoice::Man, LifeCue::Eat, "Hm. Stale. Again."),
+    life("life_m_work_1", LifeVoice::Man, LifeCue::Work, "Hup!"),
+    life("life_m_work_2", LifeVoice::Man, LifeCue::Work, "Come on, you stubborn thing!"),
+    life("life_m_work_3", LifeVoice::Man, LifeCue::WorkDone, "That's the last of it. Till tomorrow."),
+    life("life_m_yawn", LifeVoice::Man, LifeCue::Yawn, "Hhhaaah. Too early for living."),
+    life("life_m_laugh", LifeVoice::Man, LifeCue::Laugh, "(laughs heartily)"),
+    life("life_m_dusk", LifeVoice::Man, LifeCue::Dusk, "Sun's going. Best get inside."),
+    life("life_m_kid", LifeVoice::Man, LifeCue::Scold, "Oi! Get down off that cart!"),
+    // Woman
+    life("life_w_greet_1", LifeVoice::Woman, LifeCue::Greet, "Ser Godric. Mind the chickens."),
+    life("life_w_greet_2", LifeVoice::Woman, LifeCue::Greet, "Oh, it's you. Wipe your boots."),
+    life("life_w_buy_1", LifeVoice::Woman, LifeCue::Ask, "Two eggs and the cabbage. And not the one with the worm."),
+    life("life_w_buy_2", LifeVoice::Woman, LifeCue::Haggle, "I'll give you two pennies. Not a crumb more."),
+    life("life_w_buy_3", LifeVoice::Woman, LifeCue::Agree, "Pleasure doing business. Mostly."),
+    life("life_w_chat_1", LifeVoice::Woman, LifeCue::Chat, "She's walking out with the cooper's boy. The cooper's boy!"),
+    life("life_w_chat_2", LifeVoice::Woman, LifeCue::Chat, "Need rain for the beans. And none of us need orks."),
+    life("life_w_chat_3", LifeVoice::Woman, LifeCue::Chat, "He thinks I didn't see him with the ale. I see everything."),
+    life("life_w_chat_4", LifeVoice::Woman, LifeCue::Chat, "Pip's not sleeping. Up the tower at all hours with that rope."),
+    life("life_w_laundry", LifeVoice::Woman, LifeCue::Laundry, "Wash it, hang it, it rains. Every single time."),
+    life("life_w_sweep", LifeVoice::Woman, LifeCue::Sweep, "Dust, mud, dust, mud."),
+    life("life_w_water", LifeVoice::Woman, LifeCue::Water, "Hnn. Heavier every day, this bucket."),
+    life("life_w_call_kid", LifeVoice::Woman, LifeCue::CallKid, "Tom! Supper! Now, not in a minute!"),
+    life("life_w_scold", LifeVoice::Woman, LifeCue::Scold, "What did I say about the well?"),
+    life("life_w_dusk", LifeVoice::Woman, LifeCue::Dusk, "Shutters! Everyone, shutters!"),
+    life("life_w_laugh", LifeVoice::Woman, LifeCue::Laugh, "(laughs)"),
+    life("life_w_sit", LifeVoice::Woman, LifeCue::Sit, "Ah. Five minutes."),
+    // Vendor
+    life("life_v_call_1", LifeVoice::Vendor, LifeCue::Hawk, "Bread! Fresh bread! Fresh-ish!"),
+    life("life_v_call_2", LifeVoice::Vendor, LifeCue::Hawk, "Cabbages, onions, turnips the orks missed!"),
+    life("life_v_call_3", LifeVoice::Vendor, LifeCue::Hawk, "Pots! Good pots! Don't leak! Much!"),
+    life("life_v_haggle_1", LifeVoice::Vendor, LifeCue::Price, "Three pennies, love. Times are hard."),
+    life("life_v_haggle_2", LifeVoice::Vendor, LifeCue::Counter, "Two? You'll starve me! Fine. Two and a half."),
+    life("life_v_haggle_3", LifeVoice::Vendor, LifeCue::Price, "For you? Same price as everyone. But I'll smile."),
+    life("life_v_sold", LifeVoice::Vendor, LifeCue::Sold, "Done! Mind how you go."),
+    life("life_v_hero_1", LifeVoice::Vendor, LifeCue::Tease, "Shiny armour like that, you can afford the good loaf."),
+    life("life_v_hero_2", LifeVoice::Vendor, LifeCue::Tease, "Does the knight eat? Or does he just glare at bread?"),
+    life("life_v_slow", LifeVoice::Vendor, LifeCue::Slow, "Quiet day. Even the flies are thinking twice."),
+    life("life_v_laugh", LifeVoice::Vendor, LifeCue::Laugh, "(laughs brightly)"),
+    // Elder
+    life("life_e_greet", LifeVoice::Elder, LifeCue::Greet, "Eh? Oh. The knight. Taller than I thought."),
+    life("life_e_chat_1", LifeVoice::Elder, LifeCue::Chat, "In my day we had proper winters. Snow up to your ears."),
+    life("life_e_chat_2", LifeVoice::Elder, LifeCue::Chat, "Young ones. No patience. Couldn't wait for a kettle."),
+    life("life_e_chat_3", LifeVoice::Elder, LifeCue::Chat, "My grandfather said this fort was cursed. Never said why."),
+    life("life_e_doze", LifeVoice::Elder, LifeCue::Doze, "Mm. Mmm. I'm awake!"),
+    life("life_e_whittle", LifeVoice::Elder, LifeCue::Whittle, "Hmm-hmm, hmm-hmm."),
+    life("life_e_cough", LifeVoice::Elder, LifeCue::Cough, "Damp. It's always the damp."),
+    life("life_e_stand", LifeVoice::Elder, LifeCue::Stand, "Up. Up. Bones like dry sticks."),
+    life("life_e_laugh", LifeVoice::Elder, LifeCue::Laugh, "(wheezy laugh)"),
+    // Child
+    life("life_c_tag", LifeVoice::Child, LifeCue::Tag, "Tag! You're it!"),
+    life("life_c_unfair", LifeVoice::Child, LifeCue::Unfair, "Not fair! You cheated!"),
+    life("life_c_run", LifeVoice::Child, LifeCue::Run, "Can't catch me!"),
+    life("life_c_knight_1", LifeVoice::Child, LifeCue::Knight, "Look. It's the knight."),
+    life("life_c_knight_2", LifeVoice::Child, LifeCue::Knight, "Is it hot in there? In the helmet?"),
+    life("life_c_knight_3", LifeVoice::Child, LifeCue::Knight, "Can I hold the sword? Just once?"),
+    life("life_c_mum", LifeVoice::Child, LifeCue::Mum, "Mu-um! He pushed me!"),
+    life("life_c_laugh", LifeVoice::Child, LifeCue::Laugh, "(laughs uncontrollably)"),
+    life("life_c_hide", LifeVoice::Child, LifeCue::Hide, "Shh! I'm hiding!"),
+    life("life_c_count", LifeVoice::Child, LifeCue::Count, "One, two, three, four, five... coming!"),
+    // Guard
+    life("life_g_greet_1", LifeVoice::Guard, LifeCue::Greet, "M'lord."),
+    life("life_g_greet_2", LifeVoice::Guard, LifeCue::Greet, "All quiet. For now."),
+    life("life_g_patrol", LifeVoice::Guard, LifeCue::Patrol, "Wall, wall, more wall. Lovely wall."),
+    life("life_g_gate", LifeVoice::Guard, LifeCue::Gate, "Gate shuts at dusk. No exceptions."),
+    life("life_g_kid", LifeVoice::Guard, LifeCue::Scold, "You. Off the rampart. Now."),
+    life("life_g_yawn", LifeVoice::Guard, LifeCue::Yawn, "Hhh. Who scheduled the dawn so early."),
+    life("life_g_dusk", LifeVoice::Guard, LifeCue::Dusk, "Bell's soon. Torches lit, eyes open."),
+
     // Opening campaign: all clips are from the supplied Sully recording.
     Line { once: true, priority: 14, floor: 90.0, ..line("campaign_rescue_plan", Speaker::Hero, Concept::Campaign(super::campaign::CampaignLine::RescuePlan), "They've taken our people. Gather the militia. We're getting them back.") },
     Line { once: true, priority: 14, floor: 90.0, ..line("campaign_home_workers", Speaker::Hero, Concept::Campaign(super::campaign::CampaignLine::HomeWorkers), "You're home. Back to the fields. Heroism doesn't pay for supper.") },
@@ -659,6 +825,7 @@ pub fn voice_clip_path(line: &Line) -> Option<String> {
     let dir = match line.speaker {
         Speaker::Hero => "hero", Speaker::Villager => "npc",
         Speaker::Ork => "ork", Speaker::Rival => "rival", Speaker::Captive => "npc/captive",
+        Speaker::Life => "life",
     };
     Some(format!("audio/vo/{dir}/{}.ogg", line.id))
 }
@@ -782,6 +949,10 @@ mod tests {
         let last = HashMap::new();
         let once = HashSet::new();
         for line in LINES {
+            // Village-life clips are recorded piecemeal: a missing one is simply never loaded.
+            if line.speaker == Speaker::Life {
+                continue;
+            }
             if let Some(path) = voice_clip_path(line) {
                 assert!(assets.join(path).is_file(), "missing recorded clip: {}", line.id);
             } else {
@@ -895,7 +1066,7 @@ mod tests {
 
     #[test]
     fn every_speaker_is_registered() {
-        for s in [Speaker::Hero, Speaker::Villager, Speaker::Ork, Speaker::Rival, Speaker::Captive] {
+        for s in [Speaker::Hero, Speaker::Villager, Speaker::Ork, Speaker::Rival, Speaker::Captive, Speaker::Life] {
             let _ = speaker_voice(s);
         }
     }

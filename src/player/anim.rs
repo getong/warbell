@@ -1972,6 +1972,9 @@ pub(crate) fn carry_pose() -> Pose {
 /// it can build [`Pose`]s field-by-field like the clips above; `crate::captives` drives it.
 pub(crate) mod captive;
 
+/// Village-life clips (bench sit / stand-up, chores, social beats, carries) — `crate::village_life`.
+pub(crate) mod village;
+
 /// The orks' own animator (planted IK stance, foot-locked waddle, wound-up club blows that land on
 /// the damage instant) — `crate::orks` drives it, `crate::biped::animate_biped` poses with it.
 pub(crate) mod ork;

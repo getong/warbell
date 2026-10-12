@@ -454,7 +454,8 @@ impl Plugin for VillagersPlugin {
 fn townsfolk_curfew(
     siege: Option<Res<crate::siege::Siege>>,
     mut last: Local<Option<bool>>,
-    mut q: Query<&mut Visibility, (With<Villager>, Without<Guard>, Without<Townsfolk>)>,
+    // Village-life residents keep their own home/curfew schedule (`village_life::life_brain`).
+    mut q: Query<&mut Visibility, (With<Villager>, Without<Guard>, Without<Townsfolk>, Without<crate::village_life::LifeAgent>)>,
 ) {
     let wave = siege.is_some_and(|s| s.phase == crate::siege::GamePhase::Wave);
     if *last == Some(wave) {
@@ -653,6 +654,42 @@ pub fn spawn_rival_worker(
     let mat = shared_body_material(creature_mats);
     let kind = Kind::Worker { trade, skin: SKIN[(seed as usize) % SKIN.len()], tunic: 0xbf9a55 }; // desert garb
     spawn(commands, meshes, &mat, kind, home, pos, 2.2, 1.6, SCALE, seed, true)
+}
+
+/// Spawn a **village-life resident** (`village_life`): a plain peasant body — a man, a woman
+/// (kirtle + coif), a grey elder or a child — at `pos`. No wander brain claims it (the caller tags
+/// it `LifeAgent`, which `villager_brain` skips). Returns the root, its root scale and the rig's
+/// vertical offset (rig units) so the caller can seat the body exactly on a bench.
+pub(crate) fn spawn_life_peasant(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
+    pos: Vec2,
+    body: crate::village_life::Body,
+    seed: u32,
+) -> (Entity, f32, f32) {
+    use crate::village_life::Body;
+    let mat = shared_body_material(creature_mats);
+    let mut rng = seed | 1;
+    // Pick the look by body: women wear looks 2/5/8 (11 = the grey older woman), grey elder men
+    // look 4; everyone else any of the plain male looks.
+    let looks: &[u32] = match body {
+        Body::Woman => &[2, 5, 8, 11],
+        Body::Elder => &[4],
+        Body::Kid => &[0, 1, 3, 6, 7, 9],
+        Body::Man => &[0, 1, 3, 6, 7, 9, 10],
+    };
+    let look = looks[(next_u32(&mut rng) as usize) % looks.len()];
+    let seed = (seed / crate::peasant_model::LOOKS) * crate::peasant_model::LOOKS + look;
+    let skin = SKIN[(seed as usize >> 4) % SKIN.len()];
+    let tunic = TUNIC[(seed as usize >> 7) % TUNIC.len()];
+    let kind = Kind::Peasant { skin, tunic, hat: seed & 16 == 0 };
+    let kid = body == Body::Kid;
+    let (speed, scale) = if kid { (2.1, KID_SCALE) } else { (if body == Body::Elder { 0.85 } else { 1.15 }, SCALE) };
+    let e = spawn(commands, meshes, &mat, kind, pos, pos, speed, 0.0, scale, seed, false);
+    let rig = crate::peasant_model::person_rig(vil_biped_key(kind, seed, kid, false).kind, kid, seed % crate::peasant_model::LOOKS);
+    let root = if kid { SCALE } else { scale } * rig.root;
+    (e, root, VIL_RIG_OFF - rig.drop)
 }
 
 /// Spawn a plain **peasant** for a staged trailer scene at `pos`/`facing`, tagged
@@ -1006,6 +1043,8 @@ fn villager_brain(
             // `rival.rs`'s own brains, not the town's ambient wander.
             Without<crate::rival::RivalSoldier>,
             Without<crate::rival::RivalWorker>,
+            // Village-life residents follow their daily schedule (`village_life::life_brain`).
+            Without<crate::village_life::LifeAgent>,
         ),
     >,
 ) {
