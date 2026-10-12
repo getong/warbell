@@ -161,11 +161,11 @@ pub fn swamp_tree(kit: &Kit, src: usize, x: f32, z: f32) -> Option<KitTree> {
             _ => return Some(KitTree::Open(Some((cattail, 1.25)))),
         }
     } else {
-        // Open marsh: reed beds, sedge tussocks and bare blackwater; a lone dead snag or a knot of
-        // knees here and there so the flats never read as an empty lawn.
+        // Open marsh: reed beds, sedge tussocks and bare blackwater; a lone dead snag here and
+        // there so the flats never read as an empty lawn. (No knees out here: cypress knees grow
+        // round a cypress — strewn alone over the flats they read as dark pegs / "dots".)
         match a {
             _ if a < 0.085 => snag,
-            _ if a < 0.13 => return Some(knees(0.5)),
             _ if a < 0.62 => return Some(KitTree::Open(Some((cattail, 1.1 + b * 0.5)))),
             _ if a < 0.86 => return Some(KitTree::Open(Some(("sw_sedge_a", 1.3 + b * 0.5)))),
             _ => return Some(KitTree::Open(None)),
@@ -279,8 +279,9 @@ pub fn swamp_prop(kit: &Kit, class: usize, src: usize, x: f32, z: f32) -> Option
     match (class, src) {
         (1, 0) => pick(&["sw_cattail_a"], 1.0),
         (1, _) => pick(&["sw_cattail_b", "sw_cattail_a"], 1.0),
-        // Toadstool / mossy rock / trio / sunken log accents → a knot of knees, or a sedge tuft.
-        (2, _) if a < 0.45 => pick(&["knees_b"], 0.7),
+        // Toadstool / mossy rock / trio / sunken log accents → a knot of knees (on the hammocks
+        // only, round the cypresses), or a sedge tussock.
+        (2, _) if a < 0.45 && swamp_hammock(x, z) >= HAMMOCK_FRINGE => pick(&["knees_b"], 0.7),
         (2, _) => pick(&["sw_sedge_a"], 1.3),
         _ => None,
     }

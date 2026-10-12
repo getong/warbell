@@ -907,11 +907,14 @@ fn fragment(
         let pool_n = ter_noise_rot(sp * 0.22, 0.95, 0.31) * 0.82 + ter_noise_rot(sp * 0.9, 0.47, 0.88) * 0.18;
         let standing = (1.0 - smoothstep(0.37, 0.43, pool_n)) * smoothstep(0.55, 0.9, wet)
             * smoothstep(0.90, 0.98, in.world_normal.y) * (1.0 - cliff);
-        swamp_rgb = mix(swamp_rgb, swamp_rgb * 0.22 + vec3<f32>(0.004, 0.006, 0.004), standing);
+        // Darken FIRST, gloss LAST: with both on the same ramp the half-dark, half-glossy shoreline
+        // band mirrored the bright sky as a white outline round every sheet.
+        swamp_rgb = mix(swamp_rgb, swamp_rgb * 0.22 + vec3<f32>(0.004, 0.006, 0.004), sqrt(standing));
         pbr_input.material.base_color = vec4<f32>(swamp_rgb, pbr_input.material.base_color.a);
         let rw = pbr_input.material.perceptual_roughness;
-        pbr_input.material.perceptual_roughness = mix(mix(rw, 0.88, wet), 0.05, standing);
-        pbr_input.N = normalize(mix(pbr_input.N, normalize(in.world_normal), standing));
+        let gloss = standing * standing;
+        pbr_input.material.perceptual_roughness = mix(mix(rw, 0.88, wet), 0.05, gloss);
+        pbr_input.N = normalize(mix(pbr_input.N, normalize(in.world_normal), gloss));
     }
 
     // Damp bank soil just above the waterline: a soft wet sheen, glossiest at the water's edge.
