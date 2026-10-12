@@ -4019,6 +4019,7 @@ fn bs_sea_and_boats(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: 
     crate::sites_warm::plan();
     // The swamp / rocky discovery sites (sunken chapel, clan gong, ...), after every other story layer.
     crate::wild_sites::plan();
+    crate::war_party::plan(); // the Unanswering's niche (after every story layer)
     // FOREST_CASTLEKIT_SHOWCASE: reserve open ground for the castle-kit showcase rows.
     crate::castle_kit::plan();
 }

@@ -34,11 +34,15 @@ fn collect_sites() -> Vec<Site> {
     crate::stories_cold::plan();
     crate::sites_warm::plan();
     crate::wild_sites::plan();
+    crate::war_party::plan();
 
     let mut out = Vec::new();
     let mut push = |src: &'static str, pos: Vec2, interactive: bool| out.push(Site { src, pos, interactive });
     for c in crate::camps::plan() {
         push("camp", c.centre, true);
+    }
+    for (p, _) in crate::war_party::planned_footprints() {
+        push("outcast", p, true);
     }
     for l in crate::ruins::landmark_sites() {
         push("landmark", l.pos, true);
@@ -81,6 +85,7 @@ fn reset_all() {
     crate::stories_cold::reset_plan();
     crate::sites_warm::reset_plan();
     crate::wild_sites::reset_plan();
+    crate::war_party::reset_plan();
 }
 
 /// Fraction of a cell that is land (5×5 samples).
@@ -164,5 +169,9 @@ fn density_report() {
         let ia = inside.iter().filter(|s| s.interactive).count();
         let srcs: Vec<&str> = inside.iter().map(|s| s.src).collect();
         eprintln!("  area {name}: {} sites, {ia} interactive {srcs:?}", inside.len());
+        // WP1: the Reed Hide stands in the S seam the night walks through.
+        if name.starts_with("1 ") {
+            assert!(ia >= 1, "area {name} has no interactive point");
+        }
     }
 }

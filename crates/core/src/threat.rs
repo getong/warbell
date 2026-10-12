@@ -64,6 +64,34 @@ impl Threat {
     }
 }
 
+/// Which camp stages a night's specialists (spec 2026-10-13 §2 A): every problem has its own camp
+/// whose job you can SEE — the torches are dipped at the Pitch Seep, the flank is planned on a clay
+/// model at the Reed Hide, the ram is built at the Ram Yard. The game maps each onto its `CampKind`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Staging {
+    /// Night 0 scouts come from the nearest camp that holds captives (the opening rescue).
+    Intro,
+    /// Torch bearers: the Pitch Seep (desert).
+    PitchSeep,
+    /// Shamans: the forest ritual ground.
+    Shamans,
+    /// Flankers: the Reed Hide scouts under the walls.
+    ReedHide,
+    /// Berserkers with the ram: the Ram Yard (forest edge).
+    RamYard,
+}
+
+/// The staging camp of a threat kind.
+pub fn staging(kind: ThreatKind) -> Staging {
+    match kind {
+        ThreatKind::Recon => Staging::Intro,
+        ThreatKind::Arson => Staging::PitchSeep,
+        ThreatKind::Ritual => Staging::Shamans,
+        ThreatKind::Flank => Staging::ReedHide,
+        ThreatKind::Breakers => Staging::RamYard,
+    }
+}
+
 /// The first three nights introduce one problem at a time. Later nights recombine familiar
 /// enemies, with a modest stat rise and a bounded number of simultaneous attackers.
 pub const THREATS: [Threat; 8] = [
@@ -134,6 +162,15 @@ pub fn threat_for(next_night: usize) -> &'static Threat {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_threat_has_its_own_staging_camp() {
+        let kinds = [ThreatKind::Recon, ThreatKind::Arson, ThreatKind::Ritual, ThreatKind::Flank, ThreatKind::Breakers];
+        let camps: Vec<_> = kinds.iter().map(|k| staging(*k)).collect();
+        for (i, a) in camps.iter().enumerate() {
+            assert!(camps[i + 1..].iter().all(|b| b != a), "{a:?} stages two problems");
+        }
+    }
 
     #[test]
     fn first_three_nights_introduce_distinct_problems() {

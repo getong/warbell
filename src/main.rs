@@ -144,6 +144,7 @@ mod stories_cold;
 mod castle_kit;
 mod stories_warm;
 mod wild_sites;
+mod war_party;
 mod villagers;
 mod village_life; // daily life of the courtyard + street village: schedule, benches, chores, market, chats
 mod vista;
@@ -341,6 +342,7 @@ fn main() {
         ))
         // Keep each mesh out of the depth prepass until its main-pass pipeline has compiled too
         // (cold shader cache: depth-only leaves = sky-coloured holes). See `pipeline_sync`.
+        .add_plugins(war_party::WarPartyPlugin) // the outcast, war-trail posts, captive escorts (spec 2026-10-13 §2 E)
         .add_plugins(pipeline_sync::PipelineSyncPlugin)
         // Screen-space god-rays post pass (light scattering toward the sun). Toggled per-preset via
         // quality.rs (`god_rays`); same custom-post-pass family as dof/outline. Standalone call

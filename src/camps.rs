@@ -25,12 +25,12 @@ use bevy::mesh::MeshBuilder;
 use bevy::prelude::*;
 
 use crate::biome::{Biome, BiomeEntity};
-use crate::orks::{self, Faction, VARIANTS};
+use crate::orks::{self, Faction, OrkVariant, VARIANTS};
 use crate::palette::lin;
 use crate::worldmap::{self, GX, GZ};
 use crate::meshkit::tinted;
 use crate::game_state::SimAppExt;
-use tileworld_core::threat::{threat_for, ThreatKind};
+use tileworld_core::threat::{staging, threat_for, Staging, ThreatKind};
 
 // ── Plugin (campfire flicker + smoke) ────────────────────────────────────────────────
 
@@ -47,6 +47,12 @@ impl Plugin for CampsPlugin {
             .before(crate::game_state::SimulationSet));
         app.add_sim_systems(respawn_warbands.run_if(crate::rts::in_campaign)
             .run_if(|ready: Res<crate::biome::WorldReady>| ready.0));
+        // The role camps (ram, pitch, horn, Hrolk) — spec 2026-10-13 §2 A.
+        app.init_resource::<RamChannel>()
+            .add_systems(Update, grow_hrolk)
+            .add_sim_systems((ram_yard_state, role_interact, ram_channel, role_fires, eyrie_watch, refresh_eyrie_hints, hrolk_death, hrolk_stays_dead)
+                .run_if(crate::rts::in_campaign)
+                .run_if(|ready: Res<crate::biome::WorldReady>| ready.0));
     }
 }
 
@@ -283,6 +289,19 @@ pub enum CampKind {
     Stilts,
     /// SNOW — a winter hunters' camp: yurts, drying racks, a frozen fishing pond, a carcass. No cage.
     Hunters,
+    // ── The living-island camps (spec 2026-10-13 §2 A), plan indexes 5–9 ──
+    /// FOREST edge — oaks felled for a ram, the ram on its rollers. Stages the Breakers; "Fire the
+    /// ram" clears them without wiping the camp.
+    RamYard,
+    /// DESERT wadi — the Pitch Seep: kettles of pitch and sheaves of torches. Stages the Arson.
+    PitchSeep,
+    /// The S seam under the walls — the Reed Hide: three scouts and a clay model of our fort with
+    /// the flank laid out in pebbles. Stages the Flank.
+    ReedHide,
+    /// ROCKY — the Eyrie: a lookout crag with a war horn. Cleared quietly, it shows the land around.
+    Eyrie,
+    /// SNOW — Skarn's Ring: berserkers training war as a way of life, and Hrolk, Skarn's Second.
+    Ring,
 }
 
 impl CampKind {
@@ -312,8 +331,10 @@ struct Layout {
     cage: Option<(Vec3, f32)>,
     /// Extra empty cages (decor, never freed).
     spare_cages: &'static [(Vec3, f32)],
-    /// Warband spawn / idle anchors, one per `orks::VARIANTS` entry.
+    /// Warband spawn / idle anchors, one per [`Layout::crew`] entry.
     warband: [(f32, f32); 4],
+    /// Who lives here (≤ 4, one per `warband` anchor) — the old five keep the mixed `VARIANTS`.
+    crew: &'static [orks::OrkVariant],
     /// Solid props: (x, z, half-width, half-depth, local yaw).
     blockers: &'static [(f32, f32, f32, f32, f32)],
     /// Camp-local footprint `(x0, x1, z0, z1)` the scatter keeps out of (the cave's rock runs far
@@ -326,7 +347,7 @@ const FOOT: (f32, f32, f32, f32) = (-CLEAR_HALF, CLEAR_HALF, -CLEAR_HALF, CLEAR_
 /// Deck top of the swamp camp's stilt platform (`ork_camps.py` DECK_Y).
 const STILT_DECK_Y: f32 = 0.6;
 
-const LAYOUTS: [Layout; 5] = [
+const LAYOUTS: [Layout; 10] = [
     Layout {
         model: "ork_camp_shaman",
         fire: Vec3::new(0.0, 0.0, 0.0),
@@ -334,6 +355,7 @@ const LAYOUTS: [Layout; 5] = [
         cage: None,
         spare_cages: &[],
         warband: [(1.9, -0.6), (-1.7, -0.9), (0.9, 1.9), (-1.2, 1.5)],
+        crew: &VARIANTS,
         blockers: &[
             (-3.3, -1.9, 0.3, 0.3, 0.0),
             (3.2, -2.2, 0.3, 0.3, 0.0),
@@ -352,6 +374,7 @@ const LAYOUTS: [Layout; 5] = [
         cage: Some((Vec3::new(-3.3, 0.0, 1.0), 0.0)),
         spare_cages: &[],
         warband: [(2.2, -1.0), (-1.6, -0.6), (2.6, 2.4), (-0.4, 2.6)],
+        crew: &VARIANTS,
         blockers: &[
             (-3.43, -4.6, 1.9, 0.3, 0.0),
             (3.13, -4.6, 1.6, 0.3, 0.0),
@@ -371,6 +394,7 @@ const LAYOUTS: [Layout; 5] = [
         cage: Some((Vec3::new(1.25, 0.0, -4.5), -FRAC_PI_2)),
         spare_cages: &[],
         warband: [(1.8, 0.6), (-1.6, 0.0), (0.4, 2.0), (-1.0, -3.9)],
+        crew: &VARIANTS,
         blockers: &[
             (-5.6, -5.0, 2.6, 2.6, 0.0),
             (5.6, -5.0, 2.6, 2.6, 0.0),
@@ -388,6 +412,7 @@ const LAYOUTS: [Layout; 5] = [
         cage: Some((Vec3::new(-1.6, STILT_DECK_Y, 4.7), FRAC_PI_2)),
         spare_cages: &[(Vec3::new(1.7, STILT_DECK_Y, 4.8), FRAC_PI_2)],
         warband: [(1.8, -0.8), (-1.6, -0.4), (2.4, -3.0), (0.1, 0.9)],
+        crew: &VARIANTS,
         blockers: &[
             (0.0, 4.8, 3.7, 2.5, 0.0),
             (-3.5, 1.1, 0.4, 1.5, 0.35),
@@ -403,12 +428,110 @@ const LAYOUTS: [Layout; 5] = [
         cage: None,
         spare_cages: &[],
         warband: [(1.5, -0.7), (-1.6, 0.5), (0.3, 1.7), (-0.9, -1.9)],
+        crew: &VARIANTS,
         blockers: &[
             (-3.2, -2.6, 1.7, 1.7, 0.0),
             (3.1, -3.0, 1.4, 1.4, 0.0),
             (-3.9, 1.4, 0.3, 1.1, 0.0),
             (-2.2, 2.9, 0.65, 0.3, 2.4),
             (-0.4, -4.1, 0.5, 0.5, 0.0),
+        ],
+        foot: FOOT,
+    },
+    // ── WP1 camps (indexes 5–9). Anchors mirror `ork_camps.py` (camp_ram … camp_ring). ──
+    Layout {
+        model: "ork_camp_ram",
+        fire: Vec3::new(-1.4, 0.0, 2.4),
+        flag: Vec3::new(3.9, 2.5, 0.2),
+        cage: None,
+        spare_cages: &[],
+        warband: [(-0.3, 0.6), (-2.0, -1.6), (0.3, 3.4), (2.8, 1.4)],
+        crew: &[OrkVariant::Grunt, OrkVariant::Berserker, OrkVariant::Grunt, OrkVariant::Berserker],
+        blockers: &[
+            (1.2, 0.45, 0.45, 3.4, 0.0),
+            (-3.75, 0.55, 0.95, 1.85, 0.0),
+            (-1.2, -3.4, 1.25, 0.45, 0.0),
+            (3.4, -3.4, 1.35, 0.85, 0.0),
+            (-4.3, -3.3, 0.5, 0.5, 0.0),
+            (4.3, 2.3, 0.45, 0.45, 0.0),
+            (-3.9, 3.8, 0.55, 0.55, 0.0),
+            (3.9, 0.2, 0.12, 0.12, 0.0),
+        ],
+        foot: FOOT,
+    },
+    Layout {
+        model: "ork_camp_pitch",
+        fire: Vec3::new(0.8, 0.0, -0.6),
+        flag: Vec3::new(3.6, 2.5, 2.4),
+        cage: None,
+        spare_cages: &[],
+        warband: [(2.0, 0.6), (-1.0, -0.9), (0.4, 2.4), (-0.9, 2.9)],
+        crew: &[OrkVariant::Grunt, OrkVariant::Scout, OrkVariant::Grunt, OrkVariant::Grunt],
+        blockers: &[
+            (-3.2, -4.4, 1.2, 0.6, 0.1),
+            (-0.6, -4.8, 1.1, 0.6, -0.05),
+            (2.0, -4.5, 1.0, 0.55, 0.15),
+            (4.1, -3.6, 0.6, 0.5, 0.5),
+            (0.8, -0.6, 0.6, 0.6, 0.0),
+            (-1.9, 0.6, 0.45, 0.45, 0.0),
+            (-3.0, -1.8, 1.3, 0.5, 0.0),
+            (3.2, -2.0, 0.6, 0.7, 0.0),
+            (3.6, 2.4, 0.12, 0.12, 0.0),
+        ],
+        foot: FOOT,
+    },
+    Layout {
+        model: "ork_camp_reeds",
+        fire: Vec3::new(-2.3, 0.0, -1.6),
+        flag: Vec3::new(2.9, 2.5, -2.6),
+        cage: None,
+        spare_cages: &[],
+        warband: [(1.4, -0.6), (-1.1, -0.4), (0.4, -1.5), (0.0, 0.0)],
+        crew: &[OrkVariant::Scout, OrkVariant::Scout, OrkVariant::Scout],
+        blockers: &[
+            // The reed screen (an arc r 3.4 facing the walls, the spy slot open at its middle).
+            (1.215, 3.175, 0.8, 0.2, 0.365),
+            (-1.215, 3.175, 0.8, 0.2, -0.365),
+            (2.553, 2.245, 0.85, 0.2, 0.85),
+            (-2.553, 2.245, 0.85, 0.2, -0.85),
+            (0.0, 0.9, 0.9, 0.75, 0.0),
+            (2.9, -2.6, 0.1, 0.1, 0.0),
+        ],
+        foot: FOOT,
+    },
+    Layout {
+        model: "ork_camp_eyrie",
+        fire: Vec3::new(-1.6, 0.0, 1.4),
+        flag: Vec3::new(-1.25, 6.2, -3.6),
+        cage: None,
+        spare_cages: &[],
+        warband: [(0.8, 0.4), (-0.4, 2.6), (2.0, 2.4), (-2.8, 0.9)],
+        crew: &[OrkVariant::Scout, OrkVariant::Scout, OrkVariant::Grunt],
+        blockers: &[
+            (0.0, -3.2, 2.9, 1.8, 0.0),
+            (-2.6, -2.4, 1.1, 1.0, 0.0),
+            (2.7, -2.6, 1.0, 0.9, 0.0),
+            (2.6, 0.6, 0.15, 0.15, 0.0),
+            (-2.4, -0.9, 0.9, 0.6, 0.0),
+            (1.7, 1.3, 0.35, 0.3, 0.0),
+        ],
+        foot: (-CLEAR_HALF, CLEAR_HALF, -5.6, CLEAR_HALF),
+    },
+    Layout {
+        model: "ork_camp_ring",
+        fire: Vec3::new(2.2, 0.0, -3.6),
+        flag: Vec3::new(4.2, 2.5, -1.4),
+        cage: None,
+        spare_cages: &[],
+        warband: [(1.2, 0.4), (-1.2, -0.4), (0.4, -1.4), (-0.3, 1.5)],
+        crew: &[OrkVariant::Berserker, OrkVariant::Berserker, OrkVariant::Grunt],
+        // The spear fence is added by `ring_fence_blockers` (a ring of chord boxes, gap at -Z).
+        blockers: &[
+            (2.6, 3.75, 1.4, 0.3, -0.62),
+            (-3.0, 3.4, 1.05, 0.3, 0.7),
+            (-1.4, -3.95, 0.15, 0.15, 0.0),
+            (-3.9, 2.0, 0.25, 0.25, 0.0),
+            (4.2, -1.4, 0.1, 0.1, 0.0),
         ],
         foot: FOOT,
     },
@@ -421,6 +544,11 @@ fn layout(kind: CampKind) -> &'static Layout {
         CampKind::Cave => 2,
         CampKind::Stilts => 3,
         CampKind::Hunters => 4,
+        CampKind::RamYard => 5,
+        CampKind::PitchSeep => 6,
+        CampKind::ReedHide => 7,
+        CampKind::Eyrie => 8,
+        CampKind::Ring => 9,
     }]
 }
 
@@ -521,9 +649,111 @@ pub fn plan() -> &'static [CampSite] {
                     info!("camps: no site found for {:?}", b);
                 }
             }
+            // The living-island camps, appended AFTER the original five so old saves'
+            // `rescued_camps` / `cleared_camps` indexes keep pointing at the same camps.
+            plan_roles(&mut placed, &mut rng);
             placed
         })
         .as_slice()
+}
+
+/// One role camp: its kind, where the spec wants it (world XZ), its ground (`None` = the grass
+/// seam under the walls), and its banner colour.
+struct RoleWant {
+    kind: CampKind,
+    biome: Option<Biome>,
+    target: Vec2,
+    faction: Faction,
+}
+
+const ROLE_WANTS: [RoleWant; 5] = [
+    RoleWant { kind: CampKind::RamYard, biome: Some(Biome::Forest), target: Vec2::new(-110.0, 60.0), faction: Faction::Red },
+    RoleWant { kind: CampKind::PitchSeep, biome: Some(Biome::Desert), target: Vec2::new(120.0, -60.0), faction: Faction::Blue },
+    RoleWant { kind: CampKind::ReedHide, biome: None, target: Vec2::new(-10.0, 75.0), faction: Faction::Red },
+    RoleWant { kind: CampKind::Eyrie, biome: Some(Biome::Rocky), target: Vec2::new(200.0, 40.0), faction: Faction::Blue },
+    RoleWant { kind: CampKind::Ring, biome: Some(Biome::Snow), target: Vec2::new(-170.0, -170.0), faction: Faction::Red },
+];
+
+/// Place the five role camps: a deterministic grid scan round each spec target (nearest valid
+/// spot wins, the search widening if the first ring is empty). Each faces the castle (local +Z
+/// toward the walls: the ram's head, the reed screen's spy slot, the Eyrie's horn side), except
+/// the Ring, which faces nowhere in particular.
+fn plan_roles(placed: &mut Vec<CampSite>, rng: &mut u32) {
+    for want in &ROLE_WANTS {
+        let mut best: Option<(f32, f32, f32, f32)> = None; // (dist², x, z, rot)
+        for reach in [70.0f32, 140.0] {
+            let mut z = want.target.y - reach;
+            while z <= want.target.y + reach {
+                let mut x = want.target.x - reach;
+                while x <= want.target.x + reach {
+                    let d2 = Vec2::new(x, z).distance_squared(want.target);
+                    if best.is_none_or(|b| d2 < b.0) && d2 <= reach * reach {
+                        let rot = if want.kind == CampKind::Ring { 0.6 } else { (-x).atan2(-z) };
+                        if role_site_ok(x, z, want, rot, placed) {
+                            best = Some((d2, x, z, rot));
+                        }
+                    }
+                    x += 2.0;
+                }
+                z += 2.0;
+            }
+            if best.is_some() {
+                break;
+            }
+        }
+        let seed = next_u32(rng);
+        match best {
+            Some((_, x, z, rot)) => {
+                info!("camps: {:?} at {x:.1},{z:.1}", want.kind);
+                #[cfg(test)]
+                eprintln!("camps: {:?} at {x:.1},{z:.1} (want {:?})", want.kind, want.target);
+                let biome = worldmap::biome_at_world(x, z).unwrap_or(Biome::Forest);
+                placed.push(CampSite { centre: Vec2::new(x, z), biome, kind: want.kind, faction: want.faction, rot, seed });
+            }
+            None => info!("camps: no site found for {:?}", want.kind),
+        }
+    }
+}
+
+/// A role camp's ground: dry, level land over its whole ±5 footprint, off the castle apron, the
+/// rival fort, the Blight, the town plots and every other camp, in (or at the edge of) its biome.
+fn role_site_ok(cx: f32, cz: f32, want: &RoleWant, rot: f32, placed: &[CampSite]) -> bool {
+    let Some(h0) = worldmap::ground_at_world(cx, cz) else { return false };
+    let snow = want.kind == CampKind::Ring;
+    // The Ring and the Eyrie may sit up on a shelf (a snow terrace, a ledge over a pass).
+    let shelf = snow || want.kind == CampKind::Eyrie;
+    if (!shelf && h0.abs() > 0.01)
+        || crate::castle::in_footprint(cx, cz)
+        || Vec2::new(cx, cz).length() < 60.0
+        || crate::rival::near_fort(cx, cz)
+        || crate::ork_fortress::in_blight_world(cx, cz)
+        || placed.iter().any(|c| c.centre.distance(Vec2::new(cx, cz)) < 22.0)
+    {
+        return false;
+    }
+    let ground_ok = match want.biome {
+        Some(b) => {
+            worldmap::biome_at_world(cx, cz) == Some(b)
+                || (!snow && worldmap::is_grass_world(cx, cz) && biome_within(cx, cz, b, 6))
+        }
+        None => matches!(worldmap::biome_at_world(cx, cz), Some(Biome::Forest) | None) || worldmap::is_grass_world(cx, cz),
+    };
+    if !ground_ok {
+        return false;
+    }
+    if snow && crate::alpine::snow_footprint_min(cx, cz, 6.0) < crate::alpine::SOLID_SNOW {
+        return false;
+    }
+    let tol = if snow { 0.3 } else if shelf { 0.45 } else { 0.02 };
+    let q = Quat::from_rotation_y(rot);
+    (-5..=5).all(|dz| (-5..=5).all(|dx| {
+        let w = q * Vec3::new(dx as f32, 0.0, dz as f32);
+        let (x, z) = (cx + w.x, cz + w.z);
+        worldmap::ground_at_world(x, z).is_some_and(|h| (h - h0).abs() < tol)
+            && !worldmap::is_river_world(x, z)
+            && !worldmap::is_pool_world(x, z)
+            && !crate::town::near_build_plot(x, z)
+    }))
 }
 
 /// Does camp `index` keep a rescue cage (captives to free)? The shamans' ground and the hunters'
@@ -551,6 +781,18 @@ pub fn camp_centre(index: usize) -> Option<Vec2> {
 pub fn raid_target(next_night: i32) -> Option<usize> {
     let kind = threat_for(next_night.max(0) as usize).kind;
     if kind == ThreatKind::Recon { return intro_target(); }
+    // Each problem is staged at the camp whose job it is (core `threat::staging`).
+    let want = match staging(kind) {
+        Staging::Intro => return intro_target(),
+        Staging::PitchSeep => CampKind::PitchSeep,
+        Staging::Shamans => CampKind::Shaman,
+        Staging::ReedHide => CampKind::ReedHide,
+        Staging::RamYard => CampKind::RamYard,
+    };
+    if let Some(i) = plan().iter().position(|s| s.kind == want) {
+        return Some(i);
+    }
+    // Fallback (a role camp found no ground): the old biome preference.
     let preferred: &[Biome] = match kind {
         ThreatKind::Arson => &[Biome::Forest, Biome::Desert, Biome::Rocky, Biome::Snow, Biome::Swamp],
         ThreatKind::Ritual => &[Biome::Forest, Biome::Swamp, Biome::Desert, Biome::Snow, Biome::Rocky],
@@ -787,6 +1029,7 @@ pub fn build(
     let smoke_puff = meshes.add(Sphere::new(0.5).mesh().ico(1).unwrap());
 
     let armory = orks::Armory::new(meshes, materials, mat.clone());
+    commands.insert_resource(RoleFx { flame_cards: flame_cards.clone(), flame_mat: flame_mat.clone() });
 
     // Screenshot hook: `FOREST_ORKLINE="x,z"` parks one ork of each variant in a line at the
     // given world XZ, each home-anchored on its own spot so it idles in place for the shot —
@@ -914,9 +1157,14 @@ pub fn build(
         // The first rescue faces two scouts; the other camps retain their mixed warbands.
         // Once repopulated this becomes an ordinary camp, so the introduction is not a loot loop.
         let introduction = Some(camp) == intro_target();
-        let variants: &[orks::OrkVariant] = if introduction { &[orks::OrkVariant::Scout, orks::OrkVariant::Scout] } else { &VARIANTS };
+        let variants: &[orks::OrkVariant] = if introduction { &[orks::OrkVariant::Scout, orks::OrkVariant::Scout] } else { lay.crew };
         spawn_warband_with(commands, &armory, site, variants);
+
+        // The role camps' own pieces: the ram, the pitch kettle, the horn, the fence, Hrolk.
+        build_role(commands, &armory, kit, camp, site, &place, range.clone());
     }
+    // The war-trail posts and the outcast (`war_party.rs`) stand with the camps.
+    crate::war_party::build(commands, &armory, range.clone());
 
     // Keep the armory + per-camp clear timers alive so `respawn_warbands` can repopulate a wiped
     // camp off-screen after a cooldown (the cage + its captives are NOT respawned).
@@ -963,7 +1211,7 @@ fn build_fallback_props(
 /// Respawn a camp's whole warband (one of each variant at its ring offset, home-anchored to the
 /// camp centre) — the same layout [`build`] lays down, from the kept-alive armory.
 fn spawn_warband(commands: &mut Commands, armory: &orks::Armory, site: &CampSite) {
-    spawn_warband_with(commands, armory, site, &VARIANTS);
+    spawn_warband_with(commands, armory, site, layout(site.kind).crew);
 }
 
 fn spawn_warband_with(commands: &mut Commands, armory: &orks::Armory, site: &CampSite, variants: &[orks::OrkVariant]) {
@@ -1008,6 +1256,10 @@ fn reconcile_warbands_on_load(
             spawn_warband_with(&mut commands, &wb.armory, site, &[orks::OrkVariant::Scout, orks::OrkVariant::Scout]);
         } else {
             spawn_warband(&mut commands, &wb.armory, site);
+        }
+        // Hrolk went with the despawn above; he stands again unless this run already felled him.
+        if site.kind == CampKind::Ring && data.world_flags.get("hrolk_slain").copied().unwrap_or(0) == 0 {
+            spawn_hrolk(&mut commands, &wb.armory, site);
         }
     }
 }
@@ -1100,6 +1352,458 @@ pub(crate) fn respawn_warbands(
             wb.seen[i] = false;
         }
     }
+}
+
+// ── Role camps (spec 2026-10-13 §2 A): the ram, the pitch, the horn, the ring ─────────
+
+/// Ram Yard: how long the hero must hold the torch to the ram (s), and how close.
+const RAM_CHANNEL: f32 = 3.0;
+const RAM_REACH: f32 = 3.6;
+/// Eyrie: the horn post (camp-local, `ork_camps.py`), the scouts' sight lines, and how long
+/// they need to reach the horn once they've seen you.
+const EYRIE_HORN: Vec3 = Vec3::new(2.6, 0.0, 0.6);
+const EYRIE_SIGHT_FRONT: f32 = 17.0;
+const EYRIE_SIGHT_BACK: f32 = 6.5;
+const EYRIE_HORN_DELAY: f32 = 3.0;
+/// A cleared Eyrie shows every place within this radius on the compass.
+pub(crate) const EYRIE_VIEW: f32 = 150.0;
+/// Pitch pools (camp-local `(x, z, rx, rz)`, `ork_camps.py` PITCH_POOLS) — they burn once lit.
+const PITCH_POOLS: [(f32, f32, f32, f32); 4] = [(1.6, -1.6, 0.45, 0.3), (-2.4, -1.2, 0.35, 0.5), (-1.1, 0.4, 0.3, 0.22), (2.6, 0.9, 0.25, 0.35)];
+const PITCH_BURN_DPS: f32 = 18.0;
+/// Hrolk, Skarn's Second: a berserker grown big, and his HP.
+const HROLK_SCALE: f32 = 1.4;
+const HROLK_HP: f32 = 1500.0;
+
+/// A Ram Yard model: the standing ram (`burnt` false) or its charred wreck.
+#[derive(Component)]
+struct RamPiece {
+    burnt: bool,
+}
+/// The E-anchor at the ram's head ("Fire the ram") / at the pitch kettle ("Tip the pitch").
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+enum RoleAction {
+    Ram { camp: usize },
+    Pitch { camp: usize },
+}
+/// The Eyrie's horn post (world XZ in the transform).
+#[derive(Component)]
+struct EyrieHorn {
+    camp: usize,
+}
+/// Fire burning on a lit role site (pitch pools, the fired ram). `day` = the night it was lit for.
+#[derive(Component)]
+struct RoleFire {
+    day: i64,
+    pitch: Option<(usize, f32)>, // burning pool: (camp, radius) — hurts the hero standing in it
+}
+/// Hrolk, Skarn's Second — the Ring's mini-boss (a real camp ork, made big and tough).
+#[derive(Component)]
+pub struct Hrolk;
+
+/// Flame handles kept from [`build`] for fires lit later.
+#[derive(Resource, Clone)]
+struct RoleFx {
+    flame_cards: Handle<Mesh>,
+    flame_mat: Handle<StandardMaterial>,
+}
+
+/// The ram channel in progress: (anchor entity, seconds held).
+#[derive(Resource, Default)]
+struct RamChannel(Option<(Entity, f32)>);
+
+/// The next night the camps are working toward (as `respawn_warbands` computes it).
+fn coming_night(siege: &crate::siege::Siege) -> i64 {
+    match siege.phase {
+        crate::siege::GamePhase::Prep => siege.wave_index + 1,
+        _ => siege.wave_index,
+    }
+    .max(0) as i64
+}
+
+/// Index of the planned camp of `kind`.
+pub fn camp_of(kind: CampKind) -> Option<usize> {
+    plan().iter().position(|s| s.kind == kind)
+}
+
+/// Each role camp's extra pieces, built with the camp.
+#[allow(clippy::too_many_arguments)]
+fn build_role(
+    commands: &mut Commands,
+    armory: &orks::Armory,
+    kit: Option<&'static crate::realforest::Kit>,
+    camp: usize,
+    site: &CampSite,
+    place: &dyn Fn(Vec3) -> Vec3,
+    range: VisibilityRange,
+) {
+    let rot_q = Quat::from_rotation_y(site.rot);
+    let centre3 = place(Vec3::ZERO);
+    match site.kind {
+        CampKind::RamYard => {
+            for (name, burnt) in [("ork_camp_ram_beam", false), ("ork_camp_ram_burnt", true)] {
+                if let Some(e) = kit.and_then(|k| k.spawn_static_with(commands, name, Transform::from_translation(centre3).with_rotation(rot_q), range.clone())) {
+                    commands.entity(e).insert((RamPiece { burnt }, Visibility::Hidden, BiomeEntity));
+                }
+            }
+            commands.spawn((Transform::from_translation(place(v(1.2, 0.6, 3.2))), RoleAction::Ram { camp }, BiomeEntity));
+        }
+        CampKind::PitchSeep => {
+            commands.spawn((
+                Transform::from_translation(place(v(0.8, 0.6, -0.6))),
+                RoleAction::Pitch { camp },
+                crate::interaction::Interactable::new("Tip the pitch", 2.4),
+                BiomeEntity,
+            ));
+        }
+        CampKind::Eyrie => {
+            commands.spawn((Transform::from_translation(place(EYRIE_HORN)), EyrieHorn { camp }, BiomeEntity));
+        }
+        CampKind::Ring => {
+            // The spear fence: a chord box between each pair of spears, the north gap left open.
+            let (r, n) = (3.6f32, 18);
+            for k in 0..n {
+                let (a0, a1) = (k as f32 / n as f32 * TAU, (k + 1) as f32 / n as f32 * TAU);
+                if (a0.sin() + 1.0).abs() < 0.08 || (a1.sin() + 1.0).abs() < 0.08 {
+                    continue;
+                }
+                let (p0, p1) = (place(v(a0.cos() * r, 0.0, a0.sin() * r)), place(v(a1.cos() * r, 0.0, a1.sin() * r)));
+                let d = Vec2::new(p1.x - p0.x, p1.z - p0.z);
+                let m = (p0 + p1) * 0.5;
+                crate::blockers::add_obb(m.x, m.z, d.length() * 0.5, 0.1, (-d.y).atan2(d.x));
+            }
+            spawn_hrolk(commands, armory, site);
+        }
+        _ => {}
+    }
+}
+
+fn spawn_hrolk(commands: &mut Commands, armory: &orks::Armory, site: &CampSite) {
+    let e = armory.spawn(commands, OrkVariant::Berserker, Faction::Red, site.centre, site.centre, site.seed ^ 0x4801);
+    commands.entity(e).insert((Hrolk, crate::player::Health { hp: HROLK_HP, max: HROLK_HP }));
+}
+
+/// Grow Hrolk the frame he appears (the ork brain never touches scale).
+fn grow_hrolk(mut q: Query<&mut Transform, Added<Hrolk>>) {
+    for mut tf in &mut q {
+        tf.scale *= HROLK_SCALE;
+    }
+}
+
+/// Hrolk falls: his cleaver is yours, and he stays dead for the run.
+#[allow(clippy::too_many_arguments)]
+fn hrolk_death(
+    q: Query<Entity, (With<Hrolk>, Added<crate::dying::Dying>)>,
+    mut flags: ResMut<crate::savegame::WorldFlags>,
+    mut inv: ResMut<crate::inventory::Inventory>,
+    mut notice: ResMut<crate::ui::notice::Notice>,
+    time: Res<Time>,
+) {
+    for _ in &q {
+        if flags.is("hrolk_slain") {
+            continue;
+        }
+        flags.set("hrolk_slain", 1);
+        inv.0.add("ring_cleaver", 1);
+        notice.push("Hrolk, Skarn's Second, is down — his Ring Cleaver is yours", time.elapsed_secs_f64());
+    }
+}
+
+/// A slain Hrolk never stands up again (a load / rebuild spawns him by default).
+fn hrolk_stays_dead(flags: Res<crate::savegame::WorldFlags>, q: Query<Entity, (With<Hrolk>, Without<crate::dying::Dying>)>, mut commands: Commands) {
+    if flags.is("hrolk_slain") {
+        for e in &q {
+            commands.entity(e).try_despawn();
+        }
+    }
+}
+
+/// The ram always stands in its yard, and lies burnt the day it was fired (rebuilt by the next);
+/// its "Fire the ram" prompt is offered only while it stands.
+#[allow(clippy::type_complexity)]
+fn ram_yard_state(
+    flags: Res<crate::savegame::WorldFlags>,
+    siege: Res<crate::siege::Siege>,
+    mut pieces: Query<(&RamPiece, &mut Visibility)>,
+    anchors: Query<(Entity, &RoleAction, Has<crate::interaction::Interactable>)>,
+    mut commands: Commands,
+) {
+    let burnt = flags.0.contains_key("ram_burned_day") && flags.get("ram_burned_day") == coming_night(&siege);
+    for (piece, mut vis) in &mut pieces {
+        let want = if piece.burnt == burnt { Visibility::Inherited } else { Visibility::Hidden };
+        if *vis != want {
+            *vis = want;
+        }
+    }
+    let offer = !burnt;
+    for (e, action, has) in &anchors {
+        if !matches!(action, RoleAction::Ram { .. }) {
+            continue;
+        }
+        if offer && !has {
+            commands.entity(e).insert(crate::interaction::Interactable::new("Fire the ram", RAM_REACH));
+        } else if !offer && has {
+            commands.entity(e).remove::<crate::interaction::Interactable>();
+        }
+    }
+}
+
+/// E on a role anchor: start the ram channel, or tip the pitch (instant — fire does the rest).
+#[allow(clippy::too_many_arguments)]
+fn role_interact(
+    mut ev: MessageReader<crate::interaction::Interacted>,
+    anchors: Query<(&RoleAction, &GlobalTransform)>,
+    mut channel: ResMut<RamChannel>,
+    mut flags: ResMut<crate::savegame::WorldFlags>,
+    mut campaign: ResMut<crate::quest::CampaignRes>,
+    siege: Res<crate::siege::Siege>,
+    fx: Option<Res<RoleFx>>,
+    mut notice: ResMut<crate::ui::notice::Notice>,
+    time: Res<Time>,
+    mut commands: Commands,
+) {
+    for crate::interaction::Interacted(e) in ev.read() {
+        let Ok((action, gt)) = anchors.get(*e) else { continue };
+        match *action {
+            RoleAction::Ram { .. } => {
+                if channel.0.is_none() {
+                    channel.0 = Some((*e, 0.0));
+                    notice.push("You put the torch to the ram…", time.elapsed_secs_f64());
+                }
+            }
+            RoleAction::Pitch { camp } => {
+                let night = coming_night(&siege);
+                if flags.0.contains_key("pitch_fired_day") && flags.get("pitch_fired_day") == night {
+                    continue;
+                }
+                flags.set("pitch_fired_day", night);
+                credit_raid(&mut campaign, camp, night, &mut notice, time.elapsed_secs_f64());
+                if let Some(fx) = fx.as_deref() {
+                    light_pitch(&mut commands, fx, camp, night, gt.translation());
+                }
+                commands.entity(*e).remove::<crate::interaction::Interactable>();
+            }
+        }
+    }
+}
+
+/// A role action that stops the coming night's staging camp counts like clearing it — the same
+/// `cleared_camps` credit (no loot, no captives: the camp itself still stands).
+fn credit_raid(campaign: &mut crate::quest::CampaignRes, camp: usize, night: i64, notice: &mut crate::ui::notice::Notice, now: f64) {
+    if raid_target(night as i32) != Some(camp) {
+        return;
+    }
+    let n = plan().len();
+    if campaign.0.raid_day != night as i32 {
+        campaign.0.raid_day = night as i32;
+        campaign.0.cleared_camps = vec![false; n];
+    }
+    campaign.0.cleared_camps.resize(n, false);
+    campaign.0.cleared_camps[camp] = true;
+    notice.push(threat_for(night as usize).raid_result, now);
+}
+
+fn spawn_role_flame(commands: &mut Commands, fx: &RoleFx, at: Vec3, size: f32, day: i64, pitch: Option<(usize, f32)>, light: bool) {
+    let mut e = commands.spawn((
+        Mesh3d(fx.flame_cards.clone()),
+        MeshMaterial3d(fx.flame_mat.clone()),
+        Transform::from_translation(at).with_scale(Vec3::splat(size)),
+        bevy::light::NotShadowCaster,
+        RoleFire { day, pitch },
+        BiomeEntity,
+    ));
+    if light {
+        e.insert((Flicker { phase: at.x * 0.37 }, crate::firelight::campfire_light(at.z * 0.21)));
+    }
+}
+
+/// The Pitch Seep goes up: the kettle and every pool burn for the rest of the day.
+fn light_pitch(commands: &mut Commands, fx: &RoleFx, camp: usize, day: i64, kettle: Vec3) {
+    let Some(site) = plan().get(camp) else { return };
+    spawn_role_flame(commands, fx, kettle + Vec3::Y * 0.1, 1.5, day, None, true);
+    let q = Quat::from_rotation_y(site.rot);
+    for (x, z, rx, rz) in PITCH_POOLS {
+        let w = q * v(x, 0.0, z);
+        let (px, pz) = (site.centre.x + w.x, site.centre.y + w.z);
+        let y = worldmap::ground_at_world(px, pz).unwrap_or(0.0);
+        spawn_role_flame(commands, fx, Vec3::new(px, y + 0.03, pz), 0.9 + rx.max(rz), day, Some((camp, rx.max(rz) + 0.25)), false);
+    }
+}
+
+/// Hold the torch to the ram for [`RAM_CHANNEL`] seconds (walk off and it fails).
+#[allow(clippy::too_many_arguments)]
+fn ram_channel(
+    mut channel: ResMut<RamChannel>,
+    anchors: Query<(&RoleAction, &GlobalTransform)>,
+    hero: Res<crate::player::HeroState>,
+    mut flags: ResMut<crate::savegame::WorldFlags>,
+    mut campaign: ResMut<crate::quest::CampaignRes>,
+    siege: Res<crate::siege::Siege>,
+    fx: Option<Res<RoleFx>>,
+    mut notice: ResMut<crate::ui::notice::Notice>,
+    time: Res<Time>,
+    mut commands: Commands,
+) {
+    let Some((e, t)) = channel.0 else { return };
+    let Ok((RoleAction::Ram { camp }, gt)) = anchors.get(e) else {
+        channel.0 = None;
+        return;
+    };
+    if !hero.alive || hero.pos.distance(gt.translation().xz()) > RAM_REACH + 0.6 {
+        channel.0 = None;
+        notice.push("The torch gutters — the ram did not catch", time.elapsed_secs_f64());
+        return;
+    }
+    let t = t + time.delta_secs();
+    if t < RAM_CHANNEL {
+        channel.0 = Some((e, t));
+        return;
+    }
+    channel.0 = None;
+    let night = coming_night(&siege);
+    flags.set("ram_burned_day", night);
+    credit_raid(&mut campaign, *camp, night, &mut notice, time.elapsed_secs_f64());
+    if let (Some(fx), Some(site)) = (fx.as_deref(), plan().get(*camp)) {
+        let q = Quat::from_rotation_y(site.rot);
+        for (k, z) in [-2.2f32, 0.0, 2.2].into_iter().enumerate() {
+            let w = q * v(1.2, 0.0, z);
+            let y = worldmap::ground_at_world(site.centre.x + w.x, site.centre.y + w.z).unwrap_or(0.0);
+            spawn_role_flame(&mut commands, fx, Vec3::new(site.centre.x + w.x, y + 0.7, site.centre.y + w.z), 1.6, night, None, k == 1);
+        }
+    }
+}
+
+/// Fires burn out when the day they were lit for has passed; a burning pitch pool scalds the hero.
+fn role_fires(
+    siege: Res<crate::siege::Siege>,
+    fires: Query<(Entity, &RoleFire, &Transform)>,
+    hero: Res<crate::player::HeroState>,
+    mut pending: ResMut<crate::player::PendingHeroDamage>,
+    time: Res<Time>,
+    mut commands: Commands,
+) {
+    let night = coming_night(&siege);
+    for (e, fire, tf) in &fires {
+        if fire.day != night {
+            commands.entity(e).try_despawn();
+            continue;
+        }
+        if let Some((_, r)) = fire.pitch {
+            if hero.alive && hero.pos.distance(tf.translation.xz()) < r {
+                pending.0 += PITCH_BURN_DPS * time.delta_secs();
+            }
+        }
+    }
+}
+
+/// The Eyrie: if its scouts see you coming (anywhere in front of the crag, or close behind it) and
+/// one is left alive long enough to reach the horn, the horn sounds and a war party comes running
+/// from the cave. Clear them all before that — come over the pass behind the crag — and the
+/// lookout is yours: every place within [`EYRIE_VIEW`] shows on the compass.
+#[allow(clippy::too_many_arguments)]
+fn eyrie_watch(
+    horns: Query<(&EyrieHorn, &GlobalTransform)>,
+    orks_q: Query<&orks::Ork, (Without<orks::WaveInvader>, Without<crate::dying::Dying>)>,
+    hero: Res<crate::player::HeroState>,
+    siege: Res<crate::siege::Siege>,
+    mut flags: ResMut<crate::savegame::WorldFlags>,
+    wb: Option<Res<CampWarbands>>,
+    mut cues: MessageWriter<crate::audio::AudioCue>,
+    mut notice: ResMut<crate::ui::notice::Notice>,
+    time: Res<Time>,
+    mut seen_for: Local<f32>,
+    mut manned: Local<bool>,
+    mut commands: Commands,
+) {
+    let Ok((horn, gt)) = horns.single() else { return };
+    let Some(site) = plan().get(horn.camp) else { return };
+    let crew: Vec<&orks::Ork> = orks_q.iter().filter(|o| o.home().distance(site.centre) < 1.0).collect();
+    let scouts = crew.iter().any(|o| o.variant == OrkVariant::Scout);
+    if crew.is_empty() {
+        // Wiped with the horn silent today: the lookout is yours.
+        if *manned && !flags.is("eyrie_cleared") && hero.pos.distance(site.centre) < 30.0 {
+            let night = coming_night(&siege);
+            if !(flags.0.contains_key("eyrie_horn_day") && flags.get("eyrie_horn_day") == night) {
+                flags.set("eyrie_cleared", 1);
+                notice.push("From the Eyrie's perch the land lies open below", time.elapsed_secs_f64());
+            }
+        }
+        *manned = false;
+        *seen_for = 0.0;
+        return;
+    }
+    *manned = true;
+    let night = coming_night(&siege);
+    if !hero.alive || !scouts || (flags.0.contains_key("eyrie_horn_day") && flags.get("eyrie_horn_day") == night) {
+        *seen_for = 0.0;
+        return;
+    }
+    let local = Quat::from_rotation_y(-site.rot) * Vec3::new(hero.pos.x - site.centre.x, 0.0, hero.pos.y - site.centre.y);
+    let d = hero.pos.distance(site.centre);
+    let seen = (local.z > -2.0 && d < EYRIE_SIGHT_FRONT) || d < EYRIE_SIGHT_BACK;
+    *seen_for = if seen { *seen_for + time.delta_secs() } else { (*seen_for - time.delta_secs()).max(0.0) };
+    if *seen_for < EYRIE_HORN_DELAY {
+        return;
+    }
+    *seen_for = 0.0;
+    flags.set("eyrie_horn_day", night);
+    let at = gt.translation();
+    cues.write(crate::audio::AudioCue::BossRoar(at + Vec3::Y * 2.0));
+    notice.push("A war horn sounds from the crag!", time.elapsed_secs_f64());
+    // The answer comes from the nearest other camp (the cave, usually): a war party runs in from
+    // its direction and joins the Eyrie's crew.
+    let Some(wb) = wb else { return };
+    let from = plan()
+        .iter()
+        .filter(|s| s.kind != CampKind::Eyrie)
+        .min_by(|a, b| a.centre.distance_squared(site.centre).total_cmp(&b.centre.distance_squared(site.centre)))
+        .map_or(Vec2::X, |s| (s.centre - site.centre).normalize_or(Vec2::X));
+    for (k, variant) in [OrkVariant::Grunt, OrkVariant::Berserker, OrkVariant::Grunt].into_iter().enumerate() {
+        let side = Vec2::new(-from.y, from.x) * (k as f32 - 1.0) * 2.0;
+        let pos = site.centre + from * 16.0 + side;
+        wb.armory.spawn(&mut commands, variant, site.faction, site.centre, pos, site.seed ^ (0xe7e0 + k as u32));
+    }
+}
+
+/// Keep the compass's `?` marks in step with the cleared Eyrie: every viewed place until the hero
+/// has walked up to it (visits are per session — a reload shows the unvisited set again).
+fn refresh_eyrie_hints(
+    flags: Res<crate::savegame::WorldFlags>,
+    hero: Res<crate::player::HeroState>,
+    mut hints: ResMut<crate::compass::CompassHints>,
+    mut cache: Local<Option<Vec<Vec2>>>,
+) {
+    if !flags.is("eyrie_cleared") {
+        if !hints.unknown.is_empty() {
+            hints.unknown.clear();
+        }
+        *cache = None;
+        return;
+    }
+    let pts = cache.get_or_insert_with(eyrie_view_points);
+    pts.retain(|p| p.distance(hero.pos) > 14.0);
+    if hints.unknown.len() != pts.len() {
+        hints.unknown = pts.clone();
+    }
+}
+
+/// Places the cleared Eyrie shows on the compass (story sites, landmarks, other camps within
+/// [`EYRIE_VIEW`]); `war_party` adds the outcast's mark.
+pub fn eyrie_view_points() -> Vec<Vec2> {
+    let Some(i) = camp_of(CampKind::Eyrie) else { return Vec::new() };
+    let eye = plan()[i].centre;
+    let mut pts: Vec<Vec2> = crate::poi::planned_story_sites();
+    for list in [
+        crate::stories_warm::planned_footprints(),
+        crate::stories_cold::planned_footprints(),
+        crate::sites_warm::planned_footprints(),
+        crate::wild_sites::planned_footprints(),
+    ] {
+        pts.extend(list.into_iter().map(|(p, _)| p));
+    }
+    pts.extend(crate::ruins::landmark_sites().iter().map(|l| l.pos));
+    pts.extend(plan().iter().enumerate().filter(|(j, _)| *j != i).map(|(_, s)| s.centre));
+    pts.retain(|p| p.distance(eye) < EYRIE_VIEW);
+    pts
 }
 
 // ── Prop models (vertex-coloured, flat-shaded; ported from the TS components) ─────────
@@ -1216,13 +1920,38 @@ mod tests {
     /// Five camps, five different kinds; the rescue cages sit only in the camps that keep
     /// prisoners, and the introductory rescue always points at one of them.
     #[test]
-    fn camps_are_five_unique_places() {
+    fn camps_are_ten_unique_places() {
         let sites = plan();
         for (i, s) in sites.iter().enumerate() {
             let y = worldmap::ground_at_world(s.centre.x, s.centre.y).unwrap_or(0.0);
             eprintln!("camp {i} {:?} at {:.1},{y:.2},{:.1} yaw {:.2} cage {}", s.kind, s.centre.x, s.centre.y, s.rot, has_cage(i));
         }
-        assert_eq!(sites.len(), 5, "one camp per wilderness biome");
+        assert_eq!(sites.len(), 10, "one camp per wilderness biome + the five role camps");
+        // The original five keep indexes 0–4 (old saves key `rescued_camps` by them).
+        assert_eq!(sites[..5].iter().map(|s| s.kind).collect::<Vec<_>>(),
+            vec![CampKind::Hunters, CampKind::Raiders, CampKind::Shaman, CampKind::Stilts, CampKind::Cave]);
+        for want in &ROLE_WANTS {
+            let s = sites.iter().find(|s| s.kind == want.kind).unwrap_or_else(|| panic!("{:?} not placed", want.kind));
+            assert!(s.centre.distance(want.target) < 140.0, "{:?} far from its spot: {:?}", want.kind, s.centre);
+            if let Some(b) = want.biome {
+                assert!(worldmap::biome_at_world(s.centre.x, s.centre.y) == Some(b) || biome_within(s.centre.x, s.centre.y, b, 6),
+                    "{:?} off its biome", want.kind);
+            }
+            assert!(!has_cage(sites.iter().position(|x| x.kind == want.kind).unwrap()));
+        }
+        // Every threat is staged at its own camp.
+        for night in 1..12 {
+            let i = raid_target(night).expect("a staging camp");
+            let kind = threat_for(night as usize).kind;
+            let want = match kind {
+                ThreatKind::Arson => CampKind::PitchSeep,
+                ThreatKind::Ritual => CampKind::Shaman,
+                ThreatKind::Flank => CampKind::ReedHide,
+                ThreatKind::Breakers => CampKind::RamYard,
+                ThreatKind::Recon => continue,
+            };
+            assert_eq!(sites[i].kind, want, "night {night}");
+        }
         for (i, a) in sites.iter().enumerate() {
             assert!(sites[i + 1..].iter().all(|b| b.kind != a.kind), "{:?} camp twice", a.kind);
         }

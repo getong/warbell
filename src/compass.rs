@@ -74,6 +74,24 @@ struct CompassBlip {
     kind: Blip,
 }
 
+/// World knowledge the content modules put on the strip (spec 2026-10-13 §2): `unknown` — places
+/// a cleared Eyrie showed from its perch, drawn as `?` until visited (`camps`); `staging` — the
+/// camp the outcast scratched in the dirt for tonight (`war_party`). Writers own their field.
+#[derive(Resource, Default, Clone, Debug)]
+pub struct CompassHints {
+    pub unknown: Vec<Vec2>,
+    pub staging: Option<Vec2>,
+}
+/// `?` marks drawn at most (nearest first) and how far they show.
+const HINT_POOL: usize = 10;
+const HINT_RANGE: f32 = 220.0;
+
+/// A pooled hint mark: `staging` = the outcast's sign (one node), else a `?`.
+#[derive(Component)]
+struct CompassHint {
+    staging: bool,
+}
+
 #[derive(Component)]
 struct CompassRoot;
 #[derive(Component)]
@@ -98,8 +116,9 @@ impl Plugin for CompassPlugin {
         // Ungated spawn: the compass strip is built in EVERY boot (the mode can flip mid-process)
         // and tagged `CampaignOnly`, so `apply_mode_visibility` hides it in the RTS iso view. The
         // per-frame update systems stay `in_campaign`-gated.
-        app.add_systems(Startup, setup_compass)
-            .add_systems(Update, (update_compass, update_blips, update_goal).run_if(crate::rts::in_campaign));
+        app.init_resource::<CompassHints>()
+            .add_systems(Startup, setup_compass)
+            .add_systems(Update, (update_compass, update_blips, update_goal, update_hints).run_if(crate::rts::in_campaign));
     }
 }
 
@@ -259,6 +278,20 @@ fn setup_compass(mut commands: Commands, fonts: Res<UiFonts>, assets: Res<AssetS
                         },
                         img,
                         CompassBlip { kind: Blip::Boss },
+                    ));
+                }
+                // Hints: `?` for places seen from the Eyrie, a red `!` for the outcast's sign.
+                for k in 0..=HINT_POOL {
+                    let staging = k == HINT_POOL;
+                    s.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            top: Val::Px(PIP_TOP - 3.0),
+                            display: Display::None,
+                            ..default()
+                        },
+                        CompassHint { staging },
+                        children![label(&fonts.semibold, if staging { "!" } else { "?" }, 13.0, if staging { RED } else { TEXT })],
                     ));
                 }
                 // Chests: a gold coin below the line.
@@ -438,5 +471,42 @@ fn update_goal(
         let arrow = if offset < -HALF_SPAN { "←" } else if offset > HALF_SPAN { "→" } else { "◆" };
         let value = format!("{arrow} {name} · {:.0}m", delta.length());
         if t.0 != value { t.0 = value; }
+    }
+}
+
+/// Place the hint marks: the nearest [`HINT_POOL`] unknown places within [`HINT_RANGE`] as `?`,
+/// and the outcast's staging mark wherever it is.
+fn update_hints(
+    state: Res<State<AppState>>,
+    hints: Res<CompassHints>,
+    cam_q: Query<&GlobalTransform, With<Camera3d>>,
+    hero_q: Query<&GlobalTransform, With<Hero>>,
+    mut nodes: Query<(&CompassHint, &mut Node)>,
+) {
+    if *state.get() != AppState::Playing {
+        return;
+    }
+    let (Ok(cam), Ok(hero)) = (cam_q.single(), hero_q.single()) else { return };
+    let hero_xz = hero.translation().xz();
+    let fwd = cam.forward();
+    let cam_bearing = bearing_of(Vec2::new(fwd.x, fwd.z));
+    let place = |bearing: f32| CENTER_X + wrap_pi(bearing - cam_bearing).to_degrees() * PX_PER_DEG;
+    let unknown = nearest(hints.unknown.iter().copied(), hero_xz, HINT_RANGE, HINT_POOL);
+    let staging = hints.staging.and_then(|p| nearest(std::iter::once(p), hero_xz, f32::INFINITY, 1).first().copied());
+    let mut i = 0usize;
+    for (hint, mut node) in &mut nodes {
+        let target = if hint.staging {
+            staging
+        } else {
+            i += 1;
+            unknown.get(i - 1).copied()
+        };
+        match target {
+            Some((_, bearing)) => {
+                node.display = Display::Flex;
+                node.left = Val::Px(place(bearing) - 4.0);
+            }
+            None => node.display = Display::None,
+        }
     }
 }
