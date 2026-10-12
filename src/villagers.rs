@@ -656,6 +656,21 @@ pub fn spawn_rival_worker(
     spawn(commands, meshes, &mat, kind, home, pos, 2.2, 1.6, SCALE, seed, true)
 }
 
+/// Spawn an unarmed **desert traveller** (the Salt Caravan's merchants, `caravan.rs`): a plain
+/// peasant body in the desert keffiyeh + cloak, no tool, no town identity. The caller adds
+/// `SceneActor` and drives the `Villager` pose fields itself.
+pub fn spawn_desert_traveller(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
+    pos: Vec2,
+    seed: u32,
+) -> Entity {
+    let mat = shared_body_material(creature_mats);
+    let kind = Kind::Peasant { skin: SKIN[(seed as usize) % SKIN.len()], tunic: 0x8a4a3a, hat: false };
+    spawn(commands, meshes, &mat, kind, pos, pos, 1.6, 0.0, SCALE, seed, true)
+}
+
 /// Spawn a **village-life resident** (`village_life`): a plain peasant body — a man, a woman
 /// (kirtle + coif), a grey elder or a child — at `pos`. No wander brain claims it (the caller tags
 /// it `LifeAgent`, which `villager_brain` skips). Returns the root, its root scale and the rig's

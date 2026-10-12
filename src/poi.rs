@@ -298,6 +298,7 @@ pub fn story_clearings() -> StoryClearings {
     spots.extend(crate::sites_warm::planned_footprints());
     spots.extend(crate::wild_sites::planned_footprints());
     spots.extend(crate::war_party::planned_footprints());
+    spots.extend([crate::pasture::planned_footprints(), crate::drill_yard::planned_footprints(), crate::watch_beacon::planned_footprints(), crate::caravan::planned_footprints()].concat()); // WP4 meadow
     StoryClearings(spots)
 }
 /// Does a circle at `(x, z)` of radius `radius` overlap a planned story clearing (gallows

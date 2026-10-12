@@ -564,3 +564,104 @@ fn rngf(s: &mut u32) -> f32 {
     t ^= t.wrapping_add((t ^ (t >> 7)).wrapping_mul(t | 61));
     (t ^ (t >> 14)) as f32 / 4_294_967_296.0
 }
+
+// ── Shared helpers for the meadow's working sites (pasture / drill yard / beacon / caravan) ──────
+
+/// Day index of the run: 0 on day 1 (`wave_index` −1), +1 after every night.
+pub(crate) fn day_index(siege: &crate::siege::Siege) -> i64 {
+    siege.wave_index as i64 + 1
+}
+
+/// Sky clock phase helpers (`SkyClock::t`: 0 dawn · 0.25 noon · 0.5 dusk · 0.75 midnight).
+pub(crate) fn sky_t(clock: Option<&crate::scene::SkyClock>) -> f32 {
+    clock.map_or(0.25, |c| c.t.rem_euclid(1.0))
+}
+
+/// Walk a scene-actor townsperson body (`villagers::spawn_*` + `SceneActor`) one step toward
+/// `target` at `speed`: writes the `Villager` pose fields that `villager_drive` turns into the
+/// biped gait, and the root transform (ground-snapped). Returns true once within `arrive`.
+pub(crate) fn walk_body(
+    v: &mut crate::villagers::Villager,
+    tf: &mut Transform,
+    target: Vec2,
+    speed: f32,
+    arrive: f32,
+    dt: f32,
+) -> bool {
+    let to = target - v.pos;
+    let d = to.length();
+    if d <= arrive {
+        v.moving = false;
+    } else {
+        let want = to.x.atan2(to.y);
+        let turn = (6.0 * dt).min(1.0);
+        v.facing += crate::steer::wrap_pi(want - v.facing) * turn;
+        v.pos += to / d * (speed * dt).min(d);
+        v.moving = true;
+    }
+    let y = crate::worldmap::ground_at_world(v.pos.x, v.pos.y).unwrap_or(tf.translation.y);
+    tf.translation = Vec3::new(v.pos.x, y, v.pos.y);
+    tf.rotation = Quat::from_rotation_y(v.facing);
+    d <= arrive
+}
+
+/// Turn a standing body to face `at` (eased).
+pub(crate) fn face_body(v: &mut crate::villagers::Villager, tf: &mut Transform, at: Vec2, dt: f32) {
+    let to = at - v.pos;
+    if to.length_squared() > 1e-4 {
+        v.facing += crate::steer::wrap_pi(to.x.atan2(to.y) - v.facing) * (5.0 * dt).min(1.0);
+    }
+    v.moving = false;
+    tf.rotation = Quat::from_rotation_y(v.facing);
+}
+
+/// Cheap deterministic hash → [0,1).
+pub(crate) fn hash01(mut x: u32) -> f32 {
+    x ^= x >> 16;
+    x = x.wrapping_mul(0x7feb_352d);
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x846c_a68b);
+    x ^= x >> 16;
+    x as f32 / 4_294_967_296.0
+}
+
+/// Spawn a meadow-kit model as a `BiomeEntity` at a ground-snapped `(x, z)`, faded out past ~130u.
+pub(crate) fn kit_piece(commands: &mut Commands, name: &str, x: f32, z: f32, yaw: f32, sink: f32) -> Option<Entity> {
+    let kit = crate::realforest::get()?;
+    let y = crate::worldmap::ground_at_world(x, z).unwrap_or(0.0) - sink;
+    let tf = Transform::from_xyz(x, y, z).with_rotation(Quat::from_rotation_y(yaw));
+    let range = bevy::camera::visibility::VisibilityRange { start_margin: 0.0..0.0, end_margin: 120.0..140.0, use_aabb: true };
+    let e = kit.spawn_static_with(commands, name, tf, range)?;
+    commands.entity(e).insert(BiomeEntity);
+    Some(e)
+}
+
+/// The WP4 sites' worn ground for the realforest floor mask: `(centre, reach, wear)` passes, each
+/// `wear(wx, wz) -> (floor, path, debris)`. Stamped as maxima after the castle fields.
+#[allow(clippy::type_complexity)]
+pub fn ground_wear_passes() -> Vec<(Vec2, f32, Box<dyn Fn(f32, f32) -> Option<(f32, f32, f32)> + Send + Sync>)> {
+    let beacon = crate::watch_beacon::site();
+    vec![
+        (crate::pasture::WEAR_C, crate::pasture::WEAR_R, Box::new(crate::pasture::ground_wear)),
+        (Vec2::new(15.0, -39.0), 14.0, Box::new(crate::drill_yard::ground_wear)),
+        (beacon, 6.0, Box::new(move |x, z| crate::watch_beacon::ground_wear_at(beacon, x, z))),
+    ]
+}
+
+/// Grass tufts (the scatter's own `grass_*` / flower models) set on a kit piece's turf as children
+/// at local points `pts` — so a turfed bank or mound grows the same grass as the meadow around it.
+pub(crate) fn turf_tufts(commands: &mut Commands, parent: Entity, pts: &[Vec3], seed: u32) {
+    const TUFTS: [&str; 6] = ["grass_a", "grass_b", "grass_c", "grass_d", "grass_b", "flower_daisy"];
+    let Some(kit) = crate::realforest::get() else { return };
+    for (k, p) in pts.iter().enumerate() {
+        let h = seed.wrapping_add(k as u32 * 0x9E37);
+        let name = TUFTS[(hash01(h) * TUFTS.len() as f32) as usize % TUFTS.len()];
+        let tf = Transform::from_translation(*p)
+            .with_rotation(Quat::from_rotation_y(hash01(h ^ 0x51) * std::f32::consts::TAU))
+            .with_scale(Vec3::splat(0.6 + 0.45 * hash01(h ^ 0xA7)));
+        let range = bevy::camera::visibility::VisibilityRange { start_margin: 0.0..0.0, end_margin: 60.0..70.0, use_aabb: true };
+        if let Some(e) = kit.spawn_static_with(commands, name, tf, range) {
+            commands.entity(parent).add_child(e);
+        }
+    }
+}
