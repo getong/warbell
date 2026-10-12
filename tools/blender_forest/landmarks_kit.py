@@ -41,6 +41,8 @@ M_ICE = M_SNOW + 1
 M_ASHLAR = M_SNOW + 2
 M_RUBBLE = M_SNOW + 3
 MATS = W.MATS + ["s_snow", "ice", "s_ashlar", "s_rubble"]
+M_PLASTER = len(MATS)
+MATS += ["s_plaster"]
 
 BONE = (0.86, 0.8, 0.66)
 IRON = (0.36, 0.34, 0.33)
@@ -250,7 +252,7 @@ def lm_witch_hut(rng):
 
 # ─────────────────────────────────────────────────────────────── snow: the frozen spire
 def ice_col(nz, deep=0.0):
-    body, abyss, rime = (0.62, 0.8, 0.94), (0.24, 0.42, 0.7), (0.9, 0.96, 1.0)
+    body, abyss, rime = (0.3, 0.55, 0.8), (0.07, 0.18, 0.42), (0.8, 0.9, 0.98)
 
     def f(p, n):
         k = nz(p * 1.3)
@@ -260,12 +262,52 @@ def ice_col(nz, deep=0.0):
     return f
 
 
+def facets(g, verts, tris, mat, col_fn, tile):
+    """Triangles with FLAT face normals (cleaved crystal faces catch the light as planes)."""
+    for a, b_, c in tris:
+        pa, pb, pc = verts[a], verts[b_], verts[c]
+        n = (pb - pa).cross(pc - pa)
+        if n.length < 1e-12:
+            continue
+        n.normalize()
+        ax = max(range(3), key=lambda k: abs(n[k]))
+        uv = [((p.z, p.y) if ax == 0 else (p.x, p.z) if ax == 1 else (p.x, p.y)) for p in (pa, pb, pc)]
+        g.poly([pa, pb, pc], [(u / tile, v / tile) for u, v in uv], [n, n, n], [col_fn(p, n) for p in (pa, pb, pc)], mat)
+
+
 def shard(g, base, height, w, d, tilt, yaw, rng, deep=0.0, taper=0.88, cuts=2):
-    """A tapered ice crystal standing on `base`, tipped by `tilt` (rad) toward `yaw`."""
+    """An ice crystal standing on `base` (its foot sunk below it), tipped by `tilt` (rad) toward
+    `yaw`: an irregular six-sided prism, a waist ring, then a cleaved pyramidal point, flat facets."""
     rot = quat_y(yaw) @ quat_z(-tilt)
-    c = Vector(base) + rot @ V(0, height / 2, 0)
-    slab(g, tuple(c), (w, height, d), rot, rng, mat=M_ICE, col_fn=ice_col(Noise(rng, 3, 1.4), deep), tile=1.4,
-         res=(3, 8, 3), round_r=0.02, taper=taper, rough=0.02, cuts=cuts)
+    o = Vector(base)
+    sides = 6
+    phase = rng.uniform(0, 6.28)
+    rings = []
+    for y_f, r_f in ((-0.06, 1.0), (0.55, 1.0 - taper * 0.25), (0.8, 1.0 - taper * 0.55)):
+        ring = []
+        for k in range(sides):
+            a = phase + k * 2 * math.pi / sides + rng.uniform(-0.18, 0.18)
+            rr = r_f * rng.uniform(0.82, 1.12)
+            ring.append(o + rot @ V(math.cos(a) * w * 0.5 * rr, height * y_f + rng.uniform(-0.04, 0.04) * height,
+                                    math.sin(a) * d * 0.5 * rr))
+        rings.append(ring)
+    tip = o + rot @ V(rng.uniform(-0.1, 0.1) * w, height, rng.uniform(-0.1, 0.1) * d)
+    verts = [p for ring in rings for p in ring] + [tip]
+    tris = []
+    for r in range(len(rings) - 1):
+        for k in range(sides):
+            a0, a1 = r * sides + k, r * sides + (k + 1) % sides
+            b0, b1 = a0 + sides, a1 + sides
+            tris += [(a0, a1, b1), (a0, b1, b0)]
+    t = len(verts) - 1
+    top0 = (len(rings) - 1) * sides
+    tris += [(top0 + k, top0 + (k + 1) % sides, t) for k in range(sides)]
+    cen = o + rot @ V(0, height * 0.4, 0)
+    fixed = []
+    for a, b_, c in tris:  # wind every face outward
+        n = (verts[b_] - verts[a]).cross(verts[c] - verts[a])
+        fixed.append((a, b_, c) if n.dot((verts[a] + verts[b_] + verts[c]) / 3 - cen) >= 0 else (a, c, b_))
+    facets(g, verts, fixed, M_ICE, ice_col(Noise(rng, 3, 1.4), deep), 1.4)
 
 
 def lm_frozen_spire(rng):
@@ -280,7 +322,8 @@ def lm_frozen_spire(rng):
     stone(g, (-0.75, 0.3, 0.45), (0.6, 0.5, 0.55), rng, col_fn=frost, tile=1.0, rough=0.16, cuts=2)
     # Drifted snow banked in a ring, deeper on the windward (-X) side.
     snow = lambda p, n: mix(SNOW, (0.72, 0.8, 0.96), (1.0 - smoothstep(0.1, 0.8, n.y)) * 0.7)
-    mound(g, (0.0, -0.1, 0.0), 2.7, 2.5, 0.42, rng, mat=M_SNOW, col_fn=snow, tile=2.0, rings=6, seg=24, skirt=0.15)
+    mound(g, (0.0, -0.18, 0.0), 2.4, 2.2, 0.5, rng, mat=M_SNOW, col_fn=snow, tile=2.0, rings=6, seg=24, skirt=0.25,
+          edge=0.3, power=1.3)
     for x, z, r, h in ((-1.3, -0.4, 1.0, 0.45), (0.95, 0.75, 0.8, 0.35), (0.2, -1.2, 0.75, 0.3), (-0.6, 1.1, 0.7, 0.32)):
         mound(g, (x, 0.1, z), r, r * 0.8, h, rng, mat=M_SNOW, col_fn=snow, tile=1.6, rings=4, seg=14, skirt=0.12)
     # The blade: one great flattened crystal (the heart glows on its face at (0.38, 2.35, 0.52)),
@@ -312,8 +355,8 @@ def lm_frozen_spire(rng):
 
 
 # ─────────────────────────────────────────────────────────────── desert: the sunken pyramid
-SANDSTONE = (0.98, 0.8, 0.56)
-SAND = (0.96, 0.82, 0.6)
+SANDSTONE = (0.86, 0.68, 0.46)
+SAND = (0.9, 0.78, 0.56)
 TURQ = (0.42, 0.72, 0.7)
 
 
@@ -335,15 +378,43 @@ def lm_sunken_pyramid(rng):
     for i in range(6):
         w = 2.35 + (0.62 - 2.35) * (i / 5.0)
         y = i * th
-        slab(g, (0, y + th - 0.36, 0), (w * 2, 0.72, w * 2), quat_y(rng.uniform(-0.025, 0.025)), rng, mat=M_ASHLAR,
-             col_fn=sandstone_col(nz, 1.0 - 0.04 * (i % 2)), tile=1.5, res=(10, 2, 10), round_r=0.06, rough=0.004)
-        # Weather bites: chipped arrises and fallen blocks against the tier.
-        for k in range(3):
-            sx, sz = rng.choice([-1, 1]), rng.choice([-1, 1])
-            along = rng.uniform(-0.8, 0.8) * w
-            p = (sx * w, y + th * rng.uniform(0.3, 0.9), along) if k % 2 else (along, y + th * rng.uniform(0.3, 0.9), sz * w)
-            stone(g, p, (0.16, 0.12, 0.16), rng, mat=M_ASHLAR, col_fn=sandstone_col(nz, 0.85), tile=1.0, detail=1,
-                  rough=0.1, cuts=2)
+        # Rubble core (shows dark through the mortar joints), paved top.
+        slab(g, (0, y + th - 0.37, 0), (w * 2 - 0.12, 0.72, w * 2 - 0.12), quat_y(0), rng, mat=M_PLASTER,
+             col_fn=sandstone_col(nz, 0.55), tile=1.2, res=(6, 1, 6), round_r=0.02, rough=0.002)
+        # Two courses of dressed blocks round the face, joints staggered, a few robbed or slumped.
+        for c in range(2):
+            yc = y + c * 0.3 + 0.15 - (0.06 if i == 0 and c == 0 else 0.0)
+            for side in range(4):
+                ax = side % 2  # 0: blocks run along X (front/back faces), 1: along Z
+                sgn = 1 if side < 2 else -1
+                span = 2 * w if ax == 0 else 2 * w - 0.52
+                a = -span / 2
+                first = True
+                while a < span / 2 - 0.05:
+                    ln = rng.uniform(0.55, 0.9) * (0.5 if first and (c + side) % 2 else 1.0)
+                    first = False
+                    ln = min(ln, span / 2 - a)
+                    mid = a + ln / 2
+                    a += ln
+                    if rng.uniform() < 0.035 and i > 0:
+                        continue  # a robbed block: the core shows through
+                    slump = rng.uniform(-0.012, 0.012)
+                    out = w - 0.13 + rng.uniform(-0.015, 0.02)
+                    pos = (mid, yc + slump, sgn * out) if ax == 0 else (sgn * out, yc + slump, mid)
+                    size = (ln - 0.03, 0.285, 0.26) if ax == 0 else (0.26, 0.285, ln - 0.03)
+                    slab(g, pos, size, quat_y(rng.uniform(-0.02, 0.02)), rng, mat=M_PLASTER,
+                         col_fn=sandstone_col(nz, rng.uniform(0.88, 1.08)), tile=0.9, res=(2, 1, 1), round_r=0.035,
+                         rough=0.01, cuts=1 if rng.uniform() < 0.25 else 0)
+        # Fallen blocks at the tier's foot, tipped and half in the sand.
+        for k in range(2):
+            ang = rng.uniform(0, 6.28)
+            r = w + rng.uniform(0.2, 0.6)
+            px, pz = math.cos(ang) * r, math.sin(ang) * r
+            if pz > 1.5 and abs(px) < 0.8:
+                continue  # keep the stair clear
+            slab(g, (px, max(0.0, y - 0.6) + 0.06, pz), (rng.uniform(0.5, 0.75), 0.28, 0.26),
+                 quat_y(rng.uniform(0, 3.14)) @ quat_z(rng.uniform(-0.3, 0.3)), rng, mat=M_PLASTER,
+                 col_fn=sandstone_col(nz, 0.9), tile=0.9, res=(2, 1, 1), round_r=0.035, rough=0.015, cuts=2)
     # ── The processional stair up +Z: worn treads, a few cracked or missing.
     for s in range(12):
         y = s * 0.3
@@ -351,23 +422,23 @@ def lm_sunken_pyramid(rng):
         if s == 7:
             continue
         slab(g, (rng.uniform(-0.02, 0.02), y + 0.1, wh + 0.14), (0.95 - y * 0.04, 0.4, 0.62),
-             quat_y(rng.uniform(-0.03, 0.03)), rng, mat=M_ASHLAR, col_fn=sandstone_col(nz, 1.05), tile=1.2,
+             quat_y(rng.uniform(-0.03, 0.03)), rng, mat=M_PLASTER, col_fn=sandstone_col(nz, 1.05), tile=1.2,
              res=(4, 2, 3), round_r=0.05, rough=0.006, crown=0.05 if s % 3 == 0 else 0.0)
-    stone(g, (0.1, 2.12, 2.75 - 0.35), (0.28, 0.12, 0.2), rng, mat=M_ASHLAR, col_fn=sandstone_col(nz), detail=1, cuts=2)
+    stone(g, (0.1, 2.12, 2.75 - 0.35), (0.28, 0.12, 0.2), rng, mat=M_PLASTER, col_fn=sandstone_col(nz), detail=1, cuts=2)
     # ── Summit shrine: floor slab, four drum pillars, two lintels, the altar with its turquoise tiles.
     top = 6 * th
-    slab(g, (0, top + 0.02, 0), (1.5, 0.2, 1.5), quat_y(0.0), rng, mat=M_ASHLAR, col_fn=sandstone_col(nz, 1.05),
+    slab(g, (0, top + 0.02, 0), (1.5, 0.2, 1.5), quat_y(0.0), rng, mat=M_PLASTER, col_fn=sandstone_col(nz, 1.05),
          tile=1.0, res=(4, 1, 4), round_r=0.04, rough=0.004)
     for x, z in ((-0.52, -0.52), (0.52, -0.52), (-0.52, 0.52), (0.52, 0.52)):
         for d in range(3):
-            frustum(g, 0.12 - d * 0.005, 0.115 - d * 0.005, top + 0.12 + d * 0.26, 0.255, 10, M_ASHLAR,
+            frustum(g, 0.12 - d * 0.005, 0.115 - d * 0.005, top + 0.12 + d * 0.26, 0.255, 10, M_PLASTER,
                     scale(SANDSTONE, 0.95 - 0.04 * d), tile=0.8, centre=(x + rng.uniform(-0.01, 0.01), 0, z), cap_top=True)
-        slab(g, (x, top + 0.94, z), (0.3, 0.1, 0.3), quat_y(0), rng, mat=M_ASHLAR, col_fn=sandstone_col(nz, 0.9),
+        slab(g, (x, top + 0.94, z), (0.3, 0.1, 0.3), quat_y(0), rng, mat=M_PLASTER, col_fn=sandstone_col(nz, 0.9),
              tile=0.8, res=(2, 1, 2), round_r=0.02, rough=0.004)
     for z in (-0.52, 0.52):
-        slab(g, (0, top + 1.06, z), (1.4, 0.15, 0.34), quat_z(0.015 * (1 if z > 0 else -1)), rng, mat=M_ASHLAR,
+        slab(g, (0, top + 1.06, z), (1.4, 0.15, 0.34), quat_z(0.015 * (1 if z > 0 else -1)), rng, mat=M_PLASTER,
              col_fn=sandstone_col(nz, 0.85), tile=1.0, res=(5, 1, 2), round_r=0.03, rough=0.006, cuts=1)
-    slab(g, (0, top + 0.29, 0), (0.46, 0.34, 0.46), quat_y(0.0), rng, mat=M_ASHLAR, col_fn=sandstone_col(nz, 1.0),
+    slab(g, (0, top + 0.29, 0), (0.46, 0.34, 0.46), quat_y(0.0), rng, mat=M_PLASTER, col_fn=sandstone_col(nz, 1.0),
          tile=0.8, res=(2, 2, 2), round_r=0.03, rough=0.004)
     # Cracked turquoise faience tiles round the altar band (a few fallen).
     for k in range(12):
@@ -384,55 +455,56 @@ def lm_sunken_pyramid(rng):
     # Dark doorway into the top tier's +Z face.
     lbox(g, V(0, top - 0.28, 0.62 + 0.02), (0.5, 0.42, 0.1), quat_y(0), M_ROCK, (0.12, 0.1, 0.08), tile=0.5)
     # ── The dune eating the -X/-Z quarter, ripples on its back.
-    sand = lambda p, n: scale(SAND, (0.9 + 0.1 * nz(p * 3.0)) * (0.92 + 0.08 * n.y))
-    for x, z, rx, rz, h in ((-2.4, -1.5, 2.2, 1.7, 1.35), (-1.4, -2.5, 1.8, 1.5, 1.1), (-2.9, 0.3, 1.5, 1.6, 0.85),
-                            (-0.1, -2.9, 1.5, 1.1, 0.65), (-3.4, -1.3, 1.2, 1.4, 0.6)):
-        mound(g, (x, -0.1, z), rx, rz, h, rng, mat=M_EARTH, col_fn=sand, tile=2.2, rings=6, seg=20, skirt=0.15,
-              rough=0.06, power=1.1)
+    sand = lambda p, n: scale(SAND, (0.92 + 0.08 * nz(p * 3.0)) * (0.9 + 0.1 * n.y))
+    # One long wind-built dune banked up the -X/-Z faces: low, wide, tapering into the desert floor.
+    for x, z, rx, rz, h in ((-2.4, -1.8, 3.8, 3.0, 1.05), (-0.6, -3.1, 2.8, 1.7, 0.5), (-3.7, 0.7, 2.0, 2.6, 0.45)):
+        mound(g, (x, -0.25, z), rx, rz, h, rng, mat=M_PLASTER, col_fn=sand, tile=2.6, rings=8, seg=28, skirt=0.3,
+              rough=0.04, power=2.6, edge=0.3)
     # ── The colossus head buried to the chin in the +X sand, face turned to the stair.
     head = V(3.0, 0.32, 1.9)
     hr = quat_y(-2.25) @ quat_z(0.12)
     pale = lambda p, n: scale((0.97, 0.86, 0.68), 0.85 + 0.15 * nz(p * 2.0))
-    stone(g, tuple(head), (0.5, 0.56, 0.54), rng, mat=M_ASHLAR, col_fn=pale, tile=1.0, detail=2, rough=0.04, cuts=0,
+    stone(g, tuple(head), (0.5, 0.56, 0.54), rng, mat=M_PLASTER, col_fn=pale, tile=1.0, detail=2, rough=0.04, cuts=0,
           rot=hr)
-    slab(g, tuple(head + hr @ V(0, 0.44, -0.05)), (0.82, 0.16, 0.62), hr, rng, mat=M_ASHLAR,
+    slab(g, tuple(head + hr @ V(0, 0.44, -0.05)), (0.82, 0.16, 0.62), hr, rng, mat=M_PLASTER,
          col_fn=sandstone_col(nz, 0.8), tile=1.0, res=(4, 1, 3), round_r=0.05, rough=0.01, cuts=1)
     for sx in (-0.5, 0.5):
-        slab(g, tuple(head + hr @ V(sx, 0.02, -0.06)), (0.14, 0.62, 0.48), hr, rng, mat=M_ASHLAR,
+        slab(g, tuple(head + hr @ V(sx, 0.02, -0.06)), (0.14, 0.62, 0.48), hr, rng, mat=M_PLASTER,
              col_fn=sandstone_col(nz, 0.8), tile=1.0, res=(1, 4, 3), round_r=0.04, rough=0.01, taper=0.2)
-    slab(g, tuple(head + hr @ V(0, 0.17, 0.45)), (0.5, 0.09, 0.14), hr, rng, mat=M_ASHLAR, col_fn=pale, tile=0.6,
+    slab(g, tuple(head + hr @ V(0, 0.17, 0.45)), (0.5, 0.09, 0.14), hr, rng, mat=M_PLASTER, col_fn=pale, tile=0.6,
          res=(3, 1, 1), round_r=0.03, rough=0.01)
-    slab(g, tuple(head + hr @ V(0, 0.0, 0.5)), (0.12, 0.22, 0.14), hr @ quat_x(0.14), rng, mat=M_ASHLAR, col_fn=pale,
+    slab(g, tuple(head + hr @ V(0, 0.0, 0.5)), (0.12, 0.22, 0.14), hr @ quat_x(0.14), rng, mat=M_PLASTER, col_fn=pale,
          tile=0.6, res=(1, 2, 1), round_r=0.03, rough=0.02, cuts=1)
-    slab(g, tuple(head + hr @ V(0, -0.2, 0.47)), (0.3, 0.07, 0.1), hr, rng, mat=M_ASHLAR, col_fn=pale, tile=0.6,
+    slab(g, tuple(head + hr @ V(0, -0.2, 0.47)), (0.3, 0.07, 0.1), hr, rng, mat=M_PLASTER, col_fn=pale, tile=0.6,
          res=(2, 1, 1), round_r=0.02, rough=0.01)
-    mound(g, (head.x, -0.05, head.z), 0.95, 0.85, 0.32, rng, mat=M_EARTH, col_fn=sand, tile=1.6, rings=4, seg=16)
+    mound(g, (head.x, -0.15, head.z), 1.2, 1.1, 0.42, rng, mat=M_PLASTER, col_fn=sand, tile=1.6, rings=5, seg=18,
+          power=1.6, edge=0.25)
     # ── Obelisks at the stair foot: one standing, one toppled and broken.
     ob = V(1.15, 0, 3.15)
-    slab(g, tuple(ob + V(0, 0.06, 0)), (0.5, 0.2, 0.5), quat_y(0.1), rng, mat=M_ASHLAR, col_fn=sandstone_col(nz, 0.85),
+    slab(g, tuple(ob + V(0, 0.06, 0)), (0.5, 0.2, 0.5), quat_y(0.1), rng, mat=M_PLASTER, col_fn=sandstone_col(nz, 0.85),
          tile=0.8, res=(2, 1, 2), round_r=0.03, rough=0.01)
-    slab(g, tuple(ob + V(0, 0.9, 0)), (0.32, 1.6, 0.32), quat_y(0.1), rng, mat=M_ASHLAR, col_fn=sandstone_col(nz, 0.75),
+    slab(g, tuple(ob + V(0, 0.9, 0)), (0.32, 1.6, 0.32), quat_y(0.1), rng, mat=M_PLASTER, col_fn=sandstone_col(nz, 0.75),
          tile=0.8, res=(2, 6, 2), round_r=0.02, rough=0.008, taper=0.35)
-    W.tube(g, [ob + V(0, 1.68, 0), ob + V(0, 1.92, 0)], [0.1, 0.005], 4, M_ASHLAR, scale(SANDSTONE, 0.7), tile=0.4)
+    W.tube(g, [ob + V(0, 1.68, 0), ob + V(0, 1.92, 0)], [0.1, 0.005], 4, M_PLASTER, scale(SANDSTONE, 0.7), tile=0.4)
     ob2 = V(-1.25, 0, 3.0)
-    slab(g, tuple(ob2 + V(0, 0.05, 0)), (0.48, 0.18, 0.48), quat_y(0.4), rng, mat=M_ASHLAR,
+    slab(g, tuple(ob2 + V(0, 0.05, 0)), (0.48, 0.18, 0.48), quat_y(0.4), rng, mat=M_PLASTER,
          col_fn=sandstone_col(nz, 0.85), tile=0.8, res=(2, 1, 2), round_r=0.03, rough=0.01)
-    slab(g, tuple(ob2 + V(0, 0.32, 0)), (0.32, 0.5, 0.32), quat_y(0.4), rng, mat=M_ASHLAR, col_fn=sandstone_col(nz, 0.75),
+    slab(g, tuple(ob2 + V(0, 0.32, 0)), (0.32, 0.5, 0.32), quat_y(0.4), rng, mat=M_PLASTER, col_fn=sandstone_col(nz, 0.75),
          tile=0.8, res=(2, 2, 2), round_r=0.02, rough=0.01, cuts=1)
-    slab(g, tuple(ob2 + V(-0.6, 0.14, -0.45)), (0.3, 1.15, 0.3), quat_y(0.7) @ quat_z(1.5), rng, mat=M_ASHLAR,
+    slab(g, tuple(ob2 + V(-0.6, 0.14, -0.45)), (0.3, 1.15, 0.3), quat_y(0.7) @ quat_z(1.5), rng, mat=M_PLASTER,
          col_fn=sandstone_col(nz, 0.75), tile=0.8, res=(2, 5, 2), round_r=0.02, rough=0.01, taper=0.2, cuts=1)
     # Column drums + blocks round the base, half in the sand.
     for p, r in (((2.6, 0.12, -1.4), 0.0), ((3.15, 0.12, -1.15), 0.5)):
         rot = quat_y(r) @ quat_z(math.pi / 2)
         c = V(*p)
         ax = rot @ V(0, 1, 0)
-        W.tube(g, [c - ax * 0.27, c + ax * 0.27], [0.21, 0.2], 10, M_ASHLAR, scale(SANDSTONE, 0.85), tile=0.8)
-    slab(g, (-2.3, 0.12, 2.5), (0.42, 0.3, 0.36), quat_y(0.8), rng, mat=M_ASHLAR, col_fn=sandstone_col(nz, 0.9),
+        W.tube(g, [c - ax * 0.27, c + ax * 0.27], [0.21, 0.2], 10, M_PLASTER, scale(SANDSTONE, 0.85), tile=0.8)
+    slab(g, (-2.3, 0.12, 2.5), (0.42, 0.3, 0.36), quat_y(0.8), rng, mat=M_PLASTER, col_fn=sandstone_col(nz, 0.9),
          tile=0.8, res=(2, 1, 2), round_r=0.03, rough=0.02, cuts=1)
     for k in range(6):
         a = rng.uniform(0, 6.28)
         r = rng.uniform(2.6, 3.4)
-        stone(g, (math.cos(a) * r, 0.02, math.sin(a) * r), (0.14, 0.09, 0.12), rng, mat=M_ASHLAR,
+        stone(g, (math.cos(a) * r, 0.02, math.sin(a) * r), (0.14, 0.09, 0.12), rng, mat=M_PLASTER,
               col_fn=sandstone_col(nz, 0.85), detail=1, cuts=2, tile=0.8)
     return b
 

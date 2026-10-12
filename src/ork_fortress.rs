@@ -1046,8 +1046,9 @@ pub fn build(
     });
     let mut fumes = 0;
     // World-tile bounds covering the Blight landmass; the z range tracks the +BLIGHT_DZ shift
-    // (was 56..166, +16). Tiles outside the actual landmass are skipped via `blight_edge_world`.
-    for tz in 72..182 {
+    // (authored 56..166 before it — a hard-coded 72..182 left the MAP_SCALE 3.9 mire bare north of
+    // z 182). Tiles outside the actual landmass are skipped via `blight_edge_world`.
+    for tz in (56.0 + BLIGHT_DZ) as i32..(166.0 + BLIGHT_DZ) as i32 {
         for tx in -36..84 {
             // Per-tile hash-seeded RNG, independent of visit order (the snow-drift idiom).
             let mut s = (tx as i64 * 73_856_093 ^ tz as i64 * 19_349_663) as u32 ^ 0x0b1a_5eed;

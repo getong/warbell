@@ -1210,7 +1210,7 @@ fn pbr_material(images: &mut Assets<Image>, set: &str, card: bool) -> Result<Sta
         return Ok(StandardMaterial { base_color: Color::LinearRgba(LinearRgba::rgb(2.5, 2.5, 2.5)), unlit: true, ..default() });
     }
     if set == "ice" {
-        return Ok(StandardMaterial { perceptual_roughness: 0.14, reflectance: 0.6, ..default() });
+        return Ok(StandardMaterial { perceptual_roughness: 0.22, reflectance: 0.3, ..default() });
     }
     if set == "bronze" {
         return Ok(StandardMaterial { metallic: 1.0, perceptual_roughness: 0.5, reflectance: 0.5, ..default() });
