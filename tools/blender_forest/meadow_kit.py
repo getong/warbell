@@ -232,22 +232,36 @@ def build_sheep():
 
 # ─────────────────────────────────────────────────────────────── militia butts
 def mk_butt(rng):
-    """An earth archery butt: a turfed bank ~2.6 wide (X), 1.5 high, facing +Z, a straw boss on a
-    stake leaning against its face, spent arrows in the bank and the boss."""
+    """An archery butt as the old statutes had them: a bank of cut turves stacked in staggered
+    courses (~3 wide, 1.2 high, battered back), grass on the crest, a straw boss on a stake leaning
+    against its face (+Z), spent arrows in the boss and the bank. Grass tufts are added in-game."""
     b = Builder()
     g = G(b)
-    turf = lambda p, n: (0.42, 0.46, 0.3) if n.y > 0.55 else (0.62, 0.52, 0.42)  # noqa: E731
-    mound(g, (0, 0.0, -0.2), 1.45, 0.75, 1.25, rng, col_fn=turf, rings=8, seg=26, rough=0.08, edge=0.08, power=0.55)
-    # Turf sods stacked along the crest.
-    for k in range(6):
-        x = -1.0 + k * 0.4 + rng.uniform(-0.05, 0.05)
-        slab(g, (x, 1.13 + rng.uniform(-0.04, 0.02), -0.2 + rng.uniform(-0.08, 0.08)), (0.42, 0.16, 0.34),
-             quat_y(rng.uniform(-0.2, 0.2)), rng, mat=M_EARTH, res=(3, 2, 3), round_r=0.05,
-             col_fn=lambda p, n: (0.44, 0.5, 0.3) if n.y > 0.4 else (0.55, 0.47, 0.38), tile=0.6)
+    COURSES, SOD_H = 5, 0.24
+    top_green = (0.36, 0.44, 0.2)
+    for k in range(COURSES):
+        y = SOD_H * (k + 0.5)
+        half_w = 1.55 - 0.1 * k
+        front, back = 0.62 - 0.07 * k, -0.62 + 0.07 * k
+        rows = [front - 0.25, back + 0.25] if front - back > 0.75 else [(front + back) / 2]
+        for zc in rows:
+            x = -half_w + (0.24 if (k + len(rows)) % 2 else 0.0) + rng.uniform(-0.04, 0.04)
+            while x < half_w - 0.15:
+                w = rng.uniform(0.4, 0.52)
+                w = min(w, half_w - x)
+                top = k == COURSES - 1
+                cf = (lambda p_, n_, t=top: top_green if n_.y > 0.5 and t else
+                      ((0.42, 0.46, 0.26) if n_.y > 0.5 else (0.5, 0.42, 0.34)))
+                slab(g, (x + w / 2, y + rng.uniform(-0.015, 0.015), zc + rng.uniform(-0.03, 0.03)),
+                     (w - 0.02, SOD_H + 0.02, 0.5 + rng.uniform(-0.03, 0.03)), quat_y(rng.uniform(-0.06, 0.06)),
+                     rng, mat=M_EARTH, res=(3, 2, 3), round_r=0.06, rough=0.05, col_fn=cf, tile=0.55)
+                x += w
+    # A skirt of spoil at the foot so the bank sits in the ground.
+    mound(g, (0, -0.05, 0.0), 1.9, 0.95, 0.2, rng, col_fn=lambda p_, n_: (0.42, 0.44, 0.26), rings=4, seg=22, rough=0.1)
     # The straw boss: a thick coiled disc, painted rings, leaning back on a stake.
-    c = V(0.0, 0.78, 0.42)
-    lean = quat_x(-0.28)
-    rings_col = [(0.95, 0.92, 0.82), (0.25, 0.22, 0.2), (0.95, 0.92, 0.82), (0.7, 0.18, 0.12)]
+    c = V(0.0, 0.74, 0.78)
+    lean = quat_x(-0.24)
+    rings_col = [(0.88, 0.78, 0.55), (0.95, 0.93, 0.86), (0.88, 0.78, 0.55), (0.75, 0.2, 0.12)]
     R = 0.5
     for k in range(4):
         r1 = R * (1 - k / 4)
@@ -260,14 +274,14 @@ def mk_butt(rng):
             if (q[1] - q[0]).cross(q[3] - q[0]).dot(nrm) < 0:
                 q = q[::-1]
             uv = [((p - c).x / 0.6, (p - c).y / 0.6) for p in q]
-            g.poly(q, uv, [nrm] * 4, [rings_col[k]] * 4, M_THATCH)
+            g.poly(q, uv, [nrm] * 4, [rings_col[k]] * 4, M_CLOTH)
     # Coiled straw rim + back.
     rim = [c + lean @ V(math.cos(a) * R, math.sin(a) * R, 0.05) for a in np.linspace(0, 2 * math.pi, 29)]
-    tube(g, rim, [0.085] * len(rim), 9, M_THATCH, (0.92, 0.84, 0.62), tile=0.4, cap=False)
+    tube(g, rim, [0.085] * len(rim), 9, M_CLOTH, (0.86, 0.74, 0.48), tile=0.4, cap=False)
     back = [c + lean @ V(math.cos(a) * R * 0.95, math.sin(a) * R * 0.95, -0.02) for a in np.linspace(0, 2 * math.pi, 25)]
     for s in range(24):
         g.flat([c + lean @ V(0, 0, -0.03), back[s + 1], back[s]], M_THATCH, (0.8, 0.72, 0.55), 0.6)
-    pole(g, V(0.0, -0.2, 0.22), c + lean @ V(0, 0.2, -0.05), 0.035, 0.03, rng, col=GREY_WOOD, sides=6)
+    pole(g, V(0.0, -0.2, c.z - 0.2), c + lean @ V(0, 0.2, -0.05), 0.035, 0.03, rng, col=GREY_WOOD, sides=6)
     # Arrows: in the boss and stuck in the bank (missed shots), shaft + fletching.
     def arrow(tip, d):
         d = Vector(d).normalized()
@@ -285,7 +299,8 @@ def mk_butt(rng):
         arrow(tip, lean @ V(rng.uniform(-0.08, 0.08), rng.uniform(-0.05, 0.12), -1))
     for _ in range(4):
         x = rng.uniform(-1.2, 1.2)
-        arrow(V(x, rng.uniform(0.25, 0.9), 0.15), (rng.uniform(-0.1, 0.1), rng.uniform(0.0, 0.25), -1))
+        y = rng.uniform(0.2, 1.0)
+        arrow(V(x, y, 0.62 - 0.07 * y / 0.24 + 0.08), (rng.uniform(-0.1, 0.1), rng.uniform(0.0, 0.25), -1))
     return b
 
 
@@ -438,11 +453,11 @@ def mk_beacon(rng):
     b = Builder()
     g = G(b)
     nz = Noise(rng, 4, 2.2)
-    turf = lambda p, n: (0.45, 0.48, 0.32) if n.y > 0.6 else (0.6, 0.52, 0.42)  # noqa: E731
-    mound(g, (0, 0.0, 0), 1.95, 1.85, 0.75, rng, col_fn=turf, rings=8, seg=28, rough=0.06, power=0.7)
+    turf = lambda p, n: (0.36, 0.44, 0.21) if n.y > 0.75 else (0.44, 0.44, 0.28)  # noqa: E731
+    mound(g, (0, 0.0, 0), 2.25, 2.15, 0.6, rng, col_fn=turf, rings=10, seg=32, rough=0.08, power=1.5)
     for k in range(13):
         a = k / 13 * 2 * math.pi + rng.uniform(-0.1, 0.1)
-        stone(g, (math.cos(a) * 1.85, 0.02, math.sin(a) * 1.75), (0.2, 0.12, 0.16), rng,
+        stone(g, (math.cos(a) * 2.0, 0.0, math.sin(a) * 1.9), (0.2, 0.12, 0.16), rng,
               col_fn=rock_col((0.85, 0.83, 0.78), moss=0.5, noise=nz))
     top = V(0, 3.3, 0)
     feet = [V(math.cos(a) * 1.05, 0.45, math.sin(a) * 1.05) for a in (0.3, 0.3 + 2.094, 0.3 + 4.189)]
@@ -474,7 +489,7 @@ def mk_beacon(rng):
             pole(g, s * off + d * -r + V(0, y, 0), s * off + d * r + V(0, y, 0), 0.04, 0.04, rng, mat=M_BARK,
                  col=(0.3, 0.25, 0.2), sides=6, segs=1)
     # Ladder leaning on the south leg.
-    l0, l1 = V(0.1, 0.25, 1.75), V(0.05, 3.0, 0.42)
+    l0, l1 = V(0.1, 0.1, 1.85), V(0.05, 3.0, 0.42)
     d = (l1 - l0).normalized()
     s = d.cross(V(1, 0, 0)).normalized()
     side = V(1, 0, 0)
@@ -485,12 +500,12 @@ def mk_beacon(rng):
         p = l0.lerp(l1, (k + 0.6) / (n_r + 0.4))
         pole(g, p - side * 0.21, p + side * 0.21, 0.018, 0.018, rng, col=(0.9, 0.82, 0.68), sides=5, segs=1)
     # Pitch keg + a spare torch bundle at the foot.
-    kc = (1.1, 0.0, 1.35)
-    frustum(g, 0.2, 0.2, -0.05, 0.48, 12, M_PLANK, (0.55, 0.45, 0.36), tile=0.6, centre=kc, segs=2)
+    kc = (1.1, 0.1, 1.35)
+    frustum(g, 0.2, 0.2, kc[1] - 0.05, 0.48, 12, M_PLANK, (0.55, 0.45, 0.36), tile=0.6, centre=kc, segs=2)
     for y in (0.06, 0.38):
-        ring = [V(kc[0] + math.cos(a) * 0.215, y, kc[2] + math.sin(a) * 0.215) for a in np.linspace(0, 2 * math.pi, 15)]
+        ring = [V(kc[0] + math.cos(a) * 0.215, y + kc[1], kc[2] + math.sin(a) * 0.215) for a in np.linspace(0, 2 * math.pi, 15)]
         tube(g, ring, [0.012] * len(ring), 4, M_IRON, (0.3, 0.28, 0.26), tile=0.3, cap=False)
-    fan(g, [V(kc[0] + math.cos(a) * 0.19, 0.44, kc[2] + math.sin(a) * 0.19) for a in np.linspace(2 * math.pi, 0, 13)[:-1]],
+    fan(g, [V(kc[0] + math.cos(a) * 0.19, 0.44 + kc[1], kc[2] + math.sin(a) * 0.19) for a in np.linspace(2 * math.pi, 0, 13)[:-1]],
         M_WATER, (0.03, 0.025, 0.02), 0.5)
     for k in range(4):
         a = rng.uniform(-0.3, 0.3)

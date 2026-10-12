@@ -642,8 +642,26 @@ pub(crate) fn kit_piece(commands: &mut Commands, name: &str, x: f32, z: f32, yaw
 pub fn ground_wear_passes() -> Vec<(Vec2, f32, Box<dyn Fn(f32, f32) -> Option<(f32, f32, f32)> + Send + Sync>)> {
     let beacon = crate::watch_beacon::site();
     vec![
-        (Vec2::new(43.0, 33.0), 14.0, Box::new(crate::pasture::ground_wear)),
+        (crate::pasture::WEAR_C, crate::pasture::WEAR_R, Box::new(crate::pasture::ground_wear)),
         (Vec2::new(15.0, -39.0), 14.0, Box::new(crate::drill_yard::ground_wear)),
         (beacon, 6.0, Box::new(move |x, z| crate::watch_beacon::ground_wear_at(beacon, x, z))),
     ]
+}
+
+/// Grass tufts (the scatter's own `grass_*` / flower models) set on a kit piece's turf as children
+/// at local points `pts` — so a turfed bank or mound grows the same grass as the meadow around it.
+pub(crate) fn turf_tufts(commands: &mut Commands, parent: Entity, pts: &[Vec3], seed: u32) {
+    const TUFTS: [&str; 6] = ["grass_a", "grass_b", "grass_c", "grass_d", "grass_b", "flower_daisy"];
+    let Some(kit) = crate::realforest::get() else { return };
+    for (k, p) in pts.iter().enumerate() {
+        let h = seed.wrapping_add(k as u32 * 0x9E37);
+        let name = TUFTS[(hash01(h) * TUFTS.len() as f32) as usize % TUFTS.len()];
+        let tf = Transform::from_translation(*p)
+            .with_rotation(Quat::from_rotation_y(hash01(h ^ 0x51) * std::f32::consts::TAU))
+            .with_scale(Vec3::splat(0.6 + 0.45 * hash01(h ^ 0xA7)));
+        let range = bevy::camera::visibility::VisibilityRange { start_margin: 0.0..0.0, end_margin: 60.0..70.0, use_aabb: true };
+        if let Some(e) = kit.spawn_static_with(commands, name, tf, range) {
+            commands.entity(parent).add_child(e);
+        }
+    }
 }

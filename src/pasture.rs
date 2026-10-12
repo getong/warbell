@@ -21,13 +21,16 @@ use crate::meadow::{hash01, kit_piece, sky_t, walk_body};
 use crate::savegame::WorldFlags;
 
 /// Fold centre (world XZ). Local frame: x ±3.5, z ±2.5, the gate gap on the −X side.
-pub const FOLD_C: Vec2 = Vec2::new(46.5, 38.0);
+/// Centre / reach of the worn ground (the realforest mask pass).
+pub const WEAR_C: Vec2 = Vec2::new(39.0, 34.0);
+pub const WEAR_R: f32 = 12.0;
+pub const FOLD_C: Vec2 = Vec2::new(40.0, 39.5);
 const FOLD_HX: f32 = 3.5;
 const FOLD_HZ: f32 = 2.5;
 /// The grazing ground.
 pub const GRAZE_C: Vec2 = Vec2::new(40.5, 27.5);
 const GRAZE_R: f32 = 7.0;
-const TROUGH: (Vec2, f32) = (Vec2::new(39.2, 33.6), 0.35);
+const TROUGH: (Vec2, f32) = (Vec2::new(36.9, 34.4), 0.5);
 /// Start / full flock and the lambing cap.
 const START_FLOCK: i64 = 8;
 pub const SHEEP_CAP: i64 = 12;
@@ -59,7 +62,7 @@ pub fn planned_footprints() -> Vec<(Vec2, f32)> {
 /// fold gate and the trough, a sheep track from the grass to the gate, straw spill inside.
 pub fn ground_wear(wx: f32, wz: f32) -> Option<(f32, f32, f32)> {
     let p = Vec2::new(wx, wz);
-    if p.distance(Vec2::new(43.0, 33.0)) > 14.0 {
+    if p.distance(WEAR_C) > WEAR_R {
         return None;
     }
     let ss = |a: f32, b: f32, x: f32| {
@@ -72,13 +75,15 @@ pub fn ground_wear(wx: f32, wz: f32) -> Option<(f32, f32, f32)> {
         let t = ((p - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0);
         p.distance(a + ab * t)
     };
-    let track = 1.0 - ss(0.5, 1.4, seg(GRAZE_C + Vec2::new(1.5, 3.0), TROUGH.0) + wob).max(0.0);
-    let track2 = 1.0 - ss(0.5, 1.3, seg(TROUGH.0, gate_out()) + wob);
+    // Sheep tracks: narrow, broken, grass between the hoof lines.
+    let broken = 0.55 + 0.45 * ((wx * 0.9 + wz * 1.3).sin() * (wz * 0.7 - wx * 0.4).cos()).abs();
+    let track = (1.0 - ss(0.25, 0.9, seg(GRAZE_C + Vec2::new(-1.0, 3.5), TROUGH.0) + wob)) * broken;
+    let track2 = (1.0 - ss(0.25, 0.9, seg(TROUGH.0, gate_out()) + wob)) * broken;
     let gate = 1.0 - ss(1.2, 2.8, p.distance(gate_out()) + wob);
     let trough = 1.0 - ss(1.0, 2.2, p.distance(TROUGH.0 + Vec2::new(0.0, 0.5)) + wob);
     let l = p - FOLD_C;
     let inside = if l.x.abs() < FOLD_HX && l.y.abs() < FOLD_HZ { 1.0 - ss(-0.6, 0.0, (l.x.abs() - FOLD_HX).max(l.y.abs() - FOLD_HZ)) } else { 0.0 };
-    let path = (track * 0.55).max(track2 * 0.6).max(gate * 0.85).max(trough * 0.8).max(inside * 0.7);
+    let path = (track * 0.38).max(track2 * 0.45).max(gate * 0.8).max(trough * 0.8).max(inside * 0.7);
     if path <= 0.01 {
         return None;
     }

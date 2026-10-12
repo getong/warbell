@@ -113,17 +113,28 @@ fn spawn_beacon(
         return;
     };
     commands.entity(e).insert(BeaconSite { at, base_y });
+    // Turf on the mound (meadow_kit `mk_beacon`: r ~2.2, 0.6 high, profile (1 - f²)^1.5), clear of
+    // the tripod feet and the ladder.
+    let pts: Vec<Vec3> = (0..28u32)
+        .filter_map(|k| {
+            let a = crate::meadow::hash01(k * 3 + 11) * std::f32::consts::TAU;
+            let r = 0.55 + 1.6 * crate::meadow::hash01(k * 5 + 2).sqrt();
+            let (x, z) = (a.cos() * r, a.sin() * r);
+            let f = (r / 2.2).min(1.0);
+            ((x - 0.1).abs() > 0.4 || z < 0.3).then(|| Vec3::new(x, 0.6 * (1.0 - f * f).powf(1.5) - 0.04, z))
+        })
+        .collect();
+    crate::meadow::turf_tufts(&mut commands, e, &pts, 0xBEAC);
     crate::blockers::add_obb(at.x, at.y, 1.3, 1.3, 0.0);
     // The fire: hidden until lit.
     commands.spawn((
         crate::flame_fx::flame_bundle(Vec3::new(at.x, base_y + FIRE_Y, at.y), 1.5, 0.4),
         crate::firelight::campfire_light(0.4),
         BeaconFire,
-        Visibility::Hidden,
         BiomeEntity,
-    ));
+    )).insert(Visibility::Hidden);
     // The signal torch (shown on Flank nights, bobbing over the keeper's head).
-    commands.spawn((crate::flame_fx::flame_bundle(Vec3::new(at.x, base_y + 2.0, at.y), 0.45, 1.3), TorchFlame, Visibility::Hidden, BiomeEntity));
+    commands.spawn((crate::flame_fx::flame_bundle(Vec3::new(at.x, base_y + 2.0, at.y), 0.45, 1.3), TorchFlame, BiomeEntity)).insert(Visibility::Hidden);
     let post = at + Vec2::new(0.9, 2.6);
     let g = crate::villagers::spawn_rts_militia(&mut commands, &mut meshes, &mut cmats, false, post, 0xBEAC);
     commands.entity(g).insert((crate::scenes::SceneActor, Keeper { state: 0, t: 0.0, lit_day: -1 }));
@@ -172,7 +183,14 @@ fn beacon_keeper(
                 face_body(&mut v, &mut tf, site.at + Vec2::new(0.0, 12.0), dt);
             }
             if dusk && k.lit_day != day {
-                k.state = 1;
+                // Entered well after dusk (a load, a night start): the beacon is already burning.
+                if t >= 0.47 || wave {
+                    k.lit_day = day;
+                    k.state = 5;
+                    lit = !(arson && *wave_t > 25.0);
+                } else {
+                    k.state = 1;
+                }
             }
         }
         1 => {

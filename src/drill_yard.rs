@@ -25,7 +25,7 @@ const BENCH: (Vec2, f32) = (Vec2::new(14.4, -36.6), 0.1);
 /// Where the drill files out of / back into the postern.
 const POSTERN_OUT: Vec2 = Vec2::new(6.0, -27.5);
 /// Drill hours (sky clock): early morning to late morning.
-const DRILL_T: (f32, f32) = (0.03, 0.24);
+const DRILL_T: (f32, f32) = (0.03, 0.3);
 pub const DRILL_HP: f32 = 1.25;
 pub const DRILL_DMG: f32 = 1.15;
 
@@ -105,6 +105,8 @@ struct ArrowMesh(Handle<Mesh>, Handle<StandardMaterial>);
 fn spawn_drill_yard(
     mut commands: Commands,
     ready: Res<crate::biome::WorldReady>,
+    clock: Option<Res<crate::scene::SkyClock>>,
+    siege: Option<Res<crate::siege::Siege>>,
     site: Query<(), With<DrillSite>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut mats: ResMut<Assets<StandardMaterial>>,
@@ -116,7 +118,15 @@ fn spawn_drill_yard(
     let mut anchor = commands.spawn((DrillSite, BiomeEntity, Transform::default()));
     anchor.insert(Visibility::Hidden);
     for (c, yaw) in BUTTS {
-        kit_piece(&mut commands, "drill_butt", c.x, c.y, yaw, 0.05);
+        if let Some(e) = kit_piece(&mut commands, "drill_butt", c.x, c.y, yaw, 0.05) {
+            // Grass on the crest and round the foot of the turf bank.
+            let mut pts: Vec<Vec3> = (0..9).map(|k| Vec3::new(-1.15 + k as f32 * 0.29, 1.2, -0.25 + 0.3 * crate::meadow::hash01(k * 7 + 1))).collect();
+            pts.extend((0..10).map(|k| {
+                let a = k as f32 / 10.0 * std::f32::consts::TAU;
+                Vec3::new(a.cos() * 1.85, 0.0, a.sin() * 0.95 - 0.1)
+            }));
+            crate::meadow::turf_tufts(&mut commands, e, &pts, 0xB077 + (c.x * 10.0) as u32);
+        }
         crate::blockers::add_obb(c.x, c.y - 0.2, 1.4, 0.7, yaw);
     }
     for (k, c) in PELLS.iter().enumerate() {
@@ -135,8 +145,11 @@ fn spawn_drill_yard(
         (PELLS[0] + Vec2::new(-0.2, 0.95), PELLS[0], false),
         (PELLS[1] + Vec2::new(-0.75, 0.6), PELLS[1], false),
     ];
+    // A world entered mid-drill (a load, a noon start) finds the crew already at work.
+    let mid_drill = siege.as_deref().is_some_and(|s| drill_on(sky_t(clock.as_deref()), s));
     for (k, (post, face, archer)) in posts.into_iter().enumerate() {
-        let e = crate::villagers::spawn_rts_militia(&mut commands, &mut meshes, &mut cmats, archer, POSTERN_OUT, 0xD811 + k as u32 * 7);
+        let at = if mid_drill { post } else { POSTERN_OUT };
+        let e = crate::villagers::spawn_rts_militia(&mut commands, &mut meshes, &mut cmats, archer, at, 0xD811 + k as u32 * 7);
         commands.entity(e).insert((crate::scenes::SceneActor, Trainee { post, face, archer, next: k as f32 * 0.7 }, Visibility::Hidden));
     }
     let mesh = meshes.add(Cuboid::new(0.018, 0.018, 0.62).mesh().build());
