@@ -171,6 +171,46 @@ def panel(g, a, b, y0, top, thick, mat, col_fn, tile=1.6, steps=12, inward=None)
         g.poly(q, [((x - p).dot(n) / tile, x.y / tile) for x in q], [nn] * 4, [col_fn(x, nn) for x in q], mat)
 
 
+def masonry(g, a, b, y0, top, thick, mat, col_fn, rng, course=0.22, lmin=0.28, lmax=0.55, sides=(1, -1),
+            tile=1.6, steps=12, missing=0.04, mortar=0.42, depth=0.16):
+    """A wall built stone by stone: a recessed core (dark mortar / rubble fill, `panel`) with a skin of
+    individual rough-dressed stones laid in courses on each face in `sides`, joints staggered, every
+    stone chipped (`slab` with a little noise) and tinted on its own; the crown follows `top(s)`
+    stone by stone (a stone whose top would stand above it is left out) and a few go missing."""
+    A, B = Vector((a[0], 0, a[1])), Vector((b[0], 0, b[1]))
+    t = B - A
+    L = t.length
+    t.normalize()
+    n = Vector((0, 1, 0)).cross(t).normalized()
+    yaw = math.atan2(-t.z, t.x)
+    core = lambda p, nn: scale(col_fn(p, nn), mortar)  # noqa: E731
+    panel(g, a, b, y0, lambda s_: top(s_) - 0.06, thick - 2 * depth + 0.06, mat, core, tile=tile, steps=steps)
+    for side in sides:
+        y = y0
+        row = 0
+        while True:
+            h = course * rng.uniform(0.8, 1.2)
+            u = -rng.uniform(0.0, lmax) if row % 2 else 0.0
+            while u < L:
+                ln = rng.uniform(lmin, lmax)
+                u0, u1 = max(u, 0.0), min(u + ln, L)
+                u = u + ln
+                if u1 - u0 < 0.08:
+                    continue
+                sc = (u0 + u1) / 2 / L
+                if y + h > top(sc) + 0.02 or rng.uniform() < missing:
+                    continue
+                k = rng.uniform(0.82, 1.15)
+                c = A + t * ((u0 + u1) / 2) + n * side * (thick / 2 - depth / 2) + V(0, y + h / 2, 0)
+                slab(g, tuple(c), (u1 - u0 - 0.025, h - 0.025, depth + rng.uniform(-0.02, 0.03)),
+                     quat_y(yaw) @ quat_z(rng.uniform(-0.03, 0.03)), rng, mat=mat, res=(2, 1, 1), round_r=0.03,
+                     rough=0.05, col_fn=lambda p, nn, k=k: scale(col_fn(p, nn), k), tile=tile)
+            y += h
+            row += 1
+            if y > max(top(i / 8) for i in range(9)):
+                break
+
+
 def water_disc(g, centre, rx, rz, y, rng, seg=22, col=WATER):
     """A flat sheet of still black water (bogwater), slightly irregular outline."""
     nz = Noise(rng, 3, 1.5)
@@ -373,25 +413,25 @@ def site_mission_chapel(rng):
     for sx, k in ((-1, 0.0), (1, 1.7)):
         x = sx * (XW - T / 2)
         # lower course run the whole length
-        panel(g, (x, Z0 + T), (x, Z1 - T), -0.6, lambda s, k=k: 1.25 - 0.55 * smoothstep(0.55, 1.0, s) + jag(s, k),
-              T, M_CHAPEL, stn, tile=2.0, steps=14)
+        masonry(g, (x, Z0 + T), (x, Z1 - T), -0.3, lambda s, k=k: 1.25 - 0.55 * smoothstep(0.55, 1.0, s) + jag(s, k),
+              T, M_CHAPEL, stn, rng, tile=2.0, steps=14)
         # piers between the lancet windows, front half only (the back half fell)
         for z0, z1, top in ((Z0 + T, -1.9, 3.1), (-1.45, -0.2, 2.9 - 0.4 * (sx > 0)), (0.25, 1.1, 2.2 - 0.6 * (sx > 0))):
-            panel(g, (x, z0), (x, z1), 1.2, lambda s, top=top, k=k: top + jag(s, k + 3.0) - 0.25 * s, T, M_CHAPEL, stn,
-                  tile=2.0, steps=5)
+            masonry(g, (x, z0), (x, z1), 1.2, lambda s, top=top, k=k: top + jag(s, k + 3.0) - 0.25 * s, T, M_CHAPEL, stn,
+                    rng, tile=2.0, steps=5)
         # lintel stones over the windows still in place on the left
         if sx < 0:
             slab(g, (x, 2.55, -1.67), (T + 0.04, 0.22, 0.75), quat_y(0.0), rng, mat=M_CHAPEL, res=(2, 1, 3), round_r=0.03,
                  rough=0.03, col_fn=stn, tile=1.0)
     # Back wall: a ragged stump.
-    panel(g, (-XW, Z1 - T / 2), (XW, Z1 - T / 2), -0.6, lambda s: 0.7 + 0.5 * math.sin(s * 3.0) + jag(s, 5.0), T,
-          M_CHAPEL, stn, tile=2.0, steps=12)
+    masonry(g, (-XW, Z1 - T / 2), (XW, Z1 - T / 2), -0.3, lambda s: 0.7 + 0.5 * math.sin(s * 3.0) + jag(s, 5.0), T,
+            M_CHAPEL, stn, rng, tile=2.0, steps=12)
     # Front gable with the door (gap |x| < 0.55, up to 2.1) and the gable peak at 4.4.
     zf = Z0 + T / 2
     gable = lambda x: 3.2 + 1.2 * (1.0 - abs(x) / XW)  # noqa: E731
-    panel(g, (-XW, zf), (-0.55, zf), -0.6, lambda s: gable(-XW + s * (XW - 0.55)), T, M_CHAPEL, stn, tile=2.0, steps=6)
-    panel(g, (0.55, zf), (XW, zf), -0.6, lambda s: gable(0.55 + s * (XW - 0.55)), T, M_CHAPEL, stn, tile=2.0, steps=6)
-    panel(g, (-0.55, zf), (0.55, zf), 2.3, lambda s: gable(-0.55 + s * 1.1), T, M_CHAPEL, stn, tile=2.0, steps=4)
+    masonry(g, (-XW, zf), (-0.55, zf), -0.3, lambda s: gable(-XW + s * (XW - 0.55)), T, M_CHAPEL, stn, rng, tile=2.0, steps=6)
+    masonry(g, (0.55, zf), (XW, zf), -0.3, lambda s: gable(0.55 + s * (XW - 0.55)), T, M_CHAPEL, stn, rng, tile=2.0, steps=6)
+    masonry(g, (-0.55, zf), (0.55, zf), 2.3, lambda s: gable(-0.55 + s * 1.1), T, M_CHAPEL, stn, rng, tile=2.0, steps=4)
     # Door arch voussoirs.
     ac, ar = V(0.0, 1.95, zf), 0.62
     for k in range(9):
@@ -480,10 +520,20 @@ def site_mission_chapel(rng):
          col_fn=stn, tile=0.6)
     # Peat banked up the walls outside, black water pooling at the front, fallen stones, sedge.
     pf = peat_fn(rng, grass=0.55)
-    for c, rx, rz, h in (((-2.2, 0.0, 0.0), 0.8, 3.2, 0.45), ((2.25, 0.0, 0.6), 0.75, 2.8, 0.4),
-                         ((0.0, 0.0, 3.5), 2.3, 0.7, 0.45), ((-1.8, 0.0, -3.3), 0.9, 0.6, 0.3)):
-        mound(base, c, rx, rz, h, rng, mat=M_PEAT, col_fn=pf, tile=1.2, rings=5, seg=18, skirt=0.25)
+    for c, rx, rz, h in (((-2.3, 0.0, 0.0), 1.1, 3.4, 0.3), ((2.35, 0.0, 0.6), 1.0, 3.0, 0.26),
+                         ((0.0, 0.0, 3.6), 2.6, 0.95, 0.3), ((-1.8, 0.0, -3.3), 1.1, 0.8, 0.2)):
+        mound(base, c, rx, rz, h, rng, mat=M_PEAT, col_fn=pf, tile=1.2, rings=6, seg=22, skirt=0.3, edge=0.32,
+              power=0.55, rough=0.2)
     water_disc(base, (0.3, 0, -3.9), 1.6, 0.75, 0.0, rng)
+    # Fallen wall stones (single dressed blocks) scattered at the wall feet, half sunk in the peat.
+    for k in range(30):
+        side = rng.choice([-1, 1])
+        p = V(side * rng.uniform(1.95, 2.9), rng.uniform(-0.05, 0.08), rng.uniform(-2.6, 3.4))
+        if k % 3 == 0:
+            p = V(rng.uniform(-2.0, 2.0), rng.uniform(-0.05, 0.08), rng.uniform(3.0, 3.8))
+        slab(base, tuple(p), (rng.uniform(0.25, 0.48), rng.uniform(0.16, 0.24), rng.uniform(0.14, 0.2)),
+             quat_y(rng.uniform(0, 3)) @ quat_x(rng.uniform(-0.4, 0.4)) @ quat_z(rng.uniform(-0.3, 0.3)), rng, mat=M_CHAPEL,
+             res=(2, 1, 1), round_r=0.03, rough=0.06, col_fn=stn, tile=1.6)
     for k in range(9):
         a = rng.uniform(0, 2 * math.pi)
         p = V(math.cos(a) * rng.uniform(2.1, 3.0), 0.05, math.sin(a) * rng.uniform(3.0, 3.6))
@@ -705,21 +755,25 @@ def site_peat_cutting(rng):
     layered = lambda base: (lambda p, n: mix(peat_fn(rng, grass=0.9)(p, n),  # noqa: E731
                                              scale(base, 0.75 + 0.25 * math.sin(p.y * 38.0) ** 2),
                                              smoothstep(0.6, 0.2, abs(n.y))))
-    # The bank: a long mound with its -Z face cut vertical in two steps.
-    for k, (z, h, d) in enumerate(((1.45, 0.95, 0.9), (0.55, 0.5, 0.45))):
-        c = V(0.4, 0.0, z)
-        lbox(g, tuple(c + V(0, h / 2 - 0.2, 0)), (4.0 - k * 0.4, h + 0.2, d * 2 - 0.1), quat_y(0.0), M_PEAT,
-             [scale((0.55, 0.42, 0.3), 0.8), None, (0.85, 0.72, 0.55)], tile=0.9, grain=1)
-        mound(g, (c.x, h - 0.16, c.z + 0.15), 2.35 - k * 0.2, d + 0.3, 0.2, rng, mat=M_PEAT,
-              col_fn=peat_fn(rng, grass=1.0), tile=1.0, rings=4, seg=18, skirt=0.06)
-    mound(g, (0.4, -0.1, 2.6), 2.6, 0.9, 0.55, rng, mat=M_PEAT, col_fn=peat_fn(rng, grass=1.0), tile=1.2, rings=5,
-          seg=18, skirt=0.25)
-    # Spade-cut marks: the face is stepped in brick-sized notches along its top.
-    for k in range(7):
-        x = -1.4 + k * 0.55
-        if k % 3 == 1:
-            continue
-        lbox(g, (x, 0.35 + 0.02 * k, 0.12), (0.34, 0.24, 0.16), quat_y(0.02 * k), M_PEAT, (0.62, 0.5, 0.38), tile=0.4)
+    # The bank: a long low hump of peat (grass on top) whose -Z side has been cut back into a
+    # stepped face — the face laid up of the very bricks the slanes cut, in courses, a few pulled out.
+    pf_top = peat_fn(rng, grass=1.0)
+    mound(g, (0.4, -0.1, 1.75), 2.9, 1.35, 0.85, rng, mat=M_PEAT, col_fn=pf_top, tile=1.2, rings=6, seg=22, skirt=0.3,
+          edge=0.18, power=0.7)
+    for step, (z, h) in enumerate(((0.62, 0.62), (0.2, 0.3))):
+        for row in range(int(h / 0.15) + 1):
+            y = -0.08 + row * 0.15
+            x = -1.7 + (0.14 if row % 2 else 0.0) + step * 0.3
+            while x < 2.5 - step * 0.4:
+                w = rng.uniform(0.24, 0.32)
+                if rng.uniform() > 0.06:
+                    k = rng.uniform(0.85, 1.1)
+                    lbox(g, (x + w / 2, y + 0.07, z + rng.uniform(-0.02, 0.02)), (w - 0.02, 0.13, 0.32),
+                         quat_y(rng.uniform(-0.03, 0.03)), M_PEAT,
+                         [scale((0.55, 0.42, 0.3), k), None, scale((0.78, 0.64, 0.48), k)], tile=0.5, grain=1)
+                x += w
+        mound(g, (0.4, h - 0.12, z + 0.35), 2.2 - step * 0.3, 0.42, 0.12, rng, mat=M_PEAT, col_fn=pf_top,
+              tile=1.0, rings=4, seg=16, skirt=0.08)
     # The trench, full of black water, and a ridge of spoil.
     water_quad(g, [(-1.9, -0.1), (2.6, -0.1), (2.6, -0.9), (-1.9, -0.9)], -0.08)
     mound(g, (0.4, -0.05, -1.25), 2.4, 0.35, 0.16, rng, mat=M_PEAT, col_fn=peat_fn(rng, wet=0.55, grass=0.3), tile=1.0,
@@ -884,9 +938,9 @@ def site_signal_tower(rng):
         p0 = (C.x + math.cos(a0) * (R - T / 2), C.z + math.sin(a0) * (R - T / 2))
         p1 = (C.x + math.cos(a1) * (R - T / 2), C.z + math.sin(a1) * (R - T / 2))
         if k == 15:  # the door
-            panel(g, p0, p1, 1.9, top, T, M_SLATE, sl, tile=2.2, steps=2)
+            masonry(g, p0, p1, 1.9, top, T, M_SLATE, sl, rng, tile=2.2, steps=2, course=0.16, lmin=0.2, lmax=0.42, sides=(1,), depth=0.14)
             continue
-        panel(g, p0, p1, -0.5, top, T, M_SLATE, sl, tile=2.2, steps=2)
+        masonry(g, p0, p1, -0.25, top, T, M_SLATE, sl, rng, tile=2.2, steps=2, course=0.16, lmin=0.2, lmax=0.42, sides=(1,), depth=0.14)
     # Door lintel.
     a = 2 * math.pi * 15.5 / n
     slab(g, (C.x + math.cos(a) * (R - 0.2), 1.98, C.z + math.sin(a) * (R - 0.2)), (0.85, 0.18, 0.5), quat_y(-a + math.pi / 2),
@@ -1105,28 +1159,28 @@ def site_scree_battlefield(rng):
     g = G(b)
     sl = stone_fn(SLATE, rng, moss=0.08, damp_h=0.4, y0=-0.2)
     gr = stone_fn(GRANITE, rng, moss=0.15, damp_h=0.4, y0=-0.2)
-    mound(g, (0.0, -0.05, 1.6), 3.1, 2.1, 1.0, rng, mat=M_SLATE, col_fn=sl, tile=1.0, rings=6, seg=22, skirt=0.2,
-          rough=0.25, power=0.7)
+    mound(g, (0.0, -0.1, 1.6), 3.1, 2.1, 0.55, rng, mat=M_SLATE, col_fn=sl, tile=0.8, rings=6, seg=22, skirt=0.2,
+          rough=0.35, power=0.7, edge=0.3)
     mound(g, (0.3, -0.05, -0.6), 2.6, 1.5, 0.3, rng, mat=M_SLATE, col_fn=sl, tile=1.0, rings=5, seg=20, skirt=0.15,
           rough=0.3)
-    for _ in range(46):
+    for _ in range(110):
         p = V(rng.uniform(-2.8, 2.8), 0.0, rng.uniform(-1.8, 3.2))
-        h = 1.0 * max(0.0, 1 - ((p.x / 3.1) ** 2 + ((p.z - 1.6) / 2.1) ** 2)) ** 0.7
+        h = 0.55 * max(0.0, 1 - ((p.x / 3.1) ** 2 + ((p.z - 1.6) / 2.1) ** 2)) ** 0.7
         h = max(h, 0.3 * max(0.0, 1 - ((p.x - 0.3) / 2.6) ** 2 - ((p.z + 0.6) / 1.5) ** 2))
         r = rng.uniform(0.1, 0.38)
         stone(g, (p.x, h + r * 0.2, p.z), (r, r * rng.uniform(0.5, 0.8), r * rng.uniform(0.7, 1.0)), rng,
               mat=M_SLATE if rng.uniform() < 0.6 else M_GRANITE, detail=1, rough=0.12, cuts=2,
               col_fn=sl if rng.uniform() < 0.6 else gr, tile=0.6)
-    helmet(g, (-0.8, 0.42, 0.3), quat_x(0.5) @ quat_z(0.3), rng)
+    helmet(g, (-0.8, 0.36, 0.3), quat_x(0.5) @ quat_z(0.3), rng)
     helmet(g, (1.1, 0.25, -0.6), quat_x(-0.3) @ quat_z(-0.6), rng)
-    helmet(g, (0.2, 0.95, 1.6), quat_x(0.9) @ quat_z(0.1), rng)
-    cleaver(g, V(-1.5, 0.75, 1.5), V(0.5, 0.65, -0.4), rng, s=1.2)
+    helmet(g, (0.2, 0.6, 1.6), quat_x(0.9) @ quat_z(0.1), rng)
+    cleaver(g, V(-1.5, 0.45, 1.5), V(0.5, 0.65, -0.4), rng, s=1.2)
     cleaver(g, V(0.6, 0.12, -1.1), V(0.9, 0.15, 0.5), rng)
-    cleaver(g, V(1.6, 0.6, 1.2), V(-0.2, 0.9, -0.3), rng, s=1.1)
+    cleaver(g, V(1.6, 0.42, 1.2), V(-0.2, 0.9, -0.3), rng, s=1.1)
     # The snapped pike, the colony marker: a pike butt planted, a helmet hung on it.
     pk = V(-1.9, 0.0, -0.4)
     pole(g, pk + V(0, -0.4, 0), pk + V(0.12, 1.55, 0.04), 0.03, 0.026, rng, mat=M_PLANK, col=(0.6, 0.58, 0.55), sides=6)
-    helmet(g, pk + V(0.12, 1.6, 0.04), quat_x(0.15), rng, s=0.95)
+    helmet(g, pk + V(0.2, 1.48, 0.04), quat_z(-1.1) @ quat_x(0.2), rng, s=0.95)
     tube(g, [V(0.9, 0.35, 0.3), V(2.2, 0.45, 1.3)], [0.028, 0.026], 6, M_PLANK, (0.55, 0.53, 0.5), tile=0.3)
     lbox(g, (2.3, 0.47, 1.38), (0.04, 0.03, 0.28), quat_y(-0.9), M_RUST, (0.6, 0.5, 0.42), tile=0.2)
     # Shield: the iron boss and a bent rim lying flat.
@@ -1135,7 +1189,7 @@ def site_scree_battlefield(rng):
     rim = [sc + V(math.cos(t) * 0.42, -0.04 + 0.04 * math.sin(3 * t), math.sin(t) * 0.38) for t in np.linspace(0, 1.6 * math.pi, 17)]
     tube(g, rim, [0.012] * 17, 4, M_RUST, (0.55, 0.45, 0.38), tile=0.2, cap=False)
     # Bones: a long bone and rib arcs between the stones.
-    tube(g, [V(0.5, 0.35, 0.6), V(0.95, 0.4, 0.75)], [0.03, 0.028], 6, M_STONE, BONE, tile=0.2)
+    tube(g, [V(0.5, 0.42, 0.6), V(0.95, 0.45, 0.75)], [0.03, 0.028], 6, M_STONE, BONE, tile=0.2)
     for k in range(3):
         p = V(-0.4 + k * 0.12, 0.3, 0.9)
         tube(g, [p, p + V(0.1, 0.12, 0.05), p + V(0.25, 0.1, 0.08)], [0.012, 0.012, 0.008], 4, M_STONE, BONE, tile=0.2)
