@@ -1,12 +1,12 @@
 //! **Vista pass** (map-character overhaul pass 5) — the "miejsca w które się można wpatrywać":
-//! a WATERFALL plunging off the head wall of the rock range's slot gorge into the lake (the
+//! a WATERFALL plunging off the head wall of the rock range's SW valley toward the lake (the
 //! island's one moving landmark — motion + white water pull the eye from the whole south), and
 //! three authored OVERLOOK spots — a framing prop (crooked lone pine + sitting stone + cairn) on a
 //! shelf edge with a composed view behind it: the rock summit gazing back at the castle plain,
 //! the snow summit over the western sea, and the canyon mouth's release onto the desert.
 //!
 //! The waterfall is found procedurally but deterministically from the authored plunge-stream
-//! head (`worldmap::BLUE_STREAMS[0]`): a fan of bearings into the head wall is profiled and the
+//! head (`worldmap::plunge_path`): a fan of bearings into the head wall is profiled and the
 //! tallest, steepest one wins; its LIP is where the climb out of the pool flattens onto the
 //! plateau (≈11–24u up). From there:
 //! - the SHEET is a ribbon of water columns each SIMULATED off the lip (gravity + a steady
@@ -330,7 +330,7 @@ pub fn overlook_anchors() -> Vec<(Vec2, Vec2, &'static str)> {
 
 /// The waterfall (see the module doc). Logs the lip / drop so a capture can frame it.
 fn populate_falls(commands: &mut Commands, meshes: &mut Assets<Mesh>) {
-    // The plunge head is the AUTHORED stream capsule's head (`worldmap::BLUE_STREAMS[0]`, carved
+    // The plunge head is the AUTHORED waterfall stream's head (`worldmap::plunge_path`, carved
     // water connected to the lake); the head wall rises against the flow.
     let (head, flow) = crate::worldmap::waterfall_site_world();
     let base_y = crate::worldmap::SEA_Y + 0.05;

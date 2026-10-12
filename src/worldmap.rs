@@ -339,7 +339,7 @@ const REGIONS: [Region; 5] = [
     // desert and slides S/SE over the old E marsh arm, so it loses ~12% of its tiles (43.6k →
     // 38.1k) while the desert gains 11k. (Not further S: at (118,62) too little low rock apron was
     // left for the rocky story scenes — `stories_cold_plan_seats_every_scene_in_its_biome`.) The DEM rides the centre, so the summits, the pass valleys and the SW waterfall wall
-    // over the lake (`BLUE_STREAMS[0]`, ≈18 base WSW of the centre) keep their relief.
+    // over the lake (`plunge_path`, ≈18 base WSW of the centre) keep their relief.
     Region { x: 117.0, z: 60.0, r: 38.0, biome: TB::Rock, peak: 22, cliffy: true, passes: &ROCK_PASSES },
     // SW forest + S swamp: r +2/+3 (pass 0, map-character overhaul) — the two most
     // "nothing left once you subtract the claims" biomes get extra interior on top of the
@@ -874,22 +874,78 @@ const POOL_BLOBS: [(f32, f32, f32, f32); 3] = [
 /// carve the fight arena into islands (warden `region_center` (0,57), GLADE_R 16 + roam 13).
 const POOL_WARDEN_KEEPOUT: f32 = 22.0;
 
-/// The lake's BLUE feeder + drain capsules (BASE space, `((ax,az),(bx,bz),half)`): the water that
-/// keeps the deliberate lake a *living* body — a waterfall pours IN, a brook drains OUT — instead
-/// of a stagnant blue dot. Rendered as CLEAR water, NOT olive bog: the bog murk mask keys on
-/// `pool_sd` alone, so everything here stays blue even where the brook threads the marsh. They
-/// share the lake's plumbing (carve + footing + scatter/prop rejection) via [`is_pool`].
-///  [0] — the WATERFALL PLUNGE (map-character overhaul pass 5): from the rock mesa's SW tier-wall
-///        foot (world ≈(60.3, 32.6)) down to the lake edge. The wall stands ~12 base units back
-///        across a dry shelf, so without this the falls poured onto grass; `vista::populate`
-///        stands the cascade at capsule [0]'s head.
-///  [1..] — the OUTFLOW BROOK: the lake's south edge winding SW down to the marsh river
-///        (`HOME_RIVERS[1]` at ≈(76,102)), so lake water rejoins the course that drains to the
-///        south coast. Kept clear of the olive bog pools (see the lake keep-out in `pool_sd`).
+/// The lake's BLUE feeder + drain water (BASE space): the water that keeps the deliberate lake a
+/// *living* body — a waterfall pours IN, a brook drains OUT — instead of a stagnant blue dot.
+/// Rendered as CLEAR water, NOT olive bog: the bog murk mask keys on `pool_sd` alone, so everything
+/// here stays blue even where the brook threads the marsh. They share the lake's plumbing (carve +
+/// footing + scatter/prop rejection) via [`is_pool`].
+///  - the WATERFALL STREAM ([`plunge_path`]): from the plunge pool under the head wall of the
+///    rock range's SW valley, WINDING down the valley floor to the lake. `vista::populate` stands
+///    the falls at its head; `alpine_massif` carves the V-valley round the same thalweg.
+///  - the OUTFLOW BROOK ([`BLUE_STREAMS`]): the lake's south edge winding SW down to the marsh
+///    river (`HOME_RIVERS[1]` at ≈(76,102)), so lake water rejoins the course that drains to the
+///    south coast. Kept clear of the olive bog pools (see the lake keep-out in `pool_sd`).
+///
+/// Waterfall-stream control points `(x, z, half-width)`, head → lake. It used to be ONE straight
+/// capsule — with the mountain standing full height on both banks, that read as a slot sliced by a
+/// knife. The thalweg now swings ±1.2–1.4 base across the valley axis (S-bends a valley's walls
+/// close round as interlocking spurs); the plunge pool at the head is the widest water.
+const PLUNGE_CTRL: [(f32, f32, f32); 7] = [
+    (100.7, 67.3, 1.45), // plunge pool at the foot of the head wall
+    (98.43, 68.72, 0.80),
+    (99.31, 72.06, 0.86),
+    (95.77, 72.69, 0.92),
+    (96.64, 76.03, 1.0),
+    (94.12, 77.29, 1.1),
+    (93.63, 78.86, 1.2), // inside the lake
+];
+
+/// The waterfall stream's thalweg, Catmull-Rom sampled through [`PLUNGE_CTRL`] (6 per span, so
+/// the bends are round, not kinked): `(x, z, half-width)`, head → lake. Built once.
+fn plunge_path() -> &'static [(f32, f32, f32)] {
+    static PATH: OnceLock<Vec<(f32, f32, f32)>> = OnceLock::new();
+    PATH.get_or_init(|| {
+        let c = &PLUNGE_CTRL;
+        let n = c.len();
+        let at = |i: isize| c[i.clamp(0, n as isize - 1) as usize];
+        let mut out = Vec::new();
+        for i in 0..n - 1 {
+            let (p0, p1, p2, p3) = (at(i as isize - 1), at(i as isize), at(i as isize + 1), at(i as isize + 2));
+            for k in 0..6 {
+                let t = k as f32 / 6.0;
+                let (t2, t3) = (t * t, t * t * t);
+                let cr = |a: f32, b: f32, c: f32, d: f32| {
+                    0.5 * (2.0 * b + (c - a) * t + (2.0 * a - 5.0 * b + 4.0 * c - d) * t2 + (3.0 * b - a - 3.0 * c + d) * t3)
+                };
+                out.push((cr(p0.0, p1.0, p2.0, p3.0), cr(p0.1, p1.1, p2.1, p3.1), p1.2 + (p2.2 - p1.2) * t));
+            }
+        }
+        out.push(c[n - 1]);
+        out
+    })
+}
+
+/// Raw signed distance (base, no bank fray) to the waterfall stream — a chain of capsules whose
+/// radius eases along each span. `INFINITY` well away from the valley (cheap reject: this sits on
+/// the ground sampler's near-water path).
+fn plunge_sd(x: f32, z: f32) -> f32 {
+    if !(89.0..=105.0).contains(&x) || !(63.0..=83.0).contains(&z) {
+        return f32::INFINITY;
+    }
+    let mut best = f32::INFINITY;
+    for w in plunge_path().windows(2) {
+        let ((ax, az, ha), (bx, bz, hb)) = (w[0], w[1]);
+        let (abx, abz) = (bx - ax, bz - az);
+        let t = (((x - ax) * abx + (z - az) * abz) / (abx * abx + abz * abz)).clamp(0.0, 1.0);
+        best = best.min((x - ax - abx * t).hypot(z - az - abz * t) - (ha + (hb - ha) * t));
+    }
+    best
+}
+
+/// The OUTFLOW BROOK capsules (BASE space, `((ax,az),(bx,bz),half)`), a gently WESTWARD-bending
+/// curve (not a ruler-straight canal) from the lake's south edge down to the marsh-river
+/// confluence at ≈(76.5,102).
 const BLUE_STREAMS: &[((f32, f32), (f32, f32), f32)] = &[
-    ((99.4, 68.8), (94.2, 77.6), 1.1), // [0] waterfall plunge (mesa wall → lake)
-    // [1..] the OUTFLOW BROOK, a gently WESTWARD-bending curve (not a ruler-straight canal) from
-    // the lake's south edge down to the marsh-river confluence at ≈(76.5,102):
     ((91.0, 82.5), (90.0, 86.5), 0.70),
     ((90.0, 86.5), (87.8, 90.0), 0.72),
     ((87.8, 90.0), (85.5, 93.0), 0.73),
@@ -905,7 +961,7 @@ fn stream_sd(x: f32, z: f32) -> f32 {
     if is_arena() {
         return 100.0; // no waterfall/brook on the arena (this uses fixed home-island coords)
     }
-    let mut best = f32::INFINITY;
+    let mut best = plunge_sd(x, z);
     for &((ax, az), (bx, bz), half) in BLUE_STREAMS {
         let (abx, abz) = (bx - ax, bz - az);
         let t = (((x - ax) * abx + (z - az) * abz) / (abx * abx + abz * abz)).clamp(0.0, 1.0);
@@ -918,13 +974,14 @@ fn stream_sd(x: f32, z: f32) -> f32 {
     best + noise_a(x * 0.6, z * 0.6) * 0.4 - omottle(x, z, 6.0, 31.0) * 0.12 - omottle(x, z, 14.0, 9.0) * 0.08
 }
 
-/// The cascade anchor for `vista` (world space): the plunge capsule's head at the mesa wall foot,
-/// and the flow direction (head → lake).
+/// The cascade anchor for `vista` (world space): the waterfall stream's head (the plunge pool
+/// under the valley's head wall) and the flow direction there (head → first bend, downstream).
 pub fn waterfall_site_world() -> (Vec2, Vec2) {
-    let ((ax, az), (bx, bz), _) = BLUE_STREAMS[0];
+    let (ax, az, _) = PLUNGE_CTRL[0];
+    let (bx, bz, _) = PLUNGE_CTRL[1];
     let head = Vec2::new(ax * MAP_SCALE - GX, az * MAP_SCALE - GZ);
-    let mouth = Vec2::new(bx * MAP_SCALE - GX, bz * MAP_SCALE - GZ);
-    (head, (mouth - head).normalize())
+    let down = Vec2::new(bx * MAP_SCALE - GX, bz * MAP_SCALE - GZ);
+    (head, (down - head).normalize())
 }
 
 /// Signed distance (approx base units; negative = water) to the swamp bog-pool blobs, or +INF
@@ -3393,14 +3450,15 @@ fn bake_water_field(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
             flow = tang[pi as usize] * speed * wgt;
         }
         if !is_arena() {
-            for (k, &((ax, az), (ex, ez), half)) in BLUE_STREAMS.iter().enumerate() {
+            // The waterfall stream races down its valley into the lake; the outflow brook ambles.
+            let plunge = plunge_path().windows(2).map(|w| ((w[0].0, w[0].1), (w[1].0, w[1].1), w[0].2.min(w[1].2), 1.0));
+            let brook = BLUE_STREAMS.iter().map(|&(a, e, half)| (a, e, half, 0.7));
+            for ((ax, az), (ex, ez), half, speed) in plunge.chain(brook) {
                 let (abx, abz) = (ex - ax, ez - az);
                 let t = (((bx - ax) * abx + (bz - az) * abz) / (abx * abx + abz * abz)).clamp(0.0, 1.0);
                 let d = (bx - ax - abx * t).hypot(bz - az - abz * t) - half;
                 let wv = 1.0 - smoothstep(0.0, FLOW_FADE, d);
                 if wv > wgt {
-                    // The waterfall plunge ([0]) races into the lake; the outflow brook ambles.
-                    let speed = if k == 0 { 1.0 } else { 0.7 };
                     flow = Vec2::new(abx, abz).normalize() * speed * wv;
                     wgt = wv;
                 }
