@@ -662,6 +662,255 @@ def rival_house_b(rng):
     return desert_house(rng, 1)
 
 
+# ─────────────────────────────── the Pasha's producers (farm / palm-wood yard / sandstone pit)
+# Same culture as the houses: rendered mud brick on sandstone footings, palm-trunk beams, shade
+# cloth on palm poles. Pivot = ground under the building; +Z faces OUT from the fort (rival.rs
+# turns each producer so its yard looks away from the walls). Each keeps its solid mass inside the
+# 1.5 x 1.4 collision half box; the yard pieces in front (+Z) are walk-through or low.
+GREEN = (0.42, 0.55, 0.22)
+WET = (0.36, 0.27, 0.2)
+
+
+def mud_block(g, rng, c, W, D, H, col, beams=True):
+    """A rendered mud-brick block on a sandstone footing: battered walls, parapet, earth roof and
+    palm-trunk beam ends along front and back. `c` = ground point under its centre."""
+    slab(g, V(c.x, 0.08, c.z), (W + 0.12, 0.36, D + 0.12), quat_y(0.0), rng, mat=M_ROCK, res=(4, 1, 4), round_r=0.06,
+         rough=0.2, col_fn=rock_col(SANDST, dark_below=0.6), tile=0.9)
+    slab(g, V(c.x, H / 2 + 0.05, c.z), (W, H - 0.1, D), quat_y(0.0), rng, mat=M_PLASTER, res=(5, 4, 5), round_r=0.09,
+         rough=0.12, taper=0.05, col_fn=col, tile=1.3)
+    for x, z, sx, sz in ((0, D / 2 - 0.06, W, 0.14), (0, -D / 2 + 0.06, W, 0.14), (W / 2 - 0.06, 0, 0.14, D),
+                         (-W / 2 + 0.06, 0, 0.14, D)):
+        slab(g, V(c.x + x, H + 0.1, c.z + z), (sx, 0.26, sz), quat_y(0.0), rng, mat=M_PLASTER, res=(4, 1, 1),
+             round_r=0.05, rough=0.15, col_fn=col, tile=1.3)
+    slab(g, V(c.x, H - 0.02, c.z), (W - 0.2, 0.06, D - 0.2), quat_y(0.0), rng, mat=M_EARTH, res=(3, 1, 3),
+         round_r=0.02, rough=0.1, col_fn=lambda p, n: (0.66, 0.54, 0.4), tile=0.8)
+    if beams:
+        for z in (D / 2, -D / 2):
+            sgn = 1 if z > 0 else -1
+            for x in np.linspace(-W / 2 + 0.28, W / 2 - 0.28, max(3, int(W / 0.5))):
+                p = V(c.x + float(x), H - 0.2, c.z + z)
+                pole(g, p - V(0, 0, 0.15 * sgn), p + V(0, 0, 0.17 * sgn), 0.05, 0.045, rng, mat=M_BARK, col=BEAMC,
+                     sides=6, segs=1)
+
+
+def palm_trunk(g, rng, a, b, r=0.15, col=PALM):
+    """A date-palm trunk (or log): the ringed leaf-base scars swell and pinch along it."""
+    a, b = Vector(a), Vector(b)
+    n = max(4, int((b - a).length / 0.09))
+    pts = [a.lerp(b, k / n) for k in range(n + 1)]
+    radii = [r * (1.0 + (0.1 if k % 2 else -0.04)) * (1.0 - 0.12 * k / n) for k in range(n + 1)]
+    tube(g, pts, radii, 9, M_BARK, col, tile=0.5)
+
+
+def frond(g, rng, base, d, L=1.6, col=(0.62, 0.55, 0.34)):
+    """A dried palm frond lying on the ground: a midrib with stiff leaflets fanned along it."""
+    d = Vector(d).normalized()
+    side = d.cross(UP).normalized()
+    tip = base + d * L + UP * 0.02
+    tube(g, [base, base.lerp(tip, 0.5) + UP * 0.04, tip], [0.02, 0.014, 0.004], 4, M_BARK, col, tile=0.4)
+    for k in range(1, 11):
+        f = k / 11
+        p = base.lerp(tip, f) + UP * 0.03
+        ln = 0.42 * math.sin(f * math.pi) + 0.08
+        for s in (-1, 1):
+            q = p + side * s * ln + d * 0.12 + UP * rng.uniform(-0.01, 0.03)
+            lbox(g, (p + q) / 2, ((q - p).length, 0.008, 0.045), yaw_q((q - p).normalized()), M_THATCH,
+                 scale(col, rng.uniform(0.85, 1.05)), tile=0.4)
+
+
+def shade_cloth(g, rng, x0, x1, z0, z1, h=2.05, col=(0.9, 0.84, 0.7), stripe=(0.62, 0.12, 0.1)):
+    """A free-standing shade cloth on four palm poles, sagging between them."""
+    for x in (x0, x1):
+        for z in (z0, z1):
+            pole(g, V(x, -0.2, z), V(x, h + 0.1, z), 0.045, 0.035, rng, mat=M_BARK, col=PALM, sides=6, segs=2)
+    rows = []
+    for i in range(6):
+        u = i / 5
+        rows.append([V(x0 + (x1 - x0) * u, h - 0.2 * math.sin(u * math.pi) * math.sin(v / 3 * math.pi) -
+                       0.05 * math.sin(u * math.pi), z0 + (z1 - z0) * v / 3) for v in range(4)])
+    sheet(g, rows, M_CLOTH, lambda u, v: stripe if int(u * 7) % 2 else col, tile=0.6, double=True)
+    for x in (x0, x1):  # guy ropes to pegs
+        for z, sz in ((z0, -1), (z1, 1)):
+            tube(g, [V(x, h + 0.05, z), V(x + 0.0, 0.0, z + sz * 0.9)], [0.01, 0.01], 4, M_CLOTH, ROPE, tile=0.3)
+
+
+def basket(g, rng, c, r=0.22, h=0.26, fill=None):
+    lathe(g, c, (0, 1, 0), [(0.0, r * 0.75), (h * 0.5, r), (h, r * 1.05), (h + 0.02, r * 0.95)], 12, M_THATCH,
+          (0.8, 0.66, 0.44), tile=0.3)
+    if fill:
+        mound(g, (c[0], c[1] + h - 0.04, c[2]), r * 0.9, r * 0.9, 0.08, rng, mat=M_EARTH,
+              col_fn=lambda p, n: fill, rings=3, seg=10, rough=0.2)
+
+
+def rival_farm(rng):
+    """The Pasha's date garden: a mud-brick store with a beehive granary, a shaduf well-sweep over a
+    stone cistern, irrigated beds of green crops between earth channels, a palm-frond shade."""
+    b = Builder()
+    g = G(b)
+    col = render_col(rng, 0.0, 2.0, base=MUD, patches=[(V(-1.4, 0.9, -0.2), 0.3, 0.22)])
+    mud_block(g, rng, V(-0.45, 0, -0.35), 1.9, 1.9, 1.75, col)
+    arch_door(g, rng, V(-0.45, 0.08, 0.6 + 0.02), V(0, 0, 1), 0.66, 1.24)
+    pole(g, V(-1.05, 1.56, 0.68), V(0.15, 1.56, 0.68), 0.055, 0.05, rng, mat=M_BARK, col=PALM, sides=7, segs=1)
+    deep_opening(g, rng, V(-1.4 - 0.02, 1.05, -0.4), V(-1, 0, 0), 0.26, 0.4, depth=0.09, grille=True)
+    # Beehive granary: a mud dome with a hatch near the top and a ladder to it.
+    gx, gz = 0.95, -0.55
+    lathe(g, (gx, -0.05, gz), (0, 1, 0), [(0.0, 0.66), (0.4, 0.68), (0.9, 0.6), (1.3, 0.44), (1.62, 0.22),
+                                          (1.76, 0.0)], 16, M_PLASTER, scale(MUD_PALE, 0.92), tile=1.0)
+    face_w(g, [V(gx - 0.14, 1.1, gz + 0.56), V(gx + 0.14, 1.1, gz + 0.56), V(gx + 0.12, 1.36, gz + 0.48),
+               V(gx - 0.12, 1.36, gz + 0.48)], V(0, 0.4, 1), M_EARTH, VOID)
+    ladder(g, rng, V(gx + 0.05, -0.05, gz + 1.15), V(gx, 1.3, gz + 0.6), width=0.34)
+    # Irrigated beds in front: dark wet earth ridges with crop rows, a channel down the middle.
+    for k, x in enumerate((-1.25, -0.65, 0.65, 1.25)):
+        mound(g, (x, -0.06, 2.55), 0.26, 1.05, 0.13, rng, mat=M_EARTH, col_fn=lambda p, n: WET, rings=3, seg=14,
+              rough=0.1)
+        for j in range(7):
+            z = 1.7 + j * 0.28 + rng.uniform(-0.03, 0.03)
+            c = V(x + rng.uniform(-0.04, 0.04), 0.05, z)
+            for s in range(5):
+                a = s / 5 * math.tau + rng.uniform(-0.3, 0.3)
+                L = rng.uniform(0.16, 0.26)
+                tip = c + V(math.cos(a) * L * 0.55, L, math.sin(a) * L * 0.55)
+                tube(g, [c, c.lerp(tip, 0.6) + UP * 0.02, tip], [0.018, 0.012, 0.002], 4, M_THATCH,
+                     scale(GREEN, rng.uniform(0.8, 1.15)), tile=0.3)
+    # The channel: a shallow sunk strip of water between low earth lips, fed from the cistern.
+    lbox(g, V(0, -0.015, 2.5), (0.22, 0.03, 2.3), quat_y(0.0), M_EARTH, (0.12, 0.13, 0.12), tile=0.5)
+    for s in (-1, 1):
+        mound(g, (s * 0.2, -0.05, 2.5), 0.09, 1.15, 0.07, rng, mat=M_EARTH, col_fn=lambda p, n: WET, rings=2, seg=12)
+    # Cistern (stone ring, dark water) + the shaduf: a palm pole see-sawing on a crossbar between
+    # two mud pillars, a mud counterweight at the short end, a rope and leather bucket over the water.
+    cx, cz = -1.85, 1.35
+    for k in range(9):
+        a = k / 9 * math.tau
+        slab(g, V(cx + math.cos(a) * 0.48, 0.12, cz + math.sin(a) * 0.48), (0.34, 0.36, 0.2), quat_y(-a + math.pi / 2),
+             rng, mat=M_STONE, res=(2, 1, 1), round_r=0.03, rough=0.2, col_fn=rock_col(SANDST, dark_below=0.6), tile=0.8)
+    lathe(g, (cx, 0.1, cz), (0, 1, 0), [(0.0, 0.4), (0.01, 0.4)], 12, M_EARTH, (0.05, 0.06, 0.06), tile=0.5)
+    for s in (-1, 1):
+        slab(g, V(cx + 0.95 + s * 0.3, 0.75, cz - 0.25), (0.26, 1.6, 0.3), quat_y(0.0), rng, mat=M_PLASTER, res=(1, 3, 1),
+             round_r=0.05, rough=0.2, taper=0.12, col_fn=col, tile=1.0)
+    pole(g, V(cx + 0.6, 1.5, cz - 0.25), V(cx + 1.3, 1.5, cz - 0.25), 0.04, 0.04, rng, mat=M_BARK, col=BEAMC, sides=6, segs=1)
+    piv = V(cx + 0.95, 1.55, cz - 0.25)
+    d = (V(cx, 2.15, cz) - piv).normalized()
+    short = piv - d * 1.1
+    pole(g, short, V(cx, 2.15, cz) + d * 0.1, 0.05, 0.035, rng, mat=M_BARK, col=PALM, sides=6, segs=3)
+    mound(g, tuple(short + V(0, -0.12, 0)), 0.2, 0.2, 0.22, rng, mat=M_EARTH, col_fn=lambda p, n: (0.6, 0.47, 0.34),
+          rings=3, seg=10, skirt=0.0)
+    tube(g, [V(cx, 2.15, cz), V(cx, 0.75, cz)], [0.01, 0.01], 4, M_CLOTH, ROPE, tile=0.3)
+    lathe(g, (cx, 0.5, cz), (0, 1, 0), [(0.0, 0.08), (0.12, 0.14), (0.25, 0.15)], 10, M_HIDE, (0.45, 0.32, 0.22), tile=0.3)
+    # Palm-frond shade (arish) over the granary side of the yard, fronds laid on a palm-pole frame.
+    for x in (0.45, 1.7):
+        for z in (0.5, 1.45):
+            pole(g, V(x, -0.15, z), V(x, 1.7, z), 0.045, 0.038, rng, mat=M_BARK, col=PALM, sides=6, segs=2)
+    for z in (0.5, 1.45):
+        pole(g, V(0.35, 1.7, z), V(1.8, 1.7, z), 0.04, 0.04, rng, mat=M_BARK, col=PALM, sides=6, segs=1)
+    for k in range(6):
+        x = 0.45 + k * 0.25
+        frond(g, rng, V(x, 1.76, 0.25), V(0.05, 0.0, 1.0), L=1.45)
+    for k, (x, z) in enumerate(((1.1, 1.0), (1.45, 1.15), (0.75, 1.2))):
+        basket(g, rng, (x, 0.0, z), fill=[(0.42, 0.2, 0.1), (0.5, 0.26, 0.12), GREEN][k])
+    jar(g, rng, (-1.55, 0.0, 0.75), s=1.1)
+    jar(g, rng, (-1.2, 0.0, 0.85))
+    sand_drift(g, rng, V(-1.4, 0, -1.3), V(0.5, 0, -1.3), V(0, 0, -1))
+    return b
+
+
+def rival_lumber(rng):
+    """The palm-wood yard: palm trunks are the only timber in the dunes. A striped shade cloth over
+    a sawing trestle with a trunk on it, the stack of felled trunks, a heap of stripped fronds, the
+    chopping block, and a low mud-brick store at the back."""
+    b = Builder()
+    g = G(b)
+    col = render_col(rng, 0.0, 1.4, base=MUD_PALE)
+    mud_block(g, rng, V(0.0, 0, -0.85), 2.6, 1.1, 1.3, col)
+    deep_opening(g, rng, V(0.6, 0.0, -0.3 + 0.02), V(0, 0, 1), 0.6, 1.05, depth=0.1, lintel=True)
+    # Trunk stack against the store's west end: three below, two above, ringed bark, sawn ends.
+    for k, (x, y, z) in enumerate(((-0.9, 0.14, 0.35), (-0.9, 0.14, 0.68), (-0.9, 0.14, 1.01), (-0.9, 0.42, 0.52),
+                                   (-0.9, 0.42, 0.85))):
+        L = 2.1 + rng.uniform(-0.2, 0.2)
+        palm_trunk(g, rng, V(x - L / 2 + 0.6, y, z), V(x + L / 2 + 0.6, y + rng.uniform(-0.02, 0.02), z), r=0.16)
+    for s in (-1, 1):
+        pole(g, V(-1.4 + s * 0.0, -0.2, 0.15 + (s + 1) * 0.5), V(-1.4, 0.75, 0.15 + (s + 1) * 0.5), 0.04, 0.035, rng,
+             mat=M_BARK, col=BEAMC, sides=5, segs=1)
+    # The sawing trestle: two X-frames under a trunk, a two-man frame saw left in the cut.
+    tx, tz = 0.55, 1.35
+    for dx in (-0.55, 0.55):
+        for s in (-1, 1):
+            pole(g, V(tx + dx, -0.1, tz - s * 0.32), V(tx + dx, 0.82, tz + s * 0.18), 0.04, 0.035, rng, mat=M_TIMBER,
+                 col=BEAMC, sides=5, segs=1)
+    palm_trunk(g, rng, V(tx - 1.15, 0.86, tz - 0.07), V(tx + 1.2, 0.86, tz - 0.07), r=0.14)
+    lbox(g, V(tx + 0.25, 0.86, tz - 0.07), (0.02, 0.5, 0.9), quat_x(0.15), M_TIMBER, BEAMC, tile=0.4)
+    lbox(g, V(tx + 0.25, 0.62, tz - 0.07), (0.006, 0.08, 0.8), quat_x(0.15), M_IRON, IRON, tile=0.3)
+    # Sawdust under the cut and chips.
+    mound(g, (tx + 0.25, -0.03, tz), 0.45, 0.35, 0.06, rng, mat=M_EARTH, col_fn=lambda p, n: (0.85, 0.7, 0.5), rings=3,
+          seg=12, rough=0.25)
+    # Shade cloth over the saw.
+    shade_cloth(g, rng, tx - 0.95, tx + 0.95, tz - 0.6, tz + 0.65, h=2.0)
+    # Chopping block with an axe in it, a heap of stripped fronds, a basket of fibre.
+    lathe(g, (1.55, -0.05, 0.3), (0, 1, 0), [(0.0, 0.24), (0.5, 0.22), (0.52, 0.0)], 10, M_BARK, PALM, tile=0.4)
+    pole(g, V(1.55, 0.5, 0.3), V(1.3, 0.95, 0.4), 0.02, 0.018, rng, mat=M_TIMBER, col=BEAMC, sides=5, segs=1)
+    lbox(g, V(1.55, 0.52, 0.31), (0.16, 0.1, 0.02), quat_z(0.6), M_IRON, IRON, tile=0.3)
+    for k in range(7):
+        a = rng.uniform(-0.5, 0.5) + math.pi
+        frond(g, rng, V(-1.1 + rng.uniform(-0.2, 0.2), 0.02 + k * 0.025, 2.3 + rng.uniform(-0.2, 0.2)),
+              V(math.cos(a), 0, math.sin(a) * 0.3 + 0.2), L=1.5)
+    basket(g, rng, (1.6, 0.0, -0.05), fill=(0.55, 0.42, 0.28))
+    jar(g, rng, (-0.35, 0.0, -0.15))
+    sand_drift(g, rng, V(-1.3, 0, -1.45), V(1.3, 0, -1.45), V(0, 0, -1))
+    return b
+
+
+def rival_mine(rng):
+    """The sandstone pit: a shaft collared with dressed sandstone, a palm-wood windlass over it on
+    forked posts with a rope down to a hanging basket, a shade cloth for the windlass men, the spoil
+    heap, cut blocks stacked for the fort's walls, ore baskets and a pick."""
+    b = Builder()
+    g = G(b)
+    sx, sz = 0.0, 0.0
+    # Spoil + collar: a low ring mound of pale spoil, sandstone blocks round the lip, black shaft.
+    for k in range(6):
+        a = k / 6 * math.tau + 0.3
+        mound(g, (sx + math.cos(a) * 1.15, -0.08, sz + math.sin(a) * 1.15), 0.55, 0.55, 0.26, rng, mat=M_EARTH,
+              col_fn=lambda p, n: SAND, rings=4, seg=14, rough=0.15)
+    for k in range(10):
+        a = k / 10 * math.tau
+        slab(g, V(sx + math.cos(a) * 0.8, 0.12, sz + math.sin(a) * 0.8), (0.5, 0.42, 0.32), quat_y(-a + math.pi / 2), rng,
+             mat=M_STONE, res=(2, 1, 1), round_r=0.03, rough=0.18, col_fn=rock_col(SANDST, dark_below=0.6), tile=0.8)
+    # The shaft mouth: a dark disc sunk inside the collar (its stones hide the rim).
+    lathe(g, (sx, -0.25, sz), (0, 1, 0), [(0.0, 0.6), (0.3, 0.6), (0.31, 0.0)], 14, M_EARTH, VOID, tile=0.5)
+    # Windlass: two forked palm posts, a drum with a crank, rope down the shaft to a basket.
+    for s in (-1, 1):
+        pole(g, V(sx + s * 0.95, -0.2, sz), V(sx + s * 0.95, 1.15, sz), 0.07, 0.06, rng, mat=M_BARK, col=PALM, sides=7,
+             segs=2)
+        for f in (-1, 1):
+            pole(g, V(sx + s * 0.95, 1.1, sz), V(sx + s * 0.95, 1.32, sz + f * 0.1), 0.03, 0.025, rng, mat=M_BARK,
+                 col=PALM, sides=5, segs=1)
+    palm_trunk(g, rng, V(sx - 1.05, 1.18, sz), V(sx + 1.05, 1.18, sz), r=0.11, col=BEAMC)
+    tube(g, [V(sx - 0.2, 1.18, sz), V(sx + 0.2, 1.18, sz)], [0.135, 0.135], 10, M_CLOTH, ROPE, tile=0.3)
+    pole(g, V(sx + 1.05, 1.18, sz), V(sx + 1.2, 1.18, sz), 0.02, 0.02, rng, mat=M_IRON, col=IRON, sides=5, segs=1)
+    pole(g, V(sx + 1.2, 1.18, sz), V(sx + 1.2, 0.85, sz), 0.02, 0.02, rng, mat=M_IRON, col=IRON, sides=5, segs=1)
+    tube(g, [V(sx, 1.05, sz + 0.12), V(sx, 0.62, sz + 0.12)], [0.012, 0.012], 4, M_CLOTH, ROPE, tile=0.3)
+    basket(g, rng, (sx, 0.36, sz + 0.12), r=0.2, h=0.24, fill=(0.85, 0.68, 0.45))
+    # Shade cloth over the windlass.
+    shade_cloth(g, rng, sx - 1.3, sx + 1.3, sz - 0.95, sz + 0.95, h=2.2, col=(0.82, 0.74, 0.6), stripe=(0.3, 0.22, 0.4))
+    # Cut sandstone blocks stacked for the walls (front-left), quarry marks on their faces.
+    for k, (x, y, z, yaw) in enumerate(((-1.75, 0.18, 1.35, 0.05), (-1.15, 0.18, 1.4, -0.04), (-1.45, 0.52, 1.37, 0.1),
+                                        (-1.7, 0.18, 1.95, 0.0))):
+        slab(g, V(x, y, z), (0.56, 0.34, 0.4), quat_y(yaw), rng, mat=M_STONE, res=(2, 1, 2), round_r=0.03, rough=0.1,
+             col_fn=rock_col(SANDST, dark_below=0.3), tile=0.8)
+    # Spoil heap off to the right with fallen lumps, and baskets of broken stone + a pick.
+    mound(g, (1.75, -0.1, 1.5), 0.9, 0.7, 0.55, rng, mat=M_EARTH, col_fn=lambda p, n: scale(SAND, 0.93), rings=5,
+          seg=18, rough=0.25)
+    for k in range(9):
+        stone(g, (1.75 + rng.uniform(-0.9, 0.9), 0.05, 1.5 + rng.uniform(-0.7, 0.8)),
+              (rng.uniform(0.08, 0.18), rng.uniform(0.06, 0.12), rng.uniform(0.08, 0.16)), rng, detail=1,
+              col_fn=rock_col(SANDST, dark_below=0.5), tile=0.5)
+    for x, z in ((0.55, 1.5), (0.95, 1.75)):
+        basket(g, rng, (x, 0.0, z), fill=(0.8, 0.62, 0.42))
+    pole(g, V(0.3, 0.03, 2.0), V(-0.4, 0.06, 2.25), 0.022, 0.02, rng, mat=M_TIMBER, col=BEAMC, sides=5, segs=1)
+    lbox(g, V(-0.42, 0.08, 2.25), (0.04, 0.05, 0.42), quat_y(0.33), M_IRON, IRON, tile=0.3)
+    jar(g, rng, (1.4, 0.0, -0.9), s=1.15)
+    return b
+
+
 def bounds(builder):
     v = np.array(builder.verts) if builder.verts else np.zeros((1, 3))
     gx, gy, gz = v[:, 0], v[:, 2], -v[:, 1]
@@ -674,6 +923,9 @@ MODELS = {
     "rival_walls": rival_walls,
     "rival_house_a": rival_house_a,
     "rival_house_b": rival_house_b,
+    "rival_farm": rival_farm,
+    "rival_lumber": rival_lumber,
+    "rival_mine": rival_mine,
 }
 
 clear_scene()

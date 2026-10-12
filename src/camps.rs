@@ -484,6 +484,17 @@ pub fn plan() -> &'static [CampSite] {
                         }
                         z += 1.5;
                     }
+                    // The cave's rock is a solid cliff face ~8u tall whose top sinks back into the
+                    // slope: prefer a wall that climbs past it right behind, so the mountain
+                    // swallows the mass and only the face shows (never a lump standing proud).
+                    if kind == CampKind::Cave {
+                        let deep: Vec<_> = options.iter().copied().filter(|&(x, z, rot)| cave_buried(x, z, rot)).collect();
+                        #[cfg(test)]
+                        eprintln!("camps: cave walls deep enough {} / {}", deep.len(), options.len());
+                        if !deep.is_empty() {
+                            options = deep;
+                        }
+                    }
                     if !options.is_empty() {
                         found = Some(options[next_u32(&mut rng) as usize % options.len()]);
                         info!("camps: {:?} found its own setting ({} spots)", kind, options.len());
@@ -593,6 +604,19 @@ pub fn near_camp(wx: f32, wz: f32, r: f32) -> bool {
 /// A candidate `(cx, cz)` is a valid camp centre for `biome` if a flat clearing of base-height
 /// land sits there, clear of the castle + central safe-zone + other camps, and it's in the biome
 /// (or on grass within ~8 tiles of it, for the mountainous biomes). `special` asks for the kind's
+/// Does the mountain behind a cave mouth at `(cx, cz)` (facing yaw `rot`) climb high enough to bury
+/// the cave model's rock mass (its top falls from ~8u at the face to ground level ~13u back)?
+fn cave_buried(cx: f32, cz: f32, rot: f32) -> bool {
+    let Some(h0) = worldmap::ground_at_world(cx, cz) else { return false };
+    let q = Quat::from_rotation_y(rot);
+    [-6.0f32, -3.0, 0.0, 3.0, 6.0].iter().all(|&x| {
+        [(-7.0f32, 3.5f32), (-9.0, 5.0), (-11.0, 5.5)].iter().all(|&(z, need)| {
+            let w = q * Vec3::new(x, 0.0, z);
+            worldmap::ground_at_world(cx + w.x, cz + w.z).is_some_and(|h| h - h0 > need)
+        })
+    })
+}
+
 /// own setting — a cliff behind the cave (local −Z), bog water in front of the stilt deck (local
 /// +Z) — and returns the yaw that faces it; otherwise `rot0` is kept. `None` = rejected.
 fn site_ok(cx: f32, cz: f32, biome: Biome, kind: CampKind, special: bool, rot0: f32, placed: &[CampSite]) -> Option<f32> {
@@ -652,8 +676,14 @@ fn site_ok(cx: f32, cz: f32, biome: Biome, kind: CampKind, special: bool, rot0: 
             })
         }
         (CampKind::Hunters, true) => {
-            // A level shelf above the snow line (snow on the ground round the yurts).
-            (on_biome && h0 > 1.0 && crate::alpine::snow_cover(cx, cz) >= 0.2 && flat(rot0, (-5, 5, -5, 5), 0.35)).then_some(rot0)
+            // A level shelf up in the snow: solid snow under the WHOLE camp (yurts, racks, the
+            // frozen pond), never the green valley meadow round a white centre.
+            (on_biome
+                && h0 > 1.0
+                && crate::alpine::snow_cover(cx, cz) >= crate::alpine::SOLID_SNOW
+                && flat(rot0, (-5, 5, -5, 5), 0.35)
+                && crate::alpine::snow_footprint_min(cx, cz, 7.0) >= crate::alpine::SOLID_SNOW)
+                .then_some(rot0)
         }
         (CampKind::Stilts, true) => {
             let wet = (0..8).any(|k| {
