@@ -1615,6 +1615,24 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
             data[k + 3] = data[k + 3].max(to_u8(g.debris));
         }
     }
+    // Ork camps' trampled ground (`camps::ground_wear`): same channels, noisy feathered blots.
+    for c in crate::camps::wear_centres() {
+        let r = crate::camps::WEAR_REACH;
+        let ib = |v: f32, n: usize| ((v * RES).max(0.0) as usize).min(n);
+        let (i0, i1) = (ib(c.x - r - x0, w), ib(c.x + r - x0, w));
+        let (j0, j1) = (ib(c.y - r - z0, h), ib(c.y + r - z0, h));
+        for j in j0..j1 {
+            let wz = z0 + (j as f32 + 0.5) / RES;
+            for i in i0..i1 {
+                let wx = x0 + (i as f32 + 0.5) / RES;
+                let Some((f, p, d)) = crate::camps::ground_wear(wx, wz) else { continue };
+                let k = (j * w + i) * 4;
+                data[k] = data[k].max(to_u8(f));
+                data[k + 1] = data[k + 1].max(to_u8(p));
+                data[k + 3] = data[k + 3].max(to_u8(d));
+            }
+        }
+    }
     // The field strips (`castle_ground::field_at`): scanned soil (the path layer) on
     // the ploughed strips, a soil/grass mix on the stubble ones, no litter. Furrows ride the rut mask.
     let (flo, fhi) = crate::castle_ground::field_bounds();

@@ -1963,3 +1963,107 @@ mod tests {
     }
 }
 
+
+// ── Trampled ground (baked into the terrain's scanned-floor mask, not a disc on top) ──────
+
+/// Max reach of a camp's worn ground from its centre (world units) — the mask bake scans this box.
+pub const WEAR_REACH: f32 = 9.0;
+
+fn wear_hash(ix: i32, iz: i32, seed: u32) -> f32 {
+    let mut h = (ix as u32).wrapping_mul(0x8da6_b343) ^ (iz as u32).wrapping_mul(0xd816_3841) ^ seed.wrapping_mul(0xcb1a_b31f);
+    h ^= h >> 13;
+    h = h.wrapping_mul(0x5bd1_e995);
+    h ^= h >> 15;
+    (h & 0xffff) as f32 / 65535.0
+}
+
+fn wear_noise(x: f32, z: f32, f: f32, seed: u32) -> f32 {
+    let (px, pz) = (x * f, z * f);
+    let (ix, iz) = (px.floor() as i32, pz.floor() as i32);
+    let (fx, fz) = (px - ix as f32, pz - iz as f32);
+    let (ux, uz) = (fx * fx * (3.0 - 2.0 * fx), fz * fz * (3.0 - 2.0 * fz));
+    let (a, b) = (wear_hash(ix, iz, seed), wear_hash(ix + 1, iz, seed));
+    let (c, d) = (wear_hash(ix, iz + 1, seed), wear_hash(ix + 1, iz + 1, seed));
+    let top = a + (b - a) * ux;
+    let bot = c + (d - c) * ux;
+    top + (bot - top) * uz
+}
+
+fn wear_ss(e0: f32, e1: f32, x: f32) -> f32 {
+    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Per kind: worn-patch half extents (local x, z), trodden-core share, and the local directions
+/// the foot tracks leave by (the gate / the spur / the water) — so each camp wears its own shape.
+fn wear_shape(kind: CampKind) -> (f32, f32, f32, &'static [(f32, f32, f32)]) {
+    match kind {
+        CampKind::RamYard => (5.6, 5.0, 0.75, &[(0.25, 1.0, 8.5), (-1.0, -0.2, 7.0), (0.9, -0.6, 6.5)]),
+        CampKind::PitchSeep => (5.2, 4.6, 0.6, &[(0.2, 1.0, 7.5), (-0.9, -0.5, 6.0)]),
+        CampKind::ReedHide => (3.6, 3.4, 0.55, &[(0.0, 1.0, 8.0), (0.7, 0.75, 6.0)]),
+        CampKind::Eyrie => (4.6, 3.8, 0.5, &[(0.4, 1.0, 7.0), (-0.9, 0.4, 5.5)]),
+        CampKind::Ring => (4.3, 4.3, 0.95, &[(0.0, -1.0, 8.0), (0.9, -0.5, 6.0)]),
+        _ => (5.0, 4.6, 0.6, &[(0.0, 1.0, 7.5), (-0.8, -0.6, 6.0)]),
+    }
+}
+
+/// Trampled-ground weights at a world point, max over every camp: `(floor, path, debris)` in
+/// 0..1 for the terrain mask's scanned floor (R), trail soil (G) and litter (A). A noisy,
+/// feathered blot — never a disc — with a packed core round the fire and foot tracks fraying
+/// off it; the shader's own slope gate lays it over the ground's real shape.
+pub fn ground_wear(wx: f32, wz: f32) -> Option<(f32, f32, f32)> {
+    let p = Vec2::new(wx, wz);
+    let mut best: Option<(f32, f32, f32)> = None;
+    for s in plan() {
+        let d = p - s.centre;
+        // Snow camps keep their own trodden snow (the scanned floor is woodland earth + moss).
+        if s.biome == Biome::Snow || d.x.abs() > WEAR_REACH || d.y.abs() > WEAR_REACH {
+            continue;
+        }
+        let l = Quat::from_rotation_y(-s.rot) * Vec3::new(d.x, 0.0, d.y);
+        let (rx, rz, core, tracks) = wear_shape(s.kind);
+        let seed = s.seed;
+        // Ragged rim: two octaves wobble the radius by up to ~35 %, so the edge eats into the
+        // grass in tongues and bays.
+        let wob = (wear_noise(wx, wz, 0.32, seed) - 0.5) * 0.55 + (wear_noise(wx, wz, 1.15, seed ^ 0x51) - 0.5) * 0.3;
+        let r = ((l.x / rx).powi(2) + (l.z / rz).powi(2)).sqrt() + wob;
+        let mut floor = 1.0 - wear_ss(0.7, 1.15, r);
+        // Packed earth round the fire/work spot, broken by surviving tufts.
+        let tuft = wear_ss(0.62, 0.8, wear_noise(wx, wz, 0.9, seed ^ 0x77));
+        let mut path = (1.0 - wear_ss(core * 0.45, core, r)) * (1.0 - tuft * 0.6);
+        // Foot tracks: narrow, wandering, fading out past the rim.
+        for &(tx, tz, len) in tracks {
+            let dir = Vec2::new(tx, tz).normalize();
+            let lp = Vec2::new(l.x, l.z);
+            let along = lp.dot(dir);
+            if along < 0.0 || along > len {
+                continue;
+            }
+            let side = (lp - dir * along).length() + (wear_noise(wx, wz, 0.45, seed ^ 0x3a) - 0.5) * 0.9;
+            let w = 0.55 + 0.25 * wear_noise(wx, wz, 0.7, seed ^ 0x9e);
+            let t = (1.0 - wear_ss(w * 0.4, w, side)) * (1.0 - wear_ss(len * 0.6, len, along));
+            path = path.max(t * 0.9);
+            floor = floor.max(t);
+        }
+        if floor <= 0.01 {
+            continue;
+        }
+        // Litter (chips, ash, scraps) thickest inside the rim, patchy.
+        let debris = floor * (0.25 + 0.45 * wear_noise(wx, wz, 0.6, seed ^ 0xd1)) * (1.0 - path * 0.5);
+        // Off the green ground (sand, rock) the whole blot is bare soil and grit: no moss share.
+        let bare = matches!(s.biome, Biome::Desert | Biome::Rocky);
+        let path = if bare { floor } else { path.min(floor) };
+        let debris = if bare { debris * 0.5 } else { debris };
+        let v = (floor, path, debris);
+        best = Some(match best {
+            Some(b) => (b.0.max(v.0), b.1.max(v.1), b.2.max(v.2)),
+            None => v,
+        });
+    }
+    best
+}
+
+/// World-space centres of all camps (the mask bake's scan boxes for [`ground_wear`]).
+pub fn wear_centres() -> Vec<Vec2> {
+    plan().iter().map(|s| s.centre).collect()
+}
