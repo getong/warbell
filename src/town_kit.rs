@@ -34,7 +34,7 @@ impl Plugin for TownKitPlugin {
 }
 
 /// The pieces `town_kit.glb` carries, in the script's priority order.
-pub const PIECES: [&str; 36] = [
+pub const PIECES: [&str; 39] = [
     "town_granary",
     "town_smithy",
     "town_tavern",
@@ -73,6 +73,10 @@ pub const PIECES: [&str; 36] = [
     "castle_barracks",
     "castle_store",
     "castle_cartshed",
+    // The producer yards on the town's build plots (`town::spawn_building`).
+    "town_farm",
+    "town_woodcutter",
+    "town_mine",
 ];
 
 /// A spawned town-kit model root.
@@ -100,7 +104,7 @@ pub fn spawn_piece(commands: &mut Commands, name: &str, tf: Transform) -> Option
 /// x 14..20), and the four lean-tos against the OUTSIDE face of the east curtain (x 28.65), fronts
 /// east: stand-ins for their place inside the walls (backs flat on the stone, the same fit; the
 /// curtain shows once the walls are built, e.g. `FOREST_DEFEND=1`).
-pub const SHOWCASE: [(&str, Vec2, f32, Vec2); 42] = [
+pub const SHOWCASE: [(&str, Vec2, f32, Vec2); 45] = [
     ("town_granary", Vec2::new(-25.0, -29.0), 0.0, Vec2::new(1.75, 2.25)),
     ("town_smithy", Vec2::new(-16.0, -29.0), 0.0, Vec2::ZERO),
     ("town_tavern", Vec2::new(-5.5, -29.0), 0.0, Vec2::new(3.3, 2.5)),
@@ -148,6 +152,10 @@ pub const SHOWCASE: [(&str, Vec2, f32, Vec2); 42] = [
     ("castle_barracks", Vec2::new(30.49, -1.9), FRAC_PI_2, Vec2::ZERO),
     ("castle_store", Vec2::new(30.29, 5.6), FRAC_PI_2, Vec2::ZERO),
     ("castle_cartshed", Vec2::new(30.59, 13.0), FRAC_PI_2, Vec2::ZERO),
+    // The producer yards (barn / saw shed / pit-head on the -X half), a row at z -55.
+    ("town_farm", Vec2::new(-8.0, -55.0), 0.0, Vec2::ZERO),
+    ("town_woodcutter", Vec2::new(0.0, -55.0), 0.0, Vec2::ZERO),
+    ("town_mine", Vec2::new(8.0, -55.0), 0.0, Vec2::ZERO),
 ];
 
 /// Lays the showcase out once the kit has loaded; a world rebuild clears it (`BiomeEntity`) and

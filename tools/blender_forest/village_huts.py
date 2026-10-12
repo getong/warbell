@@ -1,0 +1,856 @@
+"""The poor village outside the walls: peasant huts and cottages (exec'd by town_kit.py, shares its
+namespace, replaces town_house_a..d and town_street_house_a/b under the SAME node names).
+
+The settlers outside the walls were poor: small cottages and huts under thick, shaggy, weathered
+thatch (hipped, a sagging ridge weighted by crossed riders or pinned with hazel spars, rounded
+ragged eaves that come down to shoulder height), walls of clay daub over wattle (patches fallen
+off to show the weave) or rough grey logs with saddle-notched corners, all on a fieldstone footing.
+Tiny shuttered window holes (no glass), low plank doors (~1.15u ~ 1.75 m), a smoke hole under a
+gablet or a crude clay chimney, lean-tos, woodpiles, hurdles, a byre end with its muck heap.
+
+Scale: people ~1.17u, 1u ~ 1.5 m. Pivot = ground under the footprint centre, door / front to +Z.
+
+  node                 footprint x*z   collider half   variant
+  town_house_a         5.2 x 3.0       2.55 x 1.55     daub cottage + a thatched lean-to on -X
+  town_house_b         6.0 x 3.2       2.95 x 1.65     log longhouse, byre end (+X) with wide door
+  town_house_c         3.4 x 2.8       1.75 x 1.45     tiny one-room daub hut, smoke-hole gablet
+  town_house_d         4.0 x 3.0       2.2 x 1.7       hovel half dug-in: earth bank, low walls
+  town_street_house_a  4.0 x 7.2       2.1 x 3.7       long daub cottage, ridge along Z, door +Z
+  town_street_house_b  4.4 x 6.6       2.3 x 3.4       log cottage, shutter folded down into a
+                                                       counter (wares) on the +Z end, clay chimney
+(Roof eaves overhang the footprint by ~0.45; yard props reach a little further.)
+"""
+
+from geo import bl, bn  # noqa: E402
+
+CLAY = (0.86, 0.72, 0.56)          # bare clay daub (s_earth)
+LIME_OLD = (0.86, 0.82, 0.74)      # old, dirty limewash over the daub (s_plaster)
+LOGC = (0.74, 0.7, 0.64)           # weathered grey logs (s_timber)
+POSTC = (0.66, 0.6, 0.52)
+THATCH_N = (0.98, 0.86, 0.66)      # weathered straw (on the grey-brown thatch scan)
+THATCH_FRESH = (1.18, 0.98, 0.64)  # a newer patch
+THATCH_MOSS = (0.5, 0.58, 0.34)
+DAUB_HOLE = (0.3, 0.24, 0.19)
+
+
+def _stadium(L, Rx, Rz, nS, nC):
+    """Contour samples round a stadium (ridge segment -L..L, hip radius Rx, side radius Rz):
+    (fn(t) -> base point at contour scale t, outward XZ unit normal)."""
+    out = []
+
+    def side(sz, f):
+        x = (-L + 2 * L * f) if sz > 0 else (L - 2 * L * f)
+        return (lambda t, x=x: V(x, 0, sz * Rz * t)), V(0, 0, sz)
+
+    def cap(sx, a):
+        n = V(math.cos(a) / Rx, 0, math.sin(a) / Rz).normalized()
+        return (lambda t, a=a: V(sx * L + Rx * t * math.cos(a), 0, Rz * t * math.sin(a))), n
+
+    for k in range(nS):
+        out.append(side(1, k / nS))
+    for k in range(nC):
+        out.append(cap(1, math.pi / 2 - math.pi * k / nC))
+    for k in range(nS):
+        out.append(side(-1, k / nS))
+    for k in range(nC):
+        out.append(cap(-1, -math.pi / 2 - math.pi * k / nC))
+    return out
+
+
+def shell(g, P, mat, col_fn, tile, ref):
+    """Closed-in-i quad grid P[i][j] -> smooth mesh; each quad wound so its normal faces away
+    from `ref(p)` (a point "inside"). UV: u along i (arc length), v along j (arc length)."""
+    ni, nj = len(P), len(P[0])
+    Vv = [[0.0] * nj for _ in range(ni)]
+    for i in range(ni):
+        for j in range(1, nj):
+            Vv[i][j] = Vv[i][j - 1] + (P[i][j] - P[i][j - 1]).length
+    U = [[0.0] * nj for _ in range(ni + 1)]
+    for j in range(nj):
+        for i in range(1, ni + 1):
+            U[i][j] = U[i - 1][j] + (P[i % ni][j] - P[i - 1][j]).length
+    N = [[None] * nj for _ in range(ni)]
+    for i in range(ni):
+        for j in range(nj):
+            du = P[(i + 1) % ni][j] - P[i - 1][j]
+            dv = P[i][min(j + 1, nj - 1)] - P[i][max(j - 1, 0)]
+            n = du.cross(dv)
+            N[i][j] = n.normalized() if n.length > 1e-9 else V(0, 1, 0)
+    # One orientation for the whole (continuous) grid, fixed at a sample: top, roll and soffit
+    # then all face the right way (the soffit down).
+    i0, j0 = 0, 1
+    sgn = 1.0 if N[i0][j0].dot(P[i0][j0] - ref(P[i0][j0])) > 0 else -1.0
+    N = [[n * sgn for n in row] for row in N]
+    C = [[col_fn(P[i][j], N[i][j], i, j) for j in range(nj)] for i in range(ni)]
+    for i in range(ni):
+        i2 = (i + 1) % ni
+        for j in range(nj - 1):
+            q = [(i, j, i), (i2, j, i + 1), (i2, j + 1, i + 1), (i, j + 1, i)]
+            pts = [P[a][b] for a, b, _ in q]
+            uvs = [(U[c][b] / tile, Vv[a][b] / tile) for a, b, c in q]
+            ns = [N[a][b] for a, b, _ in q]
+            cs = [C[a][b] for a, b, _ in q]
+            fn = (pts[2] - pts[0]).cross(pts[1] - pts[3])
+            if fn.dot(ns[0] + ns[1] + ns[2] + ns[3]) < 0:
+                pts, uvs, ns, cs = pts[::-1], uvs[::-1], ns[::-1], cs[::-1]
+            g.poly(pts, uvs, ns, cs, mat)
+
+
+def thatch_roof(g, rng, W, D, ye, yr, over=0.48, thick=0.3, hip=0.8, sag=0.09, moss=0.6, fresh=0.3, smoke=0,
+                ridge="riders", tone=1.0):
+    """Hipped thatch over a W x D wall rectangle (centred, ridge along X). Wall plate at `ye`,
+    ridge top `yr`; the eaves overhang by `over` with a thick, rounded, ragged lip. `smoke` = -1/+1
+    opens a smoke-hole gablet at that hip end. `ridge`: "riders" (crossed poles weighting the ridge,
+    the Slavic way) or "spars" (a bound ridge roll pinned with hazel spars)."""
+    Dz = D / 2
+    Dx = Dz * hip
+    L = max(0.06, W / 2 - Dx)
+    Rz = Dz + over
+    tw = Dz / Rz
+    Rx = Dx / tw
+    dlt = (yr - ye - thick) / tw
+    nzl = Noise(rng, 4, 0.8)
+    nzh = Noise(rng, 3, 4.0)
+    nzc = Noise(rng, 4, 1.1)
+    span = L + Rx
+
+    def sagv(x):
+        f = min(abs(x) / span, 1.0)
+        return sag * (1.0 - f * f)
+
+    def ytop(p, t):
+        lump = 0.045 * nzl(p * 1.0) + 0.015 * nzh(p * 1.0)
+        return yr - dlt * t - sagv(p.x) * (1.0 - 0.5 * t) + lump * min(1.0, t * 3)
+
+    nS = max(4, int(2 * L / 0.22))
+    con = _stadium(L, Rx, Rz, nS, 16)
+    t0 = 0.1
+    tops = [t0 + (1 - t0) * (k / 10) ** 0.92 for k in range(11)]
+    unders = [1.0, 0.94, (1 + tw) / 2, tw - 0.03]
+    r0 = thick / 2
+    P = []
+    meta = []
+    for fn, nout in con:
+        e = fn(1.0)
+        rag = 0.05 * nzh(e * 2.3) + rng.uniform(-0.02, 0.02)
+        rr = r0 * (1.0 + 0.18 * nzh(e * 1.7 + V(5, 0, 0)))
+        col_pts = []
+        for t in tops:
+            b = fn(t)
+            col_pts.append(b + V(0, ytop(b, t), 0))
+        yt1 = col_pts[-1].y
+        droop = max(0.0, 0.05 * nzl(e * 1.3 + V(0, 2, 0)))
+        for k in range(1, 7):
+            a = math.pi * k / 7
+            s = math.sin(a) ** 0.7
+            col_pts.append(e + nout * (rr * s * 1.1 + rag * smoothstep(0.0, 0.6, k / 7)) +
+                           V(0, yt1 - rr - droop * (k / 7) + rr * math.cos(a), 0))
+        ybot = yt1 - 2 * rr - droop
+        for t in unders:
+            b = fn(t)
+            y = ytop(b, t) - 2 * rr - droop * smoothstep(tw, 1.0, t)
+            if t >= 0.999:
+                y = ybot
+                b = b + nout * (rag * 0.8)
+            col_pts.append(b + V(0, y, 0))
+        P.append(col_pts)
+        meta.append(nout)
+    jr = len(tops)
+    sm = V(smoke * (L + Rx * 0.16), yr, 0)
+
+    def col_fn(p, n, i, j):
+        nout = meta[i]
+        t = tops[j] if j < jr else 1.0
+        c = mix(scale(THATCH_N, 1.06), scale(THATCH_N, 0.82), smoothstep(0.2, 1.0, t))
+        f = smoothstep(0.3, 0.62, nzc(p * 0.7 + V(9, 0, 3))) * fresh
+        c = mix(c, THATCH_FRESH, f * (1.0 - smoothstep(0.85, 1.0, t)))
+        back = smoothstep(-0.2, -0.9, nout.z) * moss + 0.25 * moss
+        m = back * smoothstep(0.45, 1.0, t) * (0.55 + 0.45 * nzl(p * 2.1 + V(1, 1, 1)))
+        c = mix(c, THATCH_MOSS, max(0.0, min(m, 0.85)))
+        if j >= jr + 5:
+            c = scale(c, 0.42 if j > jr + 6 else 0.6)
+        if smoke:
+            c = mix(c, (0.2, 0.18, 0.16), 0.75 * (1 - smoothstep(0.2, 1.1, (p - sm).length)))
+        return scale(c, tone * (0.9 + 0.12 * nzh(p * 3.0)))
+
+    shell(g, P, M_THATCH, col_fn, 0.9, lambda p: V(p.x * 0.3, p.y - 3.0, p.z * 0.3))
+
+    # Ridge: a fat bound straw roll.
+    ex = L + Rx * t0 * 0.6
+    xs = [-ex - 0.05, -ex + 0.1, -L * 0.5, 0.0, L * 0.5, ex - 0.1, ex + 0.05]
+    pts = [V(x, ytop(V(x, 0, 0), 0.02) + 0.02, 0) for x in xs]
+    rad = [0.06, 0.2, 0.22, 0.22, 0.22, 0.2, 0.06]
+    tube(g, pts, rad, 10, M_THATCH, scale(THATCH_N, 0.72 * tone), tile=0.6, uv_phase=rng.uniform(0, 2))
+    if ridge == "riders":
+        n = max(2, int((2 * ex) / 0.85))
+        for x in np.linspace(-ex + 0.25, ex - 0.25, n):
+            x = float(x) + rng.uniform(-0.06, 0.06)
+            yb = ytop(V(x, 0, 0), 0.0)
+            for sz in (-1, 1):
+                foot = V(x, 0, sz * Rz * 0.42)
+                foot.y = ytop(foot, 0.42) + 0.05
+                top = V(x + rng.uniform(-0.04, 0.04), yb + 0.38, -sz * 0.24)
+                pole(g, foot, top, 0.035, 0.03, rng, col=(0.62, 0.55, 0.45), sides=5, segs=2, wobble=0.008)
+    else:
+        for x in np.linspace(-ex + 0.2, ex - 0.2, max(3, int(2 * ex / 0.55))):
+            for sz in (-1, 1):
+                a_ = V(float(x), ytop(V(float(x), 0, 0), 0.0) + 0.12, sz * 0.14)
+                tube(g, [a_, a_ + V(0.0, -0.1, sz * 0.24)], [0.012, 0.012], 4, M_BARK, (0.85, 0.78, 0.66), tile=0.3)
+        for sz in (-1, 1):
+            pts = [V(x, ytop(V(x, 0, 0), 0.0) + 0.11, sz * 0.17) for x in (-ex + 0.15, 0.0, ex - 0.15)]
+            tube(g, pts, [0.014] * 3, 4, M_BARK, (0.8, 0.72, 0.6), tile=0.4)
+    if smoke:
+        # Smoke-hole gablet: a dark triangular vent at the hip end under a hood of straw.
+        xs_ = smoke * (L + Rx * 0.12)
+        yb = yr - dlt * 0.2 - 0.02
+        ap = V(xs_, yr - 0.03, 0)
+        bl_, br_ = V(xs_ + smoke * 0.08, yb, -0.26), V(xs_ + smoke * 0.08, yb, 0.26)
+        face(g, [bl_, br_, ap], V(smoke, 0.3, 0), M_EARTH, VOID)
+        for sz in (-1, 1):
+            a_ = V(xs_ - smoke * 0.2, yr + 0.1, 0)
+            e_ = V(xs_ + smoke * 0.16, yb - 0.04, sz * 0.36)
+            tube(g, [a_, a_.lerp(e_, 0.5) + V(0, 0.03, 0), e_], [0.12, 0.11, 0.07], 8, M_THATCH,
+                 scale(THATCH_N, 0.55), tile=0.6)
+    return dict(L=L, Rx=Rx, Rz=Rz, tw=tw, dlt=dlt)
+
+
+def _walls(W, D):
+    return [((-W / 2, D / 2), (W / 2, D / 2)), ((W / 2, D / 2), (W / 2, -D / 2)),
+            ((W / 2, -D / 2), (-W / 2, -D / 2)), ((-W / 2, -D / 2), (-W / 2, D / 2))]
+
+
+def _pieces(L, y0, y1, ops):
+    """Wall rectangles (s0, s1, ya, yb) around the openings."""
+    ops = sorted(ops, key=lambda o: o["s"])
+    out, s = [], 0.0
+    for o in ops:
+        a, b = o["s"] - o["w"] / 2, o["s"] + o["w"] / 2
+        if a > s + 0.02:
+            out.append((s, a, y0, y1))
+        if o["y0"] > y0 + 0.05:
+            out.append((a, b, y0, o["y0"]))
+        if o["y1"] < y1 - 0.05:
+            out.append((a, b, o["y1"], y1))
+        s = b
+    if s < L - 0.02:
+        out.append((s, L, y0, y1))
+    return out
+
+
+def footing(g, rng, W, D, y_top=0.22, gap=0.3, skip=()):
+    """A course of fieldstones under the walls, half sunk."""
+    nz = Noise(rng, 3, 2.0)
+    for wi, (a, b) in enumerate(_walls(W, D)):
+        A, B = V(a[0], 0, a[1]), V(b[0], 0, b[1])
+        t = (B - A).normalized()
+        L = (B - A).length
+        n = max(2, int(L / gap))
+        for k in range(n + 1):
+            s = L * k / n + rng.uniform(-0.05, 0.05)
+            if any(wi == w and lo < s < hi for w, lo, hi in skip):
+                continue
+            rx, ry, rz = rng.uniform(0.16, 0.22), rng.uniform(0.1, 0.15), rng.uniform(0.13, 0.18)
+            c = A + t * s + t.cross(UP) * rng.uniform(0.0, 0.05) + UP * (y_top - ry * 1.1)
+            stone(g, c, (rx, ry, rz), rng, mat=M_ROCK, detail=1, rough=0.12, rot=yaw(t) @ quat_y(rng.uniform(-0.3, 0.3)),
+                  col_fn=rock_col(scale((0.82, 0.8, 0.75), rng.uniform(0.75, 0.95)), moss=0.45, ground=0.0, noise=nz),
+                  tile=0.6)
+
+
+def opening_dress(g, rng, A, t, n, T, o, mat_void=M_EARTH, jamb=True):
+    """Door / window furniture in a wall from A along t (outward n): jambs + lintel, the dark
+    interior, a door leaf (ajar) or a hanging shutter, a threshold stone."""
+    s0, s1 = o["s"] - o["w"] / 2, o["s"] + o["w"] / 2
+    y0, y1 = o["y0"], o["y1"]
+    P = lambda s, y, off=0.0: A + t * s + UP * y + n * off
+    face(g, [P(s0, y0, -T / 2 + 0.02), P(s1, y0, -T / 2 + 0.02), P(s1, y1, -T / 2 + 0.02), P(s0, y1, -T / 2 + 0.02)],
+         n, mat_void, VOID)
+    if jamb:
+        for s in (s0 - 0.04, s1 + 0.04):
+            pole(g, P(s, y0 - 0.25 if o["kind"] == "door" else y0 - 0.08, T * 0.3),
+                 P(s, y1 + 0.1, T * 0.3), 0.05, 0.045, rng, col=POSTC, sides=6, segs=2)
+        pole(g, P(s0 - 0.22, y1 + 0.06, T * 0.35), P(s1 + 0.22, y1 + 0.06 + rng.uniform(-0.02, 0.02), T * 0.35),
+             0.055, 0.05, rng, col=scale(POSTC, 0.9), sides=6, segs=2)
+    if o["kind"] == "door":
+        hinge = P(s0 + 0.02, y0, T / 2 - 0.08)
+        door_leaf(g, rng, hinge, t, n, o["w"] - 0.04, y1 - y0 - 0.03, o.get("ajar", 0.5), col=(0.56, 0.5, 0.42))
+        slab(g, P(o["s"], -0.02, T / 2 + 0.22), (o["w"] + 0.2, 0.1, 0.4), yaw(t) @ quat_y(rng.uniform(-0.08, 0.08)),
+             rng, res=(3, 1, 2), round_r=0.04, rough=0.08, col_fn=rock_col((0.78, 0.76, 0.72), moss=0.2), tile=0.6)
+    else:
+        # A single plank shutter hung from the top, propped half open, or swung aside.
+        h = y1 - y0
+        if o.get("prop", True):
+            ang = rng.uniform(0.9, 1.2)
+            top = P(o["s"], y1 + 0.02, T / 2 + 0.02)
+            d = (n * math.sin(ang) - UP * math.cos(ang)).normalized()
+            board(g, top + d * (h / 2), t, d.cross(t), o["w"] + 0.06, h + 0.04, 0.035, mat=M_PLANK,
+                  col=scale((0.58, 0.52, 0.44), rng.uniform(0.8, 1.0)), rng=rng)
+            pole(g, P(o["s"] + 0.1, y0 - 0.02, T / 2 + 0.02), top + d * (h * 0.9), 0.012, 0.012, rng,
+                 col=(0.7, 0.62, 0.5), sides=4, segs=1)
+        else:
+            ang = rng.uniform(1.6, 2.2)
+            hinge = P(s1 + 0.02, y0, T / 2 + 0.02)
+            d = (-t * math.cos(math.pi - ang) + n * math.sin(math.pi - ang)).normalized()
+            board(g, hinge + d * (o["w"] / 2) + UP * (h / 2), (0, 1, 0), d.cross(UP), h + 0.04, o["w"] + 0.04, 0.035,
+                  mat=M_PLANK, col=scale((0.58, 0.52, 0.44), rng.uniform(0.8, 1.0)), rng=rng)
+
+
+def daub_walls(g, rng, W, D, y0, ye, ops, T=0.18, finish="clay", patches=3, posts=True):
+    """Clay daub over wattle between rough posts: lumpy slabs around the openings, a few patches
+    where the daub fell off and the weave shows; corner posts + a round wall plate crossing at the
+    corners. finish "clay" (bare, s_earth) or "lime" (old dirty limewash, s_plaster)."""
+    nz = Noise(rng, 4, 1.6)
+    mat = M_EARTH if finish == "clay" else M_PLASTER
+    base = CLAY if finish == "clay" else LIME_OLD
+    walls = _walls(W, D)
+    holes = []
+    for wi, (a, b) in enumerate(walls):
+        A, B = V(a[0], 0, a[1]), V(b[0], 0, b[1])
+        t = (B - A).normalized()
+        n = t.cross(UP)
+        L = (B - A).length
+        pcs = _pieces(L, y0, ye, ops[wi])
+        tall = [p for p in pcs if p[3] - p[2] > ye - y0 - 0.1 and p[1] - p[0] > 0.8]
+        for _ in range(patches if tall and rng.uniform() < 0.8 else 0):
+            p = tall[rng.integers(len(tall))]
+            s = rng.uniform(p[0] + 0.35, p[1] - 0.35)
+            y = rng.uniform(y0 + 0.3, ye - 0.3)
+            holes.append((A + t * s + UP * y + n * (T / 2), t, n, rng.uniform(0.14, 0.26), rng.uniform(0.1, 0.18)))
+
+        def col_fn(p, nn, base=base):
+            k = 0.88 + 0.16 * nz(p * 1.5)
+            c = scale(base, k)
+            c = mix(scale((0.55, 0.47, 0.38), 0.9), c, smoothstep(y0, y0 + 0.5, p.y))
+            c = mix(c, (0.42, 0.38, 0.34), 0.35 * smoothstep(ye - 0.45, ye, p.y))
+            for hc, ht, hn, rx, ry in holes:
+                d = p - hc
+                e = (d.dot(ht) / (rx * 1.35)) ** 2 + (d.y / (ry * 1.35)) ** 2
+                if e < 1.0 and abs(d.dot(hn)) < 0.08:
+                    c = mix(c, DAUB_HOLE, smoothstep(1.0, 0.55, e))
+            return c
+
+        for s0, s1, ya, yb in pcs:
+            Lp, h = s1 - s0, yb - ya
+            c = A + t * ((s0 + s1) / 2) + UP * ((ya + yb) / 2)
+            slab(g, c, (Lp + 0.02, h, T), yaw(t), rng, mat=mat, col_fn=col_fn, tile=1.1,
+                 res=(max(2, int(Lp / 0.28)), max(2, int(h / 0.28)), 1), round_r=0.035, rough=0.28)
+        for o in ops[wi]:
+            opening_dress(g, rng, A, t, n, T, o)
+    # The exposed wattle where the daub fell away.
+    for hc, ht, hn, rx, ry in holes:
+        for k in range(-1, 2):
+            s = hc + ht * (k * rx * 0.55) + hn * 0.005
+            pole(g, s - UP * ry * 1.1, s + UP * ry * 1.1, 0.014, 0.014, rng, col=(0.62, 0.55, 0.44), sides=4, segs=1)
+        for r in range(4):
+            y = -ry * 0.8 + r * ry * 0.53
+            pts = [hc + ht * (x * rx) + UP * y + hn * (0.012 if (r + q) % 2 else -0.004)
+                   for q, x in enumerate((-1.0, -0.5, 0.0, 0.5, 1.0))]
+            tube(g, pts, [0.011] * 5, 4, M_BARK, (0.85, 0.76, 0.6), tile=0.4, cap=False)
+    if posts:
+        for x, z in ((-W / 2, D / 2), (W / 2, D / 2), (W / 2, -D / 2), (-W / 2, -D / 2)):
+            pole(g, V(x, -0.15, z), V(x + rng.uniform(-0.02, 0.02), ye + 0.05, z), 0.11, 0.09, rng, col=POSTC,
+                 sides=7, segs=3, col_fn=weathered(POSTC, 0.62))
+        for a, b in walls:
+            A, B = V(a[0], ye + 0.02, a[1]), V(b[0], ye + 0.02, b[1])
+            t = (B - A).normalized()
+            pole(g, A - t * 0.18, B + t * 0.18, 0.075, 0.07, rng, col=scale(POSTC, 0.85), sides=6, segs=3)
+
+
+def log_walls(g, rng, W, D, y0, ye, ops, r=0.12):
+    """Rough grey logs, saddle-notched corners overhanging, moss chinking between the courses;
+    openings framed with split jamb boards."""
+    step = 2 * r * 0.9
+    n = max(3, int(round((ye - y0) / step)))
+    step = (ye - y0) / n
+    for wi, (a, b) in enumerate(_walls(W, D)):
+        A, B = V(a[0], 0, a[1]), V(b[0], 0, b[1])
+        t = (B - A).normalized()
+        nn = t.cross(UP)
+        L = (B - A).length
+        off = 0.0 if wi % 2 == 0 else step / 2
+        for k in range(-(wi % 2), n):
+            y = y0 + r + k * step + off
+            if y - r > ye - 0.02:
+                continue
+            segs = [(-0.26, L + 0.26)]
+            for o in ops[wi]:
+                if o["y0"] - 0.02 < y < o["y1"] + r * 0.6:
+                    cut = []
+                    for s0, s1 in segs:
+                        a_, b_ = o["s"] - o["w"] / 2 - 0.04, o["s"] + o["w"] / 2 + 0.04
+                        if b_ <= s0 or a_ >= s1:
+                            cut.append((s0, s1))
+                            continue
+                        if a_ > s0 + 0.1:
+                            cut.append((s0, a_))
+                        if b_ < s1 - 0.1:
+                            cut.append((b_, s1))
+                    segs = cut
+            for s0, s1 in segs:
+                rr = r * rng.uniform(0.88, 1.08)
+                p0 = A + t * (s0 + rng.uniform(-0.04, 0.04)) + UP * y
+                p1 = A + t * (s1 + rng.uniform(-0.04, 0.04)) + UP * (y + rng.uniform(-0.015, 0.015))
+                pole(g, p0, p1, rr, rr * 0.9, rng, mat=M_TIMBER, col=scale(LOGC, rng.uniform(0.78, 1.0)), sides=9,
+                     segs=3, wobble=0.012, tile=0.8)
+                if k > 0:
+                    a_, b_ = max(s0, 0.1), min(s1, L - 0.1)
+                    if b_ - a_ > 0.2:
+                        tube(g, [A + t * a_ + UP * (y - step / 2) + nn * (r * 0.45),
+                                 A + t * b_ + UP * (y - step / 2) + nn * (r * 0.45)],
+                             [r * 0.32, r * 0.32], 5, M_EARTH, (0.5, 0.52, 0.36), tile=0.5)
+        for o in ops[wi]:
+            for s in (o["s"] - o["w"] / 2 - 0.05, o["s"] + o["w"] / 2 + 0.05):
+                board(g, A + t * s + UP * ((o["y0"] + o["y1"]) / 2 - 0.05) + nn * (r * 0.75), (0, 1, 0), nn,
+                      o["y1"] - o["y0"] + 0.4, 0.13, 0.06, mat=M_PLANK, col=(0.6, 0.55, 0.47), rng=rng)
+            opening_dress(g, rng, A, t, nn, 2 * r, o, jamb=False)
+    # A wall plate log on top, crossing at the corners.
+    for a, b in _walls(W, D)[0::2]:
+        A, B = V(a[0], ye + 0.05, a[1]), V(b[0], ye + 0.05, b[1])
+        t = (B - A).normalized()
+        pole(g, A - t * 0.3, B + t * 0.3, r * 0.95, r * 0.85, rng, mat=M_TIMBER, col=scale(LOGC, 0.8), sides=9, segs=3)
+
+
+def muck_heap(g, rng, c, rx=0.9, rz=0.7, h=0.45):
+    mound(g, c, rx, rz, h, rng, mat=M_EARTH, col_fn=lambda p, n: (0.36, 0.3, 0.24), rings=5, seg=16, rough=0.2)
+    for _ in range(5):
+        p = V(c[0] + rng.uniform(-rx, rx) * 0.5, h * 0.7, c[2] + rng.uniform(-rz, rz) * 0.5)
+        frustum(g, 0.25, 0.05, p.y - 0.12, 0.18, 7, M_THATCH, (0.8, 0.7, 0.5), tile=0.5, centre=(p.x, 0, p.z),
+                jitter=0.05, rng=rng)
+
+
+def firewood(g, rng, c, yaw_a, L=1.2, rows=3):
+    """Split logs stacked against a wall (no frame)."""
+    q = quat_y(yaw_a)
+    C = Vector(c)
+    for r in range(rows):
+        k = int(L / 0.2) - r
+        for i in range(k):
+            x = -L / 2 + (i + 0.5 + r * 0.5) * L / (k + r)
+            p = C + q @ V(x, 0.09 + r * 0.16, 0)
+            pole(g, p + q @ V(0, 0, -0.24), p + q @ V(0, 0, 0.24), 0.085, 0.085, rng, col=(0.72, 0.62, 0.5), sides=5,
+                 segs=1, wobble=0.0)
+
+
+def wattle_hurdle(g, rng, p0, p1, h=0.75):
+    hurdle(g, rng, Vector(p0), Vector(p1), h=h, gap=0.36, rods=7)
+
+
+def _ops(*walls):
+    return [list(w) for w in walls]
+
+
+def DOOR(s, w=0.78, h=1.16, ajar=0.5):
+    return dict(s=s, w=w, y0=0.12, y1=0.12 + h, kind="door", ajar=ajar)
+
+
+def WIN(s, w=0.4, y0=0.72, h=0.32, prop=True):
+    return dict(s=s, w=w, y0=y0, y1=y0 + h, kind="window", prop=prop)
+
+
+def rotate_tail(b, v0, f0, a):
+    """Turn every vertex / normal added since (v0, f0) by `a` about game +Y."""
+    q = quat_y(a)
+    for i in range(v0, len(b.verts)):
+        x, y, z = b.verts[i]
+        p = q @ V(x, z, -y)
+        b.verts[i] = tuple(bl(p))
+    for k in range(f0, len(b.faces)):
+        idx, uvs, nrms, cols, mat = b.faces[k]
+        out = []
+        for n in nrms:
+            x, y, z = n
+            p = q @ V(x, z, -y)
+            out.append(tuple(bn(p)))
+        b.faces[k] = (idx, uvs, out, cols, mat)
+
+
+# ─────────────────────────────────────────────────────────────── the four lane cottages
+
+def town_house_c(rng):
+    """Tiny one-room hut: bare clay daub, smoke hole, riders on the ridge; a bench, a bucket and a
+    hurdle pen by the door."""
+    b = Builder()
+    g = G(b)
+    W, D, ye = 3.4, 2.8, 1.32
+    ops = _ops([DOOR(1.15, ajar=0.9), WIN(2.55)], [WIN(1.4, prop=False)], [], [])
+    footing(g, rng, W, D, skip=[(0, 0.65, 1.65)])
+    daub_walls(g, rng, W, D, 0.16, ye, ops, finish="clay", patches=2)
+    thatch_roof(g, rng, W, D, ye, 3.05, over=0.46, hip=0.85, smoke=-1, ridge="riders", moss=0.7, fresh=0.15,
+                tone=0.92)
+    bench(g, rng, V(2.0 - W / 2 + 0.35, 0.0, D / 2 + 0.45), 0.0, L=0.9)
+    bucket(g, (-W / 2 + 0.55, 0.0, D / 2 + 0.5))
+    hurdle(g, rng, V(W / 2 + 0.35, 0, D / 2 + 1.2), V(W / 2 + 0.35, 0, -D / 2 + 0.2), h=0.7)
+    hurdle(g, rng, V(W / 2 + 0.35, 0, D / 2 + 1.2), V(W / 2 - 0.9, 0, D / 2 + 1.2), h=0.7)
+    firewood(g, rng, (-W / 2 - 0.32, 0.0, -0.4), math.pi / 2, L=1.2, rows=3)
+    return b
+
+
+def town_house_b(rng):
+    """Log longhouse: the family at the west end, the byre (+X) behind a wide door, its muck heap
+    out front; a bound ridge with spars; a clay-and-wattle smoke hole at the dwelling end."""
+    b = Builder()
+    g = G(b)
+    W, D, ye = 6.0, 3.2, 1.38
+    ops = _ops([DOOR(1.4, ajar=0.35), WIN(2.45), DOOR(4.75, w=1.15, h=1.2, ajar=1.2)], [WIN(1.6, prop=False)],
+               [WIN(4.2)], [])
+    footing(g, rng, W, D, y_top=0.2, skip=[(0, 0.95, 1.85), (0, 4.1, 5.4)])
+    log_walls(g, rng, W, D, 0.18, ye, ops, r=0.12)
+    thatch_roof(g, rng, W, D, ye + 0.1, 3.35, over=0.5, hip=0.75, smoke=-1, ridge="spars", moss=0.55, fresh=0.35,
+                sag=0.14)
+    muck_heap(g, rng, (W / 2 - 0.3, 0.0, D / 2 + 1.35), rx=0.95, rz=0.6, h=0.42)
+    pole(g, V(W / 2 + 0.1, 0.3, D / 2 + 1.2), V(W / 2 + 0.7, 1.4, D / 2 + 1.5), 0.025, 0.022, rng, col=(0.7, 0.6, 0.48),
+         sides=5, segs=2)  # pitchfork stuck in the muck
+    for k in range(3):
+        tube(g, [V(W / 2 + 0.68 + 0.04 * (k - 1), 1.38, D / 2 + 1.49), V(W / 2 + 0.75 + 0.05 * (k - 1), 1.62, D / 2 + 1.6)],
+             [0.008, 0.006], 4, M_IRON, IRON_D, tile=0.2)
+    firewood(g, rng, (-W / 2 - 0.32, 0.0, 0.1), math.pi / 2, L=1.6, rows=4)
+    chopping_block(g, rng, (-W / 2 - 1.0, 0.0, D / 2 + 0.6))
+    barrel(g, rng, (0.4, 0.0, D / 2 + 0.45))
+    return b
+
+
+def town_house_a(rng):
+    """Daub cottage (old limewash) with a thatched lean-to on its west end: firewood, a ladder,
+    a hay fork; a crude clay chimney through the thatch, a bench by the door."""
+    b = Builder()
+    g = G(b)
+    W, D, ye = 3.9, 3.0, 1.34
+    ox = 0.65   # main body shifted east so body + lean-to centre on the pivot
+    v0, f0 = len(b.verts), len(b.faces)
+    ops = _ops([WIN(0.8), DOOR(2.1, ajar=0.45)], [WIN(1.5)], [WIN(2.3, prop=False)], [])
+    footing(g, rng, W, D, skip=[(0, 1.6, 2.6)])
+    daub_walls(g, rng, W, D, 0.17, ye, ops, finish="lime", patches=3)
+    info = thatch_roof(g, rng, W, D, ye, 3.2, over=0.46, hip=0.8, ridge="riders", moss=0.5, fresh=0.4)
+    # Clay-daubed wattle chimney stack poking through the east slope near the ridge.
+    cx_, cz_ = 0.7, -0.35
+    yb = 3.2 - info["dlt"] * (abs(cz_) / info["Rz"]) - 0.2
+    slab(g, V(cx_, yb + 0.45, cz_), (0.46, 1.0, 0.42), quat_y(0.05), rng, mat=M_EARTH, res=(2, 4, 2), round_r=0.06,
+         rough=0.3, taper=0.18, col_fn=lambda p, n: mix((0.62, 0.52, 0.42), (0.16, 0.14, 0.12), smoothstep(yb + 0.6, yb + 1.0, p.y)),
+         tile=0.8)
+    for k in range(3):
+        stone(g, V(cx_ + rng.uniform(-0.12, 0.12), yb + 0.98, cz_ + rng.uniform(-0.1, 0.1)), (0.1, 0.06, 0.08), rng,
+              detail=1, rough=0.1, col_fn=rock_col((0.5, 0.48, 0.45)))
+    # Lean-to on -X: three posts, a thatched pent roof down from under the main eave.
+    x_out = -W / 2 - 1.35
+    for z in (-D / 2 + 0.1, 0.0, D / 2 - 0.1):
+        pole(g, V(x_out, -0.15, z), V(x_out + rng.uniform(-0.03, 0.03), 0.7, z), 0.07, 0.06, rng, col=POSTC, sides=6)
+    pole(g, V(x_out, 0.7, -D / 2 - 0.25), V(x_out, 0.68, D / 2 + 0.25), 0.065, 0.06, rng, col=POSTC, sides=6)
+    yt, yo = 0.92, 0.66
+    th = math.atan2(yt - yo, 1.35)
+    q = quat_z(th)
+    cc = V((-W / 2 + x_out) / 2 - 0.15, (yt + yo) / 2 + 0.12, 0.0)
+    slab(g, cc, (1.75, 0.22, D + 0.6), q, rng, mat=M_THATCH, res=(4, 1, 6), round_r=0.09, rough=0.35,
+         col_fn=lambda p, n: mix(scale(THATCH_N, 0.95), THATCH_MOSS, 0.3 * smoothstep(-0.6, -1.0, p.x / 2.6)), tile=0.9)
+    firewood(g, rng, (-W / 2 - 0.45, 0.0, -0.45), math.pi / 2, L=1.6, rows=4)
+    firewood(g, rng, (-W / 2 - 1.0, 0.0, 0.55), math.pi / 2, L=1.0, rows=3)
+    ladder(g, rng, V(-W / 2 + 0.9, 0.0, D / 2 + 0.55), V(-W / 2 + 0.75, 2.05, D / 2 - 0.05), width=0.4)
+    bench(g, rng, V(1.05, 0.0, D / 2 + 0.45), 0.0, L=1.0)
+    chopping_block(g, rng, (-W / 2 - 0.6, 0.0, D / 2 + 0.95))
+    for i in range(v0, len(b.verts)):
+        x, y, z = b.verts[i]
+        b.verts[i] = (x + ox, y, z)
+    return b
+
+
+def town_house_d(rng):
+    """Hovel half dug-in: an earth bank heaped against low clay walls, the thatch sweeping down
+    almost to the bank, a stone-lined entry with the low door; turf patches on the bank."""
+    b = Builder()
+    g = G(b)
+    W, D, ye = 4.0, 3.0, 1.26
+    ops = _ops([DOOR(2.0, w=0.76, h=1.12, ajar=0.7)], [WIN(1.5, y0=0.78, h=0.28)], [], [])
+    daub_walls(g, rng, W, D, 0.1, ye, ops, finish="clay", patches=1)
+    thatch_roof(g, rng, W, D, ye, 2.95, over=0.62, thick=0.34, hip=0.9, smoke=1, ridge="riders", moss=0.9,
+                fresh=0.1, sag=0.12, tone=0.86)
+    nz = Noise(rng, 4, 1.2)
+    # The bank: a ring of earth around the walls, up to ~0.6, broken at the entry.
+    def bank_col(p, n):
+        c = mix((0.42, 0.36, 0.28), (0.4, 0.5, 0.26), smoothstep(0.4, 0.95, n.y) * (0.6 + 0.4 * nz(p * 2)))
+        return scale(c, 0.9 + 0.15 * nz(p * 4))
+    segs = []
+    perim = [(-W / 2 - 0.35, D / 2 + 0.35), (W / 2 + 0.35, D / 2 + 0.35), (W / 2 + 0.35, -D / 2 - 0.35),
+             (-W / 2 - 0.35, -D / 2 - 0.35)]
+    for k in range(4):
+        a, c = V(perim[k][0], 0, perim[k][1]), V(perim[(k + 1) % 4][0], 0, perim[(k + 1) % 4][1])
+        L = (c - a).length
+        n = int(L / 0.55)
+        for i in range(n + 1):
+            p = a.lerp(c, i / n)
+            if k == 0 and abs(p.x - (-W / 2 + 2.0)) < 0.8:
+                continue
+            segs.append(p)
+    for p in segs:
+        mound(g, (p.x, 0.0, p.z), 0.62, 0.62, rng.uniform(0.5, 0.62), rng, col_fn=bank_col, rings=4, seg=10,
+              rough=0.15)
+    # The entry: stone cheeks either side of the door, a step down (dark).
+    for sx in (-1, 1):
+        for k in range(3):
+            stone(g, V(-W / 2 + 2.0 + sx * (0.58 + 0.05 * k), 0.14 + 0.2 * k, D / 2 + 0.25 + 0.18 * k - 0.1 * k),
+                  (0.2, 0.13, 0.18), rng, detail=1, rough=0.12, col_fn=rock_col((0.78, 0.76, 0.7), moss=0.4))
+    pole(g, V(W / 2 + 0.2, -0.1, D / 2 + 0.9), V(W / 2 + 0.25, 1.0, D / 2 + 0.95), 0.04, 0.035, rng, col=POSTC, sides=5)
+    firewood(g, rng, (W / 2 + 0.9, 0.0, 0.2), math.pi / 2, L=1.0, rows=2)
+    bucket(g, (-W / 2 + 1.1, 0.0, D / 2 + 0.75))
+    return b
+
+
+# ─────────────────────────────────────────────────────────────── the street cottages
+# Ridge along Z (the gable / hip end + door to the road at +Z). Built with the ridge along X, the
+# road end at +X, then turned a quarter (+X -> +Z).
+
+def town_street_house_a(rng):
+    """Long daub cottage, door + window on the road end, a back door to the yard, a byre-end at the
+    back with a hay loft hatch, smoke hole over the hearth, bench + bucket by the door."""
+    b = Builder()
+    g = G(b)
+    W, D, ye = 7.2, 4.0, 1.4
+    v0, f0 = len(b.verts), len(b.faces)
+    # walls: 0 = -Z long side (ends up -X... after the turn: front(+Z local) -> -X world)
+    ops = _ops([WIN(2.0), WIN(5.0, prop=False)], [DOOR(1.6, ajar=0.6), WIN(3.0)], [WIN(3.6)],
+               [DOOR(2.6, w=0.95, ajar=0.2)])
+    footing(g, rng, W, D, skip=[(1, 1.1, 2.1), (3, 2.0, 3.2)])
+    daub_walls(g, rng, W, D, 0.17, ye, ops, finish="clay", patches=3)
+    thatch_roof(g, rng, W, D, ye, 3.65, over=0.5, hip=0.7, smoke=1, ridge="riders", moss=0.6, fresh=0.35, sag=0.15)
+    bench(g, rng, V(W / 2 + 0.45, 0.0, -0.9), math.pi / 2, L=1.1)
+    bucket(g, (W / 2 + 0.55, 0.0, 1.35))
+    firewood(g, rng, (0.5, 0.0, -D / 2 - 0.35), 0.0, L=2.2, rows=4)
+    chopping_block(g, rng, (-1.4, 0.0, -D / 2 - 0.9))
+    rotate_tail(b, v0, f0, -math.pi / 2)
+    return b
+
+
+def town_street_house_b(rng):
+    """Log cottage of a craftsman who sells at his window: the road-end shutter folded down into a
+    counter (pots, a cloth, loaves), the upper one propped as an awning; clay chimney; barrel."""
+    b = Builder()
+    g = G(b)
+    W, D, ye = 6.6, 4.4, 1.42
+    v0, f0 = len(b.verts), len(b.faces)
+    shop = dict(s=2.95, w=1.3, y0=0.66, y1=1.18, kind="window", prop=True)
+    ops = _ops([WIN(2.2)], [DOOR(1.0, ajar=0.4), shop], [WIN(4.0, prop=False)], [DOOR(2.2, w=0.9, ajar=0.15)])
+    footing(g, rng, W, D, y_top=0.2, skip=[(1, 0.5, 1.5)])
+    log_walls(g, rng, W, D, 0.18, ye, ops, r=0.125)
+    info = thatch_roof(g, rng, W, D, ye + 0.1, 3.6, over=0.5, hip=0.72, ridge="spars", moss=0.45, fresh=0.45, sag=0.1)
+    # Counter: the lower shutter folded down on two legs (wall 1 = +X end, outward +X).
+    x0 = W / 2 + 0.13
+    zc = D / 2 - 2.95
+    board(g, V(x0 + 0.28, 0.68, zc), (0, 0, 1), (0, 1, 0), 1.36, 0.5, 0.05, mat=M_PLANK, col=(0.6, 0.53, 0.44), rng=rng)
+    for dz in (-0.55, 0.55):
+        pole(g, V(x0 + 0.45, -0.1, zc + dz), V(x0 + 0.45, 0.66, zc + dz), 0.03, 0.028, rng, col=POSTC, sides=5, segs=1)
+    for k, dz in enumerate((-0.42, -0.1, 0.25)):
+        lathe(g, (x0 + 0.3, 0.71, zc + dz), (0, 1, 0), [(0.0, 0.06), (0.1, 0.1), (0.2, 0.075), (0.24, 0.08)], 9, M_EARTH,
+              scale((0.85, 0.55, 0.38), 0.9 + 0.1 * k), tile=0.3)
+    stone(g, V(x0 + 0.25, 0.75, zc + 0.5), (0.12, 0.06, 0.09), rng, mat=M_EARTH, detail=1, rough=0.1,
+          col_fn=lambda p, n: (0.85, 0.66, 0.42), cuts=0)
+    lbox(g, V(x0 + 0.28, 0.715, zc - 0.05), (0.42, 0.02, 0.5), quat_y(0.1), M_CLOTH, (0.62, 0.66, 0.78), tile=0.4)
+    # Clay chimney through the slope near the ridge.
+    cz_ = -0.4
+    yb = 3.6 - info["dlt"] * (abs(cz_) / info["Rz"]) - 0.25
+    slab(g, V(-0.9, yb + 0.5, cz_), (0.5, 1.1, 0.46), quat_y(-0.04), rng, mat=M_EARTH, res=(2, 4, 2), round_r=0.06,
+         rough=0.3, taper=0.16, col_fn=lambda p, n: mix((0.64, 0.54, 0.44), (0.15, 0.13, 0.12), smoothstep(yb + 0.7, yb + 1.1, p.y)),
+         tile=0.8)
+    barrel(g, rng, (W / 2 + 0.45, 0.0, -1.85))
+    firewood(g, rng, (-W / 2 - 0.35, 0.0, 0.0), math.pi / 2, L=2.4, rows=4)
+    rotate_tail(b, v0, f0, -math.pi / 2)
+    return b
+
+
+# ─────────────────────────────────────────────────────────────── the producer yards
+# town.rs plots (world units, pivot = plot centre, no yaw): the building on the -X half (collider
+# centre x -1.28, half 1.42 x 1.28), the working yard on the +X half stays walkable (low props).
+
+BX = -1.28
+
+
+def shift_tail(b, v0, dx):
+    for i in range(v0, len(b.verts)):
+        x, y, z = b.verts[i]
+        b.verts[i] = (x + dx, y, z)
+
+
+def stook(g, rng, c, h=0.62):
+    """A wheat stook: sheaves leaned together, ears up."""
+    C = Vector(c)
+    for k in range(6):
+        a = 2 * math.pi * k / 6 + rng.uniform(-0.2, 0.2)
+        foot = C + V(math.cos(a) * 0.2, -0.04, math.sin(a) * 0.2)
+        top = C + V(math.cos(a) * 0.04, h, math.sin(a) * 0.04)
+        tube(g, [foot, foot.lerp(top, 0.55), top, top + V(math.cos(a) * 0.08, 0.1, math.sin(a) * 0.08)],
+             [0.075, 0.055, 0.065, 0.03], 6, M_THATCH, scale((1.25, 1.02, 0.6), rng.uniform(0.85, 1.0)), tile=0.4)
+
+
+def town_farm(rng):
+    """Farm: a small log barn under shaggy thatch (wide door ajar, hay spilt at the door), a
+    stubble field of ridged furrows with wheat stooks, hurdles, a ragged scarecrow."""
+    b = Builder()
+    g = G(b)
+    W, D, ye = 2.5, 2.3, 1.5
+    v0 = len(b.verts)
+    ops = _ops([DOOR(1.25, w=1.15, h=1.3, ajar=1.0)], [], [], [WIN(1.1, y0=0.9, h=0.34, prop=False)])
+    footing(g, rng, W, D, y_top=0.2, skip=[(0, 0.6, 1.9)])
+    log_walls(g, rng, W, D, 0.18, ye, ops, r=0.11)
+    thatch_roof(g, rng, W, D, ye + 0.08, 3.35, over=0.45, hip=0.9, ridge="riders", moss=0.6, fresh=0.3)
+    mound(g, (0.25, 0.0, D / 2 + 0.25), 0.55, 0.35, 0.12, rng, mat=M_THATCH, col_fn=lambda p, n: (1.1, 0.92, 0.6),
+          rings=3, seg=12)
+    shift_tail(b, v0, BX)
+    # The field: ridged furrows along X, stooks, hurdles on the far sides.
+    nz = Noise(rng, 3, 1.5)
+    for k in range(6):
+        z = -1.3 + k * 0.52
+        slab(g, V(1.55, 0.0, z), (2.1, 0.16, 0.34), quat_y(rng.uniform(-0.02, 0.02)), rng, mat=M_EARTH, res=(8, 1, 2),
+             round_r=0.07, rough=0.5, col_fn=lambda p, n: scale((0.55, 0.46, 0.36), 0.9 + 0.2 * nz(p * 3)), tile=0.9)
+    for x, z in ((0.95, -0.78), (1.75, 0.26), (2.3, -0.26), (1.2, 0.78), (2.15, 1.05)):
+        stook(g, rng, (x, 0.04, z), h=rng.uniform(0.55, 0.68))
+    wattle_hurdle(g, rng, V(2.75, 0, -1.6), V(2.75, 0, 1.6), h=0.7)
+    wattle_hurdle(g, rng, V(0.6, 0, -1.6), V(2.75, 0, -1.6), h=0.7)
+    # Scarecrow: cross of poles, a stuffed sack head under a straw hat, a ragged shirt.
+    sc = V(2.05, 0.0, -0.75)
+    pole(g, sc - UP * 0.2, sc + UP * 1.55, 0.03, 0.026, rng, col=POSTC, sides=5, segs=2)
+    pole(g, sc + V(-0.5, 1.15, 0.02), sc + V(0.5, 1.18, -0.02), 0.022, 0.02, rng, col=POSTC, sides=5, segs=1)
+    stone(g, sc + UP * 1.5, (0.12, 0.14, 0.11), rng, mat=M_CLOTH, detail=1, rough=0.1, cuts=0,
+          col_fn=lambda p, n: (0.82, 0.7, 0.5))
+    frustum(g, 0.2, 0.1, 1.6, 0.07, 9, M_THATCH, (0.9, 0.78, 0.5), tile=0.4, centre=tuple(sc), jitter=0.04, rng=rng)
+    frustum(g, 0.1, 0.02, 1.66, 0.12, 9, M_THATCH, (0.9, 0.78, 0.5), tile=0.4, centre=tuple(sc))
+    grid = [[(sc + V(x, 1.2, 0.04)).to_tuple() for x in (-0.42, -0.2, 0.0, 0.2, 0.42)],
+            [(sc + V(x * 0.8, 0.72 + abs(x) * 0.3 * rng.uniform(0.5, 1.2), 0.07 * math.sin(x * 9))).to_tuple()
+             for x in (-0.3, -0.15, 0.0, 0.15, 0.3)]]
+    sheet(g, grid, M_CLOTH, lambda u, v: (0.55, 0.5, 0.42), tile=0.5, double=True)
+    return b
+
+
+def town_woodcutter(rng):
+    """Woodcutter: an open shed of four rough posts under a board pent roof weighted with stones
+    over a sawpit (a log on the pit's bearers, a frame saw in the cut), the log stack, a sawhorse
+    with a log on it, the chopping stump with the axe, chips everywhere."""
+    b = Builder()
+    g = G(b)
+    x0, x1, z0, z1 = BX - 1.25, BX + 1.25, -1.1, 1.1
+    for x in (x0, x1):
+        for z, h in ((z0, 1.75), (z1, 1.5)):
+            pole(g, V(x, -0.2, z), V(x + rng.uniform(-0.03, 0.03), h, z), 0.08, 0.07, rng, col=POSTC, sides=7, segs=2,
+                 col_fn=weathered(POSTC, 0.6))
+    for z, h in ((z0, 1.72), (z1, 1.47)):
+        pole(g, V(x0 - 0.25, h, z), V(x1 + 0.25, h + 0.02, z), 0.07, 0.065, rng, col=scale(POSTC, 0.9), sides=6, segs=2)
+    th = math.atan2(0.25, z1 - z0)
+    zc = (z0 + z1) / 2
+    for i in range(10):
+        x = x0 - 0.3 + (i + 0.5) * (x1 - x0 + 0.6) / 10
+        board(g, V(x, 1.6 + 0.08 + rng.uniform(-0.01, 0.01), zc), (0, -math.sin(th), math.cos(th)),
+              (0, math.cos(th), math.sin(th)), z1 - z0 + 0.7, (x1 - x0 + 0.6) / 10 * 1.04, 0.04, mat=M_PLANK,
+              col=scale((0.55, 0.5, 0.44), rng.uniform(0.75, 1.0)), rng=rng)
+    for k in range(5):
+        x = x0 + 0.2 + k * (x1 - x0 - 0.4) / 4
+        zz = rng.uniform(-0.6, 0.6)
+        stone(g, V(x, 1.6 - (zz - zc) * math.tan(th) + 0.16, zz), (0.13, 0.08, 0.11), rng, detail=1, rough=0.12,
+              col_fn=rock_col((0.7, 0.68, 0.64), moss=0.4))
+    # Sawpit: a dark slot with board-lined lips, two bearers and a log across them, frame saw.
+    face(g, [V(BX - 0.75, 0.03, -0.3), V(BX + 0.75, 0.03, -0.3), V(BX + 0.75, 0.03, 0.3), V(BX - 0.75, 0.03, 0.3)],
+         UP, M_EARTH, VOID)
+    for z in (-0.36, 0.36):
+        board(g, V(BX, 0.04, z), (1, 0, 0), (0, 1, 0), 1.7, 0.16, 0.05, mat=M_PLANK, col=(0.6, 0.52, 0.42), rng=rng)
+    for x in (-0.55, 0.55):
+        pole(g, V(BX + x, 0.1, -0.6), V(BX + x, 0.1, 0.6), 0.07, 0.07, rng, col=(0.6, 0.52, 0.42), sides=6, segs=1)
+    pole(g, V(BX - 1.1, 0.33, 0.02), V(BX + 1.1, 0.33, -0.02), 0.16, 0.15, rng, mat=M_BARK, col=(0.72, 0.64, 0.54),
+         sides=9, segs=2)
+    lathe(g, (BX + 1.11, 0.33, -0.02), (1, 0, 0), [(0.0, 0.15), (0.001, 0.0)], 9, M_TIMBER, (0.95, 0.8, 0.58), tile=0.2)
+    sx = BX + 0.3
+    for y in (-0.15, 1.15):
+        beam(g, [V(sx, y, -0.3), V(sx, y, 0.3)], 0.04, 0.04, mat=M_TIMBER, col=(0.62, 0.52, 0.4), rng=rng)
+    for z in (-0.26, 0.26):
+        beam(g, [V(sx, -0.18, z), V(sx, 1.18, z)], 0.04, 0.04, mat=M_TIMBER, col=(0.62, 0.52, 0.4), rng=rng)
+    lbox(g, V(sx, 0.5, 0.0), (0.004, 1.3, 0.05), quat_y(0.0), M_IRON, (0.6, 0.6, 0.62), tile=0.2)
+    mound(g, (BX + 0.2, 0.0, 0.75), 0.7, 0.3, 0.04, rng, mat=M_THATCH, col_fn=lambda p, n: (1.05, 0.88, 0.62), rings=3,
+          seg=12)
+    # Log stack in the yard along Z, held by stakes.
+    for z in (-1.15, 1.15):
+        for x in (0.5, 1.75):
+            pole(g, V(x, -0.2, z), V(x, 0.95, z), 0.04, 0.035, rng, col=POSTC, sides=5, segs=1)
+    for r in range(3):
+        for k in range(5 - r):
+            x = 0.62 + (k + r * 0.5) * 0.27
+            y = 0.13 + r * 0.24
+            pole(g, V(x, y, -1.12), V(x, y, 1.12), 0.13, 0.12, rng, mat=M_BARK,
+                 col=scale((0.75, 0.66, 0.55), rng.uniform(0.85, 1.0)), sides=8, segs=1, wobble=0.0)
+            for zz in (-1.13, 1.13):
+                lathe(g, (x, y, zz), (0, 0, 1 if zz > 0 else -1), [(0.0, 0.12), (0.001, 0.0)], 8,
+                      M_TIMBER, (0.95, 0.8, 0.58), tile=0.2)
+    trestle(g, rng, V(2.3, 0, 0.4), 0.0)
+    pole(g, V(2.3, 0.72, -0.5), V(2.3, 0.72, 1.2), 0.11, 0.1, rng, mat=M_BARK, col=(0.72, 0.64, 0.54), sides=8, segs=1)
+    chopping_block(g, rng, (2.2, 0.0, -0.9))
+    for _ in range(14):
+        p = V(rng.uniform(1.6, 2.8), 0.015, rng.uniform(-1.4, -0.3))
+        lbox(g, p, (rng.uniform(0.06, 0.14), 0.02, rng.uniform(0.03, 0.06)), quat_y(rng.uniform(0, 6.28)), M_TIMBER,
+             (0.95, 0.82, 0.6), tile=0.2)
+    return b
+
+
+def town_mine(rng):
+    """Stone mine: a shaft mouth in a ring of grey spoil, a log curb, A-frame headgear with a
+    windlass drum + crank, the rope down to a bucket; cut blocks and rubble in the yard, a
+    hand-barrow with a stone on it, a pick."""
+    b = Builder()
+    g = G(b)
+    nz = Noise(rng, 4, 1.3)
+
+    def spoil(p, n):
+        c = mix((0.5, 0.48, 0.44), (0.42, 0.46, 0.3), 0.3 * smoothstep(0.6, 1.0, n.y))
+        return scale(c, 0.85 + 0.2 * nz(p * 3))
+
+    for a in np.linspace(0.6, 5.7, 7):
+        c = (BX + math.cos(a) * 1.05, 0.0, math.sin(a) * 0.95)
+        mound(g, c, 0.65, 0.5, rng.uniform(0.25, 0.4), rng, mat=M_EARTH, col_fn=spoil, rings=4, seg=10, rough=0.25)
+    for _ in range(14):
+        a = rng.uniform(0, 6.28)
+        r_ = rng.uniform(0.9, 1.5)
+        s_ = rng.uniform(0.08, 0.16)
+        stone(g, V(BX + math.cos(a) * r_, 0.08, math.sin(a) * r_ * 0.9), (s_, s_ * 0.8, s_), rng, detail=1,
+              rough=0.15, col_fn=rock_col((0.72, 0.7, 0.66), moss=0.15))
+    face(g, [V(BX - 0.5, 0.04, -0.45), V(BX + 0.5, 0.04, -0.45), V(BX + 0.5, 0.04, 0.45), V(BX - 0.5, 0.04, 0.45)], UP,
+         M_EARTH, VOID)
+    for z in (-0.52, 0.52):
+        pole(g, V(BX - 0.75, 0.12, z), V(BX + 0.75, 0.12, z), 0.11, 0.1, rng, mat=M_TIMBER, col=LOGC, sides=8, segs=1)
+    for x in (-0.6, 0.6):
+        pole(g, V(BX + x, 0.3, -0.75), V(BX + x, 0.3, 0.75), 0.11, 0.1, rng, mat=M_TIMBER, col=LOGC, sides=8, segs=1)
+    # A-frames at either end of the windlass (axle along Z over the shaft).
+    yh = 1.55
+    for z in (-0.72, 0.72):
+        for sx in (-1, 1):
+            pole(g, V(BX + sx * 0.7, -0.15, z), V(BX + sx * 0.06, yh + 0.12, z), 0.07, 0.06, rng, col=POSTC, sides=6,
+                 segs=2)
+        pole(g, V(BX - 0.45, 0.65, z), V(BX + 0.45, 0.65, z), 0.045, 0.04, rng, col=POSTC, sides=5, segs=1)
+    tube(g, [V(BX, yh, -0.85), V(BX, yh, 0.85)], [0.05, 0.05], 8, M_TIMBER, (0.6, 0.52, 0.42), tile=0.4)
+    tube(g, [V(BX, yh, -0.5), V(BX, yh, 0.5)], [0.15, 0.15], 10, M_TIMBER, (0.7, 0.6, 0.48), tile=0.5)
+    for k in range(4):
+        y_ = yh + 0.152 * math.sin(k * 1.4)
+        x_ = BX + 0.152 * math.cos(k * 1.4)
+        tube(g, [V(x_, y_, -0.45 + k * 0.03), V(x_, y_, 0.45)], [0.012, 0.012], 4, M_CLOTH, ROPE, tile=0.2)
+    for z, s in ((-0.85, -1), (0.85, 1)):
+        tube(g, [V(BX, yh, z), V(BX + 0.3, yh - 0.18, z), V(BX + 0.3, yh - 0.18, z + s * 0.22)], [0.025] * 3, 5,
+             M_TIMBER, (0.55, 0.48, 0.38), tile=0.3)
+    tube(g, [V(BX + 0.15, yh, 0.1), V(BX + 0.15, 0.62, 0.1)], [0.013, 0.013], 4, M_CLOTH, ROPE, tile=0.3)
+    lathe(g, (BX + 0.15, 0.32, 0.1), (0, 1, 0), [(0.0, 0.14), (0.28, 0.17)], 9, M_TIMBER, (0.55, 0.46, 0.36), tile=0.4)
+    tube(g, [V(BX - 0.02, 0.6, 0.1), V(BX + 0.15, 0.66, 0.1), V(BX + 0.32, 0.6, 0.1)], [0.01] * 3, 4,
+         M_IRON, IRON_D, tile=0.2)
+    # Yard: cut blocks, a rubble heap, the hand-barrow, a pick.
+    for x, z, yy in ((0.9, -0.9, 0.0), (1.45, -0.9, 0.0), (1.15, -0.9, 0.38), (2.2, 0.9, 0.0), (2.2, 0.35, 0.0)):
+        slab(g, V(x, yy + 0.19, z), (0.5, 0.38, 0.42), quat_y(rng.uniform(-0.15, 0.15)), rng, res=(2, 2, 2),
+             round_r=0.03, rough=0.06, col_fn=rock_col((0.8, 0.78, 0.72), moss=0.05), tile=0.6)
+    for _ in range(10):
+        s_ = rng.uniform(0.1, 0.17)
+        stone(g, V(2.2 + rng.uniform(-0.35, 0.35), 0.1, -0.85 + rng.uniform(-0.35, 0.35)), (s_, s_ * 0.8, s_),
+              rng, detail=1, rough=0.15, col_fn=rock_col((0.76, 0.74, 0.7)))
+    bq = quat_y(0.3)
+    bc = V(1.3, 0.0, 0.55)
+    for dz in (-0.22, 0.22):
+        pole(g, bc + bq @ V(-0.8, 0.32, dz), bc + bq @ V(0.8, 0.32, dz), 0.03, 0.03, rng, col=(0.62, 0.54, 0.44), sides=5,
+             segs=1)
+        for dx in (-0.35, 0.35):
+            pole(g, bc + bq @ V(dx, -0.02, dz), bc + bq @ V(dx, 0.32, dz), 0.025, 0.025, rng, col=(0.62, 0.54, 0.44),
+                 sides=5, segs=1)
+    for k in range(4):
+        board(g, bc + bq @ V(-0.3 + k * 0.2, 0.35, 0), bq @ V(0, 0, 1), (0, 1, 0), 0.5, 0.18, 0.03, mat=M_PLANK,
+              col=(0.6, 0.53, 0.44), rng=rng)
+    stone(g, bc + V(0.0, 0.45, 0.0), (0.14, 0.1, 0.12), rng, detail=1, rough=0.12, col_fn=rock_col((0.75, 0.73, 0.68)))
+    pk = V(0.75, 0.0, 0.05)
+    pole(g, pk, pk + V(0.18, 0.82, 0.12), 0.022, 0.02, rng, col=(0.62, 0.54, 0.44), sides=5, segs=1)
+    tube(g, [pk + V(0.1, 0.84, -0.12), pk + V(0.18, 0.84, 0.12), pk + V(0.24, 0.8, 0.34)], [0.02, 0.03, 0.012], 5,
+         M_IRON, IRON_D, tile=0.2)
+    return b

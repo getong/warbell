@@ -2060,6 +2060,12 @@ def bounds(builder):
             "z": [round(float(gz.min()), 2), round(float(gz.max()), 2)], "y": [round(float(gy.min()), 2), round(float(gy.max()), 2)]}
 
 
+# The poor village outside the walls (user feedback: the cottages above read as modern): hipped
+# shaggy thatch, clay daub / grey logs on fieldstone footings; same node names, see village_huts.py.
+_vh = HERE / "village_huts.py"
+exec(compile(_vh.read_text(encoding="utf-8"), str(_vh), "exec"))
+
+
 MODELS = {
     "town_granary": town_granary,
     "town_smithy": town_smithy,
@@ -2098,6 +2104,10 @@ MODELS = {
     "castle_barracks": castle_barracks,
     "castle_store": castle_store,
     "castle_cartshed": castle_cartshed,
+    # The producer yards on the town build plots (village_huts.py; town.rs spawn_building).
+    "town_farm": town_farm,
+    "town_woodcutter": town_woodcutter,
+    "town_mine": town_mine,
 }
 
 ONLY = [a for a in sys.argv[sys.argv.index("--") + 1:]] if "--" in sys.argv else []

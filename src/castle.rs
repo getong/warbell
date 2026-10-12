@@ -1695,12 +1695,13 @@ pub(crate) fn houses() -> &'static [HouseSite] {
             (33.0, 1.0, "town_house_b", 0.6, -0.06),
         ];
         let half_of = |piece: &str| match piece {
-            "town_street_house_a" => Vec2::new(2.2, 3.8),
-            "town_street_house_b" => Vec2::new(2.4, 3.5),
-            "town_house_a" => Vec2::new(2.3, 1.7),
-            "town_house_b" => Vec2::new(2.8, 1.8),
-            "town_house_c" => Vec2::new(1.9, 1.6),
-            _ => Vec2::new(2.4, 1.8), // town_house_d
+            // The poor village's walls (village_huts.py); the thatch overhangs ~0.45 beyond.
+            "town_street_house_a" => Vec2::new(2.1, 3.7),
+            "town_street_house_b" => Vec2::new(2.3, 3.4),
+            "town_house_a" => Vec2::new(2.55, 1.55),
+            "town_house_b" => Vec2::new(2.95, 1.65),
+            "town_house_c" => Vec2::new(1.75, 1.45),
+            _ => Vec2::new(2.2, 1.7), // town_house_d (the earth bank reaches a little further)
         };
         // Path distance from the gate to the lane's mouth.
         let lane_s0 = {
@@ -1855,11 +1856,8 @@ fn spawn_kit(
 fn house_yard(h: &HouseSite) -> Vec<(&'static str, f32, f32, f32)> {
     let back = -h.half.y;
     let w = h.half.x.max(2.4) + 0.6; // the side fence line
-    let (fence, gate) = if h.dress % 2 == 0 {
-        ("town_fence_wattle", "town_fence_wattle_gate")
-    } else {
-        ("town_fence_picket", "town_fence_picket_gate")
-    };
+    // Poor village: woven hurdles only (the neat pointed picket fence read as suburban).
+    let (fence, gate) = ("town_fence_wattle", "town_fence_wattle_gate");
     let flip = if h.dress < 2 { 1.0 } else { -1.0 };
     let mut v = vec![
         // back fence (two modules, one with a gate) and one side fence
