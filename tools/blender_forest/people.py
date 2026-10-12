@@ -682,7 +682,7 @@ def piece_arm(sx, sleeve):
 
 
 # ───────────────────────────────────────────────────────────────── legs + feet
-def leg_bodies(sx, desert):
+def leg_bodies(sx, desert, garter=False):
     x0 = sx * HDX
     X = lambda d: x0 + sx * d  # noqa: E731
     bodies = []
@@ -725,6 +725,25 @@ def leg_bodies(sx, desert):
         bt.sub(CappedCone(P(X(0.0), 0.4, 0.0), P(X(0.0), 0.36, 0.0), 0.043, 0.041), BOOT, 0.002)
         bt.shag(Ellipsoid(P(X(0.0), 0.24, 0.0), (0.06, 0.08, 0.06)), 0.003, Creases(120.0, x0, 0.0, 2 + sx), soft=0.02)
         bodies.append(bt)
+        if garter:
+            # Cross-gartered hose: two linen bands wound in opposite spirals from the boot cuff to
+            # under the knee, hugging the trouser surface, tied off in a knot below the knee.
+            gw = PBody(h=0.0016, budget=260)
+            tfn = tr.eval
+            for d in (1, -1):
+                knots = []
+                for i in range(44):
+                    t = i / 43
+                    a = d * t * 2 * math.pi * 2.25 + (0.0 if d > 0 else math.pi)
+                    yy = 0.385 + t * 0.175
+                    o = [X(0.0) + 0.12 * math.sin(a), yy, 0.12 * math.cos(a)]
+                    q = hit(tfn, [o], [[-math.sin(a), 0.0, -math.cos(a)]], t1=0.12)[0]
+                    knots.append((P(q[0] + 0.0025 * math.sin(a), q[1], q[2] + 0.0025 * math.cos(a)), 0.0042))
+                gw.add(Chain(knots), BAND, 0.002)
+            qk = hit(tfn, [[X(0.03), 0.565, 0.12]], [[0, 0, -1]], t1=0.12)[0]
+            gw.add(Ellipsoid(P(qk[0], 0.565, qk[2] + 0.004), (0.011, 0.008, 0.007)), BAND, 0.004)  # the knot
+            gw.add(Cone(P(qk[0], 0.56, qk[2] + 0.006), P(qk[0] + sx * 0.006, 0.52, qk[2] + 0.008), 0.004, 0.0028), BAND, 0.003)
+            bodies.append(gw)
         sole = PBody(h=0.0018, budget=90, clip=((-0.3, 0.05, -0.2), (0.3, 0.085, 0.3)))
         sole.add(offset(bt, 0.0035), LEATHER).cut(slab((0, 1, 0), 0.06, 0.074))
         bodies.append((sole, bt.eval))
@@ -779,10 +798,10 @@ def leg_weather(p, n, reg):
     return knee + dust
 
 
-def piece_leg(sx, desert):
+def piece_leg(sx, desert, garter=False):
     side = "l" if sx < 0 else "r"
-    pc = Piece(f"hu_leg_{'wrap_' if desert else ''}{side}", f"leg_{side}")
-    for b in leg_bodies(sx, desert):
+    pc = Piece(f"hu_leg_{'wrap_' if desert else 'garter_' if garter else ''}{side}", f"leg_{side}")
+    for b in leg_bodies(sx, desert, garter):
         if isinstance(b, tuple):
             pc.add(b[0], cull=b[1], depth=0.002)
         else:
@@ -966,6 +985,19 @@ def ears_clear(b, w=1.0):
         b.sub(Ellipsoid(P(sx * 0.074 * w, 0.028, -0.012), (0.016, 0.034, 0.024)), HAIR, 0.006)
 
 
+def locks(b, front_y, n, length, r, seed, span=0.9):
+    """Loose locks along the front hairline (a ragged fringe instead of a cap's clean rim): short
+    tapering cones rooted in the hair surface, falling forward and down at jittered angles."""
+    rng = np.random.default_rng(seed)
+    for a in np.linspace(-span, span, n):
+        a += rng.uniform(-0.08, 0.08)
+        d = np.array([math.sin(a), 0.0, math.cos(a)])
+        q = hit(b.eval, [[0.3 * d[0], front_y + 0.012, 0.3 * d[2]]], [list(-d)], t1=0.3)[0]
+        ln = length * rng.uniform(0.7, 1.25)
+        tip = q + d * 0.006 + np.array([rng.uniform(-0.006, 0.006), -ln, 0.0]) + d * ln * 0.25
+        b.add(Cone(P(*(q - d * 0.004)), P(*tip), r * rng.uniform(0.8, 1.2), r * 0.3), HAIR, 0.006)
+
+
 def piece_hair(style):
     pc = Piece(f"hu_hair_{style}", "head", "head")
     sc = scalp_body()
@@ -974,14 +1006,16 @@ def piece_hair(style):
     if style == "crop":
         b.add(offset(sc, 0.0055), HAIR).cut(hairline(0.104, -0.012))
         ears_clear(b)
-        b.shag(Sphere(P(0, 0.07, -0.01), 0.14), 0.0022, Tufts(260, (0, -0.4, -1), seed=1), soft=0.02)
+        b.shag(Sphere(P(0, 0.07, -0.01), 0.14), 0.0036, Tufts(230, (0, -0.4, -1), seed=1), soft=0.02)
+        locks(b, 0.104, 7, 0.016, 0.0058, seed=11)
     elif style == "shag":
         b.add(offset(sc, 0.01), HAIR).cut(hairline(0.094, -0.05))
         for sx in (-1, 1):
             b.add(Ellipsoid(P(sx * 0.064, 0.03, -0.044), (0.022, 0.045, 0.044)), HAIR, 0.02)  # over the ears
         b.add(Ellipsoid(P(0, 0.0, -0.08), (0.058, 0.048, 0.03)), HAIR, 0.02)  # nape
         b.add(Ellipsoid(P(0.012, 0.11, 0.076), (0.054, 0.017, 0.022), rot_z(0.12)), HAIR, 0.015)  # fringe
-        b.shag(Sphere(P(0, 0.06, -0.01), 0.16), 0.0055, Tufts(150, (0, -1, -0.3), seed=2), soft=0.02)
+        b.shag(Sphere(P(0, 0.06, -0.01), 0.16), 0.0078, Tufts(140, (0, -1, -0.3), seed=2), soft=0.02)
+        locks(b, 0.095, 9, 0.03, 0.008, seed=12)
     elif style == "long":
         b.add(offset(sc, 0.008), HAIR).cut(hairline(0.106, -0.02))
         b.add(Ellipsoid(P(0, -0.02, -0.088), (0.064, 0.105, 0.032)), HAIR, 0.025)  # falls to the shoulders
@@ -993,11 +1027,12 @@ def piece_hair(style):
     elif style == "bald":
         b.add(offset(sc, 0.0055), HAIR).cut(hairline(0.09, -0.012)).cut(half(P(0, 0.11, -0.03), (0, -1, -0.45)))
         ears_clear(b)
-        b.shag(Sphere(P(0, 0.05, -0.04), 0.14), 0.0025, Tufts(240, (0, -1, -0.3), seed=4), soft=0.02)
+        b.shag(Sphere(P(0, 0.05, -0.04), 0.14), 0.0036, Tufts(220, (0, -1, -0.3), seed=4), soft=0.02)
     elif style == "bowl":
         b.add(offset(sc, 0.013), HAIR).cut(hairline(0.08, 0.008))
         ears_clear(b)
-        b.shag(Sphere(P(0, 0.08, 0.0), 0.14), 0.003, Tufts(200, (0, -1, 0.1), seed=5), soft=0.02)
+        b.shag(Sphere(P(0, 0.08, 0.0), 0.14), 0.0058, Tufts(180, (0, -1, 0.1), seed=5), soft=0.02)
+        locks(b, 0.084, 11, 0.022, 0.0075, seed=13, span=1.25)
     pc.add(b)
     return pc
 
@@ -1807,6 +1842,7 @@ def all_pieces():
     out = [piece_trunk]
     out += [(lambda sx=sx, s=s: piece_arm(sx, s)) for sx in (-1, 1) for s in (False, True)]
     out += [(lambda sx=sx, d=d: piece_leg(sx, d)) for sx in (-1, 1) for d in (False, True)]
+    out += [(lambda sx=sx: piece_leg(sx, False, True)) for sx in (-1, 1)]
     out += [(lambda v=v: piece_head(v)) for v in FACES]
     out += [(lambda s=s: piece_hair(s)) for s in HAIRS]
     out += [(lambda s=s, f=f: piece_beard(s, f)) for s in BEARDS for f in ADULT_FACES]
