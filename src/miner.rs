@@ -613,6 +613,19 @@ pub(crate) fn spawn_cart(commands: &mut Commands, parent: Entity, a: &CartAssets
     let (grip, dir, len) = cart_shaft();
     let mid = grip + dir * (CART_SHAFT_TIP - 0.5 * len);
     let tilt = Quat::from_rotation_x(-crate::player::anim::CART_SHAFT_PITCH);
+    // Realistic kit (bridges_kit.glb, tools/blender_forest/bridges_kit.py): a plank handcart on
+    // spoked iron-tyred wheels with a heap of quarried stone, and two round ash shafts.
+    if let Some(k) = crate::realforest::get().filter(|k| k.has("miner_handcart") && k.has("miner_cart_shaft")) {
+        let mut e = commands.spawn((Transform::from_xyz(0.0, 0.0, CART_Z), Visibility::Visible));
+        k.attach_static(&mut e, "miner_handcart", Transform::IDENTITY);
+        for sx in [-1.0_f32, 1.0] {
+            let tf = Transform::from_xyz(sx * grip.x, mid.y, mid.z).with_rotation(tilt).with_scale(Vec3::new(1.0, 1.0, len));
+            k.attach_static(&mut e, "miner_cart_shaft", tf);
+        }
+        let cart = e.id();
+        commands.entity(parent).add_child(cart);
+        return cart;
+    }
     let cart = commands
         .spawn((Transform::from_xyz(0.0, 0.0, CART_Z), Visibility::Visible))
         .with_children(|c| {

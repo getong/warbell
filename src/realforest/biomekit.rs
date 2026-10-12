@@ -142,6 +142,27 @@ pub fn desert_cover_ok(class: usize, x: f32, z: f32) -> bool {
     }
 }
 
+/// Kit ground cover for desert cover class `class` (0 = pebbles, 1 = dry grass, 2 = succulent,
+/// 3 = brittlebush / litter): (model, scale ×). Same border gate as the low-poly cover
+/// ([`desert_cover_ok`]); the succulents become young barrel cacti, the litter a small dead bush.
+pub fn desert_cover(kit: &Kit, class: usize, x: f32, z: f32) -> Option<(usize, f32)> {
+    if !desert_cover_ok(class, x, z) {
+        return None;
+    }
+    let (a, b) = super::rolls(x, z);
+    let pick = |names: &[&str], s: f32| kit.pick_named(names, b).map(|m| (m, s));
+    match class {
+        0 if a < 0.75 => pick(&["rk_pebbles"], 0.9),
+        0 => pick(&["ds_rock_a", "ds_rock_b"], 0.16),
+        1 => pick(&["tussock_a", "tussock_b"], 0.55 + a * 0.2),
+        2 if a < 0.4 => pick(&["ds_barrel_b", "ds_barrel_a"], 0.32 + a * 0.3),
+        2 => pick(&["rk_pebbles"], 1.1),
+        3 if a < 0.5 => pick(&["ds_deadbush_b", "ds_deadbush_a"], 0.3 + a * 0.2),
+        3 => pick(&["ds_bones"], 0.6),
+        _ => None,
+    }
+}
+
 /// Does the kit take over the swamp? Needs `swamp_flora.glb` — the swamp draws ONLY its own
 /// species (never the forest's oaks / beeches / snag / stump); without the file the low-poly
 /// mangroves stay.

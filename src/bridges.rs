@@ -626,6 +626,31 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
         };
         // Stable per-deck weathering seed from its world position (order-independent).
         let seed = s.cx.to_bits() ^ s.cz.to_bits().rotate_left(13) ^ 0x9e37_79b9;
+        let root = Transform { translation: Vec3::new(s.cx, s.base_y + 0.2, s.cz), rotation: rot, ..default() };
+        // Realistic kit (bridges_kit.glb, tools/blender_forest/bridges_kit.py): the span is filled
+        // with ~1u timber bays stretched to fit exactly, capped by a bank end at each side.
+        let (bays, end): (&[&str], &str) = match s.kind {
+            DeckKind::Bridge => (&["bridge_bay_a", "bridge_bay_b", "bridge_bay_c"], "bridge_end"),
+            DeckKind::Boardwalk => (&["boardwalk_bay_a", "boardwalk_bay_b"], "boardwalk_end"),
+        };
+        info!("bridges: {} at {:.1},{:.1} y {:.2} half {:.1}", if s.kind == DeckKind::Bridge { "bridge" } else { "boardwalk" }, s.cx, s.cz, s.base_y, s.half);
+        if let Some(k) = crate::realforest::get().filter(|k| k.has(bays[0]) && k.has(end)) {
+            let len = s.half * 2.0;
+            let n = (len.round() as i32).max(2);
+            let cell = len / n as f32;
+            let mut e = commands.spawn((root, Visibility::default(), BiomeEntity));
+            for i in 0..n {
+                let x = -s.half + (i as f32 + 0.5) * cell;
+                // The middle bays (deepest, dampest) take the mossier variants.
+                let mid = 1.0 - (x / s.half).abs();
+                let h = hash01(seed ^ (i as u32).wrapping_mul(0x9e37_79b1));
+                let vi = ((mid * 1.4 + h * 0.9) as usize).min(bays.len() - 1);
+                k.attach_static(&mut e, bays[vi], Transform::from_xyz(x, 0.0, 0.0).with_scale(Vec3::new(cell, 1.0, 1.0)));
+            }
+            k.attach_static(&mut e, end, Transform::from_xyz(s.half, 0.0, 0.0));
+            k.attach_static(&mut e, end, Transform::from_xyz(-s.half, 0.0, 0.0).with_rotation(Quat::from_rotation_y(std::f32::consts::PI)));
+            continue;
+        }
         let mesh = match s.kind {
             DeckKind::Bridge => deck_mesh(s.half, seed),
             DeckKind::Boardwalk => boardwalk_mesh(s.half, seed),

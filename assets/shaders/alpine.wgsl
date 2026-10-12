@@ -461,3 +461,43 @@ fn alpine_apply(pbr: ptr<function, PbrInput>, p: vec3<f32>, gn_in: vec3<f32>, cl
     }
     return k;
 }
+
+// Desert / beach SAND (scanned): the flat sand used to be the procedural vertex colour plus the
+// lawn's grass-imprint luminance — the old low-poly ground showing through between the dunes.
+// Here the snow scan's wind-packed grain (layer 0, low contrast, so its value detail is
+// exaggerated) is re-toned to the ground's own sand colour `tint` (keeps the dune shading and the
+// broad drift), with gravel lag (the scree scan, layer 2) in broad patches entering through the
+// sand's low texels. `w` = sand weight from the caller (vertex hue gate, off cliffs / forest floor
+// / alpine cover). Explicit-gradient fetches only, so it is legal in this non-uniform branch.
+fn alpine_sand(pbr: ptr<function, PbrInput>, p: vec3<f32>, gn_in: vec3<f32>, w: f32, tint: vec3<f32>, dpx: vec3<f32>, dpy: vec3<f32>) {
+    if alp.on.x < 0.5 || w < 0.003 {
+        return;
+    }
+    let gn = normalize(gn_in);
+    let lw = vec3<f32>(0.2126, 0.7152, 0.0722);
+    let t_sand = 2.6;
+    let t_grav = 3.3;
+    let s = a_planar(0, p.xz / t_sand + vec2<f32>(0.17, 0.53), dpx.xz / t_sand, dpy.xz / t_sand);
+    let g = a_planar(2, p.xz / t_grav + vec2<f32>(0.71, 0.29), dpx.xz / t_grav, dpy.xz / t_grav);
+    let mean_s = max(dot(textureSampleLevel(alp_albedo, alp_samp, vec2<f32>(0.5), 0, 12.0).rgb, lw), 0.02);
+    let mean_g = max(dot(textureSampleLevel(alp_albedo, alp_samp, vec2<f32>(0.5), 2, 12.0).rgb, lw), 0.02);
+    let vs = dot(s.alb, lw) / mean_s;
+    let rel_g = g.alb / mean_g;
+    let sand = tint * clamp(1.0 + (vs - 1.0) * 1.8, 0.55, 1.4);
+    let nb = a_noise(p.xz * 0.085 + vec2<f32>(5.0, 9.0)) * 0.7 + a_noise(p.xz * 0.37 + vec2<f32>(2.0, 31.0)) * 0.3;
+    let gk = smoothstep(0.35, 0.65, (nb - 0.60) * 3.5 + (g.orm.a - s.orm.a) * 1.3 + 0.5);
+    let gcol = mix(vec3<f32>(dot(rel_g, lw)), rel_g, 0.35) * tint * vec3<f32>(0.80, 0.75, 0.70);
+    let alb = mix(sand, gcol, gk);
+    let tx = select(normalize(vec3<f32>(1.0, 0.0, 0.0) - gn * gn.x),
+                    normalize(cross(vec3<f32>(0.0, 0.0, 1.0), gn)), abs(gn.x) > 0.98);
+    let bz = cross(gn, tx);
+    let ns = mix(vec3<f32>(s.n.xy * 1.5, s.n.z), vec3<f32>(g.n.xy * 1.4, g.n.z), gk);
+    let nw = normalize(tx * ns.x + bz * ns.y + gn * max(ns.z, 0.25));
+    let ao = mix(s.orm.r, g.orm.r, gk);
+    let base = (*pbr).material.base_color;
+    (*pbr).material.base_color = vec4<f32>(mix(base.rgb, alb, w), base.a);
+    (*pbr).N = normalize(mix((*pbr).N, nw, w));
+    (*pbr).material.perceptual_roughness = mix((*pbr).material.perceptual_roughness, mix(0.92, 0.86, gk), w);
+    (*pbr).material.metallic = mix((*pbr).material.metallic, 0.0, w);
+    (*pbr).diffuse_occlusion *= vec3<f32>(mix(1.0, ao, w * 0.7));
+}

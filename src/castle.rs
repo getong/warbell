@@ -2033,7 +2033,28 @@ pub fn build(
         let pick = |set: &[Handle<Mesh>], r: &mut Rng| -> Handle<Mesh> {
             set[((r.f() * set.len() as f32) as usize).min(set.len() - 1)].clone()
         };
+        // Realistic kit: the meadow's own scanned grass clumps / clover-lush tufts instead of the
+        // faceted low-poly sprigs (the clover handle set only decides which family is drawn).
+        let kit = crate::realforest::get().filter(|k| k.has("grass_a") && k.has("lush_a"));
         let sprig = |x: f32, z: f32, mesh: Handle<Mesh>, s: f32, r: &mut Rng, commands: &mut Commands| {
+            if let Some(k) = kit {
+                let clover = clovers.contains(&mesh);
+                let roll = r.f();
+                let name = if clover {
+                    ["lush_a", "lush_b", "lush_c"][((roll * 3.0) as usize).min(2)]
+                } else {
+                    ["grass_a", "grass_b", "grass_c", "grass_d"][((roll * 4.0) as usize).min(3)]
+                };
+                let tf = Transform {
+                    translation: Vec3::new(x, -0.01, z),
+                    rotation: Quat::from_rotation_y(r.f() * std::f32::consts::TAU),
+                    scale: Vec3::splat(s * if clover { 1.1 } else { 1.3 }),
+                };
+                if let Some(e) = k.spawn_static_with(commands, name, tf, bevy::light::NotShadowCaster) {
+                    commands.entity(e).insert((CastlePart { kind: CastleKind::Always }, BiomeEntity));
+                }
+                return;
+            }
             commands.spawn((
                 Mesh3d(mesh),
                 MeshMaterial3d(cover_mat.clone()),
@@ -2101,6 +2122,11 @@ pub fn build(
                 BiomeEntity,
             ))
             .id();
+        // Realistic kit (bridges_kit.glb): a feathered red-brown or speckled hen.
+        if let Some(k) = crate::realforest::get().filter(|k| k.has("hen_a")) {
+            k.attach_static(&mut commands.entity(parent), if i % 2 == 0 { "hen_a" } else { "hen_b" }, Transform::from_scale(Vec3::splat(0.95)));
+            continue;
+        }
         commands.entity(parent).with_children(|p| {
             for (mh, slot) in &hen_meshes {
                 p.spawn((Mesh3d(mh.clone()), MeshMaterial3d(mats.get(*slot)), Transform::default()));
