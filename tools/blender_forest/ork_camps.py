@@ -1363,7 +1363,7 @@ PALE_WOOD = (0.98, 0.86, 0.66)   # fresh debarked oak
 CHIPS = (0.95, 0.8, 0.58)
 PITCH = (0.025, 0.022, 0.02)
 CLAY = (0.78, 0.5, 0.34)
-REED = (0.86, 0.76, 0.5)
+REED = (1.35, 1.18, 0.78)
 CHAR_COL = (0.1, 0.09, 0.085)
 
 
@@ -1586,9 +1586,9 @@ def torch_stave(g, rng, foot, top, wrapped=True):
 def tar_pool(g, rng, c, rx, rz):
     """A glossy pitch pool: an iron-material (smooth, dark) lens inside a matte tar rim sinking in."""
     c = Vector(c)
-    mound(g, tuple(c + V(0, -0.005, 0)), rx * 1.25, rz * 1.25, 0.02, rng, mat=M_EARTH,
+    mound(g, tuple(c + V(0, 0.07, 0)), rx * 1.25, rz * 1.25, 0.02, rng, mat=M_EARTH,
           col_fn=lambda p, n: (0.06, 0.05, 0.045), tile=0.5, rings=3, seg=16, skirt=0.04, edge=0.25)
-    mound(g, tuple(c + V(0, 0.004, 0)), rx, rz, 0.018, rng, mat=M_IRON,
+    mound(g, tuple(c + V(0, 0.08, 0)), rx, rz, 0.018, rng, mat=M_IRON,
           col_fn=lambda p, n: PITCH, tile=0.8, rings=3, seg=18, skirt=0.0, edge=0.2, rough=0.0, power=0.3)
 
 
@@ -1598,7 +1598,7 @@ def camp_pitch(rng):
     nz = Noise(rng, 4, 0.9)
     ground_patch(g, rng, (0, 0, 0), 4.8, 4.5, (0.88, 0.72, 0.54), h=0.03)
     # The black ground: tar soaked into the sand round the seep, smeared toward the kettles.
-    mound(g, (-0.6, 0.0, -1.8), 3.2, 2.2, 0.025, rng, mat=M_EARTH,
+    mound(g, (-0.6, 0.045, -1.8), 3.2, 2.2, 0.025, rng, mat=M_EARTH,
           col_fn=lambda p, n: mix((0.05, 0.045, 0.04), (0.5, 0.4, 0.3),
                                   smoothstep(-0.1, 0.6, nz(p * 1.3) + 0.25 * math.hypot(p.x + 0.6, p.z + 1.8) - 0.6)),
           tile=0.9, rings=5, seg=24, skirt=0.06, edge=0.3, power=0.4)
@@ -1660,8 +1660,6 @@ def camp_pitch(rng):
     sb = V(3.6, 0, 2.4)
     pole(g, sb + V(0, -0.3, 0), sb + V(0.02, 2.95, 0.0), 0.055, 0.04, rng, col=(0.66, 0.56, 0.46), sides=7)
     skull(g, sb + V(0.02, 3.0, 0.0), 1.2, rng, col=(0.25, 0.22, 0.2), horns=1.1)
-    for k in range(5):
-        sand_drift(g, rng, V(math.cos(k * 1.3 + 0.4) * 4.6, 0, 2.4 + math.sin(k * 1.3) * 1.8), rng.uniform(1.0, 1.6), 0.6, 0.25)
     return b
 
 
@@ -1679,8 +1677,8 @@ def reed_clump(g, rng, c, r, n, h, lean=0.0, yaw=0.0):
         hh = h * rng.uniform(0.7, 1.1)
         bend = V(math.sin(yaw) * lean + rng.uniform(-0.08, 0.08), 0, math.cos(yaw) * lean + rng.uniform(-0.08, 0.08))
         tip = foot + V(0, hh, 0) + bend * hh * 0.25
-        tube(g, [foot, foot.lerp(tip, 0.6) + bend * 0.04, tip], [0.009, 0.007, 0.002], 3, M_THATCH,
-             mix(REED, (0.45, 0.5, 0.28), rng.uniform(0.0, 0.5)), tile=0.5, cap=False)
+        tube(g, [foot, foot.lerp(tip, 0.6) + bend * 0.04, tip], [0.014, 0.011, 0.003], 4, M_THATCH,
+             mix(REED, (0.75, 0.82, 0.45), rng.uniform(0.0, 0.45)), tile=0.5, cap=False)
         if k % 5 == 0:
             tube(g, [tip - V(0, 0.18, 0), tip + V(0, 0.02, 0)], [0.018, 0.006], 4, M_THATCH, (0.42, 0.3, 0.2), tile=0.2)
 
@@ -1691,7 +1689,7 @@ def camp_reeds(rng):
     nz = Noise(rng, 4, 1.0)
     # Trodden, flattened reed bed: straw-brown over the meadow green.
     mound(g, (0, 0, 0), 4.2, 3.8, 0.04, rng, mat=M_THATCH,
-          col_fn=lambda p, n: mix((0.6, 0.52, 0.34), (0.42, 0.46, 0.26), 0.4 + 0.4 * nz(p * 1.2)), tile=1.2, rings=5, seg=24,
+          col_fn=lambda p, n: mix((1.05, 0.92, 0.62), (0.72, 0.78, 0.45), 0.4 + 0.4 * nz(p * 1.2)), tile=1.2, rings=5, seg=24,
           skirt=0.1, edge=0.2, power=0.4)
     # The screen: bundled reeds on two rails, an arc facing the walls (+Z), crouch height, with a
     # slot left open to watch through.
