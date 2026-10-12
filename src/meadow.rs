@@ -174,7 +174,7 @@ pub fn build(
     if !town_prop(commands, "meadow_scarecrow", 17.5 + DX, -23.5 - DZ, -0.4, Vec2::ZERO) {
         prop(commands, meshes, scarecrow_mesh(), 17.5 + DX, -23.5 - DZ, -0.4, Vec2::ZERO);
     }
-    fence_run(commands, meshes, &mat, Vec2::new(10.5 + DX, -18.5 - DZ), Vec2::new(16.5 + DX, -18.0 - DZ));
+    fence_run(commands, meshes, &mat, Vec2::new(10.5 + DX, -18.5 - DZ), Vec2::new(15.4 + DX, -18.1 - DZ)); // ends clear of the NE plot pad
 
     // Beekeeper's west edge (clear of plots (-20,-8)/(-18,-17)).
     for (i, (bx_, bz)) in [(-21.0 - DX, -13.0 - DZ), (-22.4 - DX, -12.2 - DZ), (-21.6 - DX, -14.6 - DZ)].into_iter().enumerate() {
@@ -295,10 +295,33 @@ fn fence_run(
     a: Vec2,
     b: Vec2,
 ) {
-    const WOOD: u32 = 0x6b4a2a;
-    const DARK: u32 = 0x54381f;
     let d = b - a;
     let len = d.length();
+    // The Blender split-rail bays (town_kit `meadow_fence`, 3 u along local X, posts at -1.5 / 0)
+    // stretched to fit the run, each snapped to the ground, an end post closing it.
+    if crate::realforest::get().is_some_and(|k| k.has("meadow_fence") && k.has("meadow_fence_post")) && len > 0.5 {
+        let dir = d / len;
+        let yaw = (-dir.y).atan2(dir.x);
+        let bays = (len / 3.0).round().max(1.0);
+        let bay = len / bays;
+        let at = |p: Vec2| crate::worldmap::ground_at_world(p.x, p.y).unwrap_or(0.0);
+        for i in 0..bays as i32 {
+            let c = a + dir * (bay * (i as f32 + 0.5));
+            let tf = Transform::from_xyz(c.x, at(c), c.y)
+                .with_rotation(Quat::from_rotation_y(yaw))
+                .with_scale(Vec3::new(bay / 3.0, 1.0, 1.0));
+            if let Some(e) = crate::town_kit::spawn_piece(commands, "meadow_fence", tf) {
+                commands.entity(e).insert(BiomeEntity);
+            }
+        }
+        let tf = Transform::from_xyz(b.x, at(b), b.y).with_rotation(Quat::from_rotation_y(yaw));
+        if let Some(e) = crate::town_kit::spawn_piece(commands, "meadow_fence_post", tf) {
+            commands.entity(e).insert(BiomeEntity);
+        }
+        return;
+    }
+    const WOOD: u32 = 0x6b4a2a;
+    const DARK: u32 = 0x54381f;
     let yaw = d.x.atan2(d.y); // mesh runs along +Z; yaw aligns it onto the a→b bearing
     let mut parts: Vec<Mesh> = Vec::new();
     let posts = (len / 1.5).ceil() as i32 + 1;

@@ -641,7 +641,7 @@ pub fn populate_plots(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: 
     let mut spots = Vec::with_capacity(PLOT_COUNT);
     for (idx, off) in PLOT_OFFSETS.iter().enumerate() {
         spots.push(*off);
-        spawn_textured(commands, meshes, mats, BuildPlot { idx }, crate::town_meshes::plot_parts(), *off);
+        spawn_kit_or_parts(commands, meshes, mats, BuildPlot { idx }, "town_plot", crate::town_meshes::plot_parts, *off, Vec3::ONE);
     }
     commands.insert_resource(PlotSpots(spots));
 }
@@ -652,6 +652,29 @@ fn sync_plot_visibility(town: Res<TownRes>, mut q: Query<(&BuildPlot, &mut Visib
         let empty = town.0.plots.get(plot.idx).is_some_and(|p| p.state == PlotState::Empty);
         *vis = if empty { Visibility::Visible } else { Visibility::Hidden };
     }
+}
+
+/// [`spawn_textured`] with the town-kit model `piece` hung under the root (at `scale`, to undo a
+/// root scale) when the kit is loaded; the procedural `parts` otherwise.
+#[allow(clippy::too_many_arguments)]
+fn spawn_kit_or_parts(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    mats: &Mats,
+    tag: impl Bundle,
+    piece: &str,
+    parts: impl FnOnce() -> Vec<(Mesh, M)>,
+    pos: Vec2,
+    scale: Vec3,
+) -> Entity {
+    let kit = crate::realforest::get().filter(|k| k.has(piece));
+    let root = spawn_textured(commands, meshes, mats, tag, if kit.is_some() { Vec::new() } else { parts() }, pos);
+    if let Some(kit) = kit {
+        let range = bevy::camera::visibility::VisibilityRange { start_margin: 0.0..0.0, end_margin: 140.0..160.0, use_aabb: true };
+        kit.attach_static_with(&mut commands.entity(root), piece, Transform::from_scale(scale), range);
+        commands.entity(root).insert(Visibility::Visible);
+    }
+    root
 }
 
 /// Spawn a textured multi-material structure (one child mesh per `(Mesh, M)` part, sharing the
@@ -1615,7 +1638,7 @@ fn sync_house_site_pad(
             None => *vis = Visibility::Hidden, // all twelve dwellings stand
         }
     } else if let (Some(p), Some(mats)) = (site, mats) {
-        spawn_textured(&mut commands, &mut meshes, &mats.0, HouseSitePad, crate::town_meshes::house_site_parts(), p);
+        spawn_kit_or_parts(&mut commands, &mut meshes, &mats.0, HouseSitePad, "town_house_site", crate::town_meshes::house_site_parts, p, Vec3::ONE);
     }
 }
 
@@ -1664,9 +1687,11 @@ fn spawn_building(
 fn spawn_rubble(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats, idx: usize,
     kind: Option<BuildKind>, spots: &PlotSpots) {
     let Some(pos) = spots.0.get(idx).copied() else { return };
-    let root = spawn_textured(commands, meshes, mats, BuildingMesh { idx }, crate::town_meshes::rubble_parts(kind), pos);
-    let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
+    // The root pops to WORLD_BUMP x BUILDING_TALLER; the kit ruin is authored at world scale.
     let b = crate::castle::WORLD_BUMP;
+    let inv = Vec3::new(1.0 / b, 1.0 / (b * crate::castle::BUILDING_TALLER), 1.0 / b);
+    let root = spawn_kit_or_parts(commands, meshes, mats, BuildingMesh { idx }, "town_rubble", || crate::town_meshes::rubble_parts(kind), pos, inv);
+    let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
     commands.entity(root).try_insert(Transform::from_xyz(pos.x, y, pos.y)
         .with_scale(Vec3::new(b, b * crate::castle::BUILDING_TALLER, b)));
     commands.spawn(crate::build_fx::DustBurst::building(Vec3::new(pos.x - 0.95 * b, y, pos.y)));

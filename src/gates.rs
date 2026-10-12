@@ -265,32 +265,40 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
         m
     });
     let barricade = meshes.add(barricade_mesh());
+    // The Blender leaf (plank + ledges + strap hinges, hinged at local x 0 spanning +X, same size)
+    // and the overturned-wain barricade (town_kit `gate_leaf` / `gate_barricade`) when loaded.
+    let kit = crate::realforest::get().filter(|k| k.has("gate_leaf") && k.has("gate_barricade"));
+    let range = bevy::camera::visibility::VisibilityRange { start_margin: 0.0..0.0, end_margin: 140.0..160.0, use_aabb: true };
     for (i, g) in Gate::ALL.into_iter().enumerate() {
         let c = g.center();
         let a = along(g);
         for side in [-1.0_f32, 1.0] {
             let hinge = c + a * (side * OPEN_HALF);
-            commands
-                .spawn((
-                    Transform::from_xyz(hinge.x, 0.0, hinge.y),
-                    Visibility::Hidden,
-                    GateLeaf { gate: i, side, shut: 0.0 },
-                    BiomeEntity,
-                ))
-                .with_children(|p| {
+            let mut e = commands.spawn((
+                Transform::from_xyz(hinge.x, 0.0, hinge.y),
+                Visibility::Hidden,
+                GateLeaf { gate: i, side, shut: 0.0 },
+                BiomeEntity,
+            ));
+            if let Some(k) = kit {
+                k.attach_static_with(&mut e, "gate_leaf", Transform::IDENTITY, range.clone());
+                e.insert(Visibility::Hidden);
+            } else {
+                e.with_children(|p| {
                     p.spawn((Mesh3d(leaf.clone()), MeshMaterial3d(mats.get(M::Wood)), Transform::default()));
                     p.spawn((Mesh3d(band.clone()), MeshMaterial3d(mats.get(M::Iron)), Transform::default()));
                 });
+            }
         }
         let yaw = yaw_for(a);
-        commands.spawn((
-            Mesh3d(barricade.clone()),
-            MeshMaterial3d(mats.get(M::Wood)),
-            Transform::from_xyz(c.x, 0.0, c.y).with_rotation(Quat::from_rotation_y(yaw)),
-            Visibility::Hidden,
-            GateBarricade(i),
-            BiomeEntity,
-        ));
+        let tf = Transform::from_xyz(c.x, 0.0, c.y).with_rotation(Quat::from_rotation_y(yaw));
+        let mut e = commands.spawn((tf, Visibility::Hidden, GateBarricade(i), BiomeEntity));
+        if let Some(k) = kit {
+            k.attach_static_with(&mut e, "gate_barricade", Transform::IDENTITY, range.clone());
+            e.insert(Visibility::Hidden);
+        } else {
+            e.insert((Mesh3d(barricade.clone()), MeshMaterial3d(mats.get(M::Wood))));
+        }
         commands.spawn((
             Transform::from_xyz(c.x, GATE_H - 1.0, c.y),
             Visibility::Inherited,

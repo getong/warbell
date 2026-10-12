@@ -688,6 +688,11 @@ def stook(g, rng, c, h=0.62):
              [0.075, 0.055, 0.065, 0.03], 6, M_THATCH, scale((1.25, 1.02, 0.6), rng.uniform(0.85, 1.0)), tile=0.4)
 
 
+M_TMATTE = len(MATS)
+MATS = MATS + ["s_timber_matte"]   # matte twin of s_timber (no sky sheen on the barn boards)
+BOARD_CENTRES[M_TMATTE] = BOARD_CENTRES[M_TIMBER]
+
+
 def plank_walls(g, rng, W, D, y0, ye, ops, T=0.14):
     """Board-and-batten barn walls: a squared sill beam on the footing, squared corner and door
     posts, a wall plate, vertical weathered boards (uneven bottoms, a few gaps) with battens over the
@@ -719,11 +724,11 @@ def plank_walls(g, rng, W, D, y0, ye, ops, T=0.14):
                 if hgt < 0.06:
                     continue
                 board(g, A + t * s + UP * (lo + hgt / 2) + n * (T / 2 - 0.02), (0, 1, 0), tuple(n), hgt,
-                      bw - (0.018 if rng.random() < 0.85 else 0.04), 0.035, mat=M_TIMBER,
+                      bw - (0.018 if rng.random() < 0.85 else 0.04), 0.035, mat=M_TMATTE,
                       col=cols[int(rng.integers(0, len(cols)))], rng=rng)
                 if k > 0:
                     board(g, A + t * (s - bw / 2) + UP * (lo + hgt / 2) + n * (T / 2 + 0.02), (0, 1, 0), tuple(n),
-                          hgt - 0.02, 0.06, 0.025, mat=M_TIMBER, col=scale(POSTC, 0.62), rng=rng)
+                          hgt - 0.02, 0.06, 0.025, mat=M_TMATTE, col=scale(POSTC, 0.62), rng=rng)
                 # Inside face, so the open door shows a planked interior.
                 face(g, [A + t * (s - bw / 2) + UP * lo - n * 0.02, A + t * (s + bw / 2) + UP * lo - n * 0.02,
                          A + t * (s + bw / 2) + UP * yb - n * 0.02, A + t * (s - bw / 2) + UP * yb - n * 0.02],
