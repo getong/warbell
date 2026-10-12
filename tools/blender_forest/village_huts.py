@@ -90,7 +90,7 @@ def shell(g, P, mat, col_fn, tile, ref):
             uvs = [(U[c][b] / tile, Vv[a][b] / tile) for a, b, c in q]
             ns = [N[a][b] for a, b, _ in q]
             cs = [C[a][b] for a, b, _ in q]
-            fn = (pts[2] - pts[0]).cross(pts[1] - pts[3])
+            fn = (pts[2] - pts[0]).cross(pts[3] - pts[1])
             if fn.dot(ns[0] + ns[1] + ns[2] + ns[3]) < 0:
                 pts, uvs, ns, cs = pts[::-1], uvs[::-1], ns[::-1], cs[::-1]
             g.poly(pts, uvs, ns, cs, mat)
@@ -310,11 +310,11 @@ def daub_walls(g, rng, W, D, y0, ye, ops, T=0.18, finish="clay", patches=3, post
         L = (B - A).length
         pcs = _pieces(L, y0, ye, ops[wi])
         tall = [p for p in pcs if p[3] - p[2] > ye - y0 - 0.1 and p[1] - p[0] > 0.8]
-        for _ in range(patches if tall and rng.uniform() < 0.8 else 0):
+        for _ in range(patches + 1 if tall else 0):
             p = tall[rng.integers(len(tall))]
             s = rng.uniform(p[0] + 0.35, p[1] - 0.35)
             y = rng.uniform(y0 + 0.3, ye - 0.3)
-            holes.append((A + t * s + UP * y + n * (T / 2), t, n, rng.uniform(0.14, 0.26), rng.uniform(0.1, 0.18)))
+            holes.append((A + t * s + UP * y + n * (T / 2), t, n, rng.uniform(0.16, 0.3), rng.uniform(0.12, 0.22)))
 
         def col_fn(p, nn, base=base):
             k = 0.88 + 0.16 * nz(p * 1.5)
@@ -332,7 +332,17 @@ def daub_walls(g, rng, W, D, y0, ye, ops, T=0.18, finish="clay", patches=3, post
             Lp, h = s1 - s0, yb - ya
             c = A + t * ((s0 + s1) / 2) + UP * ((ya + yb) / 2)
             slab(g, c, (Lp + 0.02, h, T), yaw(t), rng, mat=mat, col_fn=col_fn, tile=1.1,
-                 res=(max(2, int(Lp / 0.28)), max(2, int(h / 0.28)), 1), round_r=0.035, rough=0.28)
+                 res=(max(2, int(Lp / 0.28)), max(2, int(h / 0.28)), 1), round_r=0.02, rough=0.2)
+        # Rough studs through the daub every ~1.1 (skipping the openings) and a sill pole.
+        k = max(1, int(L / 1.1))
+        for i in range(1, k):
+            s = L * i / k
+            if any(abs(s - o["s"]) < o["w"] / 2 + 0.15 for o in ops[wi]):
+                continue
+            pole(g, A + t * s + n * (T * 0.42) + UP * (y0 - 0.05), A + t * s + n * (T * 0.42) + UP * (ye - 0.02),
+                 0.06, 0.055, rng, col=scale(POSTC, rng.uniform(0.8, 1.0)), sides=6, segs=2)
+        pole(g, A + n * (T * 0.4) + UP * (y0 + 0.02), A + t * L + n * (T * 0.4) + UP * (y0 + 0.02), 0.07, 0.065, rng,
+             col=scale(POSTC, 0.75), sides=6, segs=3)
         for o in ops[wi]:
             opening_dress(g, rng, A, t, n, T, o)
     # The exposed wattle where the daub fell away.
@@ -796,11 +806,11 @@ def town_mine(rng):
 
     for a in np.linspace(0.6, 5.7, 7):
         c = (BX + math.cos(a) * 1.05, 0.0, math.sin(a) * 0.95)
-        mound(g, c, 0.65, 0.5, rng.uniform(0.25, 0.4), rng, mat=M_EARTH, col_fn=spoil, rings=4, seg=10, rough=0.25)
-    for _ in range(14):
+        mound(g, c, 0.75, 0.55, rng.uniform(0.12, 0.2), rng, mat=M_ROCK, col_fn=spoil, rings=4, seg=12, rough=0.35)
+    for _ in range(40):
         a = rng.uniform(0, 6.28)
-        r_ = rng.uniform(0.9, 1.5)
-        s_ = rng.uniform(0.08, 0.16)
+        r_ = rng.uniform(0.75, 1.6)
+        s_ = rng.uniform(0.05, 0.15)
         stone(g, V(BX + math.cos(a) * r_, 0.08, math.sin(a) * r_ * 0.9), (s_, s_ * 0.8, s_), rng, detail=1,
               rough=0.15, col_fn=rock_col((0.72, 0.7, 0.66), moss=0.15))
     face(g, [V(BX - 0.5, 0.04, -0.45), V(BX + 0.5, 0.04, -0.45), V(BX + 0.5, 0.04, 0.45), V(BX - 0.5, 0.04, 0.45)], UP,

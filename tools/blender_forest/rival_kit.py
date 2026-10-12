@@ -40,13 +40,23 @@ M_PLASTER = len(MATS)
 MATS = MATS + ["s_plaster"]
 UP = V(0, 1, 0)
 VOID = (0.03, 0.027, 0.025)
-MUD = (0.95, 0.74, 0.5)           # ochre earthen render (on the off-white plaster scan)
-MUD_PALE = (1.0, 0.86, 0.66)
+MUD = (0.9, 0.76, 0.6)           # ochre earthen render (on the off-white plaster scan)
+MUD_PALE = (0.98, 0.88, 0.74)
 SANDST = (0.98, 0.82, 0.6)        # sandstone footing (on the grey rock scan)
 BRICK = (0.72, 0.5, 0.34)         # exposed mud brick where the render fell off
 BEAMC = (0.62, 0.5, 0.38)
 CRIMSON = (0.6, 0.06, 0.07)
 TERRA = (0.85, 0.5, 0.32)
+
+
+_slab = slab
+
+
+def slab(g, centre, size, rot, rng, rough=0.1, round_r=0.07, **kw):
+    """Crisp mud-brick / ashlar mass: `rough` becomes an absolute bump of ~rough * 0.2 u (the
+    toolkit scales it by the block's half-size, which melted the big masses into blobs)."""
+    m = max(1e-3, min(size[0], size[2]) / 2 * 2)
+    return _slab(g, centre, size, rot, rng, rough=rough * 0.2 / m * 0.6, round_r=min(round_r, 0.04), **kw)
 
 
 def lathe(g, base, axis, profile, sides, mat, col, tile=0.5):
@@ -76,12 +86,11 @@ def render_col(rng, y0, y1, base=MUD, patches=()):
 
 
 def merlon(g, rng, c, yaw_a, col_fn, s=1.0):
-    """A stepped (two-tier) merlon on a wall top at c."""
-    q = quat_y(yaw_a)
-    slab(g, V(c.x, c.y + 0.17 * s, c.z), (0.5 * s, 0.34 * s, 0.42 * s), q, rng, mat=M_PLASTER, res=(2, 2, 2),
-         round_r=0.05, rough=0.12, col_fn=col_fn, tile=1.0)
-    slab(g, V(c.x, c.y + 0.44 * s, c.z), (0.28 * s, 0.22 * s, 0.34 * s), q, rng, mat=M_PLASTER, res=(2, 2, 2),
-         round_r=0.05, rough=0.12, col_fn=col_fn, tile=1.0)
+    """A stepped (two-tier) merlon on a wall top at c: crisp hand-laid blocks, a little skew."""
+    q = quat_y(yaw_a + rng.uniform(-0.04, 0.04))
+    for (w, h, d, y) in ((0.5, 0.32, 0.42, 0.16), (0.3, 0.22, 0.34, 0.43)):
+        p = V(c.x, c.y + y * s, c.z)
+        lbox(g, p, (w * s, h * s, d * s), q, M_PLASTER, col_fn(p, UP), tile=1.0)
 
 
 def footing_run(g, rng, a, b, T, h=0.42):
@@ -115,6 +124,17 @@ def wall_run(g, rng, a, b, T=0.7, H=1.5, merlons=True, mer_side=0.0):
         patches.append((a + t * s + nrm * side * (T / 2) + UP * rng.uniform(0.5, 1.2), rng.uniform(0.25, 0.5),
                         rng.uniform(0.15, 0.3)))
     col = render_col(rng, 0.0, H + 0.5, patches=patches)
+    for pc, rx, ry in patches:
+        side = 1 if (pc - a).dot(nrm) > 0 else -1
+        for r in range(int(ry * 2 / 0.11)):
+            y = pc.y - ry * 0.8 + r * 0.11
+            off = 0.0 if r % 2 else 0.14
+            for k in range(int(rx * 1.6 / 0.28)):
+                s = -rx * 0.8 + off + k * 0.28
+                if (s / rx) ** 2 + ((y - pc.y) / ry) ** 2 > 0.75:
+                    continue
+                lbox(g, pc + t * s + UP * (y - pc.y) + nrm * side * 0.01, (0.26, 0.09, 0.05), yaw_q(t), M_EARTH,
+                     scale(BRICK, rng.uniform(0.85, 1.1)), tile=0.4)
     footing_run(g, rng, a, b, T)
     n = max(1, int(L / 3.0))
     for k in range(n):
