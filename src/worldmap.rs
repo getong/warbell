@@ -283,21 +283,25 @@ const SNOW_PASSES: [Pass; 2] = [
     Pass { ang: 0.578, half: 5.1 },  // SE, toward the castle (main ascent)
     Pass { ang: -0.184, half: 3.7 }, // E, toward the desert dunes
 ];
-/// Rock range passes: WNW main ascent (mouth at base ≈(86,39), a clear 20+ base units from the
-/// castle — due-west would run the ramp straight into the castle safe-zone's grass fray, which
-/// force-flattens class-1 bays into the corridor) + the N slot canyon toward the desert
-/// (compression→release: the desert↔rock ring road runs its floor). The SW rim by the lake is
-/// deliberately passless — that wall is the waterfall cliff (vista pass).
+/// Rock range passes: WNW main ascent (mouth at base ≈(85,38), ≈12 base units of open ground past
+/// the castle ring's NE corner — due-west would run the ramp straight into the castle safe-zone's
+/// grass fray, which force-flattens class-1 bays into the corridor) + the N slot canyon toward the
+/// desert (compression→release: the desert↔rock ring road runs its floor). The SW rim by the lake
+/// is deliberately passless — that wall is the waterfall cliff (vista pass).
+// Biome rebalance (Oct 2026, player: "the desert is too small"): the range moved (116,57) →
+// (117,60) and the grown desert took its low northern plateau. The radius is unchanged, so the
+// half-widths stay; the WNW angle turned −2.60 → −2.55 so the mouth keeps its old distance from
+// the castle ring (the centre moved south, which swung the old angle's mouth toward the walls).
 const ROCK_PASSES: [Pass; 2] = [
-    Pass { ang: -2.60, half: 3.0 }, // WNW, toward the castle side (main ascent)
-    // N canyon toward the desert. NOT -1.88 (straight at the desert centre): the rival
-    // stronghold's forced-flat plateau (world (66,-88), r 30) sits on that line and cuts
-    // class-1 bays across the ramp; -1.60 exits the canyon ~34 world units east of the fort —
-    // the ring road passes the rival's walls, then climbs the slot.
+    Pass { ang: -2.55, half: 3.0 }, // WNW, toward the castle side (main ascent)
+    // N canyon toward the desert. NOT straight at the desert centre: the rival stronghold's
+    // forced-flat plateau (`rival::RIVAL_CENTRE`, base ≈(102,14), world r 30) sits on that line and
+    // cuts class-1 bays across the ramp; -1.60 exits the canyon at base ≈(116,21), ~60 world units
+    // east of the fort — the ring road passes the rival's walls, then climbs the slot.
     Pass { ang: -1.60, half: 2.4 },
 ];
 
-const REGIONS: [Region; 6] = [
+const REGIONS: [Region; 5] = [
     // NW snow massif (r 31→33: shrink the empty snow↔desert grass seam). peak 10→18 + cliffy
     // (pass 1): tiered mesa shelves + sheer walls, climbable only via SNOW_PASSES. 18 (not the
     // first attempt's 13): at 13 the tier walls came out 1–1.5u and the massif still read as a
@@ -317,9 +321,13 @@ const REGIONS: [Region; 6] = [
     // fills the grass corridor along the top coast. Radius 34→38 to close the empty grass seam
     // between snow and desert (players noted the wide bare strip there): with snow at r33 the seam
     // shrinks from ~10 to ~4 base, and region_at's wobble/fray makes the two biomes meet on an
-    // organic edge instead of a clean grass gutter. Still biased NORTH so the dunes don't bulge onto
-    // the keep — at z10 the south reach is ~z48, clear of the castle safe-ring (south edge ~z36).
-    Region { x: 101.0, z: 10.0, r: 38.0, biome: TB::Desert, peak: 0, cliffy: false, passes: &[] },
+    // organic edge instead of a clean grass gutter.
+    // (101,10) r38 → (109,20) r44 (biome rebalance, player: "the desert is too small now — take
+    // some from the mountains"): +47% tiles (24.0k → 35.3k). The dune sea grows S/SE over the rock range's low
+    // northern plateau (the DEM's summits sit in its southern half, so the range keeps them); the
+    // centre moved E as much as S so the snow↔desert seam stays where it was tuned (the snow massif
+    // keeps its footprint — ±0.3% of its tiles) and the dunes stop short of the castle ring's NE corner.
+    Region { x: 109.0, z: 20.0, r: 44.0, biome: TB::Desert, peak: 0, cliffy: false, passes: &[] },
     // E rock range — pulled in toward the castle (122→116: the mine country starts just past
     // the safe-zone fray instead of a 33-unit trek). peak 18→22 + cliffy (pass 1): the tallest
     // biome is now a real tiered MESA — flat shelves, 2.5u sheer walls between them, climbable
@@ -327,18 +335,21 @@ const REGIONS: [Region; 6] = [
     // r 34→38: the tallest biome grows down toward the shrunk SE marsh — more mountain, less bog.
     // Now a continuous massif shaped by a REAL DEM (the Dolomites round Passo Sella,
     // `alpine_massif::rock_y`) — the island's tallest summits; ROCK_PASSES are its pass valleys.
-    Region { x: 116.0, z: 57.0, r: 38.0, biome: TB::Rock, peak: 22, cliffy: true, passes: &ROCK_PASSES },
+    // (116,57) → (117,60) (biome rebalance): the range yields its low northern plateau to the
+    // desert and slides S/SE over the old E marsh arm, so it loses ~12% of its tiles (43.6k →
+    // 38.1k) while the desert gains 11k. (Not further S: at (118,62) too little low rock apron was
+    // left for the rocky story scenes — `stories_cold_plan_seats_every_scene_in_its_biome`.) The DEM rides the centre, so the summits, the pass valleys and the SW waterfall wall
+    // over the lake (`BLUE_STREAMS[0]`, ≈18 base WSW of the centre) keep their relief.
+    Region { x: 117.0, z: 60.0, r: 38.0, biome: TB::Rock, peak: 22, cliffy: true, passes: &ROCK_PASSES },
     // SW forest + S swamp: r +2/+3 (pass 0, map-character overhaul) — the two most
     // "nothing left once you subtract the claims" biomes get extra interior on top of the
     // MAP_SCALE 2.2 bump. Snow/desert radii stay (their shared seam is already tuned tight).
     Region { x: 32.0, z: 80.0, r: 36.0, biome: TB::Forest, peak: 0, cliffy: false, passes: &[] }, // SW forest
-    Region { x: 72.0, z: 92.0, r: 23.0, biome: TB::Swamp, peak: 0, cliffy: false, passes: &[] }, // S swamp (r 29→23: less bog)
-    // Eastern marsh arm: fills the open grass strip that ran between the S swamp and the
-    // rocky mine range (world x +30…+66, z +15…+60), so the marsh laps right up to the
-    // foot of the mines instead of leaving a grass corridor. Rock's mountain priority in
-    // `region_at` auto-clips the east edge (the mines stay rock), and the castle safe-ring
-    // forces grass at the centre, so this only eats the in-between grass.
-    Region { x: 102.0, z: 78.0, r: 17.0, biome: TB::Swamp, peak: 0, cliffy: false, passes: &[] }, // E marsh (r 24→17: yields to the rock range)
+    // S swamp: r 29→23 (less bog) → 20 (biome rebalance: "shrink the swamp a bit too"); its bog
+    // pools are region-relative (`POOL_BLOBS`) and shrink with it.
+    Region { x: 72.0, z: 92.0, r: 20.0, biome: TB::Swamp, peak: 0, cliffy: false, passes: &[] },
+    // (The eastern marsh arm, (102,78) r17, is gone: the rock range moved S/SE over it, so the lake
+    // and the waterfall now sit in a tarn at the range's SW foot instead of in a bog.)
 ];
 
 struct Plateau {
@@ -350,7 +361,11 @@ struct Plateau {
 const PLATEAUS: [Plateau; 4] = [
     Plateau { x: 98.0, z: 72.0, r: 9.0, peak: 5 },
     Plateau { x: 52.0, z: 50.0, r: 7.0, peak: 4 },
-    Plateau { x: 90.0, z: 36.0, r: 7.0, peak: 5 }, // NE mesa on the desert fringe
+    // NE mesa — a desert butte since the rebalance. (90,36) → (84,28): the grown desert's WNW rock
+    // pass mouth now opens at ≈(85,38), and a plateau cone standing on a corridor mouth breaks the
+    // ramp (`mesa_passes_climb_to_the_summit`); here it stays a clear 10 base off the mouth and
+    // outside the rock range's `in_cliffy` margin, so the whole butte rises (≤2.2u, desert-low).
+    Plateau { x: 84.0, z: 28.0, r: 7.0, peak: 5 },
     Plateau { x: 20.0, z: 62.0, r: 7.0, peak: 4 }, // W forest highland
 ];
 
@@ -844,15 +859,15 @@ fn is_lake(x: f32, z: f32) -> bool {
 /// waves their SHORES. Offsets avoid the S-swamp warden's arena direction (region-local
 /// ≈(0,−0.42) — see the keep-out below, which still hard-guards it).
 // A FEW small, well-separated puddles (not the old 6-blob amoeba clusters): each swamp region
-// gets ~2–3 small pools reading as distinct kałuże. Biased AWAY from the E-marsh's western edge
-// (positive-x / southern offsets) so, in that region, they don't crowd the waterfall's blue lake
-// just west of it (the lake keep-out below also hard-guards it). Min radius fraction stays ≥ 0.11
-// (≈2.5 base at r23 / 2 base at r17) so a pool is never so small it renders as an all-white foam
-// plate. The deepest still clears the drowned-tower gate (`bog.rs`, sd < −1.1).
+// gets ~2–3 small pools reading as distinct kałuże. (Biased toward positive-x / southern offsets
+// from when an E marsh arm lapped the waterfall's blue lake; the lake keep-out below still
+// hard-guards it.) Min radius fraction stays ≥ 0.11 (≈2.2 base at the S swamp's r20) so a pool is
+// never so small it renders as an all-white foam plate. The deepest still clears the drowned-tower
+// gate (`bog.rs`, sd < −1.1).
 const POOL_BLOBS: [(f32, f32, f32, f32); 3] = [
     (0.28, -0.24, 0.15, 0.12), // NE puddle
     (0.14, 0.36, 0.14, 0.13),  // SE puddle
-    (-0.22, 0.12, 0.12, 0.11), // W-central (smallest; lake-side in the E-marsh — keep-out trims it)
+    (-0.22, 0.12, 0.12, 0.11), // W-central (smallest)
 ];
 
 /// World-space keep-out around the swamp warden's arena — a pool inside the boss glade would
@@ -937,8 +952,8 @@ fn pool_sd(x: f32, z: f32) -> f32 {
     let swamp_glade = world22(0.0, 57.0);
     let warden = (POOL_WARDEN_KEEPOUT - (wx - swamp_glade.x).hypot(wz - swamp_glade.y)) / MAP_SCALE;
     sd = smax_poly(sd, warden, 1.2);
-    // Keep the olive bog pools OFF the waterfall's BLUE plunge pool — the E-marsh laps right up to
-    // it, and an olive puddle bleeding onto the blue lake read as one muddy blob. Nothing inside the
+    // Keep the olive bog pools OFF the waterfall's BLUE plunge pool — an olive puddle bleeding onto
+    // the blue lake read as one muddy blob (from when the E marsh arm lapped right up to it). Nothing inside the
     // lake ellipse grown by a margin (so a pool can't even touch its shore).
     let (lx, lz, lrx, lrz) = DELIBERATE_LAKE;
     let (ex, ez) = ((x - lx) / (lrx + 4.0), (z - lz) / (lrz + 4.0));
@@ -1273,6 +1288,22 @@ fn pass_class(x: f32, z: f32, reg: &Region) -> Option<i32> {
     None
 }
 
+/// Biome of a pass-corridor tile: the massif's own — except on ground a FLAT region owns outright
+/// (`alpine_massif::ownership` 0), where the corridor's floor has eased to the owner's level and
+/// runs out as a level wash of that biome (the rock range's N canyon into the desert) instead of
+/// a rock-coloured strip across the dunes.
+fn corridor_biome(x: f32, z: f32, reg: &Region) -> TB {
+    if alpine_massif::cedes_corridors(reg) && alpine_massif::ownership(x, z, reg) <= 0.0 {
+        if let Some(ri) = region_at(x, z) {
+            let o = &active_map().regions[ri];
+            if o.peak == 0 {
+                return o.biome;
+            }
+        }
+    }
+    reg.biome
+}
+
 /// True if base `(x, z)` classifies into a cliffy mesa region OR one of its pass corridors —
 /// these tiles are EXEMPT from `terrace_inland`'s ≤1-class relaxation (the shelf walls are the
 /// point, and relaxing a corridor tile toward a neighbouring low bay would break the staircase)
@@ -1357,7 +1388,7 @@ fn pass_mouth_base(reg: &Region, p: &Pass) -> (f32, f32) {
 }
 
 /// World-space centres of the active map's five primary biome regions (the road network's
-/// trunk/ring skeleton — index 5, the home marsh arm, is deliberately not a road anchor).
+/// trunk/ring skeleton: snow, desert, rock, forest, swamp — in `REGIONS` order).
 pub fn biome_centres_world() -> [Vec2; 5] {
     if is_arena() {
         // The arena has no biome blobs; the campaign `roads` network (the only consumer) is not
@@ -1436,6 +1467,17 @@ pub fn biome_ring_node(i: usize, other: Vec2) -> Vec2 {
         })
         .min_by(|a, b| a.distance(other).partial_cmp(&b.distance(other)).unwrap())
         .unwrap()
+}
+
+/// World point on pass `pass` of region `region`, `inset` base units inside the rim along the
+/// serpentined centreline — the vista overlooks anchor on it, so they follow a region retune.
+/// `None` when the active map has no such region / pass (the arena).
+pub fn pass_point_world(region: usize, pass: usize, inset: f32) -> Option<Vec2> {
+    let reg = active_map().regions.get(region)?;
+    let p = reg.passes.get(pass)?;
+    let dc = reg.r - inset;
+    let a = p.ang + pass_sway(dc, reg, p);
+    Some(Vec2::new((reg.x + a.cos() * dc) * MAP_SCALE - GX, (reg.z + a.sin() * dc) * MAP_SCALE - GZ))
 }
 
 /// The pass-corridor trails (world-space polylines, mouth → summit) of every cliffy region on
@@ -2036,7 +2078,7 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
                 if let Some(cls) = pass_class(x, z, reg) {
                     let cls = if alpine_massif::is_massif_region(reg) { alpine_massif::massif_class(x, z, reg) } else { cls };
                     if cls > 1 {
-                        return Some((reg.biome, cls));
+                        return Some((corridor_biome(x, z, reg), cls));
                     }
                 }
             }
@@ -2096,7 +2138,7 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
             if let Some(cls) = pass_class(x, z, reg) {
                 // The snow massif's trail floors are its continuous valley ramps.
                 let cls = if alpine_massif::is_massif_region(reg) { alpine_massif::massif_class(x, z, reg) } else { cls };
-                return Some((reg.biome, cls));
+                return Some((corridor_biome(x, z, reg), cls));
             }
         }
     }
@@ -5365,5 +5407,87 @@ mod tests {
         assert!(top.0 > (reg.peak - 1) as f32 * GROUND_STEP + 4.0, "summit {:.2} barely clears the col", top.0);
         assert!(flat_f < 0.08, "{:.1}% of the massif interior is dead flat (mesa shelves?)", flat_f * 100.0);
         assert!(steep_f < 0.45, "{:.1}% of the massif interior is too steep to walk", steep_f * 100.0);
+    }
+
+    /// Biome footprints (tile counts) of the home island. The player called the desert "a strip"
+    /// at ~half the rock range's area, so the desert must stay a REAL desert — at least as big as
+    /// the rock range — and the rock range must still carry its DEM summits (see
+    /// `rock_range_tallest_desert_low`). `BIOME_DUMP=<file.ppm>` writes a hillshaded biome map with
+    /// the pass trails (red) and the warden lairs (magenta) for eyeballing a region retune.
+    #[test]
+    fn biome_footprints() {
+        let names = ["grass", "sand", "forest", "rock", "snow", "desert", "swamp", "blight"];
+        let idx = |b: TB| match b {
+            TB::Grass => 0,
+            TB::Sand => 1,
+            TB::Forest => 2,
+            TB::Rock => 3,
+            TB::Snow => 4,
+            TB::Desert => 5,
+            TB::Swamp => 6,
+            TB::Blight => 7,
+        };
+        let mut n = [0u32; 8];
+        for iz in 0..ROWS {
+            for ix in 0..COLS {
+                if let Some((b, _)) = tile_at(ix, iz) {
+                    n[idx(b)] += 1;
+                }
+            }
+        }
+        let line: Vec<String> = names.iter().zip(n).map(|(k, v)| format!("{k} {v}")).collect();
+        eprintln!("biome tiles: {}", line.join(", "));
+        // Pre-rebalance the desert was ~55% of the rock range (24.0k vs 43.6k tiles).
+        assert!(n[5] * 10 >= n[3] * 8, "desert {} tiles is a strip next to the rock range's {}", n[5], n[3]);
+        if let Ok(path) = std::env::var("BIOME_DUMP") {
+            let pal = PAL_HOME;
+            let cols = [pal.grass, pal.sand, pal.forest, pal.rock, pal.snow, pal.desert, pal.swamp, pal.blight];
+            let (w, h) = (COLS as usize, ROWS as usize);
+            let mut px = vec![0u8; w * h * 3];
+            for iz in 0..ROWS {
+                for ix in 0..COLS {
+                    let i = (iz as usize * w + ix as usize) * 3;
+                    let Some((b, _)) = tile_at(ix, iz) else {
+                        px[i..i + 3].copy_from_slice(&[40, 70, 120]);
+                        continue;
+                    };
+                    let c = tile_centre_ground(ix, iz).unwrap_or(0.0);
+                    let e = tile_centre_ground(ix + 1, iz).unwrap_or(c);
+                    let s = tile_centre_ground(ix, iz + 1).unwrap_or(c);
+                    let nrm = Vec3::new(c - e, 1.0, c - s).normalize();
+                    let l = 0.45 + 0.75 * nrm.dot(Vec3::new(-0.6, 0.7, -0.4).normalize()).max(0.0);
+                    let col = cols[idx(b)];
+                    for (k, sh) in [16, 8, 0].into_iter().enumerate() {
+                        px[i + k] = (((col >> sh) & 0xff) as f32 * l).clamp(0.0, 255.0) as u8;
+                    }
+                }
+            }
+            let mut dot = |wx: f32, wz: f32, rgb: [u8; 3], r: i32| {
+                let (cx, cz) = ((wx + GX) as i32, (wz + GZ) as i32);
+                for dz in -r..=r {
+                    for dx in -r..=r {
+                        let (x, z) = (cx + dx, cz + dz);
+                        if x >= 0 && z >= 0 && x < COLS && z < ROWS {
+                            let i = (z as usize * w + x as usize) * 3;
+                            px[i..i + 3].copy_from_slice(&rgb);
+                        }
+                    }
+                }
+            };
+            for trail in pass_trails_world() {
+                for p in trail {
+                    dot(p.x, p.y, [220, 30, 30], 1);
+                }
+            }
+            for b in [Biome::Snow, Biome::Desert, Biome::Rocky, Biome::Forest, Biome::Swamp] {
+                let c = crate::boss::region_center(b);
+                dot(c.x, c.y, [230, 0, 230], 3);
+            }
+            let rc = crate::rival::RIVAL_CENTRE;
+            dot(rc.x, rc.y, [255, 255, 0], 3);
+            let mut out = format!("P6\n{w} {h}\n255\n").into_bytes();
+            out.extend_from_slice(&px);
+            std::fs::write(path, out).unwrap();
+        }
     }
 }
