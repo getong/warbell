@@ -145,7 +145,7 @@ fn track_mesh(path: &[Vec2]) -> Mesh {
             let c = *p + side * runner;
             for w in [-0.055f32, 0.055] {
                 let q = c + side * w;
-                let y = crate::steer::footing(q.x, q.y).unwrap_or(0.0) + 0.025;
+                let y = crate::steer::footing(q.x, q.y).unwrap_or(0.0) + 0.04;
                 pos.push([q.x, y, q.y]);
                 nrm.push([0.0, 1.0, 0.0]);
                 // Fade out where a fresh drift covered them; a cool blue-grey in the groove.
@@ -158,7 +158,7 @@ fn track_mesh(path: &[Vec2]) -> Mesh {
                 let b = base + alive * 2;
                 let water = crate::worldmap::is_open_water_world(p.x, p.y);
                 if !water && (i % 23) != 11 {
-                    idx.extend([a, b, a + 1, a + 1, b, b + 1]);
+                    idx.extend([a, a + 1, b, a + 1, b + 1, b]); // CCW seen from above
                 }
             }
             alive += 1;

@@ -15,7 +15,7 @@ Animated pieces are separate objects with their pivot at the origin (the game po
   odd_vulture_legs     feathered thighs, scaly shanks, talons (hidden in flight)
   odd_antlion_head     antlion larva: head + bristly thorax / abdomen, buried to the thorax
   odd_antlion_jaw      LEFT sickle mandible, pivot at its base (mirrored for the right)
-  odd_antlion_pit      the sand funnel (s_earth tinted to the dune sand), rim r ~4.3
+  odd_antlion_pit      the sand funnel (s_plaster tinted to the dune sand), rim r ~4.3
 
 Game coords (Y up, +Z forward = the creature's face), real-ish scale (hero ~1.3u, 1u ~ 1.35 m).
 
@@ -422,7 +422,7 @@ def antlion_jaw():
 
 
 def antlion_pit():
-    """The sand funnel as one heightfield disc (s_earth tinted to the dune sand)."""
+    """The sand funnel as one heightfield disc (s_plaster tinted to the dune sand)."""
     from meshkit import Builder
     from mathutils import Vector
     rng = np.random.default_rng(41)
@@ -434,12 +434,12 @@ def antlion_pit():
         wob = 0.05 * math.sin(a * 3 + ph[0]) + 0.03 * math.sin(a * 7 + ph[1])
         if r <= R_RIM:
             t = r / R_RIM
-            y = -0.32 + 0.5 * t ** 1.3  # shallow: the game seats the floor just above the ground
+            y = -0.32 + 0.6 * t ** 1.3  # shallow: the game seats the floor just above the ground
             y += 0.025 * math.sin(r * 9.0 + a * 2 + ph[2]) * t  # slumped sand runnels
         else:
             t = min(1.0, (r - R_RIM) / (R_OUT - R_RIM))
             # The spoil apron dives under the ground so it never ends in a floating lip.
-            y = 0.18 * (1 - t) ** 1.4 - 0.9 * t ** 1.2
+            y = 0.28 * (1 - t) ** 1.4 - 0.9 * t ** 1.2
             if r > R_OUT:
                 y = -1.4  # buried skirt
         return y + wob * min(1.0, r / 2.0)
@@ -481,10 +481,16 @@ def antlion_pit():
                 n = normal(ii, jj)
                 n_.append((n[0], -n[2], n[1]))
                 r = math.hypot(p[0], p[2])
-                shade = 0.62 + 0.38 * min(1.0, r / R_RIM) ** 0.7  # the funnel floor sits in its own shadow
-                c_.append((0.9 * shade, 0.8 * shade, 0.66 * shade))
-            bld.face([vid[k] for k in q][::-1], uv_[::-1], n_[::-1], c_[::-1], 0)
-    return bld.build("odd_antlion_pit", ["s_earth"])
+                a = math.atan2(p[2], p[0])
+                t = min(1.0, r / R_RIM)
+                shade = 0.34 + 0.66 * t ** 1.6  # the funnel floor sits in its own shadow
+                shade *= 1.0 + 0.12 * math.sin(a * 23.0 + 3.0 * math.sin(a * 5.0 + ph[3])) * t  # slip runnels
+                shade *= 1.0 + 0.16 * math.exp(-((r - R_RIM + 0.1) / 0.35) ** 2)  # dry pale lip
+                if r < 0.55:
+                    shade *= 0.55 + 0.45 * r / 0.55  # the burrow mouth
+                c_.append(tuple(min(1.0, v * shade) for v in (0.95, 0.78, 0.46)))  # the dune sand's ochre
+            bld.face([vid[k] for k in q], uv_, n_, c_, 0)  # q runs CCW seen from above: faces up
+    return bld.build("odd_antlion_pit", ["s_plaster"])  # fine, pale grain tinted to sand
 
 
 if __name__ == "__main__":

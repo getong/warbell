@@ -678,9 +678,9 @@ fn attach_vulture_parts(commands: &mut Commands, a: &Assets_, e: Entity, legs_hi
 
 fn pit_seat(p: Vec2) -> f32 {
     // Seat the funnel so its floor clears the ground everywhere inside the rim (the terrain can't be
-    // dug, so the funnel is a low spoil ring — ~0.5 deep, the hero's feet sink into it like loose
+    // dug, so the funnel is a low spoil ring — ~0.6 deep, the hero's feet sink into it like loose
     // sand — whose apron dives back under the ground).
-    let funnel = |r: f32| -0.32 + 0.5 * (r / PIT_R).powf(1.3);
+    let funnel = |r: f32| -0.32 + 0.6 * (r / PIT_R).powf(1.3);
     let mut hi = footing(p.x, p.y).unwrap_or(0.0) - funnel(0.0) + 0.04;
     for k in 0..12 {
         let a = k as f32 * std::f32::consts::TAU / 12.0;
@@ -1134,9 +1134,12 @@ fn animate_wings(
             VState::Climb | VState::Descend => ((ph * 6.0).sin() * 0.75 + 0.1, 0.05),
             VState::Dive => (-0.25, 0.45),
             // Half-folded and swept back along the flanks, the wrists mantling over the carcass.
-            VState::Feed => (0.12 + 0.06 * (ph * 2.0).sin(), 1.2),
+            VState::Feed => (0.12 + 0.06 * (ph * 2.0).sin(), 1.35),
         };
         tf.rotation = Quat::from_rotation_y(-s * yaw) * Quat::from_rotation_z(s * roll);
+        // On the ground the wing folds: the spread mesh is drawn in along its span so it lies along
+        // the flank instead of fanning out like a cape.
+        tf.scale = if v.state == VState::Feed { Vec3::new(0.48, 1.0, 0.8) } else { Vec3::ONE };
     }
 }
 
