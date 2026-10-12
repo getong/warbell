@@ -1140,7 +1140,7 @@ fn sit_stump_mesh(mut seed: u32) -> Mesh {
 
 /// The camp fire's flame cards: three vertical quads crossed at 60° plus a smaller inner set,
 /// 0.75 wide x 0.95 tall, base at y=0, UV v=1 at the base (the flame texture's root).
-fn flame_card_mesh() -> Mesh {
+pub(crate) fn flame_card_mesh() -> Mesh {
     use bevy::asset::RenderAssetUsages;
     use bevy::mesh::{Indices, PrimitiveTopology};
     let (mut pos, mut uv, mut nrm, mut idx) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
@@ -1167,7 +1167,7 @@ fn flame_card_mesh() -> Mesh {
 
 /// A painted flame (64x128 RGBA): three licking tongues over a hot root, white-yellow at the core,
 /// orange then deep red at the ragged edges, soft alpha falloff — the card texture for the fire.
-fn flame_card_image() -> Image {
+pub(crate) fn flame_card_image() -> Image {
     use bevy::asset::RenderAssetUsages;
     use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
     let (w, h) = (64u32, 128u32);

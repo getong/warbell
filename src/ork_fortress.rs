@@ -534,17 +534,7 @@ pub fn build(
     );
     // The orks draw against the shared creature material (per-surface texture from the surf code).
     let ork_mat = crate::creature::make_creature_material(creature_mats);
-    // Orange campfire flame + green warp flame (emissive, bloom-lit) + translucent smoke.
-    let flame_mat = std_mats.add(StandardMaterial {
-        base_color: crate::palette::srgb(0xff8a30),
-        emissive: crate::palette::srgb(0xff8a30).to_linear() * 4.0,
-        ..default()
-    });
-    let warp_mat = std_mats.add(StandardMaterial {
-        base_color: crate::palette::srgb(0x86e860),
-        emissive: crate::palette::srgb(0x6fe06a).to_linear() * 4.5,
-        ..default()
-    });
+    // Doorway glow + translucent smoke (the fires themselves are flame cards, below).
     let glow_mat = std_mats.add(StandardMaterial {
         base_color: crate::palette::srgb(0xffb050),
         emissive: crate::palette::srgb(0xff9838).to_linear() * 3.0,
@@ -558,6 +548,24 @@ pub fn build(
         ..default()
     });
     let smoke_puff = meshes.add(Sphere::new(0.5).mesh().ico(1).unwrap());
+    // Fire as the camps draw it: crossed alpha flame cards (`camps::flame_card_mesh`), never a
+    // solid cone. The scale is baked into each mesh because `Wobble` / `Flicker` own the
+    // transform scale.
+    let card_tex = images.add(crate::camps::flame_card_image());
+    let card_mat = |c: Color, mats: &mut Assets<StandardMaterial>| {
+        mats.add(StandardMaterial {
+            base_color: c,
+            base_color_texture: Some(card_tex.clone()),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            double_sided: true,
+            cull_mode: None,
+            ..default()
+        })
+    };
+    let card_fire = card_mat(Color::linear_rgb(5.0, 2.6, 1.1), std_mats);
+    let card_warp = card_mat(Color::linear_rgb(1.5, 5.0, 1.3), std_mats);
+    let card = |k: f32| crate::camps::flame_card_mesh().scaled_by(Vec3::splat(k));
 
     let mut rng = 0x6f7c_5eedu32;
     let at = |p: Vec2| Vec3::new(p.x, ground_y(p.x, p.y).unwrap_or(0.0), p.y);
@@ -573,7 +581,10 @@ pub fn build(
         if a == Vec2::new(9.0, FRONT_Z) && b == Vec2::new(15.0, FRONT_Z) {
             continue; // the gate fills this gap
         }
-        spawn_solid(commands, meshes, &timber_mat, palisade_segment(a, b, &mut rng), Vec3::ZERO, Quat::IDENTITY);
+        let m = palisade_segment(a, b, &mut rng);
+        if !hold_wall_kit(commands, a, b, i) {
+            spawn_solid(commands, meshes, &timber_mat, m, Vec3::ZERO, Quat::IDENTITY);
+        }
         let mid = (a + b) / 2.0;
         let d = b - a;
         crate::blockers::add_obb(mid.x, mid.y, d.length() / 2.0 + 0.25, 0.45, (-d.y).atan2(d.x));
@@ -583,17 +594,19 @@ pub fn build(
     // ── The gate ── static frame (posts/lintel/skulls) + two hinged door leaves. The leaves are
     // their own entities tagged `FortressGate` so the Director (and, later, the live game) can
     // swing them open; the frame is fixed scenery.
-    spawn_solid(commands, meshes, &timber_mat, gate_frame_mesh(), at(GATE), Quat::IDENTITY);
+    if !hold_kit(commands, "hold_gate_frame", Transform::from_translation(at(GATE))) {
+        spawn_solid(commands, meshes, &timber_mat, gate_frame_mesh(), at(GATE), Quat::IDENTITY);
+    }
+    let hold_models = crate::realforest::get().filter(|k| k.has("hold_gate_leaf_l"));
     for sign in [-1.0f32, 1.0] {
         // Hinge post sits ~3u out from the gate centre; the leaf reaches inward to the gap middle.
+        // The kit leaf hangs as children of the hinged entity, so the swing carries it.
         let hinge = Vec2::new(GATE.x + sign * 3.0, GATE.y);
-        commands.spawn((
-            Mesh3d(meshes.add(gate_door_mesh(sign))),
-            MeshMaterial3d(timber_mat.clone()),
-            Transform::from_translation(at(hinge)),
-            FortressGate { sign, open: 0.0 },
-            BiomeEntity,
-        ));
+        let mut e = commands.spawn((Transform::from_translation(at(hinge)), FortressGate { sign, open: 0.0 }, BiomeEntity));
+        let leaf = if sign > 0.0 { "hold_gate_leaf_l" } else { "hold_gate_leaf_r" };
+        if !hold_models.is_some_and(|k| k.attach_static(&mut e, leaf, Transform::IDENTITY)) {
+            e.insert((Mesh3d(meshes.add(gate_door_mesh(sign))), MeshMaterial3d(timber_mat.clone())));
+        }
     }
     // Breach beacon: a translucent warp-green ward shimmering across the gate mouth (the gate reads
     // through it), shown + pulsing only while the hero is in range and the Hold is unbroken
@@ -623,7 +636,10 @@ pub fn build(
             * if next_u32(&mut rng) % 2 == 0 { 1.0 } else { -1.0 };
         let pos = at(*t);
         let rot = ry(yaw) * Quat::from_rotation_z(lean);
-        spawn_solid(commands, meshes, &timber_mat, tower_mesh(&mut rng), pos, rot);
+        let m = tower_mesh(&mut rng);
+        if !hold_kit(commands, "hold_tower", Transform { translation: pos, rotation: rot, scale: Vec3::ONE }) {
+            spawn_solid(commands, meshes, &timber_mat, m, pos, rot);
+        }
         // Box, not circle: radius 1.2 > the ≤1.0 bound `blockers::is_blocked`'s neighbour-only scan
         // assumes for circles, so a circle here could be missed a tile out. A box has no such bound.
         crate::blockers::add_box(t.x, t.y, 1.2, 1.2);
@@ -654,12 +670,15 @@ pub fn build(
 
     // ── Great hall (on the terrace, scaled up for the enlarged hold) ──
     let hall_pos = at(HALL_AT);
-    commands.spawn((
-        Mesh3d(meshes.add(hall_mesh(&mut rng))),
-        MeshMaterial3d(timber_mat.clone()),
-        Transform::from_translation(hall_pos).with_scale(Vec3::splat(HALL_SCALE)),
-        BiomeEntity,
-    ));
+    let hm = hall_mesh(&mut rng);
+    if !hold_kit(commands, "hold_hall", Transform::from_translation(hall_pos).with_scale(Vec3::splat(HALL_SCALE))) {
+        commands.spawn((
+            Mesh3d(meshes.add(hm)),
+            MeshMaterial3d(timber_mat.clone()),
+            Transform::from_translation(hall_pos).with_scale(Vec3::splat(HALL_SCALE)),
+            BiomeEntity,
+        ));
+    }
     crate::blockers::add_obb(HALL_AT.x, HALL_AT.y, 5.8 * HALL_SCALE, 4.3 * HALL_SCALE, 0.0);
     // Doorway glow + flanking torches (warm light pooling out of the dark hall mouth).
     commands.spawn((
@@ -675,8 +694,9 @@ pub fn build(
         let (light, fl) = firelight::torch_light(phase);
         let base = fl.base;
         commands.spawn((
-            Mesh3d(meshes.add(flame_mesh(0.55))),
-            MeshMaterial3d(flame_mat.clone()),
+            Mesh3d(meshes.add(card(0.42))),
+            MeshMaterial3d(card_fire.clone()),
+            bevy::light::NotShadowCaster,
             Transform::from_translation(tp),
             Wobble { phase },
             light,
@@ -709,19 +729,19 @@ pub fn build(
     // ── Crooked spire (on the pad) + iron crown + green warp brazier ──
     let spire_pos = at(SPIRE_AT);
     let spire_rot = ry(0.2);
-    commands.spawn((
-        Mesh3d(meshes.add(spire_mesh(&mut rng))),
-        MeshMaterial3d(timber_mat.clone()),
-        Transform { translation: spire_pos, rotation: spire_rot, scale: Vec3::splat(SPIRE_SCALE) },
-        BiomeEntity,
-    ));
+    let sm = spire_mesh(&mut rng);
+    let spire_tf = Transform { translation: spire_pos, rotation: spire_rot, scale: Vec3::splat(SPIRE_SCALE) };
+    if !hold_kit(commands, "hold_spire", spire_tf) {
+        commands.spawn((Mesh3d(meshes.add(sm)), MeshMaterial3d(timber_mat.clone()), spire_tf, BiomeEntity));
+    }
     // Box, not circle: this footprint (~2.07) far exceeds the ≤1.0 circle bound, so a plain circle
     // would be silently missed by `is_blocked` two-plus tiles out. A box is tested directly.
     crate::blockers::add_box(SPIRE_AT.x, SPIRE_AT.y, 1.8 * SPIRE_SCALE, 1.8 * SPIRE_SCALE);
     let brazier = spire_pos + spire_rot * (Vec3::new(0.45, 12.05, -0.3) * SPIRE_SCALE);
     commands.spawn((
-        Mesh3d(meshes.add(flame_mesh(1.5))),
-        MeshMaterial3d(warp_mat.clone()),
+        Mesh3d(meshes.add(card(0.95))),
+        MeshMaterial3d(card_warp.clone()),
+        bevy::light::NotShadowCaster,
         Transform::from_translation(brazier),
         Wobble { phase: 2.4 },
         PointLight {
@@ -766,8 +786,9 @@ pub fn build(
     // Box, not circle: radius 1.1 > the ≤1.0 circle bound the neighbour-only scan assumes.
     crate::blockers::add_box(BONFIRE_AT.x, BONFIRE_AT.y, 1.1, 1.1);
     commands.spawn((
-        Mesh3d(meshes.add(flame_mesh(2.3))),
-        MeshMaterial3d(flame_mat.clone()),
+        Mesh3d(meshes.add(card(1.5))),
+        MeshMaterial3d(card_fire.clone()),
+        bevy::light::NotShadowCaster,
         Transform::from_translation(fire + Vec3::Y * 0.35),
         crate::camps::Flicker { phase: 0.7 },
         PointLight {
@@ -815,18 +836,31 @@ pub fn build(
 
     // ── Longhouses (timber barracks with hide roofs) ──
     for (p, yaw) in LONGHOUSES {
-        spawn_solid(commands, meshes, &timber_mat, longhouse_mesh(&mut rng), at(p), ry(yaw));
+        let m = longhouse_mesh(&mut rng);
+        if !hold_kit(commands, "hold_longhouse", Transform { translation: at(p), rotation: ry(yaw), scale: Vec3::ONE }) {
+            spawn_solid(commands, meshes, &timber_mat, m, at(p), ry(yaw));
+        }
         crate::blockers::add_obb(p.x, p.y, 2.1, 3.1, yaw);
     }
 
     // ── The forge (hall terrace): hearth + anvil + quench barrel, ember + smoke alive ──
     let forge_pos = at(FORGE_AT);
-    spawn_solid(commands, meshes, &timber_mat, forge_mesh(&mut rng), forge_pos, ry(-0.9));
+    let m = forge_mesh(&mut rng);
+    let forge_kit = hold_kit(commands, "hold_forge", Transform { translation: forge_pos, rotation: ry(-0.9), scale: Vec3::ONE });
+    if !forge_kit {
+        spawn_solid(commands, meshes, &timber_mat, m, forge_pos, ry(-0.9));
+    }
     crate::blockers::add_obb(FORGE_AT.x, FORGE_AT.y, 1.9, 1.5, -0.9);
-    let ember = forge_pos + Vec3::new(0.0, 0.75, -0.35);
+    // The kit hearth's coal bed sits at local (0, 0.66, -0.35), turned with the forge.
+    let ember = if forge_kit {
+        forge_pos + ry(-0.9) * Vec3::new(0.0, 0.66, -0.35)
+    } else {
+        forge_pos + Vec3::new(0.0, 0.75, -0.35)
+    };
     commands.spawn((
-        Mesh3d(meshes.add(flame_mesh(0.5))),
-        MeshMaterial3d(glow_mat.clone()),
+        Mesh3d(meshes.add(card(0.38))),
+        MeshMaterial3d(card_fire.clone()),
+        bevy::light::NotShadowCaster,
         Transform::from_translation(ember),
         Wobble { phase: 4.1 },
         PointLight {
@@ -850,19 +884,29 @@ pub fn build(
     ));
 
     // ── The boar pen (west yard): post-and-rail fence, churned mud, a feed trough ──
-    spawn_solid(commands, meshes, &timber_mat, pen_mesh(&mut rng), at(PEN_AT), ry(0.25));
+    let m = pen_mesh(&mut rng);
+    if !hold_kit(commands, "hold_pen", Transform { translation: at(PEN_AT), rotation: ry(0.25), scale: Vec3::ONE }) {
+        spawn_solid(commands, meshes, &timber_mat, m, at(PEN_AT), ry(0.25));
+    }
     crate::blockers::add_obb(PEN_AT.x, PEN_AT.y, 2.5, 2.5, 0.25);
 
     // ── War drums + the spit roast on the bonfire plaza ──
     for (i, p) in DRUMS.iter().enumerate() {
-        spawn_solid(commands, meshes, &hide_mat, drum_mesh(&mut rng), at(*p), ry(i as f32 * 1.7));
+        let m = drum_mesh(&mut rng);
+        if !hold_kit(commands, "hold_drum", Transform { translation: at(*p), rotation: ry(i as f32 * 1.7), scale: Vec3::ONE }) {
+            spawn_solid(commands, meshes, &hide_mat, m, at(*p), ry(i as f32 * 1.7));
+        }
         crate::blockers::add(p.x, p.y, 0.7);
     }
     spawn_solid(commands, meshes, &mat, spit_mesh(&mut rng), at(Vec2::new(11.5, 97.0 + BLIGHT_DZ)), ry(0.5));
 
     // ── Weapon racks + spoils piles (plunder stacked where it was dropped) ──
     for p in RACKS {
-        spawn_solid(commands, meshes, &timber_mat, rack_mesh(&mut rng), at(p), ry(rng_range(&mut rng, 0.0, TAU)));
+        let m = rack_mesh(&mut rng);
+        let r = ry(rng_range(&mut rng, 0.0, TAU));
+        if !hold_kit(commands, "hold_rack", Transform { translation: at(p), rotation: r, scale: Vec3::ONE }) {
+            spawn_solid(commands, meshes, &timber_mat, m, at(p), r);
+        }
         crate::blockers::add(p.x, p.y, 0.6);
     }
     for p in PILES {
@@ -921,7 +965,10 @@ pub fn build(
         Vec2::new(0.0, 118.0 + BLIGHT_DZ),
     ] {
         let yaw = (-tp.x).atan2(-tp.y);
-        spawn_solid(commands, meshes, &timber_mat, totem_mesh(&mut rng), at(tp), ry(yaw));
+        let m = totem_mesh(&mut rng);
+        if !hold_kit(commands, "hold_totem", Transform { translation: at(tp), rotation: ry(yaw), scale: Vec3::ONE }) {
+            spawn_solid(commands, meshes, &timber_mat, m, at(tp), ry(yaw));
+        }
         crate::blockers::add(tp.x, tp.y, 0.45);
     }
 
@@ -1110,7 +1157,9 @@ pub fn build(
                     spawn_solid(commands, meshes, &mat, m, at(p), rot);
                 }
             } else if roll < trees + 0.08 {
-                spawn_stand(commands, &shroom_meshes, &mat, at(p), 0.8, 1.5, &mut s);
+                if !kit_stand(commands, &["blight_shroom_a", "blight_shroom_b", "blight_shroom_c"], at(p), 0.8, 1.3, &mut s) {
+                    spawn_stand(commands, &shroom_meshes, &mat, at(p), 0.8, 1.5, &mut s);
+                }
             } else if roll < trees + 0.088 {
                 commands.spawn((
                     Mesh3d(pool_mesh.clone()),
@@ -1123,20 +1172,36 @@ pub fn build(
                     BiomeEntity,
                 ));
             } else if roll < trees + 0.094 {
-                spawn_solid(commands, meshes, &mat, tar_pit_mesh(&mut s), at(p), ry(rng01(&mut s) * TAU));
+                let m = tar_pit_mesh(&mut s);
+                let r = ry(rng01(&mut s) * TAU);
+                if !kit_prop(commands, "blight_tarpit", at(p), r, 1.0) {
+                    spawn_solid(commands, meshes, &mat, m, at(p), r);
+                }
             } else if roll < trees + 0.104 {
                 spawn_solid(commands, meshes, &mat, scrap_mesh(&mut s), at(p), ry(rng01(&mut s) * TAU));
             } else if roll < trees + 0.109 {
                 spawn_solid(commands, meshes, &mat, impale_mesh(&mut s), at(p), ry(rng01(&mut s) * TAU));
                 crate::blockers::add(p.x, p.y, 0.25);
             } else if roll < trees + 0.1125 {
-                spawn_solid(commands, meshes, &mat, ribcage_mesh(&mut s), at(p), ry(rng01(&mut s) * TAU));
+                let m = ribcage_mesh(&mut s);
+                let r = ry(rng01(&mut s) * TAU);
+                if !kit_prop(commands, "blight_ribcage", at(p), r, 0.75) {
+                    spawn_solid(commands, meshes, &mat, m, at(p), r);
+                }
                 crate::blockers::add(p.x, p.y, 0.45);
             } else if roll < trees + 0.1155 {
-                spawn_solid(commands, meshes, &timber_mat, gibbet_mesh(&mut s), at(p), ry(rng01(&mut s) * TAU));
+                let m = gibbet_mesh(&mut s);
+                let r = ry(rng01(&mut s) * TAU);
+                if !kit_prop(commands, "blight_gibbet", at(p), r, 1.0) {
+                    spawn_solid(commands, meshes, &timber_mat, m, at(p), r);
+                }
                 crate::blockers::add(p.x, p.y, 0.25);
             } else if roll < trees + 0.1185 {
-                spawn_solid(commands, meshes, &hide_mat, effigy_mesh(&mut s), at(p), ry(rng01(&mut s) * TAU));
+                let m = effigy_mesh(&mut s);
+                let r = ry(rng01(&mut s) * TAU);
+                if !kit_prop(commands, "blight_effigy", at(p), r, 1.0) {
+                    spawn_solid(commands, meshes, &hide_mat, m, at(p), r);
+                }
                 crate::blockers::add(p.x, p.y, 0.25);
             } else if roll < trees + 0.1245 && fumes < 20 {
                 fumes += 1;
@@ -1484,6 +1549,49 @@ fn kit_prop(commands: &mut Commands, name: &str, pos: Vec3, rot: Quat, scale: f3
     let Some(e) = k.spawn_static_with(commands, name, tf, range) else { return false };
     commands.entity(e).insert(BiomeEntity);
     true
+}
+
+/// Spawn a Hold structure from `ork_hold.glb` (when the kit is loaded). No draw-distance cull:
+/// the hold has to read from the shore. False = fall back to the procedural mesh.
+fn hold_kit(commands: &mut Commands, name: &str, tf: Transform) -> bool {
+    let Some(k) = crate::realforest::get() else { return false };
+    let Some(e) = k.spawn_static(commands, name, tf) else { return false };
+    commands.entity(e).insert(BiomeEntity);
+    true
+}
+
+/// The palisade run a->b as kit wall sections (`hold_wall_a/b`, 4.2 long, stretched to fit):
+/// each section sits on the ground under its own middle, rails (local +Z) facing the hold.
+fn hold_wall_kit(commands: &mut Commands, a: Vec2, b: Vec2, i: usize) -> bool {
+    let Some(k) = crate::realforest::get().filter(|k| k.has("hold_wall_a")) else { return false };
+    let d = b - a;
+    let len = d.length();
+    let n = (len / 4.2).ceil().max(1.0) as usize;
+    let sx = len / (n as f32 * 4.2);
+    let left = Vec2::new(-d.y, d.x);
+    let inward = (CENTRE - (a + b) * 0.5).dot(left) > 0.0;
+    let yaw = (-d.y).atan2(d.x) + if inward { 0.0 } else { std::f32::consts::PI };
+    for j in 0..n {
+        let c = a + d * ((j as f32 + 0.5) / n as f32);
+        let y = ground_y(c.x, c.y).unwrap_or(0.0);
+        let name = if (i + j) % 2 == 0 { "hold_wall_a" } else { "hold_wall_b" };
+        let tf = Transform { translation: Vec3::new(c.x, y - 0.05, c.y), rotation: ry(yaw), scale: Vec3::new(sx, 1.0, 1.0) };
+        if let Some(e) = k.spawn_static(commands, name, tf) {
+            commands.entity(e).insert(BiomeEntity);
+        }
+    }
+    true
+}
+
+/// [`spawn_stand`] with kit models (same RNG draws: pick, yaw, scale), distance-culled.
+fn kit_stand(commands: &mut Commands, names: &[&str], pos: Vec3, lo: f32, hi: f32, s: &mut u32) -> bool {
+    if !crate::realforest::get().is_some_and(|k| k.has(names[0])) {
+        return false;
+    }
+    let v = (next_u32(s) as usize) % names.len();
+    let rot = ry(rng_range(s, 0.0, TAU));
+    let sc = rng_range(s, lo, hi);
+    kit_prop(commands, names[v], pos, rot, sc)
 }
 
 /// Plant kit tree `lod0` (LOD0 + LOD1 crossfade, far cull) at `pos`, random yaw, scale `lo..hi`.
@@ -2592,23 +2700,6 @@ fn bonfire_base_mesh() -> Mesh {
         ));
     }
     group(p)
-}
-
-/// Flame cones (untinted — the emissive material colours them), `scale`× the camp size.
-fn flame_mesh(scale: f32) -> Mesh {
-    let outer = Cone { radius: 0.17 * scale, height: 0.55 * scale }
-        .mesh()
-        .build()
-        .translated_by(v(0.0, 0.27 * scale, 0.0));
-    let inner = Cone { radius: 0.09 * scale, height: 0.35 * scale }
-        .mesh()
-        .build()
-        .translated_by(v(0.0, 0.2 * scale, 0.0));
-    let mut m = outer;
-    m.merge(&inner).expect("cones share attributes");
-    m.duplicate_vertices();
-    m.compute_flat_normals();
-    m
 }
 
 // ── Systems ─────────────────────────────────────────────────────────────────────────
