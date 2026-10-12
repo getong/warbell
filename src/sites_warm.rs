@@ -107,6 +107,8 @@ const ROAD_MARGIN: f32 = 3.0;
 const SPREAD: f32 = 26.0;
 /// Gap to every other story piece past both footprints.
 const MIN_GAP: f32 = 10.0;
+/// Extra clearing round each site for the scatter (see [`planned_footprints`]).
+const SIGHTLINE: f32 = 2.5;
 /// The survey line stands within this band (past the keep-out) of the buried pyramid.
 const SURVEY_BAND: f32 = 45.0;
 
@@ -123,9 +125,11 @@ pub fn reset_plan() {
     PLAN.lock().unwrap().clear();
 }
 
-/// `(centre, visual radius)` of every planned site (folded into `poi::story_clearings`).
+/// `(centre, visual radius)` of every planned site (folded into `poi::story_clearings`), widened
+/// by a sightline margin so no saguaro or trunk stands right against the scene and it reads from
+/// a few strides off instead of through a screen of cacti / stems.
 pub fn planned_footprints() -> Vec<(Vec2, f32)> {
-    PLAN.lock().unwrap().iter().map(|s| (s.pos, SITES_DEF[s.site].foot)).collect()
+    PLAN.lock().unwrap().iter().map(|s| (s.pos, SITES_DEF[s.site].foot + SIGHTLINE)).collect()
 }
 
 /// Does a circle at `(x, z)` of radius `r` overlap a planned site?
@@ -192,6 +196,18 @@ fn ground_ok(x: f32, z: f32, foot: f32, biome: Biome, flat: f32, trails: &[Vec<V
         let (px, pz) = (x + a.cos() * r, z + a.sin() * r);
         if crate::roads::on_road(px, pz) || crate::worldmap::tile_biome_world(px, pz) != Some(biome) {
             return false;
+        }
+    }
+    // Desert sites keep off the river meadows (green desert tiles along the water read as grassland).
+    if biome == Biome::Desert {
+        for (n, r) in [(12, foot + 6.0), (16, foot + 11.0)] {
+            for k in 0..n {
+                let a = k as f32 * (TAU / n as f32);
+                let (px, pz) = (x + a.cos() * r, z + a.sin() * r);
+                if crate::worldmap::is_river_world(px, pz) || crate::worldmap::is_pool_world(px, pz) {
+                    return false;
+                }
+            }
         }
     }
     let q = Vec2::new(x, z);
@@ -410,7 +426,7 @@ pub fn shot_cams() -> Vec<(String, Transform)> {
         let front = Vec3::new(-p.yaw.sin(), 0.0, -p.yaw.cos());
         let side = Vec3::new(front.z, 0.0, -front.x);
         let name = s.model.trim_start_matches("site_");
-        for (tag, off) in [("near", front * 6.0 + side * 2.5 + Vec3::Y * 2.2), ("mid", front * 10.0 - side * 9.0 + Vec3::Y * 7.0)] {
+        for (tag, off) in [("near", front * 5.5 + side * 2.0 + Vec3::Y * 1.8), ("mid", front * 9.0 - side * 6.0 + Vec3::Y * 4.5)] {
             let eye = aim + off;
             info!("site cam {name}_{tag}: {:.1},{:.1},{:.1} -> {:.1},{:.1},{:.1}", eye.x, eye.y, eye.z, aim.x, aim.y, aim.z);
             out.push((format!("{name}_{tag}"), Transform::from_translation(eye).looking_at(aim, Vec3::Y)));

@@ -57,7 +57,7 @@ M_PLASTER = M_BRONZE + 6    # s_plaster (salt, bleached bone, paper)
 MATS = W.MATS + ["s_snow", "bronze", "s_sandstone", "s_tile", "s_mosswood", "s_clay", "s_mossrock", "s_plaster"]
 
 # Desert palette (multiplies the scans).
-SAND = (0.98, 0.86, 0.66)            # loose drift sand over s_earth
+SAND = (0.97, 0.9, 0.78)             # loose drift sand over s_sandstone
 SANDSTONE = (0.92, 0.8, 0.68)
 VARNISH = (0.36, 0.23, 0.15)          # desert varnish on old rock faces
 BLEACHED = (0.86, 0.8, 0.7)          # sun-bleached wood
@@ -86,7 +86,7 @@ def sand_drift(g, centre, rx, rz, h, rng, power=0.9, skirt=0.15, rings=5, seg=18
         k = 0.92 + 0.08 * nz(p * 2.3)
         lee = 1.0 - 0.12 * (1.0 - smoothstep(0.2, 0.9, n.y))   # the steeper lee faces a shade warmer/darker
         return scale((SAND[0], SAND[1] * (0.98 + 0.02 * lee), SAND[2] * lee), k)
-    mound(g, centre, rx, rz, h, rng, mat=M_EARTH, col_fn=f, tile=1.6, rings=rings, seg=seg, skirt=skirt, rough=0.06,
+    mound(g, centre, rx, rz, h, rng, mat=M_SAND, col_fn=f, tile=2.6, rings=rings, seg=seg, skirt=skirt, rough=0.06,
           edge=edge, power=power)
 
 
@@ -101,12 +101,13 @@ def forest_mound(g, centre, rx, rz, h, rng, moss=0.7, base=DAMP_EARTH, power=0.8
 
 
 def sun_rock(base=SANDSTONE, varnish=0.0, sand=0.35, nz=None):
-    """Sandstone tint: sun-bleached crowns, darker desert varnish down the vertical faces, sand-dusted
-    toward the foot."""
+    """Sandstone tint: sun-bleached crowns, desert varnish streaking down the vertical faces (in runs,
+    not a coat), sand-dusted toward the foot."""
     def f(p, n):
         k = 0.9 + (0.1 * nz(p * 3.0) if nz else 0.0)
         c = scale(base, k)
-        c = mix(c, VARNISH, varnish * (1.0 - smoothstep(0.2, 0.7, abs(n.y))))
+        streak = 0.55 + 0.45 * math.sin(p.x * 9.0 + p.z * 7.0 + (2.0 * nz(p * 1.5) if nz else 0.0)) if nz else 1.0
+        c = mix(c, VARNISH, varnish * streak * (1.0 - smoothstep(0.2, 0.7, abs(n.y))))
         c = mix(c, (1.0, 0.95, 0.85), 0.25 * smoothstep(0.5, 0.95, n.y))
         return mix(c, SAND, sand * (1.0 - smoothstep(0.0, 0.35, p.y)))
     return f
@@ -140,14 +141,14 @@ def tusk_figure(g, c, face, up, s, col, mat=M_ROCK, arms_up=True):
     right = up.cross(face).normalized()
     c = Vector(c)
     head = c + up * 0.32 * s
-    ring_on(g, head, face, up, 0.05 * s, col, r=0.01 * s / 0.5 if s < 0.5 else 0.011, mat=mat, n=9)
+    ring_on(g, head, face, up, 0.05 * s, col, r=0.018, mat=mat, n=9)
     body = [c + up * 0.26 * s, c + up * 0.05 * s]
-    carve_line(g, body, col, 0.011, mat)
+    carve_line(g, body, col, 0.02, mat)
     for sg in (-1, 1):
         sh = c + up * 0.2 * s
         hand = sh + right * sg * 0.13 * s + up * (0.14 if arms_up else -0.02) * s
-        carve_line(g, [sh, sh + right * sg * 0.09 * s + up * 0.02 * s, hand], col, 0.01, mat)
-        carve_line(g, [c + up * 0.05 * s, c + right * sg * 0.07 * s - up * 0.16 * s], col, 0.01, mat)
+        carve_line(g, [sh, sh + right * sg * 0.09 * s + up * 0.02 * s, hand], col, 0.018, mat)
+        carve_line(g, [c + up * 0.05 * s, c + right * sg * 0.07 * s - up * 0.16 * s], col, 0.018, mat)
         t0 = head - up * 0.035 * s + right * sg * 0.025 * s
         carve_line(g, [t0, t0 + right * sg * 0.03 * s + up * 0.045 * s], col, 0.008, mat)
 
@@ -488,7 +489,7 @@ def site_drowned_outpost(rng):
         slab(g, (cc[0] + math.cos(a) * 0.85, 0.22, cc[2] + math.sin(a) * 0.85), (0.24, 0.5, 0.39), quat_y(-a), rng,
              mat=M_SAND, res=(2, 2, 2), round_r=0.04, rough=0.03, col_fn=sun_rock(nz=nz, varnish=0.15), tile=0.8)
     tile_band(g, rng, cc, 0.99, 22, 0.36)
-    mound(g, (cc[0], 0.3, cc[2]), 0.78, 0.78, 0.06, rng, mat=M_EARTH, col_fn=lambda p, n: scale(SAND, 0.92), tile=1.0,
+    mound(g, (cc[0], 0.3, cc[2]), 0.78, 0.78, 0.06, rng, mat=M_SAND, col_fn=lambda p, n: scale(SAND, 0.92), tile=1.0,
           rings=3, seg=14, skirt=0.0, power=0.5)
     # Fallen voussoirs and loose tiles, a wind-scoured lintel beam.
     for k in range(4):
@@ -513,15 +514,15 @@ def site_glyph_wall(rng):
     for x, w, h, lean in ((-1.4, 1.6, 2.2, 0.05), (0.2, 1.9, 2.7, -0.02), (1.8, 1.3, 1.8, -0.08)):
         slab(g, (x, h / 2 - 0.25, 0.35), (w, h, 1.0), quat_y(rng.uniform(-0.08, 0.08)) @ quat_z(lean), rng, mat=M_SAND,
              res=(8, 10, 4), round_r=0.12, rough=0.16, crown=0.15, taper=0.2, cuts=3,
-             col_fn=sun_rock(nz=nz, varnish=0.9, sand=0.5), tile=1.2)
+             col_fn=sun_rock(nz=nz, varnish=0.75, sand=0.5), tile=1.2)
     sand_drift(g, (0.3, -0.05, -0.25), 2.4, 0.7, 0.35, rng, power=0.8)
     sand_drift(g, (1.6, -0.05, 1.0), 1.2, 0.8, 0.5, rng)
     # Petroglyphs, pecked pale through the varnish: a great ring spreading, figures facing it.
     face, up = V(0, 0, -1), V(0, 1, 0)
-    pale = (0.8, 0.64, 0.48)
+    pale = (1.0, 0.86, 0.68)
     rc = V(0.25, 1.45, -0.18)
     for rr in (0.08, 0.17, 0.27, 0.38, 0.5):
-        ring_on(g, rc, face, up, rr, scale(pale, 1.0 - rr * 0.4), r=0.016, n=21, mat=M_SAND)
+        ring_on(g, rc, face, up, rr, scale(pale, 1.0 - rr * 0.4), r=0.026, n=25, mat=M_SAND)
     for k, x in enumerate((-1.9, -1.45, -1.0)):
         tusk_figure(g, V(x, 0.75 + 0.05 * k, -0.12), face, up, 0.9 + 0.1 * k, pale, mat=M_SAND, arms_up=True)
     for k, x in enumerate((1.1, 1.5)):
@@ -529,7 +530,7 @@ def site_glyph_wall(rng):
     # A spiral and a row of dots beneath (a count? a calendar?).
     sp = V(-1.3, 1.65, -0.13)
     pts = [sp + V(math.cos(t) * 0.025 * t, math.sin(t) * 0.025 * t, 0) for t in np.linspace(0.3, 12, 30)]
-    carve_line(g, pts, pale, 0.012, M_SAND)
+    carve_line(g, pts, pale, 0.02, M_SAND)
     for k in range(9):
         stone(g, (-0.35 + k * 0.11, 0.48, -0.17), (0.02, 0.02, 0.008), rng, mat=M_SAND, detail=1, rough=0, cuts=0,
               col_fn=lambda p, n: pale, tile=0.2)
@@ -746,10 +747,10 @@ def site_bell_pit(rng):
 
     def pit_col(p, n):
         d = math.hypot(p.x - pc[0], p.z - pc[2])
-        c = mix((0.2, 0.17, 0.15), DAMP_EARTH, smoothstep(0.9, 1.6, d))   # scorched floor, damp berm
-        m = 0.75 * smoothstep(0.3, 0.9, n.y) * smoothstep(1.3, 2.0, d) * (0.6 + 0.4 * nz(p * 3))
+        c = mix((0.12, 0.1, 0.09), scale(DAMP_EARTH, 0.7), smoothstep(0.9, 1.6, d))   # scorched floor, damp berm
+        m = 0.95 * smoothstep(1.15, 1.7, d) * (0.75 + 0.25 * nz(p * 3))
         return mix(c, MOSS, m)
-    ring_berm(g, rng, pc, 1.35, 2.7, 0.32, col_fn=pit_col)
+    ring_berm(g, rng, pc, 1.35, 2.9, 0.22, col_fn=pit_col)
     # The bronze spill: a flat glassy puddle in the pit, a runner channel to the mould's place.
     v, t = [], []
     for i in range(14):
@@ -951,7 +952,7 @@ def site_rooted_pillar(rng):
         for rr in (0.06, 0.12, 0.18 - k * 0.02):
             ring_on(g, c, face, up, rr, (0.2, 0.22, 0.17), r=0.012, mat=M_MOSSROCK)
     # The giant oak: a dead hollow snag, broken at ~4u, its roots poured over and around the pillar.
-    tc = V(0.45, 0.0, 0.85)
+    tc = V(0.6, 0.0, 1.45)
     pts = [tc + V(0, -0.3, 0), tc + V(0.0, 0.25, 0.0), tc + V(0.0, 0.8, 0.02), tc + V(-0.05, 2.0, 0.06),
            tc + V(-0.12, 3.0, 0.1), tc + V(-0.2, 4.1, 0.14)]
     tube(g, pts, [1.5, 1.15, 0.92, 0.78, 0.72, 0.66], 18, M_BARK, (0.55, 0.5, 0.44), tile=1.2,
@@ -976,6 +977,7 @@ def site_rooted_pillar(rng):
         [V(0.6, 0.5, 0.0), V(0.7, 0.3, -0.7), V(0.5, 0.1, -1.4), V(0.3, -0.15, -1.9)],
     ]
     for k, rp in enumerate(roots):
+        rp[0] = rp[0] + V(0.15, 0.0, 0.6)
         rr = [0.32 * (1 - 0.7 * i / (len(rp) - 1)) + 0.03 for i in range(len(rp))]
         if k < 2:
             rr = [x * 0.6 for x in rr]
@@ -1058,7 +1060,7 @@ def site_anselm_forest(rng):
                     cols.append(mix(OAK, MOSS, 0.55 * (1 - f)) if wall == 0 else (0.3, 0.24, 0.18))
                 uvs = [(a0 * 0.78 / 0.9, quad[0].y / 0.9), (a1 * 0.78 / 0.9, quad[1].y / 0.9),
                        (a1 * 0.78 / 0.9, quad[2].y / 0.9), (a0 * 0.78 / 0.9, quad[3].y / 0.9)]
-                if wall == 1:
+                if (quad[1] - quad[0]).cross(quad[3] - quad[0]).dot(nrm[0]) < 0:
                     quad, uvs, nrm, cols = quad[::-1], uvs[::-1], nrm[::-1], cols[::-1]
                 g.poly(quad, uvs, nrm, cols, M_BARK if wall == 0 else M_MOSSWOOD)
         # the rotten rim between the walls
