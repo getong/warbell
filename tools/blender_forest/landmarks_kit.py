@@ -368,7 +368,7 @@ PYR_N, PYR_W0, PYR_WT, PYR_TH = 8, 7.0, 1.7, 1.1
 # this one cools it to a pale, weathered, sun-bleached sandstone (~sRGB .86/.76/.62).
 SANDSTONE = (1.0, 1.3, 1.7)
 SS_SAND = (1.03, 1.33, 1.3)     # loose sand ground into the stone's foot (= the terrain sand on that scan)
-SAND = (1.0, 0.82, 0.5)         # the desert terrain's 0xddc189 over the near-neutral s_plaster scan
+SAND = (0.97, 0.84, 0.62)       # the desert terrain's pale sand over the near-neutral s_plaster scan
 TURQ = (0.42, 0.72, 0.7)
 
 
@@ -406,7 +406,7 @@ def dune(g, centre, rx, rz, h, yaw, rng, col_fn):
                 t = (u + 1) / (uc + 1)
                 prof = t ** 1.35
                 wx, wv = u * rx, v * rz
-                rip = (0.06 * math.sin(wx * 6.0 + wv * 0.9 + nz(V(u, v, 0)) * 3.0)
+                rip = (0.11 * math.sin(wx * 6.0 + wv * 0.9 + nz(V(u, v, 0)) * 3.0)
                        + 0.025 * math.sin(wx * 9.5 - wv * 2.3 + ph)) / max(h, 0.6)
                 rip *= smoothstep(-1.0, -0.4, u) * (1.0 - smoothstep(0.75, 0.97, t))  # none on the brink
             else:
@@ -423,7 +423,16 @@ def dune(g, centre, rx, rz, h, yaw, rng, col_fn):
             for t in ((a, b2, c2), (a, c2, d2)):
                 n = (verts[t[1]] - verts[t[0]]).cross(verts[t[2]] - verts[t[0]])
                 tris.append(t if n.y >= 0 else (t[0], t[2], t[1]))
-    smooth_mesh(g, verts, tris, M_PLASTER, col_fn, 2.2)
+    inv = rq.inverted()
+
+    def cf(p, n):  # ripple troughs a shade darker (the geometry alone is too fine to read at range)
+        q = inv @ (Vector(p) - c)
+        u, v = q.x / rx, q.z / rz
+        if u > uc0 + 0.18 * abs(v) ** 1.5:
+            return scale(col_fn(p, n), 0.93)  # the slip face: shaded sand
+        r = math.sin(q.x * 6.0 + q.z * 0.9 + nz(V(u, v, 0)) * 3.0)
+        return scale(col_fn(p, n), 1.0 - 0.07 * smoothstep(-0.2, 1.0, -r) * smoothstep(-1.0, -0.4, u))
+    smooth_mesh(g, verts, tris, M_PLASTER, cf, 2.2)
 
 
 def lm_sunken_pyramid(rng):
@@ -441,7 +450,7 @@ def lm_sunken_pyramid(rng):
         w = pyr_w(i)
         y = i * th
         slab(g, (0, y + th - 0.62, 0), (w * 2 - 0.3, 1.24, w * 2 - 0.3), quat_y(0), rng, mat=M_SS,
-             col_fn=sandstone_col(nz, 0.55), tile=2.0, res=(6, 1, 6), round_r=0.04, rough=0.003)
+             col_fn=sandstone_col(nz, 0.85), tile=2.0, res=(6, 1, 6), round_r=0.04, rough=0.003)
         # Two courses of dressed blocks, joints staggered, weathered round, some robbed or slumped.
         for c in range(2):
             ch = th / 2
@@ -469,7 +478,7 @@ def lm_sunken_pyramid(rng):
                          mat=M_SS, col_fn=sandstone_col(nz, rng.uniform(0.85, 1.06)), tile=1.8, res=(3, 1, 1),
                          round_r=0.11, rough=0.025, cuts=1 if rng.uniform() < 0.3 else 0)
     # ── The slumped corner: a ramp of tumbled blocks and rubble down to the sand.
-    mound(g, (rubble_c.x, -0.2, rubble_c.z), 3.6, 3.6, 3.4, rng, mat=M_SS, col_fn=sandstone_col(nz, 0.7), tile=1.6,
+    mound(g, (rubble_c.x, -0.2, rubble_c.z), 3.6, 3.6, 3.4, rng, mat=M_SS, col_fn=sandstone_col(nz, 0.92), tile=1.6,
           rings=6, seg=18, skirt=0.2, rough=0.12, power=0.9, edge=0.2)
     for k in range(46):
         a = rng.uniform(0, 6.283)

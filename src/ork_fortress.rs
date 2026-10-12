@@ -140,7 +140,9 @@ pub fn blight_ambience() -> BiomeAmbience {
     // Lift the shadow-side fill: the mire is packed with vertical timber/snags/fortress walls whose
     // shadow side was crushing to black off-noon (player: "za ciemno, wszystko zacienione"). A touch
     // higher than the swamp since the Blight props are denser + darker-toned.
-    atmo.ambient_scale = 1.85;
+    // The gate approach looks at the hold's shaded faces (door side away from the noon sun), and
+    // the log walls are bark: at 1.85 the whole hold read as black silhouettes at midday.
+    atmo.ambient_scale = 2.5;
     BiomeAmbience { atmo, particle: ParticleKind::Ash }
 }
 

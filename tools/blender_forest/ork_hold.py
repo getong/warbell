@@ -48,7 +48,7 @@ from landmarks_kit import lathe  # noqa: E402
 M_TAR = len(OC.MATS)
 MATS = OC.MATS + ["ice"]  # "ice" = the glossy low-roughness set: near-black vertex colour reads as wet tar
 
-BARK = (0.66, 0.6, 0.53)
+BARK = (0.8, 0.73, 0.64)  # bark_oak is a dark scan: 0.66 left the walls black on the shaded side
 HEWN = (0.86, 0.74, 0.58)
 IRON = (0.32, 0.31, 0.3)
 MUD = (0.42, 0.36, 0.3)

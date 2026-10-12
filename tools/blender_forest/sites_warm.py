@@ -1328,9 +1328,9 @@ def site_anselm_desert(rng):
 
 
 # ─────────────────────────────────────────────────────────────── FOREST
-DUG = (0.47, 0.35, 0.24)              # thrown-out spoil over the s_earth scan
-DUG_CLAY = (0.62, 0.49, 0.33)         # paler subsoil clods
-LITTER = (0.42, 0.3, 0.19)          # forest-floor leaf litter
+DUG = (0.36, 0.31, 0.26)              # thrown-out spoil over the (warm) s_earth scan: forest brown, not terracotta
+DUG_CLAY = (0.5, 0.44, 0.36)          # paler subsoil clods
+LITTER = (0.36, 0.29, 0.2)           # forest-floor leaf litter
 DAMP_FOOT = (0.22, 0.16, 0.11)
 
 
