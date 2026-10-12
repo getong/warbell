@@ -34,7 +34,7 @@ impl Plugin for TownKitPlugin {
 }
 
 /// The pieces `town_kit.glb` carries, in the script's priority order.
-pub const PIECES: [&str; 39] = [
+pub const PIECES: [&str; 46] = [
     "town_granary",
     "town_smithy",
     "town_tavern",
@@ -77,6 +77,15 @@ pub const PIECES: [&str; 39] = [
     "town_farm",
     "town_woodcutter",
     "town_mine",
+    // The castle yard corners + well (`castle::build`).
+    "yard_wood",
+    "yard_hay",
+    "yard_cart",
+    "yard_well",
+    // Day-one castle furniture (`castle_decor::build`).
+    "decor_notice_board",
+    "decor_trough",
+    "decor_bench",
 ];
 
 /// A spawned town-kit model root.
@@ -104,7 +113,7 @@ pub fn spawn_piece(commands: &mut Commands, name: &str, tf: Transform) -> Option
 /// x 14..20), and the four lean-tos against the OUTSIDE face of the east curtain (x 28.65), fronts
 /// east: stand-ins for their place inside the walls (backs flat on the stone, the same fit; the
 /// curtain shows once the walls are built, e.g. `FOREST_DEFEND=1`).
-pub const SHOWCASE: [(&str, Vec2, f32, Vec2); 45] = [
+pub const SHOWCASE: [(&str, Vec2, f32, Vec2); 52] = [
     ("town_granary", Vec2::new(-25.0, -29.0), 0.0, Vec2::new(1.75, 2.25)),
     ("town_smithy", Vec2::new(-16.0, -29.0), 0.0, Vec2::ZERO),
     ("town_tavern", Vec2::new(-5.5, -29.0), 0.0, Vec2::new(3.3, 2.5)),
@@ -156,6 +165,13 @@ pub const SHOWCASE: [(&str, Vec2, f32, Vec2); 45] = [
     ("town_farm", Vec2::new(-8.0, -55.0), 0.0, Vec2::ZERO),
     ("town_woodcutter", Vec2::new(0.0, -55.0), 0.0, Vec2::ZERO),
     ("town_mine", Vec2::new(8.0, -55.0), 0.0, Vec2::ZERO),
+    ("yard_wood", Vec2::new(14.0, -55.0), 0.0, Vec2::ZERO),
+    ("yard_hay", Vec2::new(17.0, -55.0), 0.0, Vec2::ZERO),
+    ("yard_cart", Vec2::new(20.0, -55.0), 0.0, Vec2::ZERO),
+    ("yard_well", Vec2::new(23.5, -55.0), 0.0, Vec2::ZERO),
+    ("decor_notice_board", Vec2::new(26.5, -55.0), 0.0, Vec2::ZERO),
+    ("decor_trough", Vec2::new(28.5, -55.0), 0.0, Vec2::ZERO),
+    ("decor_bench", Vec2::new(30.5, -55.0), 0.0, Vec2::ZERO),
 ];
 
 /// Lays the showcase out once the kit has loaded; a world rebuild clears it (`BiomeEntity`) and

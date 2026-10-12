@@ -213,10 +213,23 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
     //    and stay solid.
     const MIN_SOLID: f32 = 0.08;
     const MIN_SOLID_AREA: f32 = 0.09;
-    let mut set = |parts: Vec<(Mesh, M)>, pos: Vec3, yaw: f32, gate: DecorGate, foot: Vec2| {
+    // `kit`: a town_kit.glb piece that replaces the procedural parts when the kit is loaded ("" = none).
+    let mut set_kit = |kit: &str, parts: Vec<(Mesh, M)>, pos: Vec3, yaw: f32, gate: DecorGate, foot: Vec2| {
         let vis = if matches!(gate, DecorGate::Always) { Visibility::Inherited } else { Visibility::Hidden };
         let solid = (foot.x >= MIN_SOLID && foot.y >= MIN_SOLID && foot.x * foot.y >= MIN_SOLID_AREA)
             .then_some(DecorSolid { hw: foot.x, hd: foot.y, yaw });
+        if !kit.is_empty() {
+            let y = crate::worldmap::ground_at_world(pos.x, pos.z).filter(|_| !crate::castle::in_footprint(pos.x, pos.z)).unwrap_or(pos.y);
+            let tf = Transform::from_xyz(pos.x, y, pos.z).with_rotation(Quat::from_rotation_y(yaw));
+            if let Some(e) = crate::town_kit::spawn_piece(commands, kit, tf) {
+                let mut e = commands.entity(e);
+                e.insert((vis, Decor { gate }, crate::build_fx::RevealAt(pos), BiomeEntity));
+                if let Some(s) = solid {
+                    e.insert(s);
+                }
+                return;
+            }
+        }
         for (i, (m, slot)) in parts.into_iter().enumerate() {
             let mut e = commands.spawn((
                 Mesh3d(meshes.add(bake(m, pos, yaw, Vec3::ONE))),
@@ -235,16 +248,17 @@ pub fn build(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mats) {
             }
         }
     };
+    let mut set = |parts: Vec<(Mesh, M)>, pos: Vec3, yaw: f32, gate: DecorGate, foot: Vec2| set_kit("", parts, pos, yaw, gate, foot);
 
     // ── Day-one life (Always) ────────────────────────────────────────────────────
     // Furniture has tight footprints, while small posts remain visual-only so plaza lanes stay smooth.
     // Castle v2 (spec §2): the courtyard in front of the keep stays OPEN — the day-one furniture
     // lives at the gates and along the walls, every spot derived from the wall/gate/keep consts.
-    set(notice_board_parts(), Vec3::new(S_GATE_X + 3.0, 0.0, HALF_Z - 4.6), 0.35, DecorGate::Always, Vec2::ZERO);
-    set(trough_parts(), Vec3::new(-HALF_X + 3.6, 0.0, W_GATE_Z + 3.0), HALF_PI, DecorGate::Always, Vec2::new(0.55, 0.25));
+    set_kit("decor_notice_board", notice_board_parts(), Vec3::new(S_GATE_X + 3.0, 0.0, HALF_Z - 4.6), 0.35, DecorGate::Always, Vec2::ZERO);
+    set_kit("decor_trough", trough_parts(), Vec3::new(-HALF_X + 3.6, 0.0, W_GATE_Z + 3.0), HALF_PI, DecorGate::Always, Vec2::new(0.55, 0.25));
     // (The old plaza market-goods pile lived here — removed; the merchant shop by the west-gate
     // market (`villagers::shop_parts`) is the town's market focal point.)
-    set(bench_parts(), Vec3::new(KEEP_POS.x - KEEP_HALF.x - 1.6, 0.0, KEEP_FRONT + 0.4), 0.0, DecorGate::Always, Vec2::new(0.60, 0.17));
+    set_kit("decor_bench", bench_parts(), Vec3::new(KEEP_POS.x - KEEP_HALF.x - 1.6, 0.0, KEEP_FRONT + 0.4), 0.0, DecorGate::Always, Vec2::new(0.60, 0.17));
     // A few lantern posts along the three gate lanes (thinned down — the bailey was getting busy).
     for (lx, lz, lyaw) in [
         (S_GATE_X - 2.3, HALF_Z - 7.0, 0.0),

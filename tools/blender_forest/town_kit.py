@@ -2108,6 +2108,15 @@ MODELS = {
     "town_farm": town_farm,
     "town_woodcutter": town_woodcutter,
     "town_mine": town_mine,
+    # The castle yard corners + the courtyard well (castle.rs; same layouts as the old clusters).
+    "yard_wood": yard_wood,
+    "yard_hay": yard_hay,
+    "yard_cart": yard_cart,
+    "yard_well": yard_well,
+    # Day-one castle furniture (castle_decor.rs).
+    "decor_notice_board": decor_notice_board,
+    "decor_trough": decor_trough,
+    "decor_bench": decor_bench,
 }
 
 ONLY = [a for a in sys.argv[sys.argv.index("--") + 1:]] if "--" in sys.argv else []

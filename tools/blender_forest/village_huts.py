@@ -854,3 +854,156 @@ def town_mine(rng):
     tube(g, [pk + V(0.1, 0.84, -0.12), pk + V(0.18, 0.84, 0.12), pk + V(0.24, 0.8, 0.34)], [0.02, 0.03, 0.012], 5,
          M_IRON, IRON_D, tile=0.2)
     return b
+
+
+# ─────────────────────────────────────────────────────────────── the castle yard corners
+# castle.rs WOOD_YARD / HAY_CORNER / CART_CORNER + the courtyard well (same local layouts and
+# footprints as the procedural clusters they replace, so register_yard_blockers still fits).
+
+def yard_wood(rng):
+    """Chopping block with the axe in it at the origin, a log pyramid along X at z -0.9, chips."""
+    b = Builder()
+    g = G(b)
+    chopping_block(g, rng, (0.0, 0.0, 0.0))
+    for r, n in ((0, 3), (1, 2), (2, 1)):
+        for k in range(n):
+            z = -0.9 + (k - (n - 1) / 2) * 0.25
+            y = 0.11 + r * 0.2
+            pole(g, V(-0.75, y, z), V(0.75, y, z + rng.uniform(-0.03, 0.03)), 0.11, 0.1, rng, mat=M_BARK,
+                 col=scale((0.75, 0.66, 0.55), rng.uniform(0.85, 1.0)), sides=8, segs=1, wobble=0.0)
+            for sx in (-1, 1):
+                lathe(g, (sx * 0.755, y, z), (sx, 0, 0), [(0.0, 0.1), (0.001, 0.0)], 8, M_TIMBER, (0.95, 0.8, 0.58),
+                      tile=0.2)
+    for _ in range(10):
+        p = V(rng.uniform(-0.6, 0.7), 0.012, rng.uniform(-0.3, 0.6))
+        lbox(g, p, (rng.uniform(0.06, 0.14), 0.02, rng.uniform(0.03, 0.06)), quat_y(rng.uniform(0, 6.28)), M_TIMBER,
+             (0.95, 0.82, 0.6), tile=0.2)
+    return b
+
+
+def bale(g, rng, c, size, yaw_a):
+    q = quat_y(yaw_a)
+    slab(g, Vector(c), size, q, rng, mat=M_THATCH, res=(4, 3, 3), round_r=0.08, rough=0.35,
+         col_fn=lambda p, n: scale((1.12, 0.96, 0.66), 0.9 + 0.1 * max(n.y, 0.0)), tile=0.5)
+    for x in (-size[0] * 0.28, size[0] * 0.28):
+        pts = []
+        for k in range(9):
+            a = 2 * math.pi * k / 8
+            pts.append(Vector(c) + q @ V(x, math.sin(a) * (size[1] / 2 + 0.012), math.cos(a) * (size[2] / 2 + 0.012)))
+        tube(g, pts, [0.012] * 9, 4, M_CLOTH, ROPE, tile=0.2, cap=False)
+
+
+def yard_hay(rng):
+    """Two roped straw bales stacked, loose straw, two grain sacks at the base (+X)."""
+    b = Builder()
+    g = G(b)
+    bale(g, rng, (0.0, 0.27, 0.0), (0.9, 0.55, 0.55), 0.03)
+    bale(g, rng, (0.03, 0.81, 0.05), (0.9, 0.53, 0.55), -0.06)
+    mound(g, (0.1, 0.0, 0.1), 0.85, 0.65, 0.05, rng, mat=M_THATCH, col_fn=lambda p, n: (1.1, 0.94, 0.64), rings=3, seg=12)
+    sack(g, rng, V(0.72, 0.25, 0.24))
+    sack(g, rng, V(0.8, 0.2, -0.22), lying=True)
+    return b
+
+
+def yard_cart(rng):
+    """A two-wheeled hand-cart (shafts to +X resting on the ground) with two barrels beside it."""
+    b = Builder()
+    g = G(b)
+    tq = quat_z(-0.08)
+    bed = V(0.0, 0.5, 0.0)
+    for k in range(5):
+        board(g, bed + tq @ V(-0.55 + k * 0.27, 0, 0), tq @ V(0, 0, 1), tq @ V(0, 1, 0), 0.72, 0.26, 0.04, mat=M_PLANK,
+              col=scale((0.62, 0.55, 0.46), rng.uniform(0.85, 1.0)), rng=rng)
+    for sz in (-0.36, 0.36):
+        board(g, bed + tq @ V(0.0, 0.12, sz), tq @ V(1, 0, 0), (0, 0, 1), 1.35, 0.2, 0.04, mat=M_PLANK,
+              col=(0.58, 0.5, 0.42), rng=rng)
+        beam(g, [bed + tq @ V(-0.6, -0.05, sz * 0.8), bed + tq @ V(1.45, -0.05, sz * 0.8) + V(0, -0.33, 0)], 0.06, 0.06,
+             mat=M_TIMBER, col=(0.6, 0.52, 0.42), rng=rng)
+    tube(g, [V(-0.2, 0.32, -0.5), V(-0.2, 0.32, 0.5)], [0.035, 0.035], 6, M_IRON, (0.35, 0.34, 0.33), tile=0.3)
+    for sz in (-0.45, 0.45):
+        cart_wheel(g, rng, (-0.2, 0.32, sz), (0, 0, 1), r=0.32)
+    barrel(g, rng, (0.95, 0.0, -0.6))
+    barrel(g, rng, (1.2, 0.0, -0.3), s=0.9)
+    return b
+
+
+def yard_well(rng):
+    """Fieldstone well curb, two forked posts carrying a windlass with a crank, a shingle hood,
+    the bucket on the rim; trodden mud round it."""
+    b = Builder()
+    g = G(b)
+    nz = Noise(rng, 3, 2.0)
+    for ring, (r_, y_) in enumerate(((0.56, 0.1), (0.55, 0.28), (0.53, 0.44))):
+        n = 11
+        for k in range(n):
+            a = 2 * math.pi * (k + 0.5 * ring) / n
+            stone(g, V(math.cos(a) * r_, y_, math.sin(a) * r_), (0.17, 0.1, 0.13), rng, detail=1, rough=0.1,
+                  rot=quat_y(-a), col_fn=rock_col((0.78, 0.76, 0.7), moss=0.35, noise=nz), tile=0.6)
+    lathe(g, (0, 0.38, 0), (0, 1, 0), [(0.0, 0.42), (0.001, 0.0)], 14, M_EARTH, (0.04, 0.05, 0.05), tile=0.5)
+    for sx in (-1, 1):
+        pole(g, V(sx * 0.62, -0.2, 0.0), V(sx * 0.6, 1.25, 0.0), 0.06, 0.05, rng, col=POSTC, sides=6, segs=2)
+    tube(g, [V(-0.75, 1.08, 0), V(0.75, 1.08, 0)], [0.07, 0.07], 8, M_TIMBER, (0.65, 0.56, 0.44), tile=0.4)
+    tube(g, [V(0.75, 1.08, 0), V(0.85, 0.88, 0), V(0.85, 0.88, 0.18)], [0.02] * 3, 5, M_IRON, (0.35, 0.34, 0.33),
+         tile=0.2)
+    tube(g, [V(0.1, 1.06, 0.05), V(0.1, 0.62, 0.05)], [0.012, 0.012], 4, M_CLOTH, ROPE, tile=0.2)
+    for sz in (-1, 1):
+        th = 0.6
+        q = quat_x(sz * th)
+        board(g, V(0.0, 1.42 - 0.0, sz * 0.24), (1, 0, 0), q @ V(0, 1, 0), 1.6, 0.62, 0.04, mat=M_PLANK,
+              col=(0.5, 0.45, 0.4), rng=rng)
+    bucket(g, (0.0, 0.47, 0.42))
+    mound(g, (0, -0.05, 0), 1.0, 1.0, 0.06, rng, mat=M_EARTH, col_fn=lambda p, n: (0.5, 0.42, 0.34), rings=3, seg=14)
+    return b
+
+
+# ─────────────────────────────────────────────────────────────── castle furniture (castle_decor.rs)
+
+def decor_notice_board(rng):
+    """Two rough posts, a plank board under a little board hood, notices pinned (one torn)."""
+    b = Builder()
+    g = G(b)
+    for sx in (-0.58, 0.58):
+        pole(g, V(sx, -0.25, 0), V(sx + rng.uniform(-0.02, 0.02), 1.42, 0), 0.055, 0.05, rng, col=POSTC, sides=6, segs=2,
+             col_fn=weathered(POSTC, 0.6))
+    for k in range(4):
+        board(g, V(0, 0.78 + k * 0.155, 0.04), (1, 0, 0), (0, 0, 1), 1.3, 0.15, 0.035, mat=M_PLANK,
+              col=scale((0.6, 0.53, 0.44), rng.uniform(0.85, 1.0)), rng=rng)
+    for sz in (-1, 1):
+        q = quat_x(sz * 0.75)
+        board(g, V(0, 1.47, 0.04 + sz * 0.11), (1, 0, 0), q @ V(0, 1, 0), 1.5, 0.3, 0.03, mat=M_PLANK,
+              col=(0.48, 0.44, 0.4), rng=rng)
+    for x, y, w, h, a in ((-0.33, 1.05, 0.22, 0.28, 0.05), (0.03, 0.98, 0.24, 0.2, -0.04), (0.36, 1.08, 0.2, 0.26, 0.08),
+                          (-0.05, 1.24, 0.16, 0.12, 0.0)):
+        lbox(g, V(x, y, 0.065), (w, h, 0.004), quat_z(a), M_CLOTH, scale((1.05, 1.0, 0.86), rng.uniform(0.85, 1.0)),
+             tile=0.3)
+        lbox(g, V(x, y + h / 2 - 0.03, 0.07), (0.02, 0.02, 0.01), quat_y(0.0), M_IRON, (0.3, 0.3, 0.3), tile=0.2)
+    lbox(g, V(0.36, 0.94, 0.07), (0.05, 0.05, 0.005), quat_z(0.3), M_CLOTH, CRIMSON, tile=0.2)
+    return b
+
+
+def decor_trough(rng):
+    """A hollowed log trough on two stones, dark water in it, wet mud round the foot."""
+    b = Builder()
+    g = G(b)
+    pole(g, V(-0.58, 0.3, 0), V(0.58, 0.3, 0), 0.24, 0.23, rng, mat=M_BARK, col=(0.62, 0.56, 0.48), sides=10, segs=2,
+         wobble=0.0)
+    lbox(g, V(0, 0.47, 0), (1.0, 0.03, 0.3), quat_y(0.0), M_EARTH, (0.05, 0.06, 0.06), tile=0.5)
+    for sx in (-1, 1):
+        lathe(g, (sx * 0.585, 0.3, 0), (sx, 0, 0), [(0.0, 0.23), (0.001, 0.0)], 10, M_TIMBER, (0.82, 0.7, 0.54), tile=0.3)
+        stone(g, V(sx * 0.4, 0.04, 0), (0.18, 0.1, 0.2), rng, detail=1, rough=0.1, col_fn=rock_col((0.78, 0.76, 0.7), moss=0.4))
+    mound(g, (0, -0.04, 0), 0.85, 0.5, 0.05, rng, mat=M_EARTH, col_fn=lambda p, n: (0.36, 0.3, 0.25), rings=3, seg=12)
+    return b
+
+
+def decor_bench(rng):
+    """A split-log bench on four splayed stick legs."""
+    b = Builder()
+    g = G(b)
+    slab(g, V(0, 0.42, 0), (1.2, 0.08, 0.3), quat_y(0.0), rng, mat=M_TIMBER, res=(4, 1, 2), round_r=0.03, rough=0.08,
+         col_fn=lambda p, n: (0.7, 0.6, 0.48) if n.y > 0.5 else (0.6, 0.52, 0.42), tile=0.6)
+    pole(g, V(-0.6, 0.3, 0.0), V(0.6, 0.3, 0.0), 0.1, 0.1, rng, mat=M_BARK, col=(0.66, 0.58, 0.48), sides=8, segs=1,
+         wobble=0.0)
+    for sx in (-0.45, 0.45):
+        for sz in (-1, 1):
+            pole(g, V(sx * 1.08, -0.05, sz * 0.17), V(sx, 0.36, sz * 0.05), 0.03, 0.028, rng, col=POSTC, sides=5, segs=1)
+    return b

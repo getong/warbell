@@ -1932,17 +1932,31 @@ pub fn build(
     }
     // The settlement's working corners: woodpile, hay store, cart. Permanent (`Always`) — the
     // courtyard never goes blank, walls or no walls. Off the open courtyard (spec v2 §2).
-    for (parts, (x, z, yaw)) in [
-        (wood_yard_parts(), WOOD_YARD),
-        (hay_corner_parts(), HAY_CORNER),
-        (cart_corner_parts(), CART_CORNER),
+    // The Blender versions (town_kit.glb `yard_*`, same local layouts) when the kit is loaded.
+    let has_kit = |name: &str| crate::realforest::get().is_some_and(|k| k.has(name));
+    let mut kit_yard: Vec<(&'static str, Vec2, f32)> = Vec::new();
+    for (piece, parts, (x, z, yaw)) in [
+        ("yard_wood", wood_yard_parts as fn() -> Vec<(Mesh, M)>, WOOD_YARD),
+        ("yard_hay", hay_corner_parts, HAY_CORNER),
+        ("yard_cart", cart_corner_parts, CART_CORNER),
     ] {
-        spawn(parts, Vec3::new(x, 0.0, z), yaw, Vec3::ONE, CastleKind::Always);
+        if has_kit(piece) {
+            kit_yard.push((piece, Vec2::new(x, z), yaw));
+        } else {
+            spawn(parts(), Vec3::new(x, 0.0, z), yaw, Vec3::ONE, CastleKind::Always);
+        }
     }
     if let Some(well) = town_plot("well") {
-        spawn(well_parts(), Vec3::new(well.pos.x, 0.0, well.pos.y), well.yaw, Vec3::ONE, CastleKind::Always);
+        if has_kit("yard_well") {
+            kit_yard.push(("yard_well", well.pos, well.yaw));
+        } else {
+            spawn(well_parts(), Vec3::new(well.pos.x, 0.0, well.pos.y), well.yaw, Vec3::ONE, CastleKind::Always);
+        }
     }
 
+    for (piece, pos, yaw) in kit_yard {
+        spawn_kit(commands, meshes, piece, pos, yaw, CastleKind::Always, crate::castle_kit::Edit::None, false);
+    }
     // The fortifications: every castle-kit piece of every tier (ruins → palisade → stone curtain,
     // the three keep tiers, the bell tower), shown by `sync_castle` as the Defenses upgrades land.
     for p in kit_layout() {
