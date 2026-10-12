@@ -51,6 +51,13 @@ pub struct CreatureExt {
     pub detail: Option<Handle<Image>>,
     #[texture(107, dimension = "2d_array")]
     pub detail_ormh: Option<Handle<Image>>,
+    /// Townsfolk GARMENT layers (`people_*.dds`, 4 layers: linen, wool, leather, skin), read by
+    /// the skinned people bodies whose UV1.y carries a cloth kind (`peasant_model::cloth_kind`).
+    /// Same sampler as the creature layers; one shared array for every villager.
+    #[texture(108, dimension = "2d_array")]
+    pub people: Option<Handle<Image>>,
+    #[texture(109, dimension = "2d_array")]
+    pub people_ormh: Option<Handle<Image>>,
 }
 
 /// The scanned creature detail layers (albedo, ormh), set once by `realforest` before the world
@@ -59,6 +66,13 @@ static DETAIL: std::sync::OnceLock<(Handle<Image>, Handle<Image>)> = std::sync::
 
 pub fn set_detail_layers(albedo: Handle<Image>, ormh: Handle<Image>) {
     let _ = DETAIL.set((albedo, ormh));
+}
+
+/// The townsfolk garment layers (albedo, ormh), set once by `realforest` with the creature layers.
+static PEOPLE: std::sync::OnceLock<(Handle<Image>, Handle<Image>)> = std::sync::OnceLock::new();
+
+pub fn set_people_layers(albedo: Handle<Image>, ormh: Handle<Image>) {
+    let _ = PEOPLE.set((albedo, ormh));
 }
 
 impl MaterialExtension for CreatureExt {
@@ -133,6 +147,8 @@ pub fn make_creature_material_with(
             mr: None,
             detail: DETAIL.get().map(|d| d.0.clone()),
             detail_ormh: DETAIL.get().map(|d| d.1.clone()),
+            people: PEOPLE.get().map(|d| d.0.clone()),
+            people_ormh: PEOPLE.get().map(|d| d.1.clone()),
         },
     })
 }

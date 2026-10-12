@@ -28,6 +28,9 @@ struct CreatureParams {
 @group(#{MATERIAL_BIND_GROUP}) @binding(105) var cd_alb: texture_2d_array<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(106) var cd_s: sampler;
 @group(#{MATERIAL_BIND_GROUP}) @binding(107) var cd_ormh: texture_2d_array<f32>;
+// Townsfolk garment layers (0 linen, 1 wool, 2 leather, 3 skin), same sampler.
+@group(#{MATERIAL_BIND_GROUP}) @binding(108) var pp_alb: texture_2d_array<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(109) var pp_ormh: texture_2d_array<f32>;
 
 fn cd_tri(t: texture_2d_array<f32>, layer: i32, p: vec3<f32>, n: vec3<f32>, sc: f32) -> vec4<f32> {
     let w = ft_tri_w(n);
@@ -127,6 +130,8 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // Skinned ORK bodies (`orks::kit_ork_body`) flag UV1.y = 65 + GLOSS (0 dry .. 1 oily / wet).
     var ork_body = false;
     var gloss = 0.0;
+    // Skinned townsfolk flag their garment kind as UV1.y = 48 + layer (63 = none); -1 elsewhere.
+    var pkind = -1.0;
 #ifdef VERTEX_UVS_A
 #ifdef VERTEX_UVS_B
     // GPU-SKINNED bodies (the townsfolk, `peasant_model::skinned_body`) carry their REST-pose
@@ -141,6 +146,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     on = select(on, normalize(rest_n + vec3<f32>(1e-7, 0.0, 0.0)), skinned);
     ork_body = in.uv_b.y > 64.5;
     gloss = clamp(in.uv_b.y - 65.0, 0.0, 1.0);
+    pkind = select(-1.0, in.uv_b.y - 48.0, in.uv_b.y > 47.5 && in.uv_b.y < 51.5);
 #endif
 #endif
 
@@ -211,9 +217,36 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
             orm = vec4<f32>(orm.r * c_orm.r, mix(orm.g, c_orm.g, 0.5), orm.b, orm.a * 0.55 + c_orm.a * 0.9);
             bump = bump * 1.2;
         }
+        // Townsfolk garments: real linen / wool / leather / skin scans in rest-pose space (sampled
+        // unconditionally — uniform control flow — and selected), tinted by the per-person palette
+        // colour already in the vertex colour. On top: hand-sized fading and grime blotches, mud
+        // climbing the hem and boots, sun-bleached tops, and a soft fabric sheen at grazing angles.
+        let pl = i32(clamp(round(pkind), 0.0, 3.0));
+        let p_sc = select(select(select(6.0, 5.0, pl == 1), 3.5, pl == 2), 7.5, pl == 3);
+        let p_alb = cd_tri(pp_alb, pl, obj, on, p_sc).rgb;
+        let p_orm = cd_tri(pp_ormh, pl, obj, on, p_sc);
+        let is_people = pkind > -0.5;
+        var dirt = 0.0;
+        if (is_people) {
+            let cloth = pl != 3;
+            alb = p_alb;
+            orm = p_orm;
+            k = select(0.5, 1.0, cloth);
+            bump = creature.pbr.y * select(0.45, 1.15, cloth);
+            let wear_n = vnoise(obj * 7.0);
+            let wear_c = vnoise(obj * 2.4 + vec3<f32>(11.0, 3.0, 7.0));
+            rgb = rgb * (1.0 + (wear_c - 0.5) * select(0.06, 0.2, cloth) + (wear_n - 0.5) * select(0.0, 0.08, cloth));
+            let top = smoothstep(0.35, 0.95, on.y) * smoothstep(0.9, 1.3, obj.y);
+            rgb = mix(rgb, rgb * vec3<f32>(1.08, 1.06, 1.02) + vec3<f32>(0.012), top * select(0.0, 0.6, pl < 2));
+            dirt = (1.0 - smoothstep(0.06, 0.6, obj.y)) * clamp(0.45 + 0.75 * wear_n, 0.0, 1.0) * select(0.0, 1.0, cloth);
+            rgb = mix(rgb, vec3<f32>(0.15, 0.115, 0.08) * (0.8 + 0.4 * wear_c), dirt * 0.6);
+            let vdir_p = normalize(view.world_position.xyz - in.world_position.xyz);
+            let ndv_p = clamp(abs(dot(normalize(pbr_input.N), vdir_p)), 0.0, 1.0);
+            rgb = rgb * (1.0 + select(0.06, 0.3, pl < 2) * pow(1.0 - ndv_p, 3.0));
+        }
         rgb = rgb * mix(vec3<f32>(1.0), alb * 2.0, k);
         pbr_input.material.base_color = vec4<f32>(max(rgb, vec3<f32>(0.0)), 1.0);
-        pbr_input.material.perceptual_roughness = clamp(mix(pbr_input.material.perceptual_roughness, orm.g, 0.7), 0.08, 1.0);
+        pbr_input.material.perceptual_roughness = clamp(mix(pbr_input.material.perceptual_roughness, orm.g, select(0.7, 0.9, is_people)) + dirt * 0.12, 0.08, 1.0);
         if (ork_body) {
             // Baked gloss: oily brow / nose / chest, wet eyes and lips, polished leather and
             // scar tissue tighten the highlight; dry knuckles, elbows, knees and dusty feet go

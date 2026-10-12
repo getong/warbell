@@ -24,6 +24,9 @@ const GROUND: [&str; 3] = ["litter", "moss", "path"];
 const STRUCT: [&str; 3] = ["wood", "stone", "cloth"];
 /// Creature surface detail layers, in `creature::Surf` code order.
 const CREATURE: [&str; 7] = ["skin", "fur", "leather", "wood", "metal", "cloth", "bone"];
+/// Townsfolk garment detail layers, in the creature shader's people-kind order
+/// (`tools/blender_forest/people_tex.py`, `peasant_model::cloth_kind`).
+const PEOPLE: [&str; 4] = ["linen", "wool", "leather", "skin"];
 /// Alpine terrain splat layers, in `alpine.wgsl` layer order (`tools/blender_forest/alpine.py`).
 const ALPINE: [&str; 5] = ["snow", "meadow", "scree", "rock", "dolomite"];
 const MAPS: [&str; 3] = ["albedo", "normal", "ormh"];
@@ -159,7 +162,7 @@ fn main() {
     // other file — for regenerating one set when the other PNG intermediates aren't on disk.
     let only = std::env::var("PACK_ONLY").ok();
     // Ground + structure re-skin: three layers per map → one array file each.
-    for (prefix, names) in [("ground", &GROUND[..]), ("struct", &STRUCT[..]), ("creature", &CREATURE[..]), ("alpine", &ALPINE[..])] {
+    for (prefix, names) in [("ground", &GROUND[..]), ("struct", &STRUCT[..]), ("creature", &CREATURE[..]), ("alpine", &ALPINE[..]), ("people", &PEOPLE[..])] {
         if only.as_deref().is_some_and(|o| o != prefix) {
             continue;
         }
@@ -208,7 +211,7 @@ fn main() {
         .filter(|p| p.extension().is_some_and(|x| x == "png"))
         .filter(|p| {
             let n = p.file_name().unwrap().to_string_lossy().to_string();
-            !["ground_", "struct_", "creature_", "alpine_"].iter().any(|p| n.starts_with(p))
+            !["ground_", "struct_", "creature_", "alpine_", "people_"].iter().any(|p| n.starts_with(p))
         })
         .collect();
     pngs.sort();

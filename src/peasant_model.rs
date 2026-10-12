@@ -511,6 +511,39 @@ pub(crate) fn decode_influences(uv0: [f32; 2], uv1: [f32; 2]) -> ([u16; 4], [f32
     (j, w)
 }
 
+/// UV1.y code for "no garment layer" (eyes, hair, metal, fletching): the creature layers apply.
+pub(crate) const PEOPLE_KIND_NONE: f32 = 63.0;
+
+/// The garment detail layer a people.glb region draws with (`people_*.dds`, people_tex.py):
+/// UV1.y = 48 + layer (0 linen, 1 wool, 2 leather, 3 skin), or [`PEOPLE_KIND_NONE`]. Shirts,
+/// tunics, trims, kerchiefs, wraps and aprons are linen; hose, hoods, cloaks, tabards and the
+/// women's kirtles are wool; belts, pouches and boots leather.
+pub(crate) fn cloth_kind(region: usize, part: &str) -> f32 {
+    let wool_part = part == "hu_dress" || part.starts_with("hu_hat_hood") || part.starts_with("hu_hood");
+    let layer = match region {
+        0 | 1 => 3.0,                                         // skin, lips
+        4 | 5 | 10 if wool_part => 1.0,                       // a kirtle / hood body
+        4 | 5 | 10 | 11 => 0.0,                               // tunic, trim, headcloth, band
+        6 | 12 | 14 => 1.0,                                   // trousers / hose, tabard, cloak
+        7 | 8 => 2.0,                                         // leather, boots
+        _ => return PEOPLE_KIND_NONE,                         // eyes, hair, metal, fletching, helm
+    };
+    48.0 + layer
+}
+
+/// Write the per-vertex garment kinds into a skinned body's UV1.y (the rest-pose flag stays > 32).
+/// A length mismatch (an unexpected part layout) leaves the body on the creature layers.
+fn set_cloth_kinds(body: &mut Mesh, kinds: &[f32]) {
+    use bevy::mesh::VertexAttributeValues as V;
+    if let Some(V::Float32x2(uv1)) = body.attribute_mut(Mesh::ATTRIBUTE_UV_1) {
+        if uv1.len() == kinds.len() {
+            for (u, k) in uv1.iter_mut().zip(kinds) {
+                u[1] = *k;
+            }
+        }
+    }
+}
+
 /// Merge people.glb pieces into ONE mesh skinned to `biped::SKIN_JOINTS`, in the rig frame. Head
 /// pieces (`head == true`, authored in the head joint's frame) are hung at the head pivot and
 /// scaled by `head_scale` as far as they are head-weighted, so the neck stub stays body-sized and
@@ -694,7 +727,15 @@ fn kit_peasant_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u32, ki
         _ if desert => "sleeve",
         _ => "bare",
     };
-    let legs = if desert { "hu_leg_wrap" } else { "hu_leg" };
+    // Some working men wear cross-gartered hose (linen bands wound up the shin over the boots).
+    let garter = !desert && !kid && !woman && matches!(kind, Farmer | Woodcutter | Miner | Unemployed) && look % 3 == 1 && kit.has("hu_leg_garter_l");
+    let legs = if desert {
+        "hu_leg_wrap"
+    } else if garter {
+        "hu_leg_garter"
+    } else {
+        "hu_leg"
+    };
     for s in ["l", "r"] {
         if kid_body {
             names.push(format!("hu_kid_arm_{s}"));
@@ -746,7 +787,19 @@ fn kit_peasant_meshes(kind: PeasantKind, skin: u32, tunic: u32, trouser: u32, ki
         .iter()
         .map(|n| Some((kit.people_part(n, &palette, &KIT_WEATHER)?, head_frame(n))))
         .collect::<Option<Vec<_>>>()?;
-    let body = skinned_body(parts, &kit_build(kid, woman, look))?;
+    // Per-vertex garment kind from the raw region codes (same vertex order as the recoloured parts).
+    let kinds: Vec<f32> = names
+        .iter()
+        .flat_map(|n| {
+            use bevy::mesh::VertexAttributeValues as V;
+            match kit.raw_part(n).as_ref().and_then(|m| m.attribute(Mesh::ATTRIBUTE_COLOR)) {
+                Some(V::Float32x4(c)) => c.iter().map(|c| cloth_kind((c[0] * 16.0).floor() as usize, n)).collect(),
+                _ => Vec::new(),
+            }
+        })
+        .collect();
+    let mut body = skinned_body(parts, &kit_build(kid, woman, look))?;
+    set_cloth_kinds(&mut body, &kinds);
     let (weapon, shield) = kit_tools(kit, kind, desert);
     let empty = || Mesh::new(bevy::mesh::PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default());
     Some(BipedMeshes {
@@ -1225,6 +1278,18 @@ mod kit_skin_tests {
     /// The authored body, unchanged.
     const IDENTITY: KitBuild =
         KitBuild { chest: 1.0, depth: 1.0, hips: 1.0, arm: 1.0, leg: 1.0, hand: 1.0, foot: 1.0, leg_len: 1.0, arm_len: 1.0, root: 1.0, head: 1.0 };
+
+    #[test]
+    fn garment_kinds_pick_the_right_layer() {
+        assert_eq!(cloth_kind(0, "hu_head_a"), 51.0, "skin");
+        assert_eq!(cloth_kind(4, "hu_trunk"), 48.0, "a tunic is linen");
+        assert_eq!(cloth_kind(4, "hu_dress"), 49.0, "a kirtle is wool");
+        assert_eq!(cloth_kind(6, "hu_leg_l"), 49.0, "hose are wool");
+        assert_eq!(cloth_kind(8, "hu_leg_l"), 50.0, "boots are leather");
+        for r in [2, 3, 9, 13, 15] {
+            assert_eq!(cloth_kind(r, "hu_trunk"), PEOPLE_KIND_NONE);
+        }
+    }
 
     #[test]
     fn builds_stay_in_their_ranges() {

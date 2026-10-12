@@ -403,6 +403,8 @@ fn gpu(
                         mr: Some(mr),
                         detail: None,
                         detail_ormh: None,
+                        people: None,
+                        people_ormh: None,
                     },
                 })
             })
