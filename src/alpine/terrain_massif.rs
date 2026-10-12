@@ -290,11 +290,26 @@ fn rock_y(x: f32, z: f32, t: f32, reg: &Region) -> f32 {
     // narrow ledges (the stratified dolomite of the Sella / Sassolungo faces) — a ledge-and-wall
     // profile every BAND units of height, blended in only where the DEM is steep, so pastures,
     // screes and the pass valleys keep their natural slopes.
+    // Real dolomite strata are NOT a ruled staircase: beds range from thin to massive, dip a few
+    // degrees, and each wall is cut by vertical joints into blocks whose ledges come and go. So:
+    // - the height is WARPED by a 1-D noise in y before banding (monotonic: the warp's slope stays
+    //   < 0.7), so bed thickness varies ~1.8–9u instead of a fixed 3.2u;
+    // - a gentle regional dip + the old broad undulation tilt the beds off the contour lines;
+    // - each bed draws its own ledge width (`lo`), so some steps are broad shelves, some hairlines;
+    // - a jointing noise (~3.5u blocks along the face) varies how hard the step is gathered, so a
+    //   ledge fades out into a plain slab and picks up again on the next block.
     const BAND: f32 = 3.2;
-    let s = y / BAND + 0.37 * vnoise(x * 0.3 + 7.0, z * 0.3 - 2.0);
-    let f = s - s.floor();
-    let stair = (s.floor() + smooth(0.58, 0.97, f) - 0.37 * vnoise(x * 0.3 + 7.0, z * 0.3 - 2.0)) * BAND;
-    y + (stair - y) * steep * 0.75
+    let warp = 0.75 * (2.0 * vnoise(y * 0.29 + 5.0, 1.7 + 0.15 * vnoise(x * 0.08, z * 0.08)) - 1.0);
+    let off = 0.37 * vnoise(x * 0.3 + 7.0, z * 0.3 - 2.0) + (x * 0.21 - z * 0.12) / BAND;
+    let s = (y + warp) / BAND + off;
+    let (bed, f) = (s.floor(), s - s.floor());
+    let lo = 0.42 + 0.36 * vnoise(bed * 1.37 + 0.5, 9.2);
+    let stair = (bed + smooth(lo, 0.97, f) - off) * BAND - warp;
+    let joint = smooth(0.22, 0.78, vnoise(x * 1.1 + 2.0, z * 1.1 - 5.0));
+    // Ledges only on the real walls: on the ~30° screes and pastures a half-strength step drew
+    // rows of parallel contour lines across the whole slope.
+    let wall = smooth(0.55, 1.15, grad) * env;
+    y + (stair - y) * wall * (0.30 + 0.50 * joint)
 }
 
 /// The massif surface (world Y) at base `(x, z)` inside a massif region: the mountain with the

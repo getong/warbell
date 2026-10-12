@@ -212,6 +212,11 @@ fn alpine_apply(pbr: ptr<function, PbrInput>, p: vec3<f32>, gn_in: vec3<f32>, cl
     // Meadow: whatever the alpine zone leaves uncovered (top faces only) — on the low apron and
     // the margin around the biome, not up on the mountain.
     var mead = max(m.g, turf) * hold * (1.0 - snow) * (1.0 - rock) * (1.0 - scree) * (1.0 - trail) * (1.0 - smoothstep(0.55, 0.85, m.r));
+    // Up on the dolomite range nothing may show the LOWLAND lawn underneath: whatever the layers
+    // above leave uncovered (turf / scree seams, the meadow's own mask fade) was drawn as the
+    // procedural lawn's saturated lime — bright green blots on the rock plateaus. Fill that gap
+    // with gravel (trails keep their earth).
+    scree = max(scree, dolo * (1.0 - trail) * clamp(1.0 - (snow + rock + scree + mead), 0.0, 1.0));
     scree *= 1.0 - trail;
     // The meadow fades in over the zone edge rather than replacing the procedural lawn wholesale.
     let cov = clamp(snow + rock + scree + mead, 0.0, 1.0) * (1.0 - skip);
@@ -357,7 +362,8 @@ fn alpine_apply(pbr: ptr<function, PbrInput>, p: vec3<f32>, gn_in: vec3<f32>, cl
             + a_noise(vec2<f32>(-er.y, er.x) * 1.4 + vec2<f32>(3.0, 5.0)) * 0.17 + nb * 0.28);
         ma = mix(ma, vec3<f32>(ml) * vec3<f32>(0.62, 0.50, 0.40), alp_m * earth * 0.4);
         // Rock-range turf: thin, grey-green alpine sward on limestone, not the olive valley meadow.
-        ma = mix(ma, vec3<f32>(ml) * vec3<f32>(0.86, 0.98, 0.80), dolo * 0.55);
+        // (0.55 → 0.85, browner: the old mix still read as fresh lawn-green blots on the rock.)
+        ma = mix(ma, vec3<f32>(ml) * vec3<f32>(0.93, 0.94, 0.78), dolo * 0.85);
         alb += w.y * ma;
         nw += w.y * nm;
         // The AO / roughness tile too (AO darkens the turf's hollows in the same dashed rows).
@@ -392,6 +398,23 @@ fn alpine_apply(pbr: ptr<function, PbrInput>, p: vec3<f32>, gn_in: vec3<f32>, cl
             let along = dot(p.xz, vec2<f32>(0.707, 0.707)) * 0.85 + nb * 1.3;
             let streak = smoothstep(0.52, 0.80, a_noise(vec2<f32>(along, p.y * 0.16 + 3.0)));
             ra = mix(ra, vec3<f32>(0.78, 0.81, 0.86), m.r * streak * 0.4 * smoothstep(-0.2, 0.4, up));
+        }
+        // Dolomite walls: the dark vertical water streaks (Tintenstriche) that run down every
+        // Sella / Sassolungo face from the ledges, and broad ochre iron stains — they cut ACROSS
+        // the bedding so the walls read as jointed rock, not ruled stripes. Projected per face
+        // axis (triplanar weights) so a streak stays vertical whichever way the wall faces.
+        if dolo > 0.01 {
+            let wall = 1.0 - smoothstep(0.35, 0.75, up);
+            let ax = abs(gn.x) / max(abs(gn.x) + abs(gn.z), 1e-3);
+            let sx = a_noise(vec2<f32>(p.z * 0.55 + 3.0, p.y * 0.045));
+            let sz = a_noise(vec2<f32>(p.x * 0.55 - 5.0, p.y * 0.045 + 7.0));
+            let fx = a_noise(vec2<f32>(p.z * 1.7, p.y * 0.12 + 1.0));
+            let fz = a_noise(vec2<f32>(p.x * 1.7, p.y * 0.12 - 2.0));
+            let s_raw = mix(sz, sx, ax) * 0.7 + mix(fz, fx, ax) * 0.3;
+            let streak = smoothstep(0.56, 0.80, s_raw) * wall * dolo;
+            ra = mix(ra, ra * vec3<f32>(0.42, 0.43, 0.46), streak * 0.75);
+            let ochre = smoothstep(0.55, 0.85, a_noise(p.xz * 0.045 + vec2<f32>(p.y * 0.02, 13.0))) * wall * dolo;
+            ra = mix(ra, ra * vec3<f32>(1.08, 0.93, 0.74), ochre * 0.45);
         }
         let lodged = m.r * lodge * 0.85;
         alb += rock * ra;
