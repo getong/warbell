@@ -786,6 +786,24 @@ fn modal_root(z: i32) -> impl Bundle {
 
 /// The cinematic start screen: a live scene behind a left-heavy scrim, with the title block,
 /// Play button, difficulty selector (lower-left) and a controls legend (lower-right).
+/// Label size of the start-menu's big action buttons.
+const MENU_BTN_FONT: f32 = 17.0;
+
+/// One shared box for every big start-menu action, so the column reads as a set: a fixed width
+/// (labels centred) instead of each button hugging its own text.
+fn menu_btn_node() -> Node {
+    Node {
+        width: Val::Px(300.0),
+        padding: UiRect::axes(Val::Px(SP_XL), Val::Px(SP_M)),
+        border: widgets::border(1.0),
+        border_radius: radius(R_BTN),
+        flex_direction: FlexDirection::Row,
+        justify_content: JustifyContent::Center,
+        align_items: AlignItems::Center,
+        ..default()
+    }
+}
+
 fn spawn_start_screen(
     mut commands: Commands,
     fonts: Res<UiFonts>,
@@ -812,9 +830,9 @@ fn spawn_start_screen(
             BackgroundGradient(vec![Gradient::Linear(LinearGradient::new(
                 std::f32::consts::FRAC_PI_2, // → right
                 vec![
-                    ColorStop::new(rgba(6, 10, 20, 0.78), Val::Percent(0.0)),
-                    ColorStop::new(rgba(6, 10, 20, 0.32), Val::Percent(40.0)),
-                    ColorStop::new(rgba(6, 10, 20, 0.0), Val::Percent(72.0)),
+                    ColorStop::new(rgba(10, 8, 6, 0.82), Val::Percent(0.0)),
+                    ColorStop::new(rgba(10, 8, 6, 0.42), Val::Percent(38.0)),
+                    ColorStop::new(rgba(10, 8, 6, 0.0), Val::Percent(66.0)),
                 ],
             ))]),
             GlobalZIndex(50),
@@ -840,7 +858,7 @@ fn spawn_start_screen(
                 ))
                 .with_children(|t| {
                     t.spawn((
-                        label(&fonts.display, "WARBELL", 88.0, rgb(244, 228, 188)),
+                        label(&fonts.display, "WARBELL", 88.0, TEXT),
                         TextShadow { offset: Vec2::new(0.0, 6.0), color: rgba(0, 0, 0, 0.65) },
                     ));
                     // Gold rule under the title, like a charter heading.
@@ -852,11 +870,11 @@ fn spawn_start_screen(
                 m.spawn((label(&fonts.regular, "A knight's last stand.", 17.0, TEXT_DIM), anim(AnimKind::Rise, 0.2, 0.7)));
                 // Quick "how to play" — the whole loop in two lines, so a new player isn't lost.
                 m.spawn((
-                    label(&fonts.semibold, "DAY  —  loot chests, gather gold & stone, buy upgrades", 13.5, rgb(214, 224, 240)),
+                    label(&fonts.semibold, "DAY  —  loot chests, gather gold & stone, buy upgrades", 13.5, TEXT_DIM),
                     anim(AnimKind::Rise, 0.24, 0.7),
                 ));
                 m.spawn((
-                    label(&fonts.semibold, "NIGHT  —  orks besiege the keep; hold the walls", 13.5, rgb(214, 224, 240)),
+                    label(&fonts.semibold, "NIGHT  —  orks besiege the keep; hold the walls", 13.5, TEXT_DIM),
                     anim(AnimKind::Rise, 0.27, 0.7),
                 ));
                 // Divider.
@@ -869,105 +887,78 @@ fn spawn_start_screen(
                 // primary action then: drops straight back into the frozen run, world intact.
                 if run.0 {
                     m.spawn((
-                        Node {
-                            padding: UiRect::axes(Val::Px(44.0), Val::Px(13.0)),
-                            border: widgets::border(1.0),
-                            border_radius: radius(11.0),
-                            ..default()
-                        },
+                        menu_btn_node(),
                         widgets::btn_primary_paint(),
                         StartResumeButton,
                         anim_btn(AnimKind::Rise, 0.32, 0.7),
                     ))
                     .with_children(|b| {
-                        b.spawn(label(&fonts.extrabold, "RESUME", 19.0, INK));
+                        b.spawn(label(&fonts.extrabold, "RESUME", MENU_BTN_FONT, INK));
                     });
                 }
                 // Continue button — always shown; the primary action when resuming. Dim + inert
                 // when there's no save yet (so the menu reads as "New Game / Continue Game").
                 if has_save {
                     m.spawn((
-                        Node {
-                            padding: UiRect::axes(Val::Px(44.0), Val::Px(13.0)),
-                            border: widgets::border(1.0),
-                            border_radius: radius(11.0),
-                            ..default()
-                        },
-                        widgets::btn_primary_paint(),
+                        menu_btn_node(),
                         StartContinueButton,
                         anim_btn(AnimKind::Rise, 0.34, 0.7),
                     ))
+                    .insert_if(widgets::btn_primary_paint(), || !run.0)
+                    .insert_if(widgets::btn_secondary_paint(), || run.0)
                     .with_children(|b| {
-                        b.spawn(label(&fonts.extrabold, "CONTINUE GAME", 19.0, INK));
+                        b.spawn(label(&fonts.extrabold, "CONTINUE GAME", MENU_BTN_FONT, if run.0 { GOLD } else { INK }));
                     });
                 } else {
                     // Disabled: no Button/Interaction/Hoverable, just a dim card.
                     m.spawn((
-                        Node {
-                            padding: UiRect::axes(Val::Px(44.0), Val::Px(13.0)),
-                            border: widgets::border(1.0),
-                            border_radius: radius(11.0),
-                            ..default()
-                        },
-                        BackgroundColor(rgba(196, 144, 62, 0.16)),
-                        BorderColor::all(rgba(244, 204, 132, 0.22)),
+                        menu_btn_node(),
+                        BackgroundColor(rgba(196, 144, 62, 0.06)),
+                        BorderColor::all(rgba(224, 168, 74, 0.14)),
                         anim(AnimKind::Rise, 0.34, 0.7),
                     ))
                     .with_children(|b| {
-                        b.spawn(label(&fonts.extrabold, "CONTINUE GAME", 19.0, GREY));
+                        b.spawn(label(&fonts.extrabold, "CONTINUE GAME", MENU_BTN_FONT, GREY));
                     });
                 }
                 // Load Game — pick any slot (Continue only takes the newest). Hidden with no saves.
                 if has_save {
                     m.spawn((
-                        Node {
-                            padding: UiRect::axes(Val::Px(44.0), Val::Px(13.0)),
-                            border: widgets::border(1.0),
-                            border_radius: radius(11.0),
-                            ..default()
-                        },
-                        widgets::btn_primary_paint(),
+                        menu_btn_node(),
+                        widgets::btn_secondary_paint(),
                         StartLoadButton,
                         anim_btn(AnimKind::Rise, 0.35, 0.7),
                     ))
                     .with_children(|b| {
-                        b.spawn(label(&fonts.extrabold, "LOAD GAME", 19.0, INK));
+                        b.spawn(label(&fonts.extrabold, "LOAD GAME", MENU_BTN_FONT, GOLD));
                     });
                 }
                 // New Game — a fresh run (confirms first if it'd overwrite a save).
-                m.spawn((
-                    Node {
-                        padding: UiRect::axes(Val::Px(44.0), Val::Px(13.0)),
-                        border: widgets::border(1.0),
-                        border_radius: radius(11.0),
-                        ..default()
-                    },
-                    widgets::btn_primary_paint(),
-                    StartPlayButton,
+                // Primary only when it's the first thing to do (no run to resume, no save to continue).
+                let new_primary = !run.0 && !has_save;
+                let mut new_btn = m.spawn((menu_btn_node(), StartPlayButton));
+                if new_primary {
+                    new_btn.insert(widgets::btn_primary_paint());
+                } else {
+                    new_btn.insert(widgets::btn_secondary_paint());
+                }
+                new_btn.insert((
                     anim_btn(AnimKind::Rise, 0.36, 0.7),
                 ))
                 .with_children(|b| {
-                    b.spawn(label(&fonts.extrabold, "NEW GAME", 19.0, INK));
+                    b.spawn(label(&fonts.extrabold, "NEW GAME", MENU_BTN_FONT, if new_primary { INK } else { GOLD }));
                 });
                 // Potyczka — the RTS skirmish mode. A separate entry point (not a campaign run):
                 // it flips the live GameMode and rebuilds the world to the arena in-process.
                 m.spawn((
-                    Node {
-                        padding: UiRect::axes(Val::Px(44.0), Val::Px(13.0)),
-                        border: widgets::border(1.0),
-                        border_radius: radius(11.0),
-                        flex_direction: FlexDirection::Row,
-                        align_items: AlignItems::Center,
-                        column_gap: Val::Px(10.0),
-                        ..default()
-                    },
-                    widgets::btn_primary_paint(),
+                    Node { column_gap: Val::Px(SP_S), ..menu_btn_node() },
+                    widgets::btn_secondary_paint(),
                     SkirmishButton,
                     anim_btn(AnimKind::Rise, 0.37, 0.7),
                 ))
                 .with_children(|b| {
-                    b.spawn(label(&fonts.extrabold, "SKIRMISH", 19.0, INK));
-                    b.spawn(label(&fonts.semibold, "SKIRMISH · RTS", 11.0, KICKER));
+                    b.spawn(label(&fonts.extrabold, "SKIRMISH", MENU_BTN_FONT, GOLD));
+                    b.spawn(label(&fonts.semibold, "RTS", FONT_CAPTION, KICKER));
                 });
                 // Difficulty selector.
                 m.spawn((

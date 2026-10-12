@@ -177,19 +177,19 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         let h2 = hash2(vec2<f32>(ci * 1.7, seed + 4.0));
         let x_px = cf * (TAU * r / cells);                        // arc-length across the cell (p units)
         let band = 1.0 - smoothstep(0.8, 1.0, abs(rb));
-        let stem = (1.0 - smoothstep(0.0012, 0.0030, abs(x_px - (h1 - 0.5) * 0.02))) * band;
+        let stem = (1.0 - smoothstep(0.0018, 0.0042, abs(x_px - (h1 - 0.5) * 0.02))) * band;
         let slope = select(-1.0, 1.0, h2 > 0.5);
         let diag_x = x_px - slope * rb * 0.012 * (0.6 + h2);
-        let diag = (1.0 - smoothstep(0.0010, 0.0026, abs(diag_x))) * (1.0 - smoothstep(0.3, 0.8, abs(rb - (h1 - 0.5))));
+        let diag = (1.0 - smoothstep(0.0016, 0.0038, abs(diag_x))) * (1.0 - smoothstep(0.3, 0.8, abs(rb - (h1 - 0.5))));
         let glyph = clamp(stem + diag * 0.85, 0.0, 1.0) * step(0.15, h2);
-        light_a = clamp(lines + glyph * 0.6, 0.0, 1.0) * wear * 0.7;
+        light_a = clamp(lines + glyph * 0.85, 0.0, 1.0) * wear * 0.8;
         // Scorched earth along the band + a very faint ash wash over the whole floor.
-        dark_a = (1.0 - smoothstep(0.01, 0.06, abs(r - 0.8975))) * 0.22
+        dark_a = (1.0 - smoothstep(0.01, 0.07, abs(r - 0.8975))) * (0.18 + 0.22 * fbm(p * 6.0 + vec2<f32>(seed)))
             + (1.0 - smoothstep(0.70, 0.96, r)) * 0.06 * fbm(p * 4.0 + vec2<f32>(seed * 2.0));
         albedo = vec3<f32>(0.60, 0.57, 0.51); // ash / old chalk
         // Kindled glyphs: those whose angle is behind the hold meter smoulder like banked embers.
         let lit_cell = 1.0 - smoothstep(aux - 0.002, aux + 0.002, (ci + 0.5) / cells);
-        ember = glyph * lit_cell * wear;
+        ember = (glyph + lines * 0.4) * lit_cell * wear;
     } else if kind == KIND_PLOT {
         // Surveyed building plot: a dashed chalk line (pegged + strung) round a softly trampled pad.
         let ang = atan2(p.y, p.x);
@@ -241,7 +241,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     pbr_input.material.base_color = vec4<f32>(albedo, 1.0);
     // Banked-ember glow on kindled rune glyphs: a low, deep orange (no white core) so bloom only
     // kisses it — legible at night without turning the circle into a light source.
-    pbr_input.material.emissive = vec4<f32>(vec3<f32>(1.6, 0.55, 0.16) * ember * strength, 1.0);
+    pbr_input.material.emissive = vec4<f32>(vec3<f32>(2.4, 0.80, 0.22) * ember * strength, 1.0);
     light_a = max(light_a, ember * 0.9 * strength);
     var lit = apply_pbr_lighting(pbr_input);
     lit = main_pass_post_lighting_processing(pbr_input, vec4<f32>(lit.rgb, 1.0));

@@ -82,6 +82,9 @@ pub fn read_secs(text: &str) -> f32 {
     (1.6 + text.chars().count() as f32 / 14.0).clamp(2.5, 8.0)
 }
 
+/// The full-width caption row (repositioned above the build palette while it's open).
+#[derive(Component)]
+struct SubtitleRow;
 /// The caption plate (soft dark band behind the line — fades with it).
 #[derive(Component)]
 struct SubtitlePlate;
@@ -113,6 +116,7 @@ fn setup(mut commands: Commands, fonts: Res<UiFonts>) {
                 ..default()
             },
             GlobalZIndex(40),
+            SubtitleRow,
         ))
         .with_children(|p| {
             // A soft, borderless dark band (the film-subtitle read): legible over bright snow or
@@ -173,7 +177,17 @@ fn update(
     mut speaker: Query<(&mut TextSpan, &mut TextColor, &mut TextFont), (With<SubtitleSpeaker>, Without<SubtitleLine>)>,
     mut line: Query<(&mut TextSpan, &mut TextColor, &mut TextFont), (With<SubtitleLine>, Without<SubtitleSpeaker>)>,
     mut shown: Local<String>,
+    build: Option<Res<crate::town::BuildMode>>,
+    mut row: Query<&mut Node, With<SubtitleRow>>,
 ) {
+    // Lift the caption clear of the bottom build palette while it's open (it would sit under it).
+    let lifted = build.is_some_and(|b| b.active);
+    if let Ok(mut n) = row.single_mut() {
+        let want = if lifted { Val::Px(262.0) } else { Val::Percent(14.0) };
+        if n.bottom != want {
+            n.bottom = want;
+        }
+    }
     let (Ok(mut bg), Ok((mut sp, mut sp_col, mut sp_font)), Ok((mut ln, mut ln_col, mut ln_font))) =
         (plate.single_mut(), speaker.single_mut(), line.single_mut())
     else {
