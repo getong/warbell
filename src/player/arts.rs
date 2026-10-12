@@ -97,6 +97,7 @@ pub fn player_arts(
                 With<crate::warlord::Warlord>,
                 With<crate::rival::RivalSoldier>,
                 With<crate::snowman::Snowman>,
+                With<crate::oddities::Oddity>,
             )>,
             Without<crate::dying::Dying>,
         ),

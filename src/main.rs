@@ -121,6 +121,9 @@ mod separation;
 mod shutters;
 mod siege;
 mod snowman;
+mod oddities;
+mod stashes;
+mod castaway;
 mod steer;
 mod subtitles;
 mod succession;
@@ -389,7 +392,9 @@ fn main() {
         .add_plugins(snowman::SnowmanPlugin)
         // Caged captives' idle life: rocking, rubbing, slumping, trips to the bars, flinches.
         // Standalone — the tuples above are at the `Plugins` arity-15 cap.
-        .add_plugins(captives::CaptivesPlugin);
+        .add_plugins(captives::CaptivesPlugin)
+        // WP3 wilds: the five biome creatures, the biome stashes + wolverine dens, Tobin the castaway.
+        .add_plugins((oddities::OdditiesPlugin, stashes::StashesPlugin, castaway::CastawayPlugin));
     campaign_verify::install(&mut app);
     if std::env::var("FOREST_RENDER_SYNC").as_deref() == Ok("1") {
         if let Some(render) = app.get_sub_app_mut(bevy::render::RenderApp) {

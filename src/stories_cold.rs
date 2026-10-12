@@ -250,6 +250,12 @@ pub fn planned_footprints() -> Vec<(Vec2, f32)> {
     SITES.lock().unwrap().iter().map(|s| (s.pos, SCENES[s.scene].foot)).collect()
 }
 
+/// `(centre, yaw)` of the castaways' snow-house (model local -Z faces the sea, its sled tracks run
+/// inland along +Z) — the start of Tobin's sled tracks (`castaway.rs`).
+pub fn castaways_site() -> Option<(Vec2, f32)> {
+    SITES.lock().unwrap().iter().find(|s| SCENES[s.scene].model == COAST_SCENE).map(|s| (s.pos, s.yaw))
+}
+
 /// Does a circle at `(x, z)` of radius `r` overlap a planned cold story site?
 pub fn overlaps_planned(x: f32, z: f32, r: f32) -> bool {
     let p = Vec2::new(x, z);
