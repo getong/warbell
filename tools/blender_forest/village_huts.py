@@ -179,7 +179,8 @@ def thatch_roof(g, rng, W, D, ye, yr, over=0.48, thick=0.3, hip=0.8, sag=0.09, m
     ex = L + Rx * t0 * 0.6
     xs = [-ex - 0.05, -ex + 0.1, -L * 0.5, 0.0, L * 0.5, ex - 0.1, ex + 0.05]
     pts = [V(x, ytop(V(x, 0, 0), 0.02) + 0.02, 0) for x in xs]
-    rad = [0.06, 0.2, 0.22, 0.22, 0.22, 0.2, 0.06]
+    rm = min(0.22, 0.1 + 0.12 * ex)   # a short ridge gets a slimmer roll (no 'ball' on the hip)
+    rad = [0.06, rm * 0.9, rm, rm, rm, rm * 0.9, 0.06]
     tube(g, pts, rad, 10, M_THATCH, scale(THATCH_N, 0.72 * tone), tile=0.6, uv_phase=rng.uniform(0, 2))
     if ridge == "riders":
         n = max(2, int((2 * ex) / 0.85))
@@ -687,42 +688,146 @@ def stook(g, rng, c, h=0.62):
              [0.075, 0.055, 0.065, 0.03], 6, M_THATCH, scale((1.25, 1.02, 0.6), rng.uniform(0.85, 1.0)), tile=0.4)
 
 
+def plank_walls(g, rng, W, D, y0, ye, ops, T=0.14):
+    """Board-and-batten barn walls: a squared sill beam on the footing, squared corner and door
+    posts, a wall plate, vertical weathered boards (uneven bottoms, a few gaps) with battens over the
+    joints; the openings dressed like the huts'."""
+    cols = [scale((1.0, 0.8, 0.6), rng.uniform(0.72, 0.95)) for _ in range(9)]
+    for wi, (a, b) in enumerate(_walls(W, D)):
+        A, B = V(a[0], 0, a[1]), V(b[0], 0, b[1])
+        t = (B - A).normalized()
+        n = t.cross(UP)
+        L = (B - A).length
+        q = yaw(t)
+        lbox(g, A + t * (L / 2) + UP * (y0 + 0.07), (L + 0.24, 0.14, T + 0.04), q, M_TIMBER, scale(POSTC, 0.72),
+             tile=0.6)
+        lbox(g, A + t * (L / 2) + UP * (ye - 0.06), (L + 0.24, 0.13, T + 0.06), q, M_TIMBER, scale(POSTC, 0.8),
+             tile=0.6)
+        lbox(g, A + UP * ((y0 + ye) / 2), (0.16, ye - y0, 0.16), q, M_TIMBER, scale(POSTC, 0.75), tile=0.6)
+        for o in ops[wi]:
+            if o["kind"] == "door":
+                for s in (o["s"] - o["w"] / 2 - 0.07, o["s"] + o["w"] / 2 + 0.07):
+                    lbox(g, A + t * s + UP * ((y0 + ye) / 2), (0.13, ye - y0, T + 0.02), q, M_TIMBER,
+                         scale(POSTC, 0.78), tile=0.6)
+        for s0, s1, ya, yb in _pieces(L, y0 + 0.14, ye - 0.12, ops[wi]):
+            nb = max(1, int(round((s1 - s0) / 0.22)))
+            bw = (s1 - s0) / nb
+            for k in range(nb):
+                s = s0 + (k + 0.5) * bw
+                lo = ya + (rng.uniform(-0.03, 0.04) if ya < y0 + 0.2 else 0.0)
+                hgt = yb - lo
+                if hgt < 0.06:
+                    continue
+                board(g, A + t * s + UP * (lo + hgt / 2) + n * (T / 2 - 0.02), (0, 1, 0), tuple(n), hgt,
+                      bw - (0.018 if rng.random() < 0.85 else 0.04), 0.035, mat=M_PLANK,
+                      col=cols[int(rng.integers(0, len(cols)))], rng=rng)
+                if k > 0:
+                    board(g, A + t * (s - bw / 2) + UP * (lo + hgt / 2) + n * (T / 2 + 0.02), (0, 1, 0), tuple(n),
+                          hgt - 0.02, 0.06, 0.025, mat=M_PLANK, col=scale(POSTC, 0.62), rng=rng)
+                # Inside face, so the open door shows a planked interior.
+                face(g, [A + t * (s - bw / 2) + UP * lo - n * 0.02, A + t * (s + bw / 2) + UP * lo - n * 0.02,
+                         A + t * (s + bw / 2) + UP * yb - n * 0.02, A + t * (s - bw / 2) + UP * yb - n * 0.02],
+                     -n, M_PLANK, scale(POSTC, 0.4))
+        for o in ops[wi]:
+            opening_dress(g, rng, A, t, n, T, o, jamb=False)
+
+
+def hay_barrack(g, rng, c, hw=0.55, H=2.6, roof_y=2.25):
+    """A hay barrack: four tall pegged poles carrying a sliding pyramid roof of thatch over a
+    loaf of loose hay."""
+    c = Vector(c)
+    corners = [c + V(sx * hw, 0, sz * hw) for sx, sz in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
+    for p in corners:
+        pole(g, p - UP * 0.25, p + UP * H + V(rng.uniform(-0.02, 0.02), 0, rng.uniform(-0.02, 0.02)), 0.05, 0.04, rng,
+             col=POSTC, sides=6, segs=3)
+        for y in np.arange(0.9, H - 0.1, 0.3):
+            pole(g, p + UP * float(y) - V(0.06, 0, 0), p + UP * float(y) + V(0.06, 0, 0), 0.01, 0.01, rng,
+                 col=scale(POSTC, 0.7), sides=4, segs=1, wobble=0.0)
+    # Roof frame (square of poles resting on pegs) and a 4-sided thatch pyramid with a ragged eave.
+    o = hw + 0.28
+    E = [c + V(sx * o, roof_y, sz * o) for sx, sz in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
+    apex = c + UP * (roof_y + 0.62)
+    for i in range(4):
+        a_, b_ = E[i], E[(i + 1) % 4]
+        rows = []
+        for k in range(6):
+            f = k / 5
+            row = []
+            for j in range(5):
+                u = j / 4
+                p = a_.lerp(b_, f).lerp(apex, u)
+                p = p + UP * (0.03 * math.sin(u * math.pi) + 0.02 * rng.uniform(-1, 1) * (1 - u))
+                row.append(p)
+            rows.append(row)
+        sheet(g, rows, M_THATCH, lambda u, v: scale(THATCH_N, 0.95 - 0.15 * v), tile=0.5, double=True)
+        pts = [a_.lerp(b_, k / 6) + UP * 0.03 + (a_.lerp(b_, k / 6) - V(c.x, roof_y, c.z)).normalized() * 0.02
+               for k in range(7)]
+        tube(g, pts, [0.06 + 0.02 * rng.uniform(0, 1) for _ in pts], 7, M_THATCH, scale(THATCH_N, 0.82), tile=0.4)
+        pole(g, corners[i] + UP * (roof_y - 0.04), corners[(i + 1) % 4] + UP * (roof_y - 0.04), 0.035, 0.035, rng,
+             col=scale(POSTC, 0.85), sides=5, segs=1)
+    tube(g, [apex - UP * 0.1, apex + UP * 0.12], [0.08, 0.02], 6, M_THATCH, scale(THATCH_N, 0.7), tile=0.3)
+    # The hay loaf under it.
+    slab(g, c + UP * 0.62, (2 * hw + 0.1, 1.24, 2 * hw + 0.1), quat_y(0.1), rng, mat=M_THATCH, res=(4, 5, 4),
+         round_r=0.25, rough=0.3, taper=-0.05, crown=0.35,
+         col_fn=lambda p, n: scale((1.3, 1.12, 0.74), 0.9 + 0.12 * max(n.y, 0.0)), tile=0.45)
+    mound(g, (c.x, 0.0, c.z), hw + 0.45, hw + 0.4, 0.07, rng, mat=M_THATCH, col_fn=lambda p, n: (1.1, 0.94, 0.64),
+          rings=3, seg=14)
+
+
+def threshing_floor(g, rng, c, r=0.85):
+    """A round threshing floor of beaten clay ringed with set stones, straw and grain spread on it,
+    a flail and a wooden shovel left lying, a winnowing basket."""
+    c = Vector(c)
+    mound(g, (c.x, -0.02, c.z), r, r * 0.95, 0.06, rng, mat=M_EARTH, col_fn=lambda p, n: (0.72, 0.6, 0.46), rings=4,
+          seg=20, rough=0.04)
+    for k in range(18):
+        a = 2 * math.pi * k / 18 + rng.uniform(-0.05, 0.05)
+        p = c + V(math.cos(a) * (r + 0.04), 0.0, math.sin(a) * (r + 0.04) * 0.95)
+        stone(g, p, (rng.uniform(0.09, 0.13), rng.uniform(0.05, 0.08), rng.uniform(0.07, 0.1)), rng, mat=M_ROCK,
+              detail=1, rough=0.12, rot=quat_y(-a), col_fn=rock_col((0.78, 0.76, 0.72), moss=0.25), tile=0.5)
+    mound(g, (c.x + 0.15, 0.03, c.z - 0.05), r * 0.62, r * 0.5, 0.06, rng, mat=M_THATCH,
+          col_fn=lambda p, n: (1.15, 0.98, 0.64), rings=3, seg=14, rough=0.3)
+    # Flail: a handle and a short swingle joined by a leather link.
+    h0 = c + V(-0.3, 0.06, 0.45)
+    h1 = h0 + V(0.95, 0.04, -0.2)
+    pole(g, h0, h1, 0.022, 0.02, rng, col=(0.76, 0.66, 0.5), sides=6, segs=1, wobble=0.0)
+    pole(g, h1 + V(0.04, 0, 0.0), h1 + V(0.5, 0.0, 0.3), 0.03, 0.028, rng, col=(0.7, 0.6, 0.46), sides=6, segs=1,
+         wobble=0.0)
+    # Wooden shovel.
+    s0 = c + V(0.2, 0.05, -0.55)
+    pole(g, s0, s0 + V(-0.8, 0.02, 0.2), 0.018, 0.018, rng, col=(0.74, 0.64, 0.5), sides=6, segs=1, wobble=0.0)
+    board(g, s0 + V(0.13, 0.0, -0.03), (1, 0, -0.25), (0, 1, 0), 0.28, 0.22, 0.025, mat=M_PLANK, col=(0.7, 0.6, 0.48),
+          rng=rng)
+    # Winnowing basket at the edge, half full of grain.
+    bc = c + V(r + 0.28, 0.0, 0.85)
+    lathe(g, tuple(bc), (0, 1, 0), [(0.0, 0.18), (0.06, 0.26), (0.14, 0.3), (0.16, 0.3)], 12, M_THATCH,
+          (0.82, 0.68, 0.48), tile=0.3)
+    mound(g, (bc.x, 0.08, bc.z), 0.24, 0.24, 0.05, rng, mat=M_FRUIT, col_fn=lambda p, n: (0.9, 0.72, 0.4), rings=2,
+          seg=10, rough=0.05)
+
+
 def town_farm(rng):
-    """Farm: a small log barn under shaggy thatch (wide door ajar, hay spilt at the door), a
-    stubble field of ridged furrows with wheat stooks, hurdles, a ragged scarecrow."""
+    """Farm: a small board-and-batten barn under a long hipped thatch (bound ridge pinned with
+    spars, wide door ajar, hay spilt at the door), a beaten-clay threshing floor with a flail and a
+    winnowing basket, a hay barrack, stooks along a hurdle."""
     b = Builder()
     g = G(b)
-    W, D, ye = 2.5, 2.3, 1.5
+    W, D, ye = 2.6, 2.2, 1.6
     v0 = len(b.verts)
-    ops = _ops([DOOR(1.25, w=1.15, h=1.3, ajar=1.0)], [], [], [WIN(1.1, y0=0.9, h=0.34, prop=False)])
-    footing(g, rng, W, D, y_top=0.2, skip=[(0, 0.6, 1.9)])
-    log_walls(g, rng, W, D, 0.18, ye, ops, r=0.11)
-    thatch_roof(g, rng, W, D, ye + 0.08, 3.35, over=0.45, hip=0.9, ridge="riders", moss=0.6, fresh=0.3)
-    mound(g, (0.25, 0.0, D / 2 + 0.25), 0.55, 0.35, 0.12, rng, mat=M_THATCH, col_fn=lambda p, n: (1.1, 0.92, 0.6),
+    ops = _ops([DOOR(1.3, w=1.2, h=1.32, ajar=1.1)], [WIN(1.1, y0=1.0, h=0.3, prop=False)], [], [])
+    footing(g, rng, W, D, y_top=0.2, skip=[(0, 0.6, 2.0)])
+    plank_walls(g, rng, W, D, 0.16, ye, ops)
+    thatch_roof(g, rng, W, D, ye + 0.04, 2.9, over=0.42, hip=0.32, ridge="spars", moss=0.55, fresh=0.35, sag=0.06)
+    mound(g, (0.25, 0.0, D / 2 + 0.25), 0.55, 0.35, 0.08, rng, mat=M_THATCH, col_fn=lambda p, n: (1.1, 0.92, 0.6),
           rings=3, seg=12)
     shift_tail(b, v0, BX)
-    # The field: ridged furrows along X, stooks, hurdles on the far sides.
-    nz = Noise(rng, 3, 1.5)
-    for k in range(6):
-        z = -1.3 + k * 0.52
-        slab(g, V(1.55, 0.0, z), (2.1, 0.16, 0.34), quat_y(rng.uniform(-0.02, 0.02)), rng, mat=M_EARTH, res=(8, 1, 2),
-             round_r=0.07, rough=0.5, col_fn=lambda p, n: scale((0.55, 0.46, 0.36), 0.9 + 0.2 * nz(p * 3)), tile=0.9)
-    for x, z in ((0.95, -0.78), (1.75, 0.26), (2.3, -0.26), (1.2, 0.78), (2.15, 1.05)):
-        stook(g, rng, (x, 0.04, z), h=rng.uniform(0.55, 0.68))
-    wattle_hurdle(g, rng, V(2.75, 0, -1.6), V(2.75, 0, 1.6), h=0.7)
-    wattle_hurdle(g, rng, V(0.6, 0, -1.6), V(2.75, 0, -1.6), h=0.7)
-    # Scarecrow: cross of poles, a stuffed sack head under a straw hat, a ragged shirt.
-    sc = V(2.05, 0.0, -0.75)
-    pole(g, sc - UP * 0.2, sc + UP * 1.55, 0.03, 0.026, rng, col=POSTC, sides=5, segs=2)
-    pole(g, sc + V(-0.5, 1.15, 0.02), sc + V(0.5, 1.18, -0.02), 0.022, 0.02, rng, col=POSTC, sides=5, segs=1)
-    stone(g, sc + UP * 1.5, (0.12, 0.14, 0.11), rng, mat=M_CLOTH, detail=1, rough=0.1, cuts=0,
-          col_fn=lambda p, n: (0.82, 0.7, 0.5))
-    frustum(g, 0.2, 0.1, 1.6, 0.07, 9, M_THATCH, (0.9, 0.78, 0.5), tile=0.4, centre=tuple(sc), jitter=0.04, rng=rng)
-    frustum(g, 0.1, 0.02, 1.66, 0.12, 9, M_THATCH, (0.9, 0.78, 0.5), tile=0.4, centre=tuple(sc))
-    grid = [[(sc + V(x, 1.2, 0.04)).to_tuple() for x in (-0.42, -0.2, 0.0, 0.2, 0.42)],
-            [(sc + V(x * 0.8, 0.72 + abs(x) * 0.3 * rng.uniform(0.5, 1.2), 0.07 * math.sin(x * 9))).to_tuple()
-             for x in (-0.3, -0.15, 0.0, 0.15, 0.3)]]
-    sheet(g, grid, M_CLOTH, lambda u, v: (0.55, 0.5, 0.42), tile=0.5, double=True)
+    threshing_floor(g, rng, V(1.3, 0, 0.6), r=0.8)
+    hay_barrack(g, rng, V(1.75, 0, -1.02), hw=0.45)
+    for x, z in ((2.55, 0.05), (2.5, 0.62)):
+        stook(g, rng, (x, 0.04, z), h=rng.uniform(0.55, 0.66))
+    wattle_hurdle(g, rng, V(2.85, 0, -1.6), V(2.85, 0, 1.55), h=0.7)
+    for k in range(2):
+        sack(g, rng, V(0.32 + k * 0.32, 0.22, 1.42), lying=bool(k))
     return b
 
 
