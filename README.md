@@ -1,15 +1,18 @@
-
+<img width="1919" height="1076" alt="image" src="https://github.com/user-attachments/assets/cc2dfadd-6f5d-4f85-bffd-6680d3599c78" />
 <div align="center">
 
 # ⚔️ Warbell
 
 # MASSIVE OVERHALL INCOMING - REALISTIC GRAPHICS, 5h CAMPAIGN
 
-<img width="1896" height="1079" alt="image" src="https://github.com/user-attachments/assets/d4246fe4-89e3-4bed-b677-d11dbef729ac" />
-<img width="1908" height="1075" alt="image" src="https://github.com/user-attachments/assets/3bea8da7-f5a3-4b26-ab2a-35e1f5ef3534" />
-<img width="1919" height="1079" alt="image" src="https://github.com/user-attachments/assets/b41d00cd-3aae-4bf0-a68d-0ddd3d8a86f7" />
-<img width="1919" height="1078" alt="image" src="https://github.com/user-attachments/assets/69671a55-1630-4101-9d52-479f8ae18fa1" />
-<img width="1919" height="1079" alt="image" src="https://github.com/user-attachments/assets/53e29812-b7f9-48f9-8252-56945a5a6909" />
+<img width="1898" height="1079" alt="image" src="https://github.com/user-attachments/assets/f8c8051c-652a-4831-b464-0ed9173ecd30" />
+<img width="1919" height="1079" alt="image" src="https://github.com/user-attachments/assets/3159eefa-e330-4588-8563-8bd8bf25cf25" />
+<img width="1919" height="1077" alt="image" src="https://github.com/user-attachments/assets/96cafcbe-b118-440c-8a54-aaa54c05e120" />
+<img width="1919" height="1079" alt="image" src="https://github.com/user-attachments/assets/6e5a7f7c-59cc-449a-b45b-8c5059e12b9f" />
+<img width="1919" height="1079" alt="image" src="https://github.com/user-attachments/assets/afea4eae-7523-4d9a-8ad9-92a4dbe9fc5a" />
+<img width="1919" height="1079" alt="image" src="https://github.com/user-attachments/assets/0f4f6012-3aaa-4ba1-9a6b-830e46b38403" />
+<img width="1915" height="1079" alt="image" src="https://github.com/user-attachments/assets/402279b1-c0a8-4c2f-afa3-5c3a94d8615e" />
+
 
 
 **Defend the keep against nightly ork sieges.**
@@ -32,10 +35,6 @@ Built in Rust on [**Bevy 0.18**](https://bevyengine.org).
 - **itch.io:** [**miskibin.itch.io/warbell**](https://miskibin.itch.io/warbell) — Windows & Linux builds, pushed automatically on every release (works with the [itch.io app](https://itch.io/app) for auto-updates).
 - **From source** (any platform): see [Build from source](#build-from-source) below.
 
-|  |  |  |
-|---|---|---|
-| ![The keep and village at the island's heart](site/screenshots/town-center.png) | ![Orks storm the keep at night](site/screenshots/orks-night.png) | ![The drowned swamp](site/screenshots/swamp.png) |
-| ![The snowbound pinewood](site/screenshots/snow.png) | ![The desert and the rival keep](site/screenshots/desert.png) | ![Gnashfang Hold, the ork stronghold](site/screenshots/ork-temple.png) |
 
 ## Controls
 
@@ -136,10 +135,4 @@ separately licensed). The hero's light sword combo is retargeted from
 [Quaternius' Universal Animation Library 2](https://quaternius.itch.io/universal-animation-library-2)
 (CC0). See [`LICENSE`](LICENSE) for the full text and the asset note.
 
-
-I am also working on realistic procedural world generation in bevy 
-<img width="1900" height="1002" alt="image" src="https://github.com/user-attachments/assets/2b327d0a-a6a9-47b2-b437-50a17db5e3cc" />
-<img width="1909" height="1017" alt="image" src="https://github.com/user-attachments/assets/928c556c-79ab-44b8-a84c-17101151bcb5" />
-
-<img width="1903" height="1016" alt="image" src="https://github.com/user-attachments/assets/b9833a24-d51a-4f04-bee5-c53931bfa4e1" />
 
