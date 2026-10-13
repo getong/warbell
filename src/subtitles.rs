@@ -61,6 +61,10 @@ impl Subtitles {
         self.locked = true;
         self.set(now, speaker, text, dur);
     }
+    /// Hand the caption back to ambient speakers (a staged scene is done with its [`force`](Self::force) pin).
+    pub fn release(&mut self) {
+        self.locked = false;
+    }
     /// Is the current caption a muffled aside? (Test probe — the UI reads the field directly.)
     #[cfg(test)]
     pub fn is_muffled(&self) -> bool {

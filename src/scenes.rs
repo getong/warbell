@@ -47,6 +47,8 @@ pub enum SceneId {
     NightSiege,
     BarrelPeek,
     Mason,
+    /// Ch.2 cutscene (campaign screenplay): dawn after night 1, a farmer mending a burnt fence.
+    FarmMorning,
 }
 
 /// What the F1 panel asks for vs. what's currently staged. `clock` is seconds since the active scene
@@ -61,6 +63,8 @@ pub struct SceneState {
     clock: f32,
     /// Where to pin the hero while the scene runs (world pos + yaw), if the scene stages him.
     hero: Option<(Vec3, f32)>,
+    /// The staged hero is walking (his gait fields are written by the scene, not cleared by [`hold_scene_hero`]).
+    hero_moving: bool,
 }
 
 /// Per-ork looped role within a scene.
@@ -140,6 +144,7 @@ impl Plugin for ScenesPlugin {
                 "nightsiege" | "siege" | "night" => Some(SceneId::NightSiege),
                 "barrelpeek" | "barrel" => Some(SceneId::BarrelPeek),
                 "mason" | "threestones" | "stones" => Some(SceneId::Mason),
+                "farm" | "farmmorning" | "ch2" | "protection" => Some(SceneId::FarmMorning),
                 _ => None,
             };
         }
@@ -147,14 +152,14 @@ impl Plugin for ScenesPlugin {
             .add_systems(Startup, setup_scene_assets)
             .add_systems(
                 Update,
-                (apply_scene_change, drive_scene_orks, drive_scene_labor, drive_scene_bolts, drive_scene_mason)
+                (apply_scene_change, drive_scene_orks, drive_scene_labor, drive_scene_bolts, drive_scene_mason, drive_farm_scene)
                     .chain(),
             )
             // Pin the staged hero LAST (after locomotion/gravity have run) and just before transforms
             // propagate, so his elevated wall mark is the authoritative pose regardless of PlayMode.
             .add_systems(
                 PostUpdate,
-                hold_scene_hero.before(bevy::transform::TransformSystems::Propagate),
+                (hold_scene_hero, farm_camera).before(bevy::transform::TransformSystems::Propagate),
             );
     }
 }
@@ -193,9 +198,16 @@ fn apply_scene_change(
     mut meshes: ResMut<Assets<Mesh>>,
     mut creature_mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
     old: Query<Entity, Or<(With<SceneActor>, With<SceneProp>)>>,
+    prog: Option<Res<crate::capture::ClipProgress>>,
+    mut subs: ResMut<crate::subtitles::Subtitles>,
 ) {
     if state.want == state.active {
-        state.clock += time.delta_secs();
+        // A clip's warm-up frames don't count: the scene starts when recording does.
+        // `FOREST_SCENE_T` freezes the clock at that instant (a still of one moment of the cutscene).
+        let still = state.active == Some(SceneId::FarmMorning) && std::env::var_os("FOREST_SCENE_T").is_some();
+        if !still && !prog.is_some_and(|p| !p.recording) {
+            state.clock += time.delta_secs();
+        }
         return;
     }
     // Tear down the previous scene's actors + props.
@@ -204,6 +216,8 @@ fn apply_scene_change(
     }
     state.clock = 0.0;
     state.hero = None;
+    state.hero_moving = false;
+    subs.release();
     director.gesture = None;
     director.hide_weapon = false;
 
@@ -328,6 +342,10 @@ fn apply_scene_change(
                 commands.entity(e).insert(SceneLabor { period: 1.5, phase: i as f32 * 0.43, last: -1.0 });
             }
         }
+        SceneId::FarmMorning => {
+            pin_sky(&mut clock, 0.13); // first light
+            setup_farm_morning(&mut commands, &mut meshes, &mut creature_mats, &assets);
+        }
         SceneId::BarrelPeek => {
             pin_sky(&mut clock, 0.82);
             // A peasant peeking out from behind a barrel in the yard.
@@ -345,7 +363,12 @@ fn apply_scene_change(
             }
         }
     }
-    state.clock = -crate::cinematic::PRE_ROLL; // camera-setting grace before the loop starts
+    // Loop scenes get a camera-setting grace; the cutscene starts at once (`FOREST_SCENE_T=<s>` skips ahead for a still).
+    state.clock = if id == SceneId::FarmMorning {
+        std::env::var("FOREST_SCENE_T").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0.0)
+    } else {
+        -crate::cinematic::PRE_ROLL
+    };
     state.active = Some(id);
 }
 
@@ -562,9 +585,292 @@ fn hold_scene_hero(
     hero.pos = Vec2::new(p.x, p.z);
     hero.y = p.y;
     hero.facing = yaw;
-    hero.moving = false;
+    hero.moving = state.hero_moving;
     tf.translation = p;
     tf.rotation = Quat::from_rotation_y(yaw);
+}
+
+// ── Ch.2 cutscene: "Bless you for the protection" ────────────────────────────────────
+//
+// Campaign screenplay Ch.2 (`docs/superpowers/specs/2026-10-13-kampania-scenariusz-design.md`): the
+// dawn after night 1. A farmer kneels mending a burnt fence, another hauls planks past, the knight
+// walks up. ~19 s, every clip from the UAL pool (`Fixing_Kneeling`, `Walk_Carry_Loop`, hero walk).
+// Pure scene-director: the same `SceneState` clock drives actors, camera cuts, captions, letterbox +
+// fades, and the scene clears itself (`want = None`) at the end. `FOREST_SCENE=farm` stages it
+// (`FOREST_SCENE_T=<s>` freezes the clock there for a still; under `FOREST_CLIP` it starts with recording).
+
+/// The fence line's centre (world XZ): open grass on the road out to the south-west farms.
+const FARM: Vec2 = Vec2::new(-36.0, 34.0);
+/// Where the kneeling farmer works — just on the +Z side of the fence gap, facing the fence (−Z).
+const FARM_KNEEL: Vec2 = Vec2::new(FARM.x, FARM.y + 0.55);
+const FARM_END: f32 = 19.4;
+/// The knight's walk-in: from the road to a conversational stop beside the farmer.
+const WAT_FROM: Vec2 = Vec2::new(FARM.x + 9.5, FARM.y + 1.2);
+const WAT_TO: Vec2 = Vec2::new(FARM.x + 1.9, FARM.y + 0.9);
+/// The plank-hauler's lane (behind the pair) and where he finishes walking.
+const HAUL_Z: f32 = FARM.y + 3.3;
+const HAUL_END_X: f32 = FARM.x - 6.5;
+const HAUL_SPEED: f32 = 1.2; // = npc_skin::WALK_NATIVE, so the carry-walk's feet don't skate
+
+/// Timed captions: (start s, duration s, speaker, line). Texts verbatim from the screenplay; the
+/// farmer's first line is the existing villager VO clip `screaming` (`audio/lines.rs`).
+const FARM_LINES: [(f32, f32, &str, &str); 4] = [
+    (5.6, 5.3, "Farmer", "Bless you for the protection. The screaming at night is a lovely touch."),
+    (11.2, 2.0, "Wat", "You're welcome."),
+    (13.8, 2.0, "Farmer", "Wasn't thanking you."),
+    (16.4, 1.8, "Wat", "I know."),
+];
+
+#[derive(Component, Clone, Copy, PartialEq)]
+enum FarmRole {
+    Kneeler,
+    Hauler,
+}
+
+/// Full-screen black overlay for the open/close fades.
+#[derive(Component)]
+struct FarmFade;
+
+fn setup_farm_morning(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
+    assets: &SceneAssets,
+) {
+    let a = FARM;
+    // The fence: three bays each side of a gap; the right-hand ones scorched.
+    for dx in [-6.0f32, -4.0, -2.0, 2.0, 4.0, 6.0] {
+        let p = Vec2::new(a.x + dx, a.y);
+        spawn_prop_mesh(commands, meshes, assets, fence_section_mesh(dx > 3.0), Vec3::new(p.x, world_y_at(p), p.y), 0.0, 1.0);
+    }
+    // Torn-out rail: one end still nailed to the post, hanging; a spare lying in the grass.
+    let hinge = Vec3::new(a.x - 1.0, world_y_at(Vec2::new(a.x - 1.0, a.y)) + 0.72, a.y);
+    commands.spawn((
+        Mesh3d(meshes.add(cube(1.0, 0.07, 0.05, Vec3::new(0.5, 0.0, 0.0), WOOD))),
+        MeshMaterial3d(assets.prop_mat.clone()),
+        Transform::from_translation(hinge).with_rotation(Quat::from_rotation_z(-0.6)),
+        SceneProp,
+    ));
+    let spare = Vec2::new(a.x + 0.6, a.y - 0.5);
+    spawn_prop_mesh(commands, meshes, assets, cube(1.4, 0.06, 0.12, Vec3::new(0.0, 0.03, 0.0), WOOD), Vec3::new(spare.x, world_y_at(spare), spare.y), 0.5, 1.0);
+    // Planks stacked beside the work.
+    let pile = Vec2::new(a.x - 1.5, a.y + 0.45);
+    spawn_prop_mesh(commands, meshes, assets, plank_pile_mesh(), Vec3::new(pile.x, world_y_at(pile), pile.y), 0.2, 1.0);
+    // The burnt field behind them: charred ground + blackened stakes.
+    for (dx, dz, r) in [(-3.0f32, 6.5f32, 2.6f32), (1.5, 8.0, 3.2), (5.5, 6.0, 2.2), (-6.5, 9.5, 2.8), (9.0, 9.0, 2.4)] {
+        let p = Vec2::new(a.x + dx, a.y + dz);
+        spawn_prop_mesh(commands, meshes, assets, scorch_patch_mesh(), Vec3::new(p.x, world_y_at(p) + 0.02, p.y), dx, r);
+    }
+    for (dx, dz) in [(-2.0f32, 5.6f32), (0.2, 7.4), (2.8, 6.8), (4.4, 8.6), (-4.6, 8.2), (-0.8, 9.6)] {
+        let p = Vec2::new(a.x + dx, a.y + dz);
+        spawn_prop_mesh(commands, meshes, assets, char_stake_mesh(), Vec3::new(p.x, world_y_at(p), p.y), dx * 1.7, 0.7 + (dz % 1.0) * 0.5);
+    }
+
+    // The kneeling farmer (never looks up) and the plank-hauler.
+    let farmer = crate::villagers::spawn_scene_peasant(
+        commands, meshes, creature_mats, FARM_KNEEL, std::f32::consts::PI, Some(crate::villagers::Trade::Farmer), 23,
+    );
+    commands.entity(farmer).insert((FarmRole::Kneeler, crate::npc_skin::SkinClip("Fixing_Kneeling")));
+    let hauler = crate::villagers::spawn_scene_peasant(
+        commands, meshes, creature_mats, Vec2::new(FARM.x + 9.6, HAUL_Z), -std::f32::consts::FRAC_PI_2, None, 13,
+    );
+    let bundle = meshes.add(plank_bundle_mesh());
+    commands.entity(hauler).insert((FarmRole::Hauler, crate::npc_skin::SkinClip("Walk_Carry_Loop"))).with_children(|p| {
+        // The load, cradled at the chest (the carry clip holds the arms out; the bundle is the prop).
+        p.spawn((Mesh3d(bundle), MeshMaterial3d(assets.prop_mat.clone()), Transform::from_xyz(0.0, 1.0, 0.5)));
+    });
+
+    // Letterbox + fade-from-black.
+    for top in [true, false] {
+        commands.spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(0.0),
+                width: Val::Percent(100.0),
+                height: Val::Percent(11.0),
+                top: if top { Val::Px(0.0) } else { Val::Auto },
+                bottom: if top { Val::Auto } else { Val::Px(0.0) },
+                ..default()
+            },
+            BackgroundColor(Color::BLACK),
+            GlobalZIndex(35),
+            SceneProp,
+        ));
+    }
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(0.0),
+            top: Val::Px(0.0),
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            ..default()
+        },
+        BackgroundColor(Color::BLACK),
+        GlobalZIndex(38),
+        FarmFade,
+        SceneProp,
+    ));
+}
+
+/// The knight's walk-in: (position, facing, still striding?) at scene time `t`.
+fn farm_wat(t: f32) -> (Vec2, f32, bool) {
+    let speed = crate::player::SPEED;
+    let len = WAT_FROM.distance(WAT_TO);
+    let arrive = len / speed;
+    let pos = WAT_FROM.lerp(WAT_TO, ((t * speed) / len).clamp(0.0, 1.0));
+    let yaw = |v: Vec2| v.x.atan2(v.y);
+    let (walk, stand) = (yaw(WAT_TO - WAT_FROM), yaw(FARM_KNEEL - WAT_TO));
+    // ease the last bit of heading round to face the farmer
+    let k = env(t, &[(arrive, 0.0), (arrive + 0.5, 1.0)]);
+    (pos, walk + (stand - walk) * k, t > 0.0 && t < arrive)
+}
+
+#[allow(clippy::type_complexity)]
+fn drive_farm_scene(
+    time: Res<Time>,
+    mut state: ResMut<SceneState>,
+    mut subs: ResMut<crate::subtitles::Subtitles>,
+    mut actors: Query<
+        (&FarmRole, &mut crate::villagers::Villager, &mut Transform, Option<&mut crate::npc_skin::SkinClip>),
+        Without<crate::player::Hero>,
+    >,
+    mut hero_q: Query<&mut crate::player::Hero>,
+    mut fade: Query<&mut BackgroundColor, With<FarmFade>>,
+) {
+    if state.active != Some(SceneId::FarmMorning) {
+        return;
+    }
+    let t = state.clock.max(0.0);
+    let (dt, now) = (time.delta_secs(), time.elapsed_secs());
+
+    for (role, mut v, mut tf, clip) in &mut actors {
+        let (pos, facing, walking) = match role {
+            FarmRole::Kneeler => (FARM_KNEEL, std::f32::consts::PI, false),
+            FarmRole::Hauler => {
+                // already mid-stride when the scene opens
+                let x = (FARM.x + 12.0 - HAUL_SPEED * (t + 2.0)).max(HAUL_END_X);
+                (Vec2::new(x, HAUL_Z), -std::f32::consts::FRAC_PI_2, x > HAUL_END_X + 1e-3)
+            }
+        };
+        v.pos = pos;
+        v.facing = facing;
+        v.moving = walking;
+        tf.translation = Vec3::new(pos.x, world_y_at(pos), pos.y);
+        tf.rotation = Quat::from_rotation_y(facing);
+        if *role == FarmRole::Hauler {
+            if let Some(mut c) = clip {
+                let want = if walking { "Walk_Carry_Loop" } else { "" };
+                if c.0 != want {
+                    c.0 = want;
+                }
+            }
+        }
+    }
+
+    // The knight: pose handed to `hold_scene_hero` (PostUpdate); gait fields written here.
+    let (wp, wf, walking) = farm_wat(t);
+    state.hero = Some((Vec3::new(wp.x, world_y_at(wp), wp.y), wf));
+    state.hero_moving = walking;
+    if let Ok(mut hero) = hero_q.single_mut() {
+        if walking {
+            crate::player::anim::stage_gait(&mut hero, crate::player::SPEED, dt);
+            hero.sprint_held = false;
+        } else {
+            hero.moving_amt *= (-dt * 8.0).exp();
+        }
+    }
+
+    // Captions (pinned against ambient barks; `release`d on teardown).
+    match FARM_LINES.iter().find(|(s, d, ..)| t >= *s && t < s + d) {
+        Some((s, d, who, text)) => subs.force(now, Some(who), text, s + d - t),
+        None => subs.force(now, None, "", 0.0),
+    }
+
+    // Fade in from black, out to black.
+    let a = (1.0 - t / 1.2).max((t - (FARM_END - 1.0)) / 1.0).clamp(0.0, 1.0);
+    for mut bg in &mut fade {
+        bg.0 = Color::srgba(0.0, 0.0, 0.0, a);
+    }
+
+    if t >= FARM_END {
+        state.want = None; // done — the next frame's teardown hands the world back
+    }
+}
+
+/// Camera cuts: wide track of the walk-in, then farmer / knight coverage of the exchange.
+fn farm_camera(
+    state: Res<SceneState>,
+    mut cam: Query<&mut Transform, (With<Camera3d>, Without<crate::player::Hero>)>,
+) {
+    if state.active != Some(SceneId::FarmMorning) {
+        return;
+    }
+    let Ok(mut c) = cam.single_mut() else { return };
+    let t = state.clock.max(0.0);
+    let gy = world_y_at(FARM);
+    let at3 = |x: f32, y: f32, z: f32| Vec3::new(FARM.x + x, gy + y, FARM.y + z);
+    // (cut time, shot): wide · farmer · knight · farmer · knight
+    const CUTS: [(f32, u8); 5] = [(0.0, 0), (5.4, 1), (11.0, 2), (13.6, 1), (16.2, 2)];
+    let (start, shot) = CUTS.iter().rev().find(|(s, _)| t >= *s).copied().unwrap_or((0.0, 0));
+    let u = t - start;
+    let (eye, at) = match shot {
+        // Low, through the fence line, following the knight in (a slow drift sideways).
+        0 => {
+            let (w, _, _) = farm_wat(t);
+            let chest = Vec3::new(w.x, world_y_at(w) + 1.0, w.y);
+            (at3(3.8 - 0.1 * u, 1.05, -4.6), chest.lerp(at3(0.8, 0.9, 0.8), 0.4))
+        }
+        // The farmer, shot through the gap in the fence; a slow push-in.
+        1 => (at3(-0.5, 0.85, -2.3 + 0.07 * u), at3(0.0, 0.62, 0.55)),
+        // Over the farmer's shoulder at the knight.
+        _ => (at3(-1.1, 0.95, 1.5 - 0.04 * u), Vec3::new(WAT_TO.x, world_y_at(WAT_TO) + 1.0, WAT_TO.y)),
+    };
+    c.translation = eye;
+    c.look_at(at, Vec3::Y);
+}
+
+/// One fence bay (2 u wide, centred on the origin): two posts + two rails. `burnt` = scorched black.
+fn fence_section_mesh(burnt: bool) -> Mesh {
+    let (post, rail) = if burnt { (0x2a2520, 0x352d26) } else { (WOOD_DARK, WOOD) };
+    merged(vec![
+        cylr(0.05, 0.95, Vec3::new(-1.0, 0.475, 0.0), Quat::IDENTITY, post),
+        cylr(0.05, 0.95, Vec3::new(1.0, 0.475, 0.0), Quat::IDENTITY, post),
+        cube(2.0, 0.07, 0.05, Vec3::new(0.0, 0.40, 0.0), rail),
+        cube(2.0, 0.07, 0.05, Vec3::new(0.0, 0.72, 0.0), rail),
+    ])
+}
+
+/// A short stack of fresh-cut planks.
+fn plank_pile_mesh() -> Mesh {
+    merged(vec![
+        cube(1.2, 0.05, 0.2, Vec3::new(0.0, 0.03, 0.0), 0xb08a58),
+        cube(1.2, 0.05, 0.2, Vec3::new(0.02, 0.08, 0.22), 0xa87f4e),
+        cube(1.2, 0.05, 0.2, Vec3::new(-0.03, 0.13, 0.1), 0xb89463),
+        cube(1.1, 0.05, 0.2, Vec3::new(0.05, 0.18, 0.16), 0xa98250),
+    ])
+}
+
+/// The planks the hauler carries (length along local +Z, the way he faces).
+fn plank_bundle_mesh() -> Mesh {
+    merged(vec![
+        cube(0.2, 0.05, 1.3, Vec3::new(-0.11, 0.0, 0.0), 0xb08a58),
+        cube(0.2, 0.05, 1.3, Vec3::new(0.11, 0.0, 0.0), 0xa87f4e),
+        cube(0.2, 0.05, 1.2, Vec3::new(0.0, 0.055, 0.0), 0xb89463),
+    ])
+}
+
+/// A scorched patch of ground: a flat soot disc.
+fn scorch_patch_mesh() -> Mesh {
+    cylr(1.0, 0.03, Vec3::new(0.0, 0.015, 0.0), Quat::IDENTITY, 0x1e1914)
+}
+
+/// A blackened stalk/stake left standing in the burnt field.
+fn char_stake_mesh() -> Mesh {
+    merged(vec![
+        cylr(0.04, 0.8, Vec3::new(0.0, 0.4, 0.0), Quat::IDENTITY, 0x1b1713),
+        cone_m(0.05, 0.12, Vec3::new(0.0, 0.86, 0.0), Quat::IDENTITY, 0x2a231d),
+    ])
 }
 
 // ── Spawn helpers ──────────────────────────────────────────────────────────────────────
