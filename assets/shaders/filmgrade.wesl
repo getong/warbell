@@ -19,6 +19,10 @@ struct FilmGrade {
     saturation: f32,
     contrast: f32,
     sharpen: f32,
+    grain: f32,
+    vignette: f32,
+    aberration: f32,
+    time: f32,
 }
 @group(0) @binding(2) var<uniform> grade: FilmGrade;
 
@@ -41,6 +45,15 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         return src;
     }
     var lin = max(src.rgb, vec3<f32>(0.0));
+
+    // ── Chromatic aberration ── red/blue split radially (zero at the centre, strongest at the
+    // corners) — the cheap-lens fringe that sells "shot on glass". Off (0) in normal play.
+    let to_c = in.uv - vec2<f32>(0.5);
+    if grade.aberration > 0.00001 {
+        let off = to_c * (dot(to_c, to_c) * 4.0) * grade.aberration;
+        lin.r = textureSample(screen_texture, texture_sampler, in.uv + off).r;
+        lin.b = textureSample(screen_texture, texture_sampler, in.uv - off).b;
+    }
 
     // ── Unsharp mask (linear, 4-tap cross) — luma-only so it never adds colour fringing. ──
     if grade.sharpen > 0.001 {
@@ -84,6 +97,24 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
 
     // ── Toe ── lift the floor into a faint cool tint (never pure #000 — soft film blacks).
     c = c * (1.0 - grade.toe) + grade.toe * grade.toe_tint;
+
+    // ── Vignette ── soft optical fall-off toward the corners (display space, so it reads as light
+    // loss rather than a grey overlay).
+    if grade.vignette > 0.001 {
+        let r = length(to_c * vec2<f32>(1.0, 0.8)) * 1.45;
+        c = c * (1.0 - grade.vignette * smoothstep(0.35, 1.0, r));
+    }
+
+    // ── Film grain ── per-pixel hash, re-seeded each frame, strongest in the mid-tones and
+    // quiet in deep shadow / clipped highlights so it never lifts the blacks.
+    if grade.grain > 0.001 {
+        let p = in.position.xy + vec2<f32>(grade.time * 61.0, grade.time * 37.0);
+        let n = fract(sin(dot(p, vec2<f32>(12.9898, 78.233))) * 43758.5453) - 0.5;
+        let n2 = fract(sin(dot(p + 7.1, vec2<f32>(39.346, 11.135))) * 24634.6345) - 0.5;
+        let lm = luma(c);
+        let w = 4.0 * lm * (1.0 - lm) + 0.15;
+        c = c + vec3<f32>(n + 0.35 * n2) * grade.grain * w;
+    }
 
     c = clamp(c, vec3<f32>(0.0), vec3<f32>(1.0));
     c = mix(graded_in, c, clamp(grade.strength, 0.0, 2.0));

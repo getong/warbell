@@ -60,6 +60,13 @@ pub struct FilmGrade {
     pub contrast: f32,
     /// Unsharp-mask amount (0 = off).
     pub sharpen: f32,
+    /// Cinematic extras (all 0 = off, the in-game default; the cutscene director raises them):
+    /// film-grain amplitude, edge-darkening vignette, radial chromatic aberration (uv shift at the
+    /// corners), and a clock that re-seeds the grain each frame.
+    pub grain: f32,
+    pub vignette: f32,
+    pub aberration: f32,
+    pub time: f32,
 }
 
 impl Default for FilmGrade {
@@ -75,6 +82,10 @@ impl Default for FilmGrade {
             saturation: 1.0,
             contrast: 1.18,
             sharpen: 0.32,
+            grain: 0.0,
+            vignette: 0.0,
+            aberration: 0.0,
+            time: 0.0,
         }
     }
 }

@@ -88,7 +88,7 @@ pub fn read_secs(text: &str) -> f32 {
 
 /// The full-width caption row (repositioned above the build palette while it's open).
 #[derive(Component)]
-struct SubtitleRow;
+pub(crate) struct SubtitleRow;
 /// The caption plate (soft dark band behind the line — fades with it).
 #[derive(Component)]
 struct SubtitlePlate;

@@ -159,7 +159,7 @@ impl Plugin for ScenesPlugin {
             // propagate, so his elevated wall mark is the authoritative pose regardless of PlayMode.
             .add_systems(
                 PostUpdate,
-                (hold_scene_hero, farm_camera).before(bevy::transform::TransformSystems::Propagate),
+                (hold_scene_hero, farm_camera, farm_hide_hud).before(bevy::transform::TransformSystems::Propagate),
             );
     }
 }
@@ -687,7 +687,7 @@ fn setup_farm_morning(
                 position_type: PositionType::Absolute,
                 left: Val::Px(0.0),
                 width: Val::Percent(100.0),
-                height: Val::Percent(11.0),
+                height: Val::Percent(12.8), // 2.39:1 on a 16:9 frame
                 top: if top { Val::Px(0.0) } else { Val::Auto },
                 bottom: if top { Val::Auto } else { Val::Px(0.0) },
                 ..default()
@@ -798,36 +798,118 @@ fn drive_farm_scene(
     }
 }
 
-/// Camera cuts: wide track of the walk-in, then farmer / knight coverage of the exchange.
+/// What the cutscene borrows from the camera and restores on teardown.
+struct FarmLookSaved {
+    fov: f32,
+    dof: (f32, f32, f32),
+}
+
+/// Camera cuts + lens: wide track of the walk-in, then farmer / knight coverage of the exchange.
+/// Each shot has its own focal length (wide 46° → telephoto close-ups) and a shallow depth of field
+/// racked onto the subject; a faint handheld drift keeps the frame alive; film grain, vignette and
+/// a touch of chromatic aberration ride the final grade pass. All of it is put back afterwards.
+#[allow(clippy::type_complexity)]
 fn farm_camera(
+    time: Res<Time>,
     state: Res<SceneState>,
-    mut cam: Query<&mut Transform, (With<Camera3d>, Without<crate::player::Hero>)>,
+    mut cam: Query<
+        (&mut Transform, &mut Projection, &mut crate::dof::Dof, Option<&mut crate::filmgrade::FilmGrade>),
+        (With<Camera3d>, Without<crate::player::Hero>),
+    >,
+    mut saved: Local<Option<FarmLookSaved>>,
 ) {
+    let Ok((mut c, mut proj, mut dof, grade)) = cam.single_mut() else { return };
     if state.active != Some(SceneId::FarmMorning) {
+        // Hand the lens back (once) after the scene.
+        if let Some(sv) = saved.take() {
+            if let Projection::Perspective(p) = &mut *proj {
+                p.fov = sv.fov;
+            }
+            (dof.range, dof.far_ramp, dof.max_radius) = sv.dof;
+            if let Some(mut g) = grade {
+                (g.grain, g.vignette, g.aberration) = (0.0, 0.0, 0.0);
+            }
+        }
         return;
     }
-    let Ok(mut c) = cam.single_mut() else { return };
     let t = state.clock.max(0.0);
+    let now = time.elapsed_secs();
     let gy = world_y_at(FARM);
     let at3 = |x: f32, y: f32, z: f32| Vec3::new(FARM.x + x, gy + y, FARM.y + z);
     // (cut time, shot): wide · farmer · knight · farmer · knight
     const CUTS: [(f32, u8); 5] = [(0.0, 0), (5.4, 1), (11.0, 2), (13.6, 1), (16.2, 2)];
     let (start, shot) = CUTS.iter().rev().find(|(s, _)| t >= *s).copied().unwrap_or((0.0, 0));
     let u = t - start;
-    let (eye, at) = match shot {
+    // (eye, look-at, field of view, sharp half-band) per shot.
+    let (eye, at, fov_deg, band): (Vec3, Vec3, f32, f32) = match shot {
         // Low, through the fence line, following the knight in (a slow drift sideways).
         0 => {
             let (w, _, _) = farm_wat(t);
             let chest = Vec3::new(w.x, world_y_at(w) + 1.0, w.y);
-            (at3(3.8 - 0.1 * u, 1.05, -4.6), chest.lerp(at3(0.8, 0.9, 0.8), 0.4))
+            (at3(3.8 - 0.1 * u, 1.05, -4.6), chest.lerp(at3(0.8, 0.9, 0.8), 0.4), 46.0, 7.0)
         }
-        // The farmer, shot through the gap in the fence; a slow push-in.
-        1 => (at3(-0.5, 0.85, -2.3 + 0.07 * u), at3(0.0, 0.62, 0.55)),
+        // The farmer, shot through the gap in the fence; a slow push-in on a long lens.
+        1 => (at3(-0.5, 0.85, -2.6 + 0.07 * u), at3(0.0, 0.62, 0.55), 30.0, 0.9),
         // Over the farmer's shoulder at the knight.
-        _ => (at3(-1.1, 0.95, 1.5 - 0.04 * u), Vec3::new(WAT_TO.x, world_y_at(WAT_TO) + 1.0, WAT_TO.y)),
+        _ => (
+            at3(-1.1, 0.95, 1.5 - 0.04 * u),
+            Vec3::new(WAT_TO.x, world_y_at(WAT_TO) + 1.0, WAT_TO.y),
+            34.0,
+            1.1,
+        ),
     };
-    c.translation = eye;
-    c.look_at(at, Vec3::Y);
+    // Handheld: slow, tiny, incommensurate drifts on position and aim (never a shake).
+    let h = |f: f32, ph: f32| (now * f + ph).sin();
+    let sway = Vec3::new(h(0.9, 0.0) + 0.5 * h(2.3, 1.0), h(1.1, 2.0) * 0.6, h(0.7, 4.0)) * 0.012;
+    let aim = Vec3::new(h(1.3, 3.0), h(0.8, 5.0) * 0.7, h(1.7, 1.5)) * 0.01;
+    c.translation = eye + sway;
+    c.look_at(at + aim, Vec3::Y);
+
+    if saved.is_none() {
+        let fov = if let Projection::Perspective(p) = &*proj { p.fov } else { 50f32.to_radians() };
+        *saved = Some(FarmLookSaved { fov, dof: (dof.range, dof.far_ramp, dof.max_radius) });
+    }
+    if let Projection::Perspective(p) = &mut *proj {
+        p.fov = fov_deg.to_radians();
+    }
+    // Rack focus onto the subject: sharp through the subject, melting off behind it.
+    dof.focal = eye.distance(at);
+    dof.range = band;
+    dof.far_ramp = 16.0;
+    dof.max_radius = 7.0;
+    if let Some(mut g) = grade {
+        g.grain = 0.045;
+        g.vignette = 0.42;
+        g.aberration = 0.0035;
+        g.time = now.fract() * 17.0;
+    }
+}
+
+/// Hide the whole HUD for the duration (every root UI node but the cutscene's own letterbox / fade
+/// and the caption row), remembering each node's visibility so it comes back exactly as it was.
+#[allow(clippy::type_complexity)]
+fn farm_hide_hud(
+    state: Res<SceneState>,
+    mut roots: Query<
+        (Entity, &mut Visibility),
+        (With<Node>, Without<ChildOf>, Without<SceneProp>, Without<crate::subtitles::SubtitleRow>),
+    >,
+    mut hidden: Local<Vec<(Entity, Visibility)>>,
+) {
+    if state.active == Some(SceneId::FarmMorning) {
+        for (e, mut v) in &mut roots {
+            if *v != Visibility::Hidden {
+                hidden.push((e, *v));
+                *v = Visibility::Hidden;
+            }
+        }
+    } else if !hidden.is_empty() {
+        for (e, was) in hidden.drain(..) {
+            if let Ok((_, mut v)) = roots.get_mut(e) {
+                *v = was;
+            }
+        }
+    }
 }
 
 /// One fence bay (2 u wide, centred on the origin): two posts + two rails. `burnt` = scorched black.
