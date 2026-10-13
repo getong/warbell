@@ -272,6 +272,7 @@ fn main() {
             decor::DecorPlugin, // firefly bob system (decor itself spawned per-biome)
             dof::DofPlugin,     // custom CoC bokeh depth-of-field post pass (player-focused)
         ))
+        .add_plugins(distant_isles::DistantIslesPlugin) // horizon mountains: aerial-perspective haze driver
         .add_plugins(filmgrade::FilmGradePlugin) // final RDR2-style look pass: split-tone, vibrance, S-curve, sharpen
         .add_plugins(gates::GatesPlugin) // gates shut at dusk, open at dawn; ork-only solid, hackable
         .add_plugins(market::MarketPlugin) // the living market on the west lane: stalls, vendors, vendor greetings
