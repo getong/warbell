@@ -82,17 +82,23 @@ fn setup_orb_assets(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let mesh = meshes.add(Sphere::new(0.09).mesh().ico(2).unwrap());
+    // A soft round camera-facing glint (additive) rather than a solid ball — still reads clearly
+    // as a pickup, but as a point of light, in the subdued ui-vfx palette below.
+    let mesh = meshes.add(crate::particles::soft_disc_mesh().scaled_by(Vec3::splat(0.34)));
     // Muted reward motes (the unlit base colour IS the output — HDR gain feeds a soft bloom):
     // a dull tarnished-gold glint and a pale cold wisp for XP, instead of saturated candy orbs.
     let gold = materials.add(StandardMaterial {
         base_color: Color::LinearRgba(LinearRgba::rgb(1.5, 1.0, 0.38)),
         unlit: true,
+        alpha_mode: AlphaMode::Add,
+        cull_mode: None,
         ..default()
     });
     let xp = materials.add(StandardMaterial {
         base_color: Color::LinearRgba(LinearRgba::rgb(0.85, 0.95, 1.05)),
         unlit: true,
+        alpha_mode: AlphaMode::Add,
+        cull_mode: None,
         ..default()
     });
     commands.insert_resource(OrbAssets { mesh, gold, xp });
@@ -123,6 +129,7 @@ fn spawn_queued_orbs(
                 MeshMaterial3d(mat),
                 Transform::from_xyz(o.x as f32, o.y as f32, o.z as f32),
                 RewardOrb(o),
+                crate::particles::FaceCamera,
                 bevy::light::NotShadowCaster,
             ));
         }

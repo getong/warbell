@@ -146,12 +146,15 @@ fn setup_embers(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let mesh = meshes.add(Sphere::new(0.035).mesh().ico(1).unwrap());
-    // Hot ember: warm base + a strong emissive so the scene's bloom kisses it into a glowing speck.
+    // Hot ember: a tiny soft round sprite (camera-facing), additive, HDR orange so the bloom kisses
+    // it into a glowing speck. (Unlit outputs base_color only — the old `emissive` never reached
+    // the frame.)
+    let mesh = meshes.add(crate::particles::soft_disc_mesh().scaled_by(Vec3::splat(0.09)));
     let mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 0.55, 0.22),
-        emissive: LinearRgba::rgb(3.4, 1.3, 0.3),
+        base_color: Color::LinearRgba(LinearRgba::rgb(2.6, 0.95, 0.25)),
         unlit: true,
+        alpha_mode: AlphaMode::Add,
+        cull_mode: None,
         ..default()
     });
     commands.insert_resource(EmberAssets { mesh, mat });
@@ -197,6 +200,7 @@ fn spawn_embers(
             MeshMaterial3d(assets.mat.clone()),
             Transform::from_translation(base).with_scale(Vec3::splat(0.7 + hash01(j + 1.3) * 0.6)),
             Ember { vel: drift + Vec3::Y * up, life: 1.3, life0: 1.3, scale0: 0.7 + hash01(j + 1.3) * 0.6 },
+            crate::particles::FaceCamera,
             NotShadowCaster,
         ));
     }

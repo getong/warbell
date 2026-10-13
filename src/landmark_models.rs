@@ -404,6 +404,8 @@ pub fn witch_hut() -> LandmarkModel {
         Fx::None,
         Glow { color: Color::srgb(0.24, 0.27, 0.15), strength: 0.55, pulse: Some((1.1, 0.25, 0.7)) },
     ));
+    // (The three glowing ico-sphere wisps that orbited the brew are gone: hard pale balls read as
+    // low-poly magic. The brew's own faint glow + the chimney smoke carry the yard.)
 
     // Charms swinging from the eaves: bone-and-twig fetishes on cords.
     let charm = |long: f32| {
@@ -449,7 +451,12 @@ pub fn witch_hut() -> LandmarkModel {
     // close so the column reads connected, not as beads on a string.
     for k in 0..4 {
         let mut m = AnimPart::solid(
-            tinted(ico(0.21, 2).scaled_by(Vec3::new(1.0, 0.78, 1.0)), lin(HUT_SMOKE)),
+            // A soft round camera-facing puff (`FaceCamera` via Fx::Rise), not a faceted ico.
+            crate::particles::soft_disc_tinted({
+                let c = lin(HUT_SMOKE);
+                [c[0], c[1], c[2]]
+            })
+            .scaled_by(Vec3::splat(0.62)),
             Transform::from_xyz(-0.66, 4.02, -0.72),
             Fx::Rise { rate: 0.36, range: 1.55, drift: Vec2::new(0.34, 0.16), grow: 1.2, phase: k as f32 * 0.39 },
         );

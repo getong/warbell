@@ -39,9 +39,14 @@ struct Wisp {
 
 /// Slow eerie hover: a gentle vertical bob + a small horizontal drift circle. Runs ungated
 /// (render-side dressing, like other anim systems) — 20-odd transforms is nothing.
-fn bob_wisps(time: Res<Time>, mut q: Query<(&Wisp, &mut Transform)>) {
+fn bob_wisps(time: Res<Time>, dusk: Res<crate::particles::Dusk>, mut q: Query<(&Wisp, &mut Transform)>) {
     let t = time.elapsed_secs();
+    // Night-only marsh-light: grows in after sunset (dusk² so it lags the fireflies), and breathes
+    // slowly in and out (marsh gas flares and fades rather than hanging lit).
+    let night = dusk.0 * dusk.0;
     for (w, mut tf) in &mut q {
+        let breathe = 0.55 + 0.45 * (t * 0.23 + w.phase * 2.3).sin();
+        tf.scale = Vec3::splat(0.55 * night * breathe);
         tf.translation = w.base
             + Vec3::new(
                 (t * 0.31 + w.phase).sin() * 0.55,
@@ -166,23 +171,27 @@ fn stilt_hut() -> Mesh {
 pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) {
     use crate::worldmap::{ground_at_world, pool_sd_world};
     let mat = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.95, ..default() });
-    // Faint marsh-light, not a neon bead: at ×55 bloom every wisp read as a glowing green speck
-    // from across the bog (player: "dots"). Only one in four RNG-walk spots is lit (below).
+    // Marsh-gas will-o'-wisp: a faint, soft, pale blue-green haze (a soft round sprite, additive),
+    // not a bead — only at dusk/night (`bob_wisps` shrinks it to nothing by day) and rare (one in
+    // four RNG-walk spots is lit, below). Dim enough that it's half-imagined at the edge of sight.
     let wisp_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.30, 0.42, 0.33),
-        emissive: LinearRgba::from(Color::srgb(0.45, 1.0, 0.55)) * 4.0,
+        base_color: Color::LinearRgba(LinearRgba::rgb(0.16, 0.24, 0.20)),
         unlit: true,
+        alpha_mode: AlphaMode::Add,
+        cull_mode: None,
         ..default()
     });
+    // Foxfire caps: real bioluminescent fungus is a faint cold green you only see in the dark, not
+    // a neon-cyan bulb. Low-saturation, low HDR gain.
     let glow_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.6, 1.0, 0.9),
-        emissive: LinearRgba::from(Color::srgb(0.35, 1.0, 0.82)) * 26.0,
-        unlit: true,
+        base_color: Color::srgb(0.46, 0.56, 0.44),
+        emissive: LinearRgba::from(Color::srgb(0.50, 0.60, 0.52)) * 0.45,
+        perceptual_roughness: 0.8,
         ..default()
     });
     let range = VisibilityRange { start_margin: 0.0..0.0, end_margin: 110.0..110.0, use_aabb: true };
-    // A smooth little glow mote (an ico(1) read as a faceted gem up close).
-    let wisp_mesh = meshes.add(Sphere::new(0.06).mesh().ico(3).unwrap());
+    // A soft round sprite ~0.55u across (scaled in `bob_wisps`), faced to the camera.
+    let wisp_mesh = meshes.add(crate::particles::soft_disc_mesh());
     let dead_tree = meshes.add(crate::biome_swamp::build_hollow_dead_tree_mesh());
     let mangroves: Vec<Handle<Mesh>> =
         (0..3).map(|v| meshes.add(crate::biome_swamp::build_mangrove_mesh(v))).collect();
@@ -298,8 +307,9 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
             commands.spawn((
                 Mesh3d(wisp_mesh.clone()),
                 MeshMaterial3d(wisp_mat.clone()),
-                Transform::from_translation(base),
+                Transform::from_translation(base).with_scale(Vec3::ZERO),
                 Wisp { base, phase },
+                crate::particles::FaceCamera,
                 NotShadowCaster,
                 BiomeEntity,
                 VisibilityRange { start_margin: 0.0..0.0, end_margin: 45.0..45.0, use_aabb: true },

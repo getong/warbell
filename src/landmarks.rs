@@ -10,7 +10,7 @@
 //!   against a guardian horde; win → the named gear). See the trial systems below.
 //! - **Shrine** — once a landmark's gear is claimed (or for gear-less vignettes), the same `[E]`
 //!   prays at it for a timed buff (per-biome Resist/Power/Haste, on a [`SHRINE_CD`] cooldown).
-//! - **Beacon** — a column of emissive will-o'-wisp motes (unlit → punches through the fog) over a
+//! - **Beacon** — a thin column of offering smoke (soft lit puffs rising + widening) over a
 //!   landmark draws the eye from afar. It marks *both* an undiscovered landmark ("something is out
 //!   there") AND a discovered one whose **boost is ready to claim** — a sealed-gear trial, or a
 //!   shrine that's off cooldown. It hides only while the shrine rests on its [`SHRINE_CD`] timeout,
@@ -46,11 +46,8 @@ const SHRINE_CD: f32 = 120.0;
 const SHRINE_BUFF_MS: f64 = 45_000.0;
 /// Motes per beacon column.
 const BEACON_MOTES: u32 = 22;
-/// Beacon mote radius (before the per-mote 0.7–1.4 scale): a spark, not a ball — the column's
-/// reach comes from its HDR glow + bloom ([`BEACON_GLOW`]), not from mote size.
-const BEACON_MOTE_R: f32 = 0.08;
-/// Linear HDR gain on a beacon's tint — what makes a mote glow (see `spawn_beacon`).
-const BEACON_GLOW: f32 = 5.0;
+/// Smoke-puff diameter at the column foot; `beacon_drift` grows it ~4x as the puff rises.
+const BEACON_MOTE_R: f32 = 0.9;
 
 // ── Rune-Trial — the gear gate ──────────────────────────────────────────────────────
 // Each biome landmark hoards one signature gear piece, SEALED until the hero earns it with a
@@ -126,7 +123,7 @@ impl Landmark {
     }
 }
 
-/// One emissive mote in a landmark's beacon column. `name` ties it to its landmark so the
+/// One smoke puff in a landmark's beacon column. `name` ties it to its landmark so the
 /// column despawns on discovery.
 #[derive(Component)]
 struct Beacon {
@@ -329,45 +326,42 @@ fn spawn_beacon(
     pos: Vec3,
     color: Color,
 ) {
-    let mesh = meshes.add(Sphere::new(BEACON_MOTE_R).mesh().ico(1).unwrap());
-    // The glow rides the BASE colour, in HDR. An unlit StandardMaterial outputs `base_color`
-    // verbatim — Bevy never adds `emissive` to an unlit surface — so the old `emissive × 16` never
-    // reached the frame: every mote drew as a flat, near-opaque sRGB disc 0.3–0.7u across (the
-    // "large orange discs floating over the forest camp"). Now each mote is a small point of
-    // light: values > 1 feed the bloom, and additive blending sums overlapping motes like light
-    // instead of stacking discs.
-    // Muted to fit the grounded look: the biome hue keeps 40% of its saturation over a warm
-    // candle-white of equal luminance, so a column reads as pale witch-light (still telling
-    // biomes apart) rather than a neon cyan/violet laser.
+    // A thin column of offering smoke (a shrine's smouldering incense / votive fire) instead of
+    // the old glowing will-o'-wisp motes: soft round puffs that rise, widen and thin out — the
+    // way a real hearth-smoke column marks a place from across a valley. LIT by the scene (grey in
+    // daylight, golden at dusk, near-invisible at night, like real smoke) with a whisper of warm
+    // self-light from the embers below. The biome hue survives only as a faint 12% cast so the
+    // columns still differ a little without any neon.
     let lin = LinearRgba::from(color);
-    let lum = 0.2126 * lin.red + 0.7152 * lin.green + 0.0722 * lin.blue;
-    let warm = LinearRgba::rgb(lum * 1.08, lum * 0.98, lum * 0.82);
-    let muted = LinearRgba::rgb(
-        warm.red + (lin.red - warm.red) * 0.4,
-        warm.green + (lin.green - warm.green) * 0.4,
-        warm.blue + (lin.blue - warm.blue) * 0.4,
+    let smoke = LinearRgba::rgb(0.36, 0.35, 0.33);
+    let tint = LinearRgba::rgb(
+        smoke.red + (lin.red * 0.36 - smoke.red) * 0.12,
+        smoke.green + (lin.green * 0.36 - smoke.green) * 0.12,
+        smoke.blue + (lin.blue * 0.36 - smoke.blue) * 0.12,
     );
-    let glow = muted * BEACON_GLOW;
+    let mesh = meshes.add(crate::particles::soft_disc_mesh());
     let mat = materials.add(StandardMaterial {
-        base_color: Color::LinearRgba(glow.with_alpha(1.0)),
-        unlit: true,
-        alpha_mode: AlphaMode::Add,
+        base_color: Color::LinearRgba(tint.with_alpha(0.42)),
+        emissive: LinearRgba::rgb(0.035, 0.025, 0.015),
+        perceptual_roughness: 1.0,
+        reflectance: 0.0,
+        alpha_mode: AlphaMode::Blend,
+        cull_mode: None,
         ..default()
     });
-    let y_lo = pos.y + 1.5;
+    let y_lo = pos.y + 1.2;
     let y_hi = pos.y + 13.0;
     for i in 0..BEACON_MOTES {
         let h0 = hash(i);
         let h1 = hash(i + 911);
         let h2 = hash(i + 7331);
-        // Tight column with a little jitter so it reads as a rising wisp, not a pole.
-        let off = Vec3::new((h0 - 0.5) * 0.7, 0.0, (h1 - 0.5) * 0.7);
+        // Tight foot with a little jitter; `beacon_drift` widens + sways it with height.
+        let off = Vec3::new((h0 - 0.5) * 0.4, 0.0, (h1 - 0.5) * 0.4);
         let y = y_lo + h2 * (y_hi - y_lo);
         commands.spawn((
             Mesh3d(mesh.clone()),
             MeshMaterial3d(mat.clone()),
-            Transform::from_xyz(pos.x + off.x, y, pos.z + off.z)
-                .with_scale(Vec3::splat(0.7 + h0 * 0.7)),
+            Transform::from_xyz(pos.x + off.x, y, pos.z + off.z).with_scale(Vec3::splat(BEACON_MOTE_R)),
             // Explicit Visibility so `sync_beacons` can toggle the column on the shrine cooldown.
             Visibility::Inherited,
             Beacon {
@@ -376,8 +370,9 @@ fn spawn_beacon(
                 y_lo,
                 y_hi,
                 phase: h1 * std::f32::consts::TAU,
-                rise: 1.1 + h2 * 0.9,
+                rise: 0.7 + h2 * 0.5,
             },
+            crate::particles::FaceCamera,
             NotShadowCaster,
             BiomeEntity,
         ));
@@ -481,13 +476,21 @@ fn track_total(mut disc: ResMut<Discoveries>, q: Query<&Landmark>, mut done: Loc
 fn beacon_drift(time: Res<Time>, mut q: Query<(&Beacon, &mut Transform)>) {
     let dt = time.delta_secs();
     let t = time.elapsed_secs_wrapped();
+    // One shared breeze leans every column the same way, more with height (smoke bends downwind).
+    let lean = Vec2::new(0.9 + 0.3 * (t * 0.07).sin(), 0.35);
     for (b, mut tf) in &mut q {
         tf.translation.y += b.rise * dt;
         if tf.translation.y > b.y_hi {
             tf.translation.y = b.y_lo;
         }
-        tf.translation.x = b.base.x + (t * 0.8 + b.phase).sin() * 0.25;
-        tf.translation.z = b.base.z + (t * 0.7 + b.phase * 1.7).cos() * 0.25;
+        let f = ((tf.translation.y - b.y_lo) / (b.y_hi - b.y_lo)).clamp(0.0, 1.0);
+        let sway = 0.15 + f * 0.9;
+        tf.translation.x = b.base.x + lean.x * f * f * 3.0 + (t * 0.5 + b.phase).sin() * sway;
+        tf.translation.z = b.base.z + lean.y * f * f * 3.0 + (t * 0.43 + b.phase * 1.7).cos() * sway;
+        // Swell as it rises, thin to nothing at the top (so the wrap back to the foot never pops),
+        // and fade in over the first metre at the foot.
+        let grow = (1.0 + f * 3.2) * (1.0 - f * f * f) * (f * 8.0).min(1.0);
+        tf.scale = Vec3::splat(BEACON_MOTE_R * grow.max(0.001));
     }
 }
 

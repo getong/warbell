@@ -17,6 +17,11 @@ const POLLEN_COUNT: usize = 60;
 const TAU: f32 = std::f32::consts::TAU;
 /// Warm pollen glow colour (sRGB → linear in the emissive so bloom catches it).
 const POLLEN_TINT: Color = Color::srgb(1.0, 0.93, 0.7);
+/// Fraction of the panel's `pollen_glow` used as self-light (the motes are lit, this just lifts
+/// them a touch in shade so they don't vanish).
+const POLLEN_SELF_GLOW: f32 = 0.04;
+/// Pollen sprite diameter (world units).
+const POLLEN_SIZE: f32 = 0.06;
 
 /// Live-tunable visual knobs not owned by a single Bevy component (driven by the panel).
 #[derive(Resource)]
@@ -83,11 +88,17 @@ fn spawn_pollen(
     mut mats: ResMut<Assets<StandardMaterial>>,
 ) {
     let glow = VisualSettings::default().pollen_glow;
-    let mesh = meshes.add(Sphere::new(0.03).mesh().ico(1).expect("ico detail in range"));
+    // Daylight dust/pollen catching the sun: soft round sprites (camera-facing), LIT by the scene
+    // with only a faint self-glow (the knob), so they read as specks in the light, not as glowing
+    // beads — and `drift_pollen` shrinks them away after dusk.
+    let mesh = meshes.add(crate::particles::soft_disc_mesh());
     let mat = mats.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 0.96, 0.8),
-        emissive: LinearRgba::from(POLLEN_TINT) * glow,
-        unlit: true,
+        base_color: Color::srgba(0.86, 0.83, 0.72, 0.55),
+        emissive: LinearRgba::from(POLLEN_TINT) * glow * POLLEN_SELF_GLOW,
+        perceptual_roughness: 1.0,
+        reflectance: 0.0,
+        alpha_mode: AlphaMode::Blend,
+        cull_mode: None,
         ..default()
     });
 
@@ -106,8 +117,9 @@ fn spawn_pollen(
         commands.spawn((
             Mesh3d(mesh.clone()),
             MeshMaterial3d(mat.clone()),
-            Transform::from_xyz(x, y, z),
+            Transform::from_xyz(x, y, z).with_scale(Vec3::splat(POLLEN_SIZE)),
             NotShadowCaster,
+            crate::particles::FaceCamera,
             Pollen {
                 base: Vec3::new(x, y, z),
                 phase: next() * TAU,
@@ -121,9 +133,17 @@ fn spawn_pollen(
 }
 
 /// Gentle independent bob + wander per mote, scaled by the live drift-speed knob.
-fn drift_pollen(time: Res<Time>, settings: Res<VisualSettings>, mut q: Query<(&mut Transform, &Pollen)>) {
+fn drift_pollen(
+    time: Res<Time>,
+    settings: Res<VisualSettings>,
+    dusk: Res<crate::particles::Dusk>,
+    mut q: Query<(&mut Transform, &Pollen)>,
+) {
     let t = time.elapsed_secs() * settings.pollen_speed;
+    // Sunlit motes only: gone once the light goes.
+    let s = POLLEN_SIZE * (1.0 - dusk.0);
     for (mut tf, p) in &mut q {
+        tf.scale = Vec3::splat(s);
         let ph = p.phase + t * p.speed;
         tf.translation.x = p.base.x + (ph * 0.6).sin() * p.drift;
         tf.translation.z = p.base.z + (ph * 0.8 + 1.1).cos() * p.drift;
@@ -145,7 +165,7 @@ fn apply_visual_settings(
     // Pollen glow.
     if let Some(pm) = pollen_mat {
         if let Some(mut m) = mats.get_mut(&pm.0) {
-            m.emissive = LinearRgba::from(POLLEN_TINT) * settings.pollen_glow;
+            m.emissive = LinearRgba::from(POLLEN_TINT) * settings.pollen_glow * POLLEN_SELF_GLOW;
         }
     }
 

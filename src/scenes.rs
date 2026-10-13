@@ -168,7 +168,7 @@ fn setup_scene_assets(
         materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.85, ..default() });
     // Sickly-green warp glow (matches the fortress towers' bolts), unlit so it blooms.
     let bolt_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.5, 1.0, 0.45),
+        base_color: Color::srgb(0.62, 0.78, 0.5), // desaturated off the old neon green
         emissive: LinearRgba::rgb(0.6, 3.4, 0.7),
         unlit: true,
         ..default()
