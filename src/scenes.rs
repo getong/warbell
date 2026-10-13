@@ -595,7 +595,7 @@ fn hold_scene_hero(
 //
 // Campaign screenplay Ch.2 (`docs/superpowers/specs/2026-10-13-kampania-scenariusz-design.md`): the
 // dawn after night 1. Farmers mend a burnt fence, one hauls planks over, the knight walks up the road,
-// the exchange, and he walks back the way he came. ~42 s, every clip from the UAL pool.
+// the exchange, and the joke lands. ~30 s, every clip from the UAL pool.
 // Pure scene-director: the same `SceneState` clock drives actors, camera cuts, captions, audio cues,
 // letterbox + fades, and the scene clears itself (`want = None`) at the end. `FOREST_SCENE=farm`
 // stages it (`FOREST_SCENE_T=<s>` freezes the clock there for a still, silent; under `FOREST_CLIP`
@@ -606,26 +606,24 @@ fn hold_scene_hero(
 const FARM: Vec2 = Vec2::new(-36.0, 34.0);
 /// Where the kneeling farmer works — just on the +Z side of the fence gap, facing the fence (−Z).
 const FARM_KNEEL: Vec2 = Vec2::new(FARM.x, FARM.y + 0.55);
-const FARM_END: f32 = 42.0;
+const FARM_END: f32 = 29.5;
 /// The knight's walk-in: down the road from the east to a conversational stop beside the farmer.
-const WAT_FROM: Vec2 = Vec2::new(FARM.x + 22.0, FARM.y + 1.4);
+const WAT_FROM: Vec2 = Vec2::new(FARM.x + 11.5, FARM.y + 1.2);
 const WAT_TO: Vec2 = Vec2::new(FARM.x + 2.0, FARM.y + 0.95);
-/// When he stops, and when (after the exchange) he turns and walks back up the road.
-const T_LEAVE: f32 = 33.0;
 /// The plank-hauler: along a lane behind the fence, then in to the fence beside the gap.
 const HAUL_Z: f32 = FARM.y + 3.3;
 const HAUL_SPEED: f32 = 1.2; // = npc_skin::WALK_NATIVE, so the carry-walk's feet don't skate
-const HAUL_X0: f32 = FARM.x + 14.0;
+const HAUL_X0: f32 = FARM.x + 8.0;
 const HAUL_TURN_X: f32 = FARM.x - 2.6;
 const HAUL_SPOT: Vec2 = Vec2::new(HAUL_TURN_X, FARM.y + 1.1);
 
 /// Timed captions: (start s, duration s, speaker, line). Texts verbatim from the screenplay; the
 /// farmer's first line is the existing villager VO clip `screaming` (`audio/lines.rs`, 6.2 s).
 const FARM_LINES: [(f32, f32, &str, &str); 4] = [
-    (15.9, 6.2, "Farmer", "Bless you for the protection. The screaming at night is a lovely touch."),
-    (23.3, 2.0, "Wat", "You're welcome."),
-    (26.6, 2.0, "Farmer", "Wasn't thanking you."),
-    (30.4, 1.8, "Wat", "I know."),
+    (9.4, 6.2, "Farmer", "Bless you for the protection. The screaming at night is a lovely touch."),
+    (16.1, 1.8, "Wat", "You're welcome."),
+    (18.8, 2.0, "Farmer", "Wasn't thanking you."),
+    (22.4, 1.6, "Wat", "I know."),
 ];
 
 #[derive(Component, Clone, Copy, PartialEq)]
@@ -769,7 +767,7 @@ fn setup_farm_morning(
     ));
 }
 
-/// The knight: down the road (to [`T_ARRIVE`]), standing for the exchange, then back up it.
+/// The knight: down the road to a conversational stop beside the farmer, then he stays and listens.
 /// (position, facing, striding?) at scene time `t`.
 fn farm_wat(t: f32) -> (Vec2, f32, bool) {
     let speed = crate::player::SPEED;
@@ -777,28 +775,23 @@ fn farm_wat(t: f32) -> (Vec2, f32, bool) {
     let out = WAT_TO - WAT_FROM; // walking in
     let len = out.length();
     let arrive = len / speed;
-    let (walk_in, face_farmer, walk_out) = (yaw(out), yaw(FARM_KNEEL - WAT_TO), yaw(-out));
+    let (walk_in, face_farmer) = (yaw(out), yaw(FARM_KNEEL - WAT_TO));
     if t < arrive {
         return (WAT_FROM + out * (t * speed / len), walk_in, t > 0.0);
     }
-    if t < T_LEAVE {
-        // swing round to the farmer, later (a beat after "I know.") back toward the road
-        let k = env(t, &[(arrive, 0.0), (arrive + 0.6, 1.0)]);
-        let back = env(t, &[(T_LEAVE - 0.9, 0.0), (T_LEAVE, 1.0)]);
-        let f = walk_in + (face_farmer - walk_in) * k;
-        return (WAT_TO, f + (walk_out - f) * back, false);
-    }
-    (WAT_TO - out / len * (speed * (t - T_LEAVE)), walk_out, true)
+    // swing round to the farmer as he stops
+    let k = env(t, &[(arrive, 0.0), (arrive + 0.6, 1.0)]);
+    (WAT_TO, walk_in + (face_farmer - walk_in) * k, false)
 }
 
 /// The kneeler's work, varied: hammering, a pause to reach for a plank, a crouch to listen, and a
 /// brief stand to answer — never looking up at the hero until the very last line.
 fn farmer_clip(t: f32) -> &'static str {
     match t {
-        t if (6.5..9.4).contains(&t) => "PickUp_Table",
-        t if (20.5..23.6).contains(&t) => "Crouch_Idle_Loop",
-        t if (26.6..28.9).contains(&t) => "Idle_Talking_Loop",
-        t if (36.5..38.6).contains(&t) => "PickUp_Table",
+        t if (3.4..5.9).contains(&t) => "PickUp_Table",
+        t if (16.0..18.5).contains(&t) => "Crouch_Idle_Loop",
+        t if (18.5..21.2).contains(&t) => "Idle_Talking_Loop",
+        t if (25.0..27.4).contains(&t) => "PickUp_Table",
         _ => "Fixing_Kneeling",
     }
 }
@@ -1032,64 +1025,55 @@ fn farm_shot(t: f32, gy: f32) -> Cam {
     let (w, _, _) = farm_wat(t);
     let wat = |dy: f32| Vec3::new(w.x, world_y_at(w) + dy, w.y);
     match t {
-        // A · establishing crane: down from above the grass on the near side toward the fence line.
-        t if t < 6.2 => lerp_cam(
-            (at3(-9.0, 5.4, -9.5), at3(3.0, 1.0, 2.0), 44.0, 9.0),
-            (at3(-4.5, 1.9, -6.4), at3(1.0, 0.9, 1.0), 42.0, 9.0),
-            seg(0.0, 6.2),
+        // A · establishing crane: down from above the grass toward the fence — the farmer at work,
+        // the hauler crossing, the knight small on the road behind.
+        t if t < 3.8 => lerp_cam(
+            (at3(-8.0, 5.0, -9.0), at3(5.0, 1.0, 1.6), 46.0, 12.0),
+            (at3(-3.5, 2.0, -6.4), at3(3.5, 0.9, 1.2), 44.0, 12.0),
+            seg(0.0, 3.8),
         ),
-        // B · tracking: abreast of the knight on the near side, keeping pace, fence posts sliding by.
-        t if t < 12.8 => (
+        // B · he arrives: keeping pace on the near side, fence posts sliding by.
+        t if t < 6.8 => (
             Vec3::new(w.x - 1.2, gy + 1.35, a.y - 4.8),
             wat(1.05) + Vec3::new(0.5, 0.0, 0.0),
             38.0,
             7.0,
         ),
-        // C · the two-shot as he arrives — everyone in frame, farmer still not looking up.
-        t if t < 15.6 => lerp_cam(
+        // C · the two-shot as he stops — everyone in frame, the farmer still not looking up.
+        t if t < 9.2 => lerp_cam(
             (at3(4.8, 1.25, -5.6), at3(0.9, 0.85, 0.8), 36.0, 6.5),
             (at3(4.1, 1.22, -5.2), at3(0.9, 0.85, 0.8), 34.0, 6.5),
-            lin(12.8, 15.6),
+            lin(6.8, 9.2),
         ),
-        // D · farmer, through the gap.
-        t if t < 23.0 => lerp_cam(
+        // D · farmer, through the gap: "Bless you for the protection…"
+        t if t < 15.8 => lerp_cam(
             (at3(-1.3, 1.0, -4.2), at3(0.0, 0.78, 0.55), 29.0, 1.4),
             (at3(-1.0, 0.96, -3.7), at3(0.0, 0.78, 0.55), 28.0, 1.4),
-            lin(15.6, 23.0),
+            lin(9.2, 15.8),
         ),
-        // E · the knight, three-quarter from the near side.
-        t if t < 26.2 => lerp_cam(
+        // E · the knight, three-quarter from the near side: "You're welcome."
+        t if t < 18.4 => lerp_cam(
             (at3(0.2, 1.3, -3.4), at3(2.0, 1.2, 0.95), 32.0, 1.6),
             (at3(0.5, 1.3, -3.1), at3(2.0, 1.2, 0.95), 30.0, 1.6),
-            lin(23.0, 26.2),
+            lin(15.8, 18.4),
         ),
-        // D2 · farmer again, a touch tighter.
-        t if t < 29.8 => lerp_cam(
+        // D2 · farmer again, a touch tighter: "Wasn't thanking you."
+        t if t < 21.8 => lerp_cam(
             (at3(-1.6, 0.95, -4.0), at3(0.0, 0.8, 0.55), 26.0, 1.4),
             (at3(-1.3, 0.95, -3.7), at3(0.0, 0.8, 0.55), 25.0, 1.4),
-            lin(26.2, 29.8),
+            lin(18.4, 21.8),
         ),
-        // E2 · the knight's beat — "I know." — and the turn to go.
-        t if t < 33.4 => lerp_cam(
+        // E2 · the knight's beat — "I know." — and a long look; the joke lands, the work goes on.
+        t if t < 25.2 => lerp_cam(
             (at3(1.1, 1.25, -3.2), at3(2.0, 1.22, 0.95), 29.0, 1.6),
             (at3(0.8, 1.25, -3.4), at3(2.0, 1.22, 0.95), 31.0, 1.6),
-            lin(29.8, 33.4),
+            lin(21.8, 25.2),
         ),
-        // F · follow him out from behind-left, up the road toward the castle.
-        t if t < 38.6 => {
-            let k = seg(33.4, 35.0);
-            (
-                Vec3::new(w.x - 4.4, gy + 1.45, w.y - 3.4).lerp(Vec3::new(w.x - 4.6, gy + 1.5, w.y - 3.6), k),
-                wat(1.15) + Vec3::new(1.3, 0.0, 0.0),
-                40.0,
-                8.0,
-            )
-        }
-        // G · pull up and away over the work: the farmers back at it, the hauler beside them.
+        // G · pull up and away over the work: the farmers back at it, the knight standing by.
         _ => lerp_cam(
-            (at3(3.0, 2.0, -6.2), at3(0.0, 0.7, 1.6), 40.0, 9.0),
-            (at3(-2.5, 6.8, -12.5), at3(0.0, 0.4, 2.4), 40.0, 12.0),
-            seg(38.6, FARM_END),
+            (at3(3.0, 2.0, -6.2), at3(0.8, 0.8, 1.2), 40.0, 9.0),
+            (at3(-2.5, 6.8, -12.5), at3(0.8, 0.4, 2.0), 40.0, 12.0),
+            seg(25.2, FARM_END),
         ),
     }
 }

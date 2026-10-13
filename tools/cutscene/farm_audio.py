@@ -23,27 +23,26 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 ASSETS = ROOT / "assets"
 CUES = ASSETS / "cutscene" / "farm_morning.cues"
-END = 42.0
+END = 29.5
 
 # ── scene constants mirrored from scenes.rs ───────────────────────────────────────────
 WAT_SPEED = 1.4
-WAT_ARRIVE = 20.0 / WAT_SPEED          # (|WAT_TO - WAT_FROM| / SPEED) ≈ 14.3
-T_LEAVE = 33.0
-HAUL_LEG1 = (14.0 + 2.6) / 1.2         # lane walk
+WAT_ARRIVE = 9.503 / WAT_SPEED         # (|WAT_TO - WAT_FROM| / SPEED) ≈ 6.8
+HAUL_LEG1 = (8.0 + 2.6) / 1.2          # lane walk
 HAUL_ARRIVE = HAUL_LEG1 + 2.2 / 1.2    # at the fence
 HAUL_FIX_FROM = HAUL_ARRIVE + 2.6      # after setting the planks down
 # kneeler hammering windows (farmer_clip): everything except the pick-up / crouch / talk beats
-FARMER_FIX = [(0.0, 6.5), (9.4, 20.5), (23.6, 26.6), (28.9, 36.5), (38.6, END)]
+FARMER_FIX = [(0.0, 3.4), (5.9, 16.0), (21.2, 25.0), (27.4, END)]
 # shots where each source is close to the lens (loud) — see farm_shot()
-CLOSE_FARMER = [(15.6, 23.0), (26.2, 29.8)]
-TRACK_WAT = [(6.2, 12.8), (33.4, 38.6)]
-FINALE = (38.6, END)
+CLOSE_FARMER = [(9.2, 15.8), (18.4, 21.8)]
+TRACK_WAT = [(3.8, 6.8)]
+FINALE = (25.2, END)
 
 VO = [
-    (15.9, "audio/vo/npc/screaming.ogg", 1.0, 6.2),                 # Farmer: "Bless you for the protection…"
-    (23.3, "audio/cutscene/wat_youre_welcome.ogg", 1.0, 1.6),       # Wat: "You're welcome."
-    (26.6, "audio/cutscene/farmer_wasnt_thanking_you.ogg", 1.0, 1.8),  # Farmer: "Wasn't thanking you."
-    (30.4, "audio/cutscene/wat_i_know.ogg", 1.0, 1.2),              # Wat: "I know."
+    (9.4, "audio/vo/npc/screaming.ogg", 1.0, 6.2),                 # Farmer: "Bless you for the protection…"
+    (16.1, "audio/cutscene/wat_youre_welcome.ogg", 1.0, 1.6),       # Wat: "You're welcome."
+    (18.8, "audio/cutscene/farmer_wasnt_thanking_you.ogg", 1.0, 1.8),  # Farmer: "Wasn't thanking you."
+    (22.4, "audio/cutscene/wat_i_know.ogg", 1.0, 1.2),              # Wat: "I know."
 ]
 
 
@@ -78,7 +77,7 @@ def gen():
     steps = [f"audio/footstep-dirt-{i}.ogg" for i in (1, 2, 3)]
     t = 0.3
     while t < END:
-        walking = t < WAT_ARRIVE or t >= T_LEAVE
+        walking = t < WAT_ARRIVE
         if walking:
             vol = 0.5 if inside(t, TRACK_WAT) else 0.16
             rows.append((round(t, 2), rnd.choice(steps), round(vol * rnd.uniform(0.85, 1.1), 2), "video"))
@@ -93,8 +92,8 @@ def gen():
     rows.append((0.0, "audio/meadow-ambient.ogg", 0.42, "video loop"))
     rows.append((0.0, "audio/wind.ogg", 0.12, "video loop"))
     rows.append((0.0, "audio/forest-ambient.ogg", 0.22, "video loop"))
-    rows.append((9.6, "audio/dog-2.ogg", 0.16, "video"))
-    rows.append((31.4, "audio/dog-4.ogg", 0.12, "video"))
+    rows.append((6.4, "audio/dog-2.ogg", 0.14, "video"))
+    rows.append((24.2, "audio/dog-4.ogg", 0.10, "video"))
     t = 3.0
     while t < END - 2:
         rows.append((round(t, 2), "audio/forage.ogg", 0.10, "video"))
@@ -102,14 +101,14 @@ def gen():
 
     # Far-off things (all existing repo SFX — nothing is generated): a bell across the fields, goats up the hill, kids in the village, embers crackling.
     rows.append((1.2, "audio/war-bell.ogg", 0.05, "pan=0.5"))
-    rows.append((39.6, "audio/war-bell.ogg", 0.04, "pan=0.5"))
-    rows.append((12.5, "audio/goat-1.ogg", 0.10, "video pan=-0.6"))
-    rows.append((35.8, "audio/goat-2.ogg", 0.09, "video pan=0.6"))
+    rows.append((27.6, "audio/war-bell.ogg", 0.04, "pan=0.5"))
+    rows.append((7.0, "audio/goat-1.ogg", 0.10, "video pan=-0.6"))
+    rows.append((26.0, "audio/goat-2.ogg", 0.09, "video pan=0.6"))
     rows.append((0.0, "audio/campfire-loop.ogg", 0.05, "video loop"))
     rows.append((0.0, "audio/kids-play.ogg", 0.03, "video loop"))
     # Wood: a plank dropped on the pile, the creak as the farmer reaches for another (twice).
     rows.append((round(HAUL_ARRIVE + 1.1, 2), "audio/chop-wood-1.ogg", 0.26, "pan=-0.3"))
-    for t in (7.4, 37.3):
+    for t in (4.4, 25.6):
         rows.append((t, "audio/wood-crack.ogg", 0.14, "pan=0.0"))
 
     rows.sort(key=lambda r: r[0])

@@ -6,110 +6,61 @@
   0.00  audio/forest-ambient.ogg  0.22  video loop
   0.00  audio/campfire-loop.ogg  0.05  video loop
   0.00  audio/kids-play.ogg  0.03  video loop
-  0.30  audio/footstep-dirt-2.ogg  0.14  video
-  0.60  audio/footstep-dirt-3.ogg  0.12  video
-  0.83  audio/footstep-dirt-3.ogg  0.16  video
+  0.30  audio/footstep-dirt-1.ogg  0.17  video
+  0.60  audio/footstep-dirt-2.ogg  0.11  video
+  0.83  audio/footstep-dirt-2.ogg  0.15  video
   1.00  audio/sfx/life/life_sfx_hammer.ogg  0.22  pan=0.0
   1.20  audio/war-bell.ogg  0.05  pan=0.5
-  1.36  audio/footstep-dirt-3.ogg  0.16  video
+  1.36  audio/footstep-dirt-2.ogg  0.17  video
   1.40  audio/footstep-dirt-2.ogg  0.1  video
-  1.89  audio/footstep-dirt-1.ogg  0.18  video
-  2.20  audio/footstep-dirt-1.ogg  0.11  video
-  2.42  audio/footstep-dirt-2.ogg  0.17  video
-  2.95  audio/footstep-dirt-3.ogg  0.16  video
-  3.00  audio/footstep-dirt-3.ogg  0.11  video
+  1.89  audio/footstep-dirt-2.ogg  0.17  video
+  2.20  audio/footstep-dirt-2.ogg  0.09  video
+  2.42  audio/footstep-dirt-3.ogg  0.14  video
+  2.95  audio/footstep-dirt-1.ogg  0.15  video
+  3.00  audio/footstep-dirt-2.ogg  0.11  video
   3.00  audio/forage.ogg  0.1  video
-  3.48  audio/footstep-dirt-2.ogg  0.17  video
-  3.55  audio/sfx/life/life_sfx_hammer.ogg  0.22  pan=0.0
-  3.80  audio/footstep-dirt-2.ogg  0.11  video
-  4.01  audio/footstep-dirt-2.ogg  0.15  video
-  4.54  audio/footstep-dirt-2.ogg  0.14  video
-  4.60  audio/footstep-dirt-1.ogg  0.09  video
-  5.07  audio/footstep-dirt-2.ogg  0.16  video
-  5.40  audio/footstep-dirt-1.ogg  0.09  video
-  5.60  audio/footstep-dirt-2.ogg  0.16  video
+  3.48  audio/footstep-dirt-1.ogg  0.14  video
+  3.80  audio/footstep-dirt-2.ogg  0.3  video
+  4.01  audio/footstep-dirt-1.ogg  0.44  video
+  4.40  audio/wood-crack.ogg  0.14  pan=0.0
+  4.54  audio/footstep-dirt-3.ogg  0.47  video
+  4.60  audio/footstep-dirt-1.ogg  0.28  video
+  5.07  audio/footstep-dirt-3.ogg  0.51  video
+  5.40  audio/footstep-dirt-2.ogg  0.29  video
+  5.60  audio/footstep-dirt-1.ogg  0.55  video
   6.09  audio/sfx/life/life_sfx_hammer.ogg  0.22  pan=0.0
-  6.13  audio/footstep-dirt-1.ogg  0.16  video
-  6.20  audio/footstep-dirt-3.ogg  0.11  video
-  6.66  audio/footstep-dirt-2.ogg  0.49  video
-  7.00  audio/footstep-dirt-3.ogg  0.25  video
-  7.19  audio/footstep-dirt-2.ogg  0.51  video
-  7.40  audio/wood-crack.ogg  0.14  pan=0.0
-  7.72  audio/footstep-dirt-2.ogg  0.54  video
-  7.80  audio/footstep-dirt-2.ogg  0.28  video
-  8.25  audio/footstep-dirt-2.ogg  0.47  video
-  8.60  audio/footstep-dirt-2.ogg  0.28  video
-  8.78  audio/footstep-dirt-3.ogg  0.54  video
-  9.31  audio/footstep-dirt-3.ogg  0.48  video
-  9.40  audio/footstep-dirt-3.ogg  0.31  video
-  9.60  audio/dog-2.ogg  0.16  video
-  9.84  audio/footstep-dirt-3.ogg  0.45  video
- 10.20  audio/footstep-dirt-2.ogg  0.31  video
- 10.34  audio/forage.ogg  0.1  video
- 10.37  audio/footstep-dirt-2.ogg  0.53  video
- 10.90  audio/footstep-dirt-1.ogg  0.53  video
- 11.00  audio/footstep-dirt-3.ogg  0.3  video
- 11.43  audio/footstep-dirt-3.ogg  0.46  video
- 11.67  audio/sfx/life/life_sfx_hammer.ogg  0.22  pan=0.0
- 11.80  audio/footstep-dirt-2.ogg  0.33  video
- 11.96  audio/footstep-dirt-2.ogg  0.46  video
- 12.49  audio/footstep-dirt-3.ogg  0.53  video
- 12.50  audio/goat-1.ogg  0.1  video pan=-0.6
- 12.60  audio/footstep-dirt-1.ogg  0.3  video
- 13.02  audio/footstep-dirt-3.ogg  0.16  video
- 13.40  audio/footstep-dirt-2.ogg  0.12  video
- 13.55  audio/footstep-dirt-3.ogg  0.16  video
- 13.98  audio/sfx/life/life_sfx_hammer.ogg  0.22  pan=0.0
- 14.08  audio/footstep-dirt-2.ogg  0.15  video
- 14.20  audio/footstep-dirt-1.ogg  0.1  video
- 15.00  audio/footstep-dirt-1.ogg  0.11  video
- 15.90  audio/vo/npc/screaming.ogg  1.0
- 16.22  audio/sfx/life/life_sfx_hammer.ogg  0.48  pan=0.0
- 16.77  audio/chop-wood-1.ogg  0.26  pan=-0.3
- 16.80  audio/forage.ogg  0.1  video
- 18.05  audio/sfx/life/life_sfx_hammer.ogg  0.48  pan=0.0
- 18.27  audio/sfx/life/life_sfx_hammer.ogg  0.31  pan=-0.45
- 20.22  audio/sfx/life/life_sfx_hammer.ogg  0.48  pan=0.0
- 20.35  audio/sfx/life/life_sfx_hammer.ogg  0.31  pan=-0.45
- 22.41  audio/sfx/life/life_sfx_hammer.ogg  0.31  pan=-0.45
- 22.79  audio/forage.ogg  0.1  video
- 23.30  audio/cutscene/wat_youre_welcome.ogg  1.0
+  6.13  audio/footstep-dirt-2.ogg  0.52  video
+  6.20  audio/footstep-dirt-2.ogg  0.3  video
+  6.40  audio/dog-2.ogg  0.14  video
+  6.66  audio/footstep-dirt-3.ogg  0.49  video
+  7.00  audio/footstep-dirt-2.ogg  0.12  video
+  7.00  audio/goat-1.ogg  0.1  video pan=-0.6
+  7.66  audio/sfx/life/life_sfx_hammer.ogg  0.22  pan=0.0
+  7.80  audio/footstep-dirt-2.ogg  0.1  video
+  8.60  audio/footstep-dirt-3.ogg  0.12  video
+  8.97  audio/forage.ogg  0.1  video
+  9.25  audio/sfx/life/life_sfx_hammer.ogg  0.48  pan=0.0
+  9.40  audio/vo/npc/screaming.ogg  1.0
+  9.40  audio/footstep-dirt-3.ogg  0.1  video
+ 10.20  audio/footstep-dirt-3.ogg  0.1  video
+ 11.67  audio/sfx/life/life_sfx_hammer.ogg  0.48  pan=0.0
+ 11.77  audio/chop-wood-1.ogg  0.26  pan=-0.3
+ 13.27  audio/sfx/life/life_sfx_hammer.ogg  0.31  pan=-0.45
+ 13.98  audio/sfx/life/life_sfx_hammer.ogg  0.48  pan=0.0
+ 16.07  audio/forage.ogg  0.1  video
+ 16.10  audio/cutscene/wat_youre_welcome.ogg  1.0
+ 16.37  audio/sfx/life/life_sfx_hammer.ogg  0.14  pan=-0.45
+ 18.80  audio/cutscene/farmer_wasnt_thanking_you.ogg  1.0
+ 19.87  audio/sfx/life/life_sfx_hammer.ogg  0.31  pan=-0.45
+ 21.57  audio/forage.ogg  0.1  video
+ 22.39  audio/sfx/life/life_sfx_hammer.ogg  0.22  pan=0.0
+ 22.40  audio/cutscene/wat_i_know.ogg  1.0
+ 23.30  audio/sfx/life/life_sfx_hammer.ogg  0.14  pan=-0.45
+ 24.20  audio/dog-4.ogg  0.1  video
  24.53  audio/sfx/life/life_sfx_hammer.ogg  0.22  pan=0.0
- 25.13  audio/sfx/life/life_sfx_hammer.ogg  0.14  pan=-0.45
- 26.20  audio/sfx/life/life_sfx_hammer.ogg  0.48  pan=0.0
- 26.60  audio/cutscene/farmer_wasnt_thanking_you.ogg  1.0
- 27.62  audio/sfx/life/life_sfx_hammer.ogg  0.31  pan=-0.45
- 30.11  audio/sfx/life/life_sfx_hammer.ogg  0.22  pan=0.0
- 30.21  audio/sfx/life/life_sfx_hammer.ogg  0.14  pan=-0.45
- 30.40  audio/cutscene/wat_i_know.ogg  1.0
- 30.41  audio/forage.ogg  0.1  video
- 31.40  audio/dog-4.ogg  0.12  video
- 32.40  audio/sfx/life/life_sfx_hammer.ogg  0.22  pan=0.0
- 33.16  audio/footstep-dirt-1.ogg  0.16  video
- 33.56  audio/sfx/life/life_sfx_hammer.ogg  0.14  pan=-0.45
- 33.69  audio/footstep-dirt-2.ogg  0.54  video
- 34.22  audio/footstep-dirt-3.ogg  0.54  video
- 34.75  audio/footstep-dirt-2.ogg  0.52  video
- 35.00  audio/sfx/life/life_sfx_hammer.ogg  0.22  pan=0.0
- 35.28  audio/footstep-dirt-1.ogg  0.55  video
- 35.80  audio/goat-2.ogg  0.09  video pan=0.6
- 35.81  audio/footstep-dirt-1.ogg  0.43  video
- 36.34  audio/footstep-dirt-3.ogg  0.43  video
- 36.37  audio/sfx/life/life_sfx_hammer.ogg  0.14  pan=-0.45
- 36.43  audio/forage.ogg  0.1  video
- 36.87  audio/footstep-dirt-3.ogg  0.45  video
- 37.30  audio/wood-crack.ogg  0.14  pan=0.0
- 37.40  audio/footstep-dirt-1.ogg  0.52  video
- 37.93  audio/footstep-dirt-1.ogg  0.53  video
- 38.46  audio/footstep-dirt-1.ogg  0.53  video
- 38.99  audio/footstep-dirt-1.ogg  0.15  video
- 39.23  audio/sfx/life/life_sfx_hammer.ogg  0.2  pan=-0.45
- 39.52  audio/footstep-dirt-3.ogg  0.17  video
- 39.60  audio/war-bell.ogg  0.04  pan=0.5
- 39.64  audio/sfx/life/life_sfx_hammer.ogg  0.31  pan=0.0
- 40.05  audio/footstep-dirt-1.ogg  0.15  video
- 40.58  audio/footstep-dirt-1.ogg  0.15  video
- 41.11  audio/footstep-dirt-1.ogg  0.14  video
- 41.60  audio/sfx/life/life_sfx_hammer.ogg  0.2  pan=-0.45
- 41.63  audio/sfx/life/life_sfx_hammer.ogg  0.31  pan=0.0
- 41.64  audio/footstep-dirt-1.ogg  0.14  video
+ 25.60  audio/wood-crack.ogg  0.14  pan=0.0
+ 26.00  audio/goat-2.ogg  0.09  video pan=0.6
+ 26.14  audio/sfx/life/life_sfx_hammer.ogg  0.2  pan=-0.45
+ 27.60  audio/war-bell.ogg  0.04  pan=0.5
+ 28.18  audio/sfx/life/life_sfx_hammer.ogg  0.31  pan=0.0
+ 28.82  audio/sfx/life/life_sfx_hammer.ogg  0.2  pan=-0.45
