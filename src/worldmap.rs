@@ -3771,7 +3771,7 @@ pub fn build_step(
         24 => crate::vignettes::populate_vignettes(commands, meshes, std_mats),
         25 => crate::ork_fortress::build(commands, meshes, images, std_mats, creature_mats),
         26 => crate::bridges::populate(commands, meshes, std_mats),
-        27 => crate::distant_isles::build(commands, meshes, std_mats),
+        27 => crate::distant_isles::build(commands, meshes, images, std_mats),
         28 => crate::rival::build(commands, meshes, images, std_mats),
         // (29 was bs_swamp_pools — flat teal water discs, removed: read as ugly "plates"; real
         // carved pools also dropped — too small, the water shader foamed them solid white.)

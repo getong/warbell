@@ -13,5 +13,7 @@ bundled with a download is executed.
 | Wine Barrel 01 (wine_barrel_01) | market barrels, meadow crate pile (look baked onto a low-poly lathe) | Poly Haven | CC0 1.0 | https://polyhaven.com/a/wine_barrel_01 | `tools/blender_forest/scanned_props.py` |
 | Wooden Crate 01 (wooden_crate_01) | market barrels + meadow crate pile | Poly Haven | CC0 1.0 | https://polyhaven.com/a/wooden_crate_01 | `tools/blender_forest/scanned_props.py` |
 | Wooden Crate 02 (wooden_crate_02) | market barrels + meadow crate pile | Poly Haven | CC0 1.0 | https://polyhaven.com/a/wooden_crate_02 | `tools/blender_forest/scanned_props.py` |
+| Terrain Tiles (terrarium elevation) | horizon islands' height fields (`distant_isles.rs`: Lofoten, Austvågøya, Stromboli, Fogo, La Gomera, Jan Mayen) | Mapzen / AWS Open Data; sources incl. SRTM, GMTED2010, ETOPO1, EU-DEM, ArcticDEM | open data, attribution per source | https://github.com/tilezen/joerd/blob/master/docs/attribution.md | `tools/terrain_isles/fetch_isles.py` |
+| Sentinel-2 cloudless 2016 | horizon islands' colour (`assets/isles/*_albedo.png`) | "Sentinel-2 cloudless - https://s2maps.eu by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016 & 2017)" | CC BY 4.0 | https://s2maps.eu | `tools/terrain_isles/fetch_isles.py` |
 
 Photographic textures from Poly Haven (CC0) are listed in `assets/forest_pbr/ATTRIBUTION.txt`.

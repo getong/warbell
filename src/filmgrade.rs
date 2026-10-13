@@ -71,10 +71,10 @@ impl Default for FilmGrade {
             split: 0.55,
             toe_tint: Vec3::new(0.80, 0.90, 1.10),
             toe: 0.018,
-            vibrance: 0.32,
-            saturation: 1.04,
-            contrast: 1.12,
-            sharpen: 0.28,
+            vibrance: 0.24,
+            saturation: 1.0,
+            contrast: 1.18,
+            sharpen: 0.32,
         }
     }
 }
@@ -157,8 +157,8 @@ fn drive_film_grade(sun: Query<&GlobalTransform, With<Sun>>, mut cams: Query<&mu
         if changed {
             g.highlight_tint = hi;
             g.shadow_tint = sh;
-            g.vibrance = 0.32 - 0.14 * night + 0.06 * golden;
-            g.contrast = 1.12 + 0.05 * golden - 0.04 * night;
+            g.vibrance = 0.24 - 0.12 * night + 0.08 * golden;
+            g.contrast = 1.18 + 0.04 * golden - 0.06 * night;
             g.split = 0.55 + 0.15 * golden;
         }
     }
