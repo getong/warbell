@@ -825,16 +825,6 @@ fn mirror_x(mut m: Mesh) -> Mesh {
 /// channels walk the coat ramp, so saddle, pale belly, tan legs and face markings come out per
 /// species. `None` without the kit → the box-built animal.
 fn kit_quad_meshes(species: QuadSpecies) -> Option<QuadMeshes> {
-    kit_quad_meshes_coat(species, None)
-}
-
-/// The kit animal for `species`' rig recoloured with a caller's coat ramp `[dark, base, light, tint]`
-/// (the wolverine on the bear's body, `oddities.rs`). `None` without the kit.
-pub fn kit_quad_meshes_with(species: QuadSpecies, coat: [u32; 4]) -> Option<QuadMeshes> {
-    kit_quad_meshes_coat(species, Some(coat))
-}
-
-fn kit_quad_meshes_coat(species: QuadSpecies, coat_override: Option<[u32; 4]>) -> Option<QuadMeshes> {
     let name = match species {
         QuadSpecies::Dog => "dog",
         QuadSpecies::Wolf => "wolf",
@@ -847,10 +837,7 @@ fn kit_quad_meshes_coat(species: QuadSpecies, coat_override: Option<[u32; 4]>) -
     let c = quad_config(species);
     let k = c.coat;
     let l = crate::palette::lin;
-    let coat = match coat_override {
-        Some(c) => c.map(l),
-        None => [l(k.dark), l(k.base), l(k.light), l(k.tint)],
-    };
+    let coat = [l(k.dark), l(k.base), l(k.light), l(k.tint)];
     // Region order = animals.py: FUR (coat ramp), SKIN, DETAIL, EYE, ACCENT, HORN.
     let accent_surf = if c.collar { Surf::Cloth } else { Surf::Fur };
     let palette = [
