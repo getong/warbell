@@ -411,7 +411,10 @@ pub(crate) fn animate_viewmodel(
     let busy = build_mode.as_ref().is_some_and(|b| b.active)
         || succ.as_ref().is_some_and(|s| s.active)
         || hero.victory;
-    let show = *mode == PlayMode::Play && fp.active && fp.blend > 0.85 && player.0.is_alive() && !busy;
+    // First person now looks out of the real third-person rig (`camera::fp_head_track`), so the
+    // separate box-hands viewmodel stays hidden unless `FOREST_FPVM=1` asks for it (A/B).
+    let legacy = std::env::var_os("FOREST_FPVM").is_some();
+    let show = legacy && *mode == PlayMode::Play && fp.active && fp.blend > 0.85 && player.0.is_alive() && !busy;
     approach(&mut st.draw, if show { 1.0 } else { 0.0 }, if show { 7.5 } else { 14.0 }, dt);
     let draw = st.draw;
     // `FOREST_VMHIDE=1` keeps every animation/lean running but hides the meshes, for A/B screen diffs.

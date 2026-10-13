@@ -560,7 +560,7 @@ fn spawn_model(
             let step = 0.46;
             commands.entity(root).insert(Transform {
                 translation: Vec3::new(-3.5 * step, 0.0, 0.0),
-                scale: Vec3::splat(crate::player::HERO_SCALE),
+                scale: crate::player::HERO_SCALE_V,
                 ..default()
             });
             crate::player::spawn_hero_meshes(commands, root, meshes, images, creature_mats);

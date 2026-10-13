@@ -108,6 +108,36 @@ const FP_EYE_H: f32 = 1.32;
 /// First-person forward eye offset (world units along the look direction): nudges the eye a touch
 /// ahead of the (hidden) body centre so it sits at the face, not inside the chest.
 const FP_FWD_OFF: f32 = 0.05;
+/// How far in front of the rig's head joint the FP eye sits (face, not skull centre — the head
+/// itself is hidden in first person).
+const FP_HEAD_FWD: f32 = 0.09;
+/// `(forward, up)` seat of the FP eye off the head joint; `FOREST_FPHEAD="fwd,up"` overrides.
+fn fp_head_seat() -> (f32, f32) {
+    static CELL: std::sync::OnceLock<(f32, f32)> = std::sync::OnceLock::new();
+    *CELL.get_or_init(|| {
+        let v: Vec<f32> = std::env::var("FOREST_FPHEAD")
+            .ok()
+            .map(|s| s.split(',').filter_map(|x| x.trim().parse().ok()).collect())
+            .unwrap_or_default();
+        (v.first().copied().unwrap_or(FP_HEAD_FWD), v.get(1).copied().unwrap_or(0.0))
+    })
+}
+
+/// FP arm reach `(forward, down)` in rig units; `FOREST_FPARM="fwd,down"` overrides.
+fn fp_arm_reach() -> (f32, f32) {
+    static CELL: std::sync::OnceLock<(f32, f32)> = std::sync::OnceLock::new();
+    *CELL.get_or_init(|| {
+        let v: Vec<f32> = std::env::var("FOREST_FPARM")
+            .ok()
+            .map(|s| s.split(',').filter_map(|x| x.trim().parse().ok()).collect())
+            .unwrap_or_default();
+        (v.first().copied().unwrap_or(0.25), v.get(1).copied().unwrap_or(0.12))
+    })
+}
+
+/// How far the FP look-pitch bends the rig's torso (so the arms, sword and shield follow the view
+/// up and down instead of leaving the frame).
+const FP_SPINE_AIM: f32 = 0.55;
 /// First-person look-pitch clamp (radians): how far you can crane up/down. Symmetric, unlike the
 /// third-person `MIN/MAX_PITCH` (which is camera *elevation*, always tilting the view downward).
 const FP_PITCH_LIMIT: f32 = 1.3;
@@ -329,6 +359,9 @@ pub struct FirstPerson {
     /// fills the whole first-person frame (face-in-lens); this eases a modest wide-angle in as
     /// the ringed foe closes, buying back its silhouette + HP bar. See `FP_CLOSE_FOV_DEG`.
     pub close_fov: f32,
+    /// The hero rig's head joint relative to the hero root (world-space offset, last frame,
+    /// low-passed) — first person looks out of the real third-person body's head.
+    pub head_off: Option<Vec3>,
 }
 
 /// Per-frame memory for the first-person eye: a low-passed ground height (so terrace steps glide),
@@ -362,7 +395,7 @@ pub(super) fn spring(pos: &mut f32, vel: &mut f32, target: f32, omega: f32, zeta
 /// Advance the eye rig one frame. Height glides over terraced ground and follows a jump at full
 /// rate; landings compress the eye and spring back; stride adds a figure-eight bob; strafing rolls
 /// the view a hair into the turn; a dodge roll dips the head and pitches it forward.
-fn fp_eye_rig(eye: &mut FpEye, hero: &Hero, yaw: f32, dt: f32) -> FpEyePose {
+fn fp_eye_rig(eye: &mut FpEye, hero: &Hero, yaw: f32, dt: f32, head_off: Option<Vec3>) -> FpEyePose {
     let dt = dt.clamp(1e-4, 0.05);
     let raw_y = hero.y + FP_EYE_H;
     if !eye.primed || (eye.y - raw_y).abs() > 2.5 {
@@ -408,6 +441,14 @@ fn fp_eye_rig(eye: &mut FpEye, hero: &Hero, yaw: f32, dt: f32) -> FpEyePose {
     };
     eye.dive += (dive_t - eye.dive) * (1.0 - (-dt * 14.0).exp());
 
+    if let Some(off) = head_off {
+        // Riding the real body's head: its walk / roll / landing already move the eye, so no
+        // synthetic bob or dip — only the strafe roll. The terrace low-pass still applies to the
+        // root height so stepping up a terrace glides.
+        let (fwd, up) = fp_head_seat();
+        let pos = Vec3::new(hero.pos.x, eye.y - FP_EYE_H, hero.pos.y) + off + Vec3::new(ys, 0.0, yc) * fwd + Vec3::Y * up;
+        return FpEyePose { pos, lean: Vec3::new(0.0, 0.0, eye.roll) };
+    }
     let pos = Vec3::new(
         hero.pos.x + ys * FP_FWD_OFF + right.x * bob_x,
         eye.y + bob_y + eye.land - eye.dive * 0.42,
@@ -474,28 +515,62 @@ pub fn toggle_first_person(
 /// respects `fp.blend`, keeping the world sword hidden between transition edges.
 pub fn fp_body_visibility(
     fp: Res<FirstPerson>,
-    mut was_hidden: Local<bool>,
-    mut vis_q: Query<&mut Visibility, With<super::HeroMesh>>,
-    fresh_q: Query<Entity, Added<super::HeroMesh>>,
+    mut parts: Query<(&super::HeroPart, &mut Visibility), Without<super::HeroMesh>>,
+    mut leaves: Query<(&ChildOf, &mut Visibility), With<super::HeroMesh>>,
+    joints: Query<&super::HeroPart>,
 ) {
-    let hide = fp.blend > 0.5;
-    if hide {
-        let sweep = !*was_hidden || !fresh_q.is_empty();
-        if sweep {
-            for mut vis in &mut vis_q {
-                if *vis != Visibility::Hidden {
-                    *vis = Visibility::Hidden;
-                }
-            }
-        }
-    } else if *was_hidden {
-        for mut vis in &mut vis_q {
-            if *vis == Visibility::Hidden {
-                *vis = Visibility::Inherited;
-            }
+    use super::Joint;
+    let want = if fp.blend > 0.5 { Visibility::Hidden } else { Visibility::Inherited };
+    for (p, mut vis) in &mut parts {
+        if p.joint == Joint::Head && *vis != want {
+            *vis = want;
         }
     }
-    *was_hidden = hide;
+    // The upper arms + pauldrons swing right past the eye in the third-person clips (a dark slab
+    // across half the frame): drop them, keep the forearms / hands / sword / shield.
+    for (parent, mut vis) in &mut leaves {
+        let upper = joints.get(parent.parent()).is_ok_and(|j| matches!(j.joint, Joint::ShoulderL | Joint::ShoulderR));
+        if upper && *vis != want {
+            *vis = want;
+        }
+    }
+}
+
+/// First person looks out of the real body: track the head joint's offset from the hero root
+/// (low-passed so the walk's head bob reads as a gentle sway, not a shake), and bend the torso
+/// with the look pitch so the arms keep the sword / shield in frame. Runs after the animator.
+pub fn fp_head_track(
+    time: Res<Time>,
+    mut fp: ResMut<FirstPerson>,
+    hero_q: Query<&GlobalTransform, With<Hero>>,
+    mut parts: Query<(&super::HeroPart, &mut Transform, &GlobalTransform)>,
+) {
+    let Ok(root) = hero_q.single() else { return };
+    let dt = time.delta_secs().clamp(1e-4, 0.05);
+    let mut head = None;
+    for (p, mut tf, gt) in &mut parts {
+        match p.joint {
+            super::Joint::Head => head = Some(gt.translation() - root.translation()),
+            super::Joint::Torso if fp.blend > 0.01 => {
+                tf.rotation *= Quat::from_rotation_x(-fp.pitch * FP_SPINE_AIM * fp.blend.clamp(0.0, 1.0));
+            }
+            // Arms reach a little further out and lower than the third-person clips author them, so
+            // a raised guard / wind-up holds the gauntlet off the lens (KCD-style: the weapon sits
+            // in the lower frame, the forearm never fills it).
+            super::Joint::ShoulderL | super::Joint::ShoulderR if fp.blend > 0.01 => {
+                let (fwd, down) = fp_arm_reach();
+                tf.translation += Vec3::new(0.0, -down, fwd) * fp.blend.clamp(0.0, 1.0);
+            }
+            _ => {}
+        }
+    }
+    if let Some(h) = head {
+        let k = 1.0 - (-dt * 10.0).exp();
+        fp.head_off = Some(match fp.head_off {
+            Some(o) if o.distance(h) < 1.0 => o + (h - o) * k,
+            _ => h,
+        });
+    }
 }
 
 pub fn player_camera(
@@ -658,7 +733,8 @@ pub fn player_camera(
     let look_yaw = a + std::f32::consts::PI;
     let (fpy_sin, fpy_cos) = look_yaw.sin_cos();
     let (fpp_sin, fpp_cos) = fp.pitch.sin_cos();
-    let fp_pose = fp_eye_rig(&mut fp.eye, &hero, look_yaw, time.delta_secs());
+    let head_off = fp.head_off;
+    let fp_pose = fp_eye_rig(&mut fp.eye, &hero, look_yaw, time.delta_secs(), head_off);
     let fp_eye = fp_pose.pos;
     let fp_fwd = Vec3::new(fpy_sin * fpp_cos, fpp_sin, fpy_cos * fpp_cos);
     let fp_look = fp_eye + fp_fwd;

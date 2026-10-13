@@ -49,6 +49,11 @@ use bevy::prelude::*;
 /// scaled by the SAME 1.35× so proportions stay consistent; animals are deliberately left small.
 /// Camera `EYE_H`/`FP_EYE_H` (player/camera.rs) track this height.
 pub const HERO_SCALE: f32 = 0.6345;
+/// The hero root's scale. The footman asset is mirrored across X on import (`footman.rs`), which
+/// left the knight holding his sword in the LEFT hand and the shield in the right; flipping X back
+/// here makes him right-handed in third AND first person (Bevy flips the winding for a negative
+/// determinant, so the faces still cull correctly).
+pub const HERO_SCALE_V: Vec3 = Vec3::new(-HERO_SCALE, HERO_SCALE, HERO_SCALE);
 
 /// A rig **joint** — a transform-only entity the animator ([`anim`]) poses. Each joint's mesh is a
 /// separate child *leaf* entity ([`HeroMesh`]). (Hands / neck / feet are unanimated, so they carry
@@ -430,7 +435,8 @@ impl Plugin for PlayerPlugin {
             .init_resource::<combat::CombatRng>()
             .init_resource::<combat::HitStop>()
             .insert_resource(orbit)
-            .insert_resource(camera::FirstPerson { active: fp_boot, ..default() })
+            // `FOREST_FP_PITCH=<rad>`: start the FP look pitched (shots of the body / weapon framing).
+            .insert_resource(camera::FirstPerson { active: fp_boot, pitch: envf("FOREST_FP_PITCH").unwrap_or(0.0), ..default() })
             // `setup_combat_fx` stays UNGATED: it inserts the shared `CombatFx` resource that
             // ungated modules (projectile/defenses impact sparks) read, and RTS archer arrows
             // reuse those FX in Skirmish. Everything hero-specific below is Campaign-only.
@@ -463,9 +469,10 @@ impl Plugin for PlayerPlugin {
                     camera::toggle_first_person, // V / HUD eye button: third ⇄ first person
                     camera::player_camera,
                     camera::fp_body_visibility
-                        .after(camera::player_camera), // FP: hide the world rig
+                        .after(camera::player_camera), // FP: hide the rig's head (we look out of it)
                     animtest, // debug: FOREST_ANIMTEST=walk|block stages an animation for a capture
                     anim::hero_anim,
+                    camera::fp_head_track.after(anim::hero_anim), // FP eye on the head + spine aim
                     combat::update_sparks,
                     combat::update_fx_fades,
                     combat::update_light_fades, // impact flashes (kill/heavy/parry) decay + despawn
@@ -616,7 +623,7 @@ fn spawn_hero(
             Transform {
                 translation: Vec3::new(pos.x, y, pos.y),
                 rotation: Quat::from_rotation_y(facing),
-                scale: Vec3::splat(HERO_SCALE),
+                scale: HERO_SCALE_V,
             },
             Visibility::Visible,
             Hero::fresh(pos, y, facing),
@@ -687,6 +694,6 @@ fn reset_player(
     *hero = Hero::fresh(pos, y, facing);
     tf.translation = Vec3::new(pos.x, y, pos.y);
     tf.rotation = Quat::from_rotation_y(facing);
-    tf.scale = Vec3::splat(HERO_SCALE);
+    tf.scale = HERO_SCALE_V;
     *hh = HeroHealth::default();
 }

@@ -390,7 +390,9 @@ fn gpu(
                         base_color: srgb_hex(m.color),
                         metallic: m.metal,
                         perceptual_roughness: m.rough.clamp(0.05, 1.0),
-                        cull_mode: if m.double { None } else { Some(Face::Back) },
+                        // FRONT: the hero root is mirrored (`HERO_SCALE_V`, negative X) and Bevy does not
+                        // flip the winding for a negative determinant, so the outside faces wind backwards.
+                        cull_mode: if m.double { None } else { Some(Face::Front) },
                         double_sided: m.double,
                         ..default()
                     },

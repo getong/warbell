@@ -282,6 +282,10 @@ struct ClipClock {
     saved: u32,
     /// tick the last frame was written — start of the flush tail
     done_at: Option<u32>,
+    /// consecutive ticks with every render pipeline compiled (see `drive_shot`)
+    settled_frames: u32,
+    /// warm-up passed; recording (latched)
+    started: bool,
 }
 
 /// Read by the demo director (`demo.rs` / `town.rs`) so scripted timelines (the hero walk, the
@@ -352,7 +356,14 @@ fn drive_clip(
     // frame count elapses in well under a second on a fast preset (SMAA instead of TAA runs ~3x the
     // frame rate during the load): every screenshot was requested before the window rendered at
     // all, none ever landed, and the harness exited with no frames and no error.
-    let warm = clock.frame >= cfg.warmup && time.elapsed_secs() >= 10.0;
+    // ...and, like `drive_shot`, only once every render pipeline has compiled: without it a cold
+    // shader cache recorded the whole clip as a black world behind a live HUD.
+    clock.settled_frames = if crate::pipeline_sync::settled() { clock.settled_frames + 1 } else { 0 };
+    let settled = clock.settled_frames >= 10 || time.elapsed_secs() >= 10.0 + PIPELINE_WAIT_SECS;
+    if !clock.started && clock.frame >= cfg.warmup && time.elapsed_secs() >= 10.0 && settled {
+        clock.started = true;
+    }
+    let warm = clock.started;
     prog.recording = warm;
     prog.frame = clock.saved;
     // Flush tail: all frames requested → keep rendering until the LAST one is on disk (the async

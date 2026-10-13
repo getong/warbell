@@ -116,16 +116,15 @@ impl Plugin for CinematicPlugin {
     }
 }
 
-/// Hide/show the world hero's held weapon. First person keeps it hidden alongside the body;
-/// the camera-parented viewmodel supplies the visible sword. Apply after the body's transition
-/// sweep so returning to third person still respects the Director's empty-hand poses.
+/// Hide/show the world hero's held weapon for the Director's empty-hand poses. First person looks
+/// out of the real rig now (`camera::fp_head_track`), so it shows the same sword.
 fn weapon_visibility(
     state: Res<DirectorState>,
     fp: Option<Res<crate::player::FirstPerson>>,
     mut q: Query<&mut Visibility, With<crate::player::HeroWeapon>>,
 ) {
-    let hide = fp.is_some_and(|fp| fp.blend > 0.5)
-        || state.hide_weapon
+    let _ = fp;
+    let hide = state.hide_weapon
         || state.gesture.is_some_and(|g| g.wants_empty_hand());
     let want = if hide {
         Visibility::Hidden

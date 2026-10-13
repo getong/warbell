@@ -271,7 +271,7 @@ fn drive_succession(
             hero.attacking = false;
             tf.translation = succ.steal_pos;
             tf.rotation = Quat::from_rotation_y(0.0);
-            tf.scale = Vec3::splat(crate::player::HERO_SCALE);
+            tf.scale = crate::player::HERO_SCALE_V;
             player.0.respawn_at(pos.x as f64, y as f64, pos.y as f64); // full HP, clears dead_since
             hh.stamina = hh.stamina_max;
             hh.block_locked = false;
