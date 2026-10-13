@@ -86,7 +86,7 @@ def main():
         c = cnt[name]
         per_call = d / max(c, 1)
         per_frame = (d / 1000.0) / frames if frames else 0.0
-        print(f"{name[:52]:52} {d / 1000:>10.1f} {c:>8} {per_call:>9.1f} {per_frame:>9.3f}")
+        print(f"{name[:110]:110} {d / 1000:>10.1f} {c:>8} {per_call:>9.1f} {per_frame:>9.3f}")
     print("-" * 92)
     print(f"{'TOTAL span-ms (sums across threads)':52} {grand:>10.1f}  est. frames={frames}")
 

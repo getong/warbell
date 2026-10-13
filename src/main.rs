@@ -180,7 +180,10 @@ fn main() {
     // washed-out pale mean — the real game at native res looks lush.)
     let mut window = Window { title: "Warbell".into(), ..default() };
     // Unattended verification should not activate its window over the user's current app.
-    if std::env::var("FOREST_PERFTEST").is_ok() || std::env::var("FOREST_SHOT").is_ok()
+    // NB: Windows throttles an UNFOCUSED window's presents to 60 Hz, so an unfocused PERFTEST is
+    // pinned at 16.67 ms no matter how cheap the frame is. `FOREST_PERFFOCUS=1` keeps the window
+    // focused for real frame-rate measurement (it will grab the foreground while it runs).
+    if (std::env::var("FOREST_PERFTEST").is_ok() && std::env::var("FOREST_PERFFOCUS").is_err()) || std::env::var("FOREST_SHOT").is_ok()
         || std::env::var("FOREST_RTS_ECOTEST").is_ok() || std::env::var("FOREST_CAMPAIGN_VERIFY").is_ok() {
         window.focused = false;
     }

@@ -72,10 +72,24 @@ impl Plugin for PerftestPlugin {
             .clamp(0.25, 16.0);
         let frozen = std::env::var("FOREST_PERFFREEZE").is_ok();
         let army = std::env::var("FOREST_PERF_ARMY").is_ok();
+        let cpu = CpuTimes::default();
+        if let Some(ra) = app.get_sub_app_mut(bevy::render::RenderApp) {
+            use bevy::render::{Render, RenderSystems};
+            ra.insert_resource(cpu.clone()).add_systems(
+                Render,
+                (
+                    cpu_render_begin.in_set(RenderSystems::ExtractCommands),
+                    cpu_render_end.in_set(RenderSystems::PostCleanup),
+                ),
+            );
+        }
         app.insert_resource(PerfCfg { duration, speed, frozen, army })
             .init_resource::<PerfClock>()
             .init_resource::<PerfFrames>()
             .init_resource::<PerfArmyReady>()
+            .insert_resource(cpu)
+            .add_systems(First, cpu_main_begin)
+            .add_systems(Last, cpu_main_end)
             // FrameTime/EntityCount/SystemInformation diagnostics are all registered by `debug_stats`
             // (always present); we just read them here.
             .add_systems(Startup, perf_setup)
@@ -225,6 +239,67 @@ fn perf_keep_hero_alive(player: Option<ResMut<crate::player::PlayerRes>>) {
     }
 }
 
+/// Untraced CPU cost per frame of each thread, for A/B work where frame time can't resolve it
+/// (vsync/driver caps pin frame time, and the `profiling` trace adds its own overhead): `main` is the
+/// main-world schedule (`First` → `Last`), `render` the render-world `Render` schedule
+/// (`ExtractCommands` → `PostCleanup`, which includes command encoding + queue submit). With
+/// pipelined rendering the two overlap, so the achievable frame ≈ max(main, render + extract).
+#[derive(Resource, Clone, Default)]
+struct CpuTimes(std::sync::Arc<std::sync::Mutex<CpuAcc>>);
+
+#[derive(Default)]
+struct CpuAcc {
+    /// Since the last PERF line (drained by `perf_tick`).
+    win_main: Vec<f64>,
+    win_render: Vec<f64>,
+    /// Post-warmup samples for the summary (cleared until gameplay frames start counting).
+    all_main: Vec<f64>,
+    all_render: Vec<f64>,
+}
+
+impl CpuAcc {
+    fn push_main(&mut self, ms: f64) {
+        self.win_main.push(ms);
+        self.all_main.push(ms);
+    }
+    fn push_render(&mut self, ms: f64) {
+        self.win_render.push(ms);
+        self.all_render.push(ms);
+    }
+}
+
+#[derive(Resource)]
+struct RenderStart(std::time::Instant);
+
+fn cpu_main_begin(mut commands: Commands) {
+    // Same marker type as the render side — each world holds its own copy.
+    commands.insert_resource(RenderStart(std::time::Instant::now()));
+}
+
+fn cpu_main_end(start: Option<Res<RenderStart>>, times: Res<CpuTimes>) {
+    if let Some(s) = start {
+        times.0.lock().unwrap().push_main(s.0.elapsed().as_secs_f64() * 1000.0);
+    }
+}
+
+fn cpu_render_begin(mut commands: Commands) {
+    commands.insert_resource(RenderStart(std::time::Instant::now()));
+}
+
+fn cpu_render_end(start: Option<Res<RenderStart>>, times: Res<CpuTimes>) {
+    if let Some(s) = start {
+        times.0.lock().unwrap().push_render(s.0.elapsed().as_secs_f64() * 1000.0);
+    }
+}
+
+fn mean_p95(v: &mut [f64]) -> (f64, f64) {
+    if v.is_empty() {
+        return (0.0, 0.0);
+    }
+    v.sort_by(f64::total_cmp);
+    (v.iter().sum::<f64>() / v.len() as f64, v[((v.len() - 1) as f64 * 0.95).ceil() as usize])
+}
+
 fn perf_setup(cfg: Res<PerfCfg>, mut vtime: ResMut<Time<Virtual>>) {
     if (cfg.speed - 1.0).abs() > f32::EPSILON {
         vtime.set_relative_speed(cfg.speed);
@@ -238,10 +313,17 @@ fn perf_setup(cfg: Res<PerfCfg>, mut vtime: ResMut<Time<Virtual>>) {
 /// Hard stop after the wall-clock budget so an unattended run always terminates.
 fn perf_sample(time: Res<Time<Real>>, app: Res<State<crate::game_state::AppState>>,
     modal: Option<Res<State<crate::game_state::Modal>>>, cfg: Res<PerfCfg>, mut frames: ResMut<PerfFrames>,
-    ready: Res<crate::biome::WorldReady>, army_ready: Res<PerfArmyReady>, mut ready_at: Local<Option<f32>>) {
+    ready: Res<crate::biome::WorldReady>, army_ready: Res<PerfArmyReady>, mut ready_at: Local<Option<f32>>,
+    cpu: Res<CpuTimes>) {
     // Exclude shader/asset warmup and frozen menus. Percentiles describe actual gameplay frames.
+    let clear_cpu = || {
+        let mut c = cpu.0.lock().unwrap();
+        c.all_main.clear();
+        c.all_render.clear();
+    };
     if !ready.0 || (cfg.army && !army_ready.0) {
         *ready_at = None;
+        clear_cpu();
         return;
     }
     let now = time.elapsed_secs();
@@ -249,11 +331,13 @@ fn perf_sample(time: Res<Time<Real>>, app: Res<State<crate::game_state::AppState
     if now - start >= 15.0 && *app.get() == crate::game_state::AppState::Playing
         && (cfg.frozen || modal.is_some_and(|m| *m.get() == crate::game_state::Modal::None)) {
         frames.0.push(time.delta_secs_f64() * 1000.0);
+    } else {
+        clear_cpu();
     }
 }
 
 fn perf_exit(time: Res<Time<Real>>, cfg: Res<PerfCfg>, mut frames: ResMut<PerfFrames>, mut exit: MessageWriter<AppExit>,
-    app: Res<State<crate::game_state::AppState>>, modal: Option<Res<State<crate::game_state::Modal>>>) {
+    app: Res<State<crate::game_state::AppState>>, modal: Option<Res<State<crate::game_state::Modal>>>, cpu: Res<CpuTimes>) {
     if time.elapsed_secs() >= cfg.duration {
         if frames.0.is_empty() || *app.get() != crate::game_state::AppState::Playing
             || (!cfg.frozen && !modal.is_some_and(|m| *m.get() == crate::game_state::Modal::None)) {
@@ -267,6 +351,12 @@ fn perf_exit(time: Res<Time<Real>>, cfg: Res<PerfCfg>, mut frames: ResMut<PerfFr
         let percentile = |p: f64| frames.0[((n - 1) as f64 * p).ceil() as usize];
         info!("PERF_SUMMARY mode={mode} frames={n} mean_ms={:.3} p50_ms={:.3} p95_ms={:.3} p99_ms={:.3} max_ms={:.3}",
             frames.0.iter().sum::<f64>() / n as f64, percentile(0.50), percentile(0.95), percentile(0.99), frames.0[n-1]);
+        {
+            let mut c = cpu.0.lock().unwrap();
+            let (mm, mp) = mean_p95(&mut c.all_main);
+            let (rm, rp) = mean_p95(&mut c.all_render);
+            info!("PERF_CPU main_mean_ms={mm:.3} main_p95_ms={mp:.3} render_mean_ms={rm:.3} render_p95_ms={rp:.3}");
+        }
         info!("PERFTEST done ({:.0}s) — exiting", time.elapsed_secs());
         exit.write(AppExit::Success);
     }
@@ -317,8 +407,16 @@ fn perf_tick(world: &mut World) {
         (fa.len(), fa.values().map(|v| v.len()).sum::<usize>())
     });
 
+    let (cpu_main, cpu_render) = world.get_resource::<CpuTimes>().map_or((0.0, 0.0), |c| {
+        let mut c = c.0.lock().unwrap();
+        let m = mean_p95(&mut c.win_main).0;
+        let r = mean_p95(&mut c.win_render).0;
+        c.win_main.clear();
+        c.win_render.clear();
+        (m, r)
+    });
     info!(
-        "PERF t={elapsed:>4.0} fps={fps:>4.0} ms={ms:>5.1} ent={ent:>6.0} mesh={meshes:>5} mat={mats:>4} creature_mat={creature_mats} img={imgs:>5} atlas={atlas_keys}k/{atlas_pages}p rss={rss:>5.2}GiB"
+        "PERF t={elapsed:>4.0} fps={fps:>4.0} ms={ms:>5.1} cpu_main={cpu_main:>5.2} cpu_render={cpu_render:>5.2} ent={ent:>6.0} mesh={meshes:>5} mat={mats:>4} creature_mat={creature_mats} img={imgs:>5} atlas={atlas_keys}k/{atlas_pages}p rss={rss:>5.2}GiB"
     );
 
     // ── per-archetype histogram (top by entity count, tagged with game components) ──────
