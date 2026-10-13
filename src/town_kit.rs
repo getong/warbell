@@ -34,7 +34,19 @@ impl Plugin for TownKitPlugin {
 }
 
 /// The pieces `town_kit.glb` carries, in the script's priority order.
-pub const PIECES: [&str; 77] = [
+pub const PIECES: [&str; 89] = [
+    "town_hut_0",
+    "town_hut_1",
+    "town_hut_2",
+    "town_hut_3",
+    "town_hut_4",
+    "town_hut_5",
+    "town_hut_6",
+    "town_hut_7",
+    "town_hut_8",
+    "town_hut_9",
+    "town_hut_10",
+    "town_hut_11",
     "town_granary",
     "town_smithy",
     "town_tavern",

@@ -59,7 +59,190 @@ impl Plugin for VillageLifePlugin {
                     .run_if(in_state(crate::game_state::Modal::None)),
             )
             // Ungated (like `animate_biped`) so a paused world still draws its people posed.
-            .add_systems(Update, life_animate.before(crate::biped::animate_biped));
+            .add_systems(Update, life_animate.before(crate::biped::animate_biped))
+            .add_systems(PostUpdate, seat_fit.before(bevy::transform::TransformSystems::Propagate));
+        if std::env::var("FOREST_LIFECHECK").is_ok_and(|v| v != "0") {
+            app.add_systems(Update, life_check.after(life_brain));
+        }
+    }
+}
+
+/// Where a seated person's PELVIS joint belongs: over the seat's line, a hand above its top.
+const SEAT_PELVIS_UP: f32 = 0.09;
+
+/// Per-person seat correction (world offset applied to the visible body while sitting).
+#[derive(Component, Default)]
+struct SeatFit(Vec3);
+
+/// **Sit ON the bench, not in it.** The realistic cast's sitting clips put the pelvis wherever
+/// their own rig likes (measured by `FOREST_LIFECHECK`: ~0.2 behind the seat line and up to 0.15
+/// under the seat top, varying with build and clip), so each sitter's body is eased by a small
+/// feedback offset until the skin's real pelvis rests on the seat. The offset is kept per person
+/// (the next sit starts from it), faded in over the sit-down and out over the stand-up.
+#[allow(clippy::type_complexity)]
+fn seat_fit(
+    time: Res<Time>,
+    mut commands: Commands,
+    w: Res<LifeWorld>,
+    mut q: Query<(Entity, &LifeAgent, &GlobalTransform, &crate::npc_skin::Skinned, Option<&mut SeatFit>)>,
+    joints: Query<&GlobalTransform, Without<LifeAgent>>,
+    mut tfs: Query<&mut Transform, Without<LifeAgent>>,
+) {
+    let now = time.elapsed_secs();
+    let dt = time.delta_secs().min(0.05);
+    for (e, a, gt, sk, fit) in &mut q {
+        let Some(mut fit) = fit else {
+            commands.entity(e).try_insert(SeatFit::default());
+            continue;
+        };
+        // How much of the offset shows: in over the sit-down, out over the stand-up.
+        let (weight, learn) = match a.st {
+            St::SitDown => (((now - a.t0) / 1.2).clamp(0.0, 1.0), false),
+            St::Sit(_) => (1.0, true),
+            St::StandUp => ((1.0 - (now - a.t0) / 1.0).clamp(0.0, 1.0), false),
+            _ => (0.0, false),
+        };
+        if learn {
+            if let (Some(i), Some(pel)) = (a.spot, sk.pelvis) {
+                if let (Some(s), Ok(pg)) = (w.spots.get(i), joints.get(pel)) {
+                    let gy = crate::steer::footing(s.pos.x, s.pos.y).unwrap_or(gt.translation().y);
+                    let want = Vec3::new(s.pos.x, gy + s.seat_h + SEAT_PELVIS_UP, s.pos.y);
+                    let err = want - pg.translation();
+                    fit.0 = (fit.0 + err * (6.0 * dt).min(1.0)).clamp(Vec3::splat(-0.4), Vec3::splat(0.4));
+                }
+            }
+        }
+        let Ok(mut tf) = tfs.get_mut(sk.inst()) else { continue };
+        // World offset → the root's local frame (rotation + uniform scale).
+        let (scale, rot, _) = gt.to_scale_rotation_translation();
+        tf.translation = rot.inverse() * (fit.0 * weight) / scale.x.max(1e-3);
+    }
+}
+
+/// `FOREST_LIFECHECK=1` (+ `FOREST_LIFECHECK_SECS`, default 90): an automated **people collision
+/// check** on the live town. Twice a second it audits every resident out of doors:
+/// - standing / walking: the body centre must keep 0.08 off every prop and wall (`inside prop`; a
+///   person just risen from a bench stands 0.1 in front of it, shins to the plank),
+///   and stay 0.4 from everyone else (`overlap`);
+/// - seated: the skin's real pelvis must rest ON the seat — 0.0–0.3 above the seat top and within
+///   0.22 of the seat line front-to-back (`sits in bench` / `floats` / `off bench`).
+/// Prints each violation (first 40) and a tally; at the end logs `LIFECHECK PASS` or
+/// `LIFECHECK FAIL n` and quits (exit code 1 on failure), so it runs like a test:
+/// `FOREST_LIFECHECK=1 FOREST_DEMO=work FOREST_TIME=0.3 cargo run`.
+#[allow(clippy::type_complexity)]
+fn life_check(
+    time: Res<Time>,
+    w: Res<LifeWorld>,
+    q: Query<(Entity, &LifeAgent, &Villager, Option<&crate::npc_skin::Skinned>), Without<crate::dying::Dying>>,
+    joints: Query<&GlobalTransform>,
+    mut st: Local<(f32, u32, u32, std::collections::HashMap<&'static str, u32>)>,
+    mut seats: Local<std::collections::BTreeMap<usize, (f32, f32, u32, f32, u8)>>,
+    mut exit: MessageWriter<AppExit>,
+    mut inside: Local<std::collections::HashMap<Entity, u32>>,
+) {
+    let now = time.elapsed_secs();
+    let secs: f32 = std::env::var("FOREST_LIFECHECK_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(90.0);
+    // Let the town settle (houses rise, folk walk out) before judging.
+    if now < 20.0 || now < st.0 {
+        return;
+    }
+    st.0 = now + 0.5;
+    st.1 += 1;
+    let out: Vec<(Entity, Vec2, bool)> = q
+        .iter()
+        .filter(|(_, a, ..)| !matches!(a.st, St::Indoors))
+        .map(|(e, a, v, _)| (e, v.pos, matches!(a.st, St::Sit(_) | St::SitDown | St::StandUp)))
+        .collect();
+    let view = crate::blockers::read();
+    let mut bad = |kind: &'static str, msg: String, st: &mut (f32, u32, u32, std::collections::HashMap<&'static str, u32>)| {
+        st.2 += 1;
+        *st.3.entry(kind).or_default() += 1;
+        if st.2 <= 40 {
+            warn!("LIFECHECK {kind}: {msg}");
+        }
+    };
+    for (e, a, v, sk) in &q {
+        if matches!(a.st, St::Indoors) {
+            continue;
+        }
+        let p = v.pos;
+        match a.st {
+            St::Sit(_) => {
+                // (the seat fit settles within the first second of the sit)
+                if now - a.t0 < 1.5 {
+                    continue;
+                }
+                let (Some(i), Some(pel)) = (a.spot, sk.and_then(|s| s.pelvis)) else { continue };
+                let Ok(g) = joints.get(pel) else { continue };
+                let s = w.spots[i];
+                let gy = crate::steer::footing(s.pos.x, s.pos.y).unwrap_or(0.0);
+                let pp = g.translation();
+                let up = pp.y - (gy + s.seat_h);
+                let f = fwd(s.face);
+                let along = (Vec2::new(pp.x, pp.z) - s.pos).dot(f);
+                let m = seats.entry(i).or_insert((0.0, 0.0, 0, s.seat_h, a.body as u8));
+                m.0 += up;
+                m.1 += along;
+                m.2 += 1;
+                if up < 0.03 {
+                    bad("sits in bench", format!("{e:?} seat {i} at {:.1},{:.1}: pelvis {up:.2} under the seat top", s.pos.x, s.pos.y), &mut st);
+                } else if up > 0.2 {
+                    bad("floats", format!("{e:?} seat {i}: pelvis {up:.2} above the seat top"), &mut st);
+                }
+                if along.abs() > 0.1 {
+                    bad("off bench", format!("{e:?} seat {i} at {:.1},{:.1}: pelvis {along:.2} off the seat line", s.pos.x, s.pos.y), &mut st);
+                }
+            }
+            St::SitDown | St::StandUp => {}
+            _ => {
+                // (a graze for one sample while sliding past isn't visible; one second inside is)
+                let streak = inside.entry(e).or_default();
+                *streak = if view.any_within(p.x, p.y, 0.08) { *streak + 1 } else { 0 };
+                if *streak >= 2 {
+                    bad("inside prop", format!("{e:?} {:?} {:?} at {:.2},{:.2} after {:?} path {}/{} stall {:.1} replans {} until {:.1} spot {:?}", a.body, a.st, p.x, p.y, a.after, a.path_i, a.path.len(), a.stall, a.replans, a.until - now, a.spot) + &{
+                    let hs = crate::castle::houses();
+                    hs.iter().enumerate().min_by(|x, y| x.1.pos.distance(p).total_cmp(&y.1.pos.distance(p))).map_or(String::new(), |(i, h)| {
+                        let l = rot2(p - h.pos, -h.yaw);
+                        format!(" | house {i} {} half {:.2},{:.2} local {:.2},{:.2}", h.piece, h.half.x, h.half.y, l.x, l.y)
+                    })
+                }, &mut st);
+                }
+                for &(o, op, _) in &out {
+                    if o != e && Some(o) != a.partner && o.index_u32() < e.index_u32() && op.distance(p) < 0.4 {
+                        bad("overlap", format!("{e:?} {:?} with {o:?} at {:.2},{:.2} ({:.2} apart)", a.st, p.x, p.y, op.distance(p)), &mut st);
+                    }
+                }
+                if a.st == St::Walk {
+                    for &(o, op, seated) in &out {
+                        // (taking the seat beside them is fine)
+                        if seated && o != e && op.distance(p) < 0.45 && a.goal.distance(op) > 1.0 {
+                            bad("walks through sitter", format!("{e:?} at {:.2},{:.2}", p.x, p.y), &mut st);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if now >= 20.0 + secs {
+        let n = st.2;
+        let mut tally: Vec<_> = st.3.iter().map(|(k, v)| format!("{k}={v}")).collect();
+        tally.sort();
+        if n == 0 {
+            info!("LIFECHECK PASS ({} samples)", st.1);
+            exit.write(AppExit::Success);
+        } else {
+            error!("LIFECHECK FAIL {n} over {} samples: {}", st.1, tally.join(" "));
+            let mut hist = std::collections::BTreeMap::<String, u32>::new();
+            for (_, a, ..) in &q {
+                *hist.entry(format!("{:?}", a.st)).or_default() += 1;
+            }
+            error!("LIFECHECK states now: {hist:?}");
+            for (i, (u, al, n, h, b)) in seats.iter() {
+                let n = *n as f32;
+                info!("LIFECHECK seat {i}: seat_h {h:.2} body {b} pelvis up {:.3} along {:.3}", u / n, al / n);
+            }
+            exit.write(AppExit::error());
+        }
     }
 }
 
@@ -493,6 +676,10 @@ fn add_bench(commands: &mut Commands, w: &mut LifeWorld, pos: Vec2, yaw: f32, fa
 /// The seats a house's own model already has by its door (`village_huts.py`, house-local frame:
 /// centre, axis yaw, facing, seat top, offsets along the axis) — `None` for a house without one.
 fn house_seats(piece: &str) -> Option<(Vec2, f32, f32, f32, &'static [f32])> {
+    if let Some((_, d)) = crate::castle::hut_dims(piece) {
+        // Every settler hut: bench(V(-1.0, 0, D/2 + 0.45), L=0.9) left of the door (village_huts.py).
+        return Some((Vec2::new(-1.0, d / 2.0 + 0.45), 0.0, 0.0, PLANK_TOP, &[0.0]));
+    }
     match piece {
         // bench(V(W/2 + 0.45, 0, -0.9), π/2, L=1.1) built along X, then the whole cottage turned
         // −π/2 (+X → +Z): (x, z) → (−z, x) — so 0.45 before the road-end wall, along X.
@@ -781,7 +968,8 @@ fn life_houses(
     let door = h.local(0.0, h.half.y + 0.55);
     w.doors.push((door, h.pos, h.yaw));
     let hi = Some(i as u8);
-    add_spot(&mut w, SpotKind::Sweep, h.local(0.95, h.half.y + 0.6), h.yaw + FRAC_PI_2, v, hi, 0);
+    // Sweeping the doorstep, just right of the door (clear of the porch bench and the pots/bucket).
+    add_spot(&mut w, SpotKind::Sweep, h.local(0.5, h.half.y + 0.75), h.yaw + FRAC_PI_2, v, hi, 0);
     let g = h.local(-1.1 * flip, back - 0.85);
     add_spot(&mut w, SpotKind::Garden, g, h.yaw + PI, v, hi, 0);
     if h.dress() == 1 {
@@ -1048,7 +1236,8 @@ const WALK_R: f32 = 0.3;
 fn walk_to(a: &mut LifeAgent, from: Vec2, goal: Vec2, after: After, now: f32) {
     let goal = match after {
         After::Spot | After::Enter => goal,
-        _ => crate::navgrid::free_point(goal, WALK_R),
+        // body (0.22) + the arrival slack (0.18): a walker stopping short of the goal still clears.
+        _ => crate::navgrid::free_point(goal, 0.42),
     };
     a.goal = goal;
     a.after = after;
@@ -1132,10 +1321,10 @@ fn life_brain(
     let (hero, hero_alive) = hero_q.single().map(|h| (h.pos, true)).unwrap_or((Vec2::splat(1e6), false));
     let w = &mut *w;
     // Everyone out on the street, for personal-space steering (sitters / indoors don't count).
-    let others: Vec<(Entity, Vec2)> = q
+    let others: Vec<(Entity, Vec2, bool)> = q
         .iter()
         .filter(|(_, a, ..)| !matches!(a.st, St::Indoors))
-        .map(|(e, _, v, ..)| (e, v.pos))
+        .map(|(e, a, v, ..)| (e, v.pos, matches!(a.st, St::SitDown | St::Sit(_) | St::StandUp)))
         .collect();
 
     for (me, mut a, mut v, mut tf, mut vis) in &mut q {
@@ -1208,12 +1397,12 @@ fn life_brain(
         // ── Neighbours: passing someone close ahead, a nod or a raised hand, then on their way ──
         if a.st == St::Walk && now > a.nod_cd && a.body != Body::Kid && a.carry == Carry::None {
             let ahead = fwd(v.facing);
-            let met = others.iter().find(|(oe, op)| {
+            let met = others.iter().find(|(oe, op, _)| {
                 let d = *op - pos;
                 let l = d.length();
                 *oe != me && Some(*oe) != a.partner && l > 0.9 && l < 2.6 && d.dot(ahead) > 0.6 * l
             });
-            if let Some(&(_, op)) = met {
+            if let Some(&(_, op, _)) = met {
                 a.nod_cd = now + rr(&mut a.rng, 25.0, 50.0);
                 if r01(&mut a.rng) < 0.45 {
                     let act = if r01(&mut a.rng) < 0.65 { Act::Nod } else { Act::Wave };
@@ -1284,12 +1473,17 @@ fn life_brain(
                     let dir = (target - v.pos).normalize_or_zero();
                     let mut aim = target;
                     let mut pace: f32 = 1.0;
-                    for &(oe, op) in &others {
+                    for &(oe, op, seated) in &others {
                         if oe == me || Some(oe) == a.partner {
                             continue;
                         }
                         let d = op - v.pos;
                         let dist = d.length();
+                        // A sitter's knees and feet stick out in front of the bench: give anyone
+                        // seated a wide berth even when merely passing beside them.
+                        if seated && dist < 1.0 && dist > 1e-3 && op.distance(target) > 0.6 {
+                            aim -= d / dist * (1.0 - dist) * 2.5;
+                        }
                         if dist > 1.6 || dist < 1e-3 {
                             continue;
                         }
@@ -1306,7 +1500,7 @@ fn life_brain(
                     }
                     let step = speed * pace * dt;
                     let s = if near {
-                        crate::steer::advance_person(v.pos, v.facing, aim, step, v.body_r, gy, 3.0 * dt)
+                        crate::steer::advance_person(v.pos, v.facing, aim, step, v.body_r.max(0.28), gy, 3.0 * dt)
                     } else {
                         Some(crate::steer::advance_direct(v.pos, v.facing, aim, step, v.body_r, gy, 3.0 * dt))
                     };
@@ -1590,7 +1784,7 @@ fn think(a: &mut LifeAgent, v: &Villager, w: &mut LifeWorld, stalls: &mut Stalls
         let to = approach(s, a.root_scale);
         // A chore spot drawn against its prop (the woodpile, the coop, a bench) is worked from
         // beside it, never from inside it.
-        let to = if s.kind == SpotKind::Seat { to } else { crate::navgrid::free_point(to, WALK_R * 0.9) };
+        let to = if s.kind == SpotKind::Seat { to } else { crate::navgrid::free_point(to, 0.42) };
         walk_to(a, pos, to, After::Spot, now);
         return;
     }

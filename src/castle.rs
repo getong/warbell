@@ -1679,33 +1679,42 @@ impl HouseSite {
 /// The twelve house sites, nearest the W gate first (the order `town.houses` reveals them): eight
 /// along the King's Road — alternating sides, uneven gaps, the building line following the road,
 /// a little yaw jitter — and four cottages on the side lane.
+/// Wall footprint `(W, D)` of each village settler hut `town_hut_<k>` — MUST match
+/// `tools/blender_forest/village_huts.py` `HUT_SPECS` (front +Z, door centred, porch bench at
+/// x −1.0, z D/2 + 0.45).
+pub(crate) const HUTS: [(f32, f32); 12] = [
+    (3.4, 2.8), (3.8, 3.0), (3.2, 2.7), (4.0, 3.0), (3.5, 2.9), (3.6, 2.8),
+    (3.0, 2.6), (3.9, 3.1), (3.4, 2.8), (3.7, 3.0), (3.3, 2.7), (3.8, 2.9),
+];
+
+/// `(W, D)` of a `town_hut_<k>` piece.
+pub(crate) fn hut_dims(piece: &str) -> Option<(f32, f32)> {
+    piece.strip_prefix("town_hut_").and_then(|k| k.parse::<usize>().ok()).and_then(|k| HUTS.get(k).copied())
+}
+
 pub(crate) fn houses() -> &'static [HouseSite] {
     static SITES: std::sync::LazyLock<Vec<HouseSite>> = std::sync::LazyLock::new(|| {
         // (arc length along the street, side: +1 north / −1 south, piece, front-yard depth, yaw jitter)
         const MAIN: [(f32, f32, &str, f32, f32); 8] = [
-            (19.0, -1.0, "town_street_house_b", 0.6, 0.03),
-            (19.5, 1.0, "town_street_house_a", 0.9, -0.05),
-            (26.5, 1.0, "town_street_house_b", 0.5, 0.04),
-            (33.5, 1.0, "town_street_house_a", 1.1, -0.02),
-            (42.5, -1.0, "town_street_house_a", 0.8, 0.06),
-            (41.0, 1.0, "town_street_house_a", 0.6, 0.02),
-            (49.5, -1.0, "town_street_house_b", 1.0, -0.04),
-            (48.0, 1.0, "town_street_house_b", 0.7, 0.05),
+            (19.0, -1.0, "town_hut_0", 0.9, 0.03),
+            (19.5, 1.0, "town_hut_1", 1.2, -0.05),
+            (26.5, 1.0, "town_hut_2", 0.8, 0.04),
+            (33.5, 1.0, "town_hut_3", 1.3, -0.02),
+            (42.5, -1.0, "town_hut_4", 1.0, 0.06),
+            (41.0, 1.0, "town_hut_5", 0.9, 0.02),
+            (49.5, -1.0, "town_hut_6", 1.2, -0.04),
+            (48.0, 1.0, "town_hut_7", 1.0, 0.05),
         ];
         const LANE_HOUSES: [(f32, f32, &str, f32, f32); 4] = [
-            (17.5, -1.0, "town_house_a", 0.7, -0.04),
-            (25.0, -1.0, "town_house_d", 0.9, 0.05),
-            (32.5, -1.0, "town_house_c", 1.0, 0.03),
-            (33.0, 1.0, "town_house_b", 0.6, -0.06),
+            (17.5, -1.0, "town_hut_8", 0.9, -0.04),
+            (25.0, -1.0, "town_hut_9", 1.1, 0.05),
+            (32.5, -1.0, "town_hut_10", 1.2, 0.03),
+            (33.0, 1.0, "town_hut_11", 0.8, -0.06),
         ];
-        let half_of = |piece: &str| match piece {
-            // The poor village's walls (village_huts.py); the thatch overhangs ~0.45 beyond.
-            "town_street_house_a" => Vec2::new(2.1, 3.7),
-            "town_street_house_b" => Vec2::new(2.3, 3.4),
-            "town_house_a" => Vec2::new(2.55, 1.55),
-            "town_house_b" => Vec2::new(2.95, 1.65),
-            "town_house_c" => Vec2::new(1.75, 1.45),
-            _ => Vec2::new(2.2, 1.7), // town_house_d (the earth bank reaches a little further)
+        // The settler huts' walls (village_huts.py HUT_SPECS) + the footing's reach.
+        let half_of = |piece: &str| {
+            let (w, d) = hut_dims(piece).unwrap_or((3.6, 2.9));
+            Vec2::new(w / 2.0 + 0.12, d / 2.0 + 0.12)
         };
         // Path distance from the gate to the lane's mouth.
         let lane_s0 = {

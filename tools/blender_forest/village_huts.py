@@ -32,6 +32,10 @@ THATCH_FRESH = (1.18, 0.98, 0.64)  # a newer patch
 THATCH_MOSS = (0.5, 0.58, 0.34)
 DAUB_HOLE = (0.3, 0.24, 0.19)
 
+# Per-hut paint, set by `settler_hut` while it builds and cleared after (the older huts read the
+# defaults): wall finish colour, log tone, door and shutter colours.
+PAINT = {}
+
 
 def _stadium(L, Rx, Rz, nS, nC):
     """Contour samples round a stadium (ridge segment -L..L, hip radius Rx, side radius Rz):
@@ -171,7 +175,9 @@ def thatch_roof(g, rng, W, D, ye, yr, over=0.48, thick=0.3, hip=0.8, sag=0.09, m
             c = scale(c, 0.42 if j > jr + 6 else 0.6)
         if smoke:
             c = mix(c, (0.2, 0.18, 0.16), 0.75 * (1 - smoothstep(0.2, 1.1, (p - sm).length)))
-        return scale(c, tone * (0.9 + 0.12 * nzh(p * 3.0)))
+        c = scale(c, tone * (0.9 + 0.12 * nzh(p * 3.0)))
+        st = PAINT.get("straw")
+        return tuple(c[i] * st[i] for i in range(3)) if st else c
 
     shell(g, P, M_THATCH, col_fn, 0.9, lambda p: V(p.x * 0.3, p.y - 3.0, p.z * 0.3))
 
@@ -273,7 +279,7 @@ def opening_dress(g, rng, A, t, n, T, o, mat_void=M_EARTH, jamb=True):
              0.055, 0.05, rng, col=scale(POSTC, 0.9), sides=6, segs=2)
     if o["kind"] == "door":
         hinge = P(s0 + 0.02, y0, T / 2 - 0.08)
-        door_leaf(g, rng, hinge, t, n, o["w"] - 0.04, y1 - y0 - 0.03, o.get("ajar", 0.5), col=(0.56, 0.5, 0.42))
+        door_leaf(g, rng, hinge, t, n, o["w"] - 0.04, y1 - y0 - 0.03, o.get("ajar", 0.5), col=PAINT.get("door", (0.56, 0.5, 0.42)))
         slab(g, P(o["s"], -0.02, T / 2 + 0.22), (o["w"] + 0.2, 0.1, 0.4), yaw(t) @ quat_y(rng.uniform(-0.08, 0.08)),
              rng, res=(3, 1, 2), round_r=0.04, rough=0.08, col_fn=rock_col((0.78, 0.76, 0.72), moss=0.2), tile=0.6)
     else:
@@ -284,7 +290,7 @@ def opening_dress(g, rng, A, t, n, T, o, mat_void=M_EARTH, jamb=True):
             top = P(o["s"], y1 + 0.02, T / 2 + 0.02)
             d = (n * math.sin(ang) - UP * math.cos(ang)).normalized()
             board(g, top + d * (h / 2), t, d.cross(t), o["w"] + 0.06, h + 0.04, 0.035, mat=M_PLANK,
-                  col=scale((0.58, 0.52, 0.44), rng.uniform(0.8, 1.0)), rng=rng)
+                  col=scale(PAINT.get("shutter", (0.58, 0.52, 0.44)), rng.uniform(0.8, 1.0)), rng=rng)
             pole(g, P(o["s"] + 0.1, y0 - 0.02, T / 2 + 0.02), top + d * (h * 0.9), 0.012, 0.012, rng,
                  col=(0.7, 0.62, 0.5), sides=4, segs=1)
         else:
@@ -292,7 +298,7 @@ def opening_dress(g, rng, A, t, n, T, o, mat_void=M_EARTH, jamb=True):
             hinge = P(s1 + 0.02, y0, T / 2 + 0.02)
             d = (-t * math.cos(math.pi - ang) + n * math.sin(math.pi - ang)).normalized()
             board(g, hinge + d * (o["w"] / 2) + UP * (h / 2), (0, 1, 0), d.cross(UP), h + 0.04, o["w"] + 0.04, 0.035,
-                  mat=M_PLANK, col=scale((0.58, 0.52, 0.44), rng.uniform(0.8, 1.0)), rng=rng)
+                  mat=M_PLANK, col=scale(PAINT.get("shutter", (0.58, 0.52, 0.44)), rng.uniform(0.8, 1.0)), rng=rng)
 
 
 def daub_walls(g, rng, W, D, y0, ye, ops, T=0.18, finish="clay", patches=3, posts=True):
@@ -301,7 +307,7 @@ def daub_walls(g, rng, W, D, y0, ye, ops, T=0.18, finish="clay", patches=3, post
     corners. finish "clay" (bare, s_earth) or "lime" (old dirty limewash, s_plaster)."""
     nz = Noise(rng, 4, 1.6)
     mat = M_EARTH if finish == "clay" else M_PLASTER
-    base = CLAY if finish == "clay" else LIME_OLD
+    base = PAINT.get("wall") or (CLAY if finish == "clay" else LIME_OLD)
     walls = _walls(W, D)
     holes = []
     for wi, (a, b) in enumerate(walls):
@@ -400,7 +406,7 @@ def log_walls(g, rng, W, D, y0, ye, ops, r=0.12):
                 rr = r * rng.uniform(0.88, 1.08)
                 p0 = A + t * (s0 + rng.uniform(-0.04, 0.04)) + UP * y
                 p1 = A + t * (s1 + rng.uniform(-0.04, 0.04)) + UP * (y + rng.uniform(-0.015, 0.015))
-                pole(g, p0, p1, rr, rr * 0.9, rng, mat=M_TIMBER, col=scale(LOGC, rng.uniform(0.78, 1.0)), sides=9,
+                pole(g, p0, p1, rr, rr * 0.9, rng, mat=M_TIMBER, col=scale(PAINT.get("log", LOGC), rng.uniform(0.78, 1.0)), sides=9,
                      segs=3, wobble=0.012, tile=0.8)
                 if k > 0:
                     a_, b_ = max(s0, 0.1), min(s1, L - 0.1)
@@ -417,7 +423,7 @@ def log_walls(g, rng, W, D, y0, ye, ops, r=0.12):
     for a, b in _walls(W, D)[0::2]:
         A, B = V(a[0], ye + 0.05, a[1]), V(b[0], ye + 0.05, b[1])
         t = (B - A).normalized()
-        pole(g, A - t * 0.3, B + t * 0.3, r * 0.95, r * 0.85, rng, mat=M_TIMBER, col=scale(LOGC, 0.8), sides=9, segs=3)
+        pole(g, A - t * 0.3, B + t * 0.3, r * 0.95, r * 0.85, rng, mat=M_TIMBER, col=scale(PAINT.get("log", LOGC), 0.8), sides=9, segs=3)
 
 
 def muck_heap(g, rng, c, rx=0.9, rz=0.7, h=0.45):
@@ -1127,3 +1133,155 @@ def decor_bench(rng):
         for sz in (-1, 1):
             pole(g, V(sx * 1.08, -0.05, sz * 0.17), V(sx, 0.36, sz * 0.05), 0.03, 0.028, rng, col=POSTC, sides=5, segs=1)
     return b
+
+
+# ─────────────────────────────────────────────────────────────── the settlers' huts (Oct 2026)
+# User feedback: the cottages above read too massive, too alike and all grey-brown. The twelve
+# village homes are now SMALL settler huts, each its own: 3.0-4.0 x 2.6-3.1 walls, eaves at
+# shoulder height, low roofs; limewash in white / ochre / rose, clay daub or warm / grey logs;
+# golden or aged thatch, natural, moss-grey or muted-red shingles; painted doors and shutters.
+# Shared layout contract with src/castle.rs `HUTS` + src/village_life.rs (keep in sync): pivot =
+# footprint centre, front (+Z) faces the road, the door centred on the front wall, a porch bench
+# (L 0.9) at x -1.0, z D/2 + 0.45, nothing else within 0.6 in front of the door.
+
+M_SHINGLE = len(MATS)
+MATS = MATS + ["s_shingle"]   # weathered split shingles (castle_kit's roof_slates_02 set)
+
+LIME_W = (0.95, 0.92, 0.85)
+LIME_OCHRE = (0.95, 0.78, 0.5)
+LIME_ROSE = (0.93, 0.76, 0.68)
+LOG_WARM = (1.0, 0.74, 0.5)
+LOG_HONEY = (1.08, 0.86, 0.58)
+SH_NAT = (0.8, 0.7, 0.6)
+SH_RED = (0.8, 0.38, 0.28)
+SH_MOSS = (0.66, 0.72, 0.56)
+DOOR_RED = (0.56, 0.22, 0.17)
+DOOR_GREEN = (0.3, 0.44, 0.38)
+DOOR_BLUE = (0.3, 0.4, 0.54)
+DOOR_OCHRE = (0.74, 0.55, 0.28)
+DOOR_NAT = (0.6, 0.52, 0.42)
+
+
+def shingle_roof(g, rng, W, D, ye, yr, col, over=0.36, verge=0.28, thick=0.07):
+    """Gable roof of split shingles, ridge along X: two slopes, a course lip every ~0.22 (each
+    course a shade off the next), verge boards and a board ridge cap."""
+    th = math.atan2(yr - ye, D / 2)
+    run = D / 2 + over
+    Ls = (run + 0.1) / math.cos(th)
+    Wx = W + 2 * verge
+    for sz in (-1, 1):
+        q = quat_x(sz * th)
+        nrm = V(0, math.cos(th), sz * math.sin(th))
+        zm = sz * (run - 0.1) / 2
+        ym = yr - (sz * zm) * math.tan(th)
+        lbox(g, V(0, ym, zm) + nrm * (thick / 2), (Wx, thick, Ls), q, M_SHINGLE,
+             [col, None, scale(col, 0.78)], tile=1.6, grain=2, u0=sz * 0.37)
+        k = int(Ls / 0.22)
+        for i in range(1, k + 1):
+            f = i / (k + 0.3)
+            zz = -sz * 0.1 + (sz * run + sz * 0.1) * f
+            p = V(0, yr - (sz * zz) * math.tan(th), zz) + nrm * (thick + 0.008)
+            c = scale(col, rng.uniform(0.74, 0.92) * (1.0 - 0.12 * f))
+            lbox(g, p, (Wx, 0.022, 0.045), q, M_SHINGLE, c, tile=1.6, grain=0)
+        ez, ey = sz * run, ye - over * math.tan(th)
+        for sx in (-1, 1):
+            a_ = V(sx * (Wx / 2), yr + 0.1 * math.tan(th), -sz * 0.1) + nrm * 0.03
+            e_ = V(sx * (Wx / 2), ey, ez) + nrm * 0.03
+            beam(g, [a_, e_], 0.16, 0.04, up=(sx, 0, 0), mat=M_PLANK, col=scale(BOARD, 0.85), rng=rng, mode="plank")
+    ry = yr + thick / math.cos(th) * 0.7
+    for sz in (-1, 1):
+        p = V(0, ry - 0.02, sz * 0.08)
+        beam(g, [p - V(Wx / 2 + 0.04, 0, 0), p + V(Wx / 2 + 0.04, 0, 0)], 0.035, 0.2,
+             up=(0, math.cos(th), sz * math.sin(th)), mat=M_PLANK, col=scale(col, 0.62), rng=rng)
+
+
+def clay_chimney(g, rng, x, z, y_top, w=0.42):
+    """A crude clay-daubed stack, sooty at the lip."""
+    slab(g, V(x, y_top - 0.55, z), (w, 1.1, w * 0.9), quat_y(rng.uniform(-0.08, 0.08)), rng, mat=M_EARTH,
+         res=(2, 4, 2), round_r=0.06, rough=0.3, taper=0.16,
+         col_fn=lambda p, n: mix((0.66, 0.55, 0.44), (0.16, 0.14, 0.12), smoothstep(y_top - 0.2, y_top + 0.05, p.y)),
+         tile=0.8)
+
+
+def settler_hut(P):
+    """One small settler hut from a spec dict (see HUT_SPECS)."""
+    def build(rng):
+        b = Builder()
+        g = G(b)
+        W, D, ye = P["W"], P["D"], P["ye"]
+        PAINT.clear()
+        PAINT.update(wall=P.get("wall"), log=P.get("log", LOGC), door=P["door"], shutter=P.get("shutter", P["door"]),
+                     straw=P.get("straw", (1.0, 0.86, 0.58)))
+        side = [WIN(D / 2 + P["side_win"], prop=False)] if P.get("side_win") is not None else []
+        back = [WIN(W / 2 + P["back_win"], prop=False)] if P.get("back_win") is not None else []
+        ops = _ops([DOOR(W / 2, ajar=P.get("ajar", 0.5)), WIN(W / 2 + P.get("win", 0.95))], side, back, [])
+        footing(g, rng, W, D, skip=[(0, W / 2 - 0.55, W / 2 + 0.55)])
+        if P["walls"] == "logs":
+            log_walls(g, rng, W, D, 0.18, ye, ops, r=0.115)
+        else:
+            daub_walls(g, rng, W, D, 0.17, ye, ops, finish=P["walls"], patches=P.get("patches", 1))
+        if P["roof"] == "thatch":
+            ytop = ye + P.get("rise", 1.45)
+            thatch_roof(g, rng, W, D, ye, ytop, over=0.4, thick=0.24, hip=P.get("hip", 0.5), sag=0.07,
+                        moss=P.get("moss", 0.4), fresh=P.get("fresh", 0.4), smoke=P.get("smoke", 0),
+                        ridge=P.get("ridge", "spars"), tone=P.get("tone", 1.0) * 1.22)
+        else:
+            ytop = ye + P.get("rise", 1.25)
+            shingle_roof(g, rng, W, D, ye, ytop, P["roof_col"])
+            gs = "boards" if P["walls"] in ("logs", "clay") else "plaster"
+            tint = tuple(P["wall"][i] / PLW[i] for i in range(3)) if P.get("wall") else None
+            R = quat_y(0.0)
+            for sx in (-1, 1):
+                gable(g, rng, (0, 0, 0), R, sx * W / 2, sx, D, ye, ytop, style=gs, tint=tint)
+        if P.get("chimney"):
+            cx, cz = P["chimney"]
+            clay_chimney(g, rng, cx, cz, ytop + 0.35)
+        bench(g, rng, V(-1.0, 0.0, D / 2 + 0.45), 0.0, L=0.9)
+        for kind, x, z, a in P.get("props", ()):
+            if kind == "wood":
+                firewood(g, rng, (x, 0.0, z), a, L=1.1, rows=3)
+            elif kind == "barrel":
+                barrel(g, rng, (x, 0.0, z))
+            elif kind == "bucket":
+                bucket(g, (x, 0.0, z))
+            elif kind == "block":
+                chopping_block(g, rng, (x, 0.0, z))
+            elif kind == "pots":
+                for k in range(3):
+                    lathe(g, (x + 0.22 * k, 0.0, z + 0.05 * (k % 2)), (0, 1, 0),
+                          [(0.0, 0.07), (0.12, 0.11), (0.24, 0.08), (0.28, 0.09)], 9, M_EARTH,
+                          scale((0.82, 0.52, 0.36), 0.9 + 0.08 * k), tile=0.3)
+        PAINT.clear()
+        return b
+    return build
+
+
+# Twelve homes, no two alike (index k = `town_hut_k`, assigned to the sites in castle.rs).
+HUT_SPECS = [
+    dict(W=3.4, D=2.8, ye=1.42, walls="lime", wall=LIME_W, roof="thatch", fresh=0.7, tone=1.12, door=DOOR_GREEN,
+         side_win=0.0, chimney=(0.6, -0.3), props=[("wood", 1.95, 0.0, math.pi / 2)]),
+    dict(W=3.8, D=3.0, ye=1.45, walls="logs", log=LOG_WARM, roof="shingle", roof_col=SH_RED, door=DOOR_OCHRE,
+         back_win=-0.7, chimney=(-0.9, -0.35), props=[("barrel", 1.5, 1.9, 0), ("block", 2.4, 0.8, 0)]),
+    dict(W=3.2, D=2.7, ye=1.38, walls="lime", wall=LIME_OCHRE, roof="thatch", fresh=0.3, tone=0.95, moss=0.6,
+         door=DOOR_BLUE, smoke=-1, props=[("bucket", 1.15, 1.85, 0)]),
+    dict(W=4.0, D=3.0, ye=1.45, walls="clay", roof="shingle", roof_col=SH_NAT, door=DOOR_RED, side_win=-0.3,
+         chimney=(1.1, 0.35), props=[("wood", -2.35, -0.2, math.pi / 2), ("pots", 1.2, 1.85, 0)]),
+    dict(W=3.5, D=2.9, ye=1.42, walls="lime", wall=LIME_ROSE, roof="shingle", roof_col=SH_MOSS, door=DOOR_GREEN,
+         back_win=0.5, props=[("barrel", -2.1, 0.9, 0)]),
+    dict(W=3.6, D=2.8, ye=1.4, walls="logs", log=LOG_HONEY, roof="thatch", fresh=0.6, tone=1.08,
+         door=DOOR_RED, side_win=0.2, props=[("wood", 2.2, -0.1, math.pi / 2), ("block", 1.5, 1.95, 0)]),
+    dict(W=3.0, D=2.6, ye=1.36, walls="clay", roof="thatch", fresh=0.2, tone=0.9, moss=0.7, smoke=1, door=DOOR_NAT,
+         props=[("bucket", 1.0, 1.75, 0)]),
+    dict(W=3.9, D=3.1, ye=1.48, walls="lime", wall=LIME_W, roof="shingle", roof_col=SH_RED, door=DOOR_BLUE,
+         side_win=0.0, back_win=-0.4, chimney=(-1.0, -0.4), props=[("pots", 1.15, 1.95, 0)]),
+    dict(W=3.4, D=2.8, ye=1.4, walls="logs", log=LOGC, roof="shingle", roof_col=SH_NAT, door=DOOR_GREEN,
+         props=[("wood", -2.1, 0.0, math.pi / 2), ("barrel", 1.45, 1.85, 0)]),
+    dict(W=3.7, D=3.0, ye=1.44, walls="lime", wall=LIME_OCHRE, roof="shingle", roof_col=SH_RED, door=DOOR_NAT,
+         back_win=0.6, chimney=(0.9, -0.35), props=[("bucket", 1.25, 1.95, 0)]),
+    dict(W=3.3, D=2.7, ye=1.38, walls="lime", wall=LIME_ROSE, roof="thatch", fresh=0.5, tone=1.04,
+         door=DOOR_OCHRE, side_win=0.0, props=[("wood", 2.0, 0.0, math.pi / 2)]),
+    dict(W=3.8, D=2.9, ye=1.44, walls="logs", log=LOG_WARM, roof="thatch", fresh=0.35, tone=0.96, smoke=-1,
+         door=DOOR_BLUE, back_win=0.3, props=[("block", -2.3, 1.2, 0), ("wood", -2.25, -0.3, math.pi / 2)]),
+]
+
+SETTLER_HUTS = {f"town_hut_{k}": settler_hut(P) for k, P in enumerate(HUT_SPECS)}

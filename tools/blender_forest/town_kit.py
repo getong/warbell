@@ -2133,6 +2133,8 @@ MODELS = {
     # The last procedural town pieces (town_finish.py): paddock fence, lantern, ballista, plots,
     # ruins, the castle upgrade set-pieces, gate leaves + barricades.
     **TOWN_FINISH,
+    # The twelve settler huts of the village (village_huts.py HUT_SPECS).
+    **SETTLER_HUTS,
 }
 
 ONLY = [a for a in sys.argv[sys.argv.index("--") + 1:]] if "--" in sys.argv else []

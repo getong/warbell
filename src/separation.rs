@@ -39,9 +39,13 @@ const RELAX: f32 = 0.5;
 /// Max separation nudge applied to one body in one frame (world units) — a backstop so a deep
 /// pile can't teleport a body across a wall in a single step.
 const MAX_PUSH: f32 = 0.3;
+/// Closest two townsfolk centres may settle. Their 0.22 body radius is a combat/steering size;
+/// two people resting 0.44 apart already mesh shoulders, and a walker pressing in sank to ~0.3.
+const PERSON_GAP: f32 = 0.56;
 
-/// One body in the crowd: its entity, centre (world XZ) and collision radius.
-type Body = (Entity, Vec2, f32);
+/// One body in the crowd: its entity, centre (world XZ), collision radius and whether it's a person
+/// (villager — gets the wider `PERSON_GAP` from other people).
+type Body = (Entity, Vec2, f32, bool);
 
 #[allow(clippy::type_complexity)]
 fn separate_agents(
@@ -62,13 +66,13 @@ fn separate_agents(
     // time — all three touch `Transform`, which is why they live in a `ParamSet`.)
     bodies.clear();
     for (e, o, _) in set.p0().iter() {
-        bodies.push((e, o.pos, o.body_r));
+        bodies.push((e, o.pos, o.body_r, false));
     }
     for (e, v, _) in set.p1().iter() {
-        bodies.push((e, v.pos, v.body_r));
+        bodies.push((e, v.pos, v.body_r, true));
     }
     for (e, a, _) in set.p2().iter() {
-        bodies.push((e, a.pos, a.body_r));
+        bodies.push((e, a.pos, a.body_r, false));
     }
     if bodies.len() < 2 {
         return;
@@ -79,7 +83,7 @@ fn separate_agents(
     grid.clear();
     next.clear();
     next.resize(bodies.len(), usize::MAX);
-    for (i, (_, p, _)) in bodies.iter().enumerate() {
+    for (i, (_, p, _, _)) in bodies.iter().enumerate() {
         // Flat links keep the original per-cell order without allocating and dropping a Vec
         // for every occupied cell on every frame of a large army.
         grid.entry((p.x.floor() as i32, p.y.floor() as i32))
@@ -88,7 +92,7 @@ fn separate_agents(
     }
     push.clear();
     push.resize(bodies.len(), Vec2::ZERO);
-    for (i, &(_, pi, ri)) in bodies.iter().enumerate() {
+    for (i, &(_, pi, ri, hi)) in bodies.iter().enumerate() {
         let (tx, tz) = (pi.x.floor() as i32, pi.y.floor() as i32);
         for dx in -1..=1 {
             for dz in -1..=1 {
@@ -100,10 +104,10 @@ fn separate_agents(
                     if j <= i {
                         continue; // each unordered pair exactly once
                     }
-                    let (_, pj, rj) = bodies[j];
+                    let (_, pj, rj, hj) = bodies[j];
                     let delta = pi - pj;
                     let d = delta.length();
-                    let min_d = ri + rj;
+                    let min_d = if hi && hj { PERSON_GAP } else { ri + rj };
                     if d >= min_d {
                         continue;
                     }
@@ -124,7 +128,7 @@ fn separate_agents(
 
     // 3. Map each entity to its accumulated nudge (skip the bodies that aren't overlapping).
     pushes.clear();
-    for ((e, _, _), p) in bodies.iter().zip(push.iter()) {
+    for ((e, _, _, _), p) in bodies.iter().zip(push.iter()) {
         if p.length_squared() > 1e-8 {
             pushes.insert(*e, *p);
         }
@@ -168,12 +172,25 @@ fn apply(pos: &mut Vec2, tf: &mut Transform, body_r: f32, mut push: Vec2) {
     let cur_y = steer::footing(pos.x, pos.y).unwrap_or(tf.translation.y);
     let nx = pos.x + push.x;
     let nz = pos.y + push.y;
-    if steer::can_stand(nx, pos.y, body_r, cur_y) && !blockers::is_blocked(nx, pos.y) {
+    // Never shove a body into a prop: a push may not shrink the gap to the nearest solid below the
+    // body (a body already pressed against something may slide along or away, never deeper in).
+    let view = blockers::read();
+    let gap = |x: f32, z: f32| {
+        let mut g = 0.0;
+        while g < body_r && !view.any_within(x, z, g + 0.03) {
+            g += 0.03;
+        }
+        g
+    };
+    let here = gap(pos.x, pos.y);
+    let clear = |x: f32, z: f32, _from: Vec2| !view.is_blocked(x, z) && gap(x, z) >= here.min(body_r - 0.03);
+    if steer::can_stand(nx, pos.y, body_r, cur_y) && clear(nx, pos.y, *pos) {
         pos.x = nx;
     }
-    if steer::can_stand(pos.x, nz, body_r, cur_y) && !blockers::is_blocked(pos.x, nz) {
+    if steer::can_stand(pos.x, nz, body_r, cur_y) && clear(pos.x, nz, *pos) {
         pos.y = nz;
     }
+    drop(view);
     tf.translation.x = pos.x;
     tf.translation.z = pos.y;
 }

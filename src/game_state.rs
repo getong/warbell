@@ -238,6 +238,8 @@ fn skip_menu() -> bool {
         // still look plausible (entity/mesh counts come from the unconditional Startup world-build).
         // Previously this only worked by accident when a run happened to also set FOREST_WAVE.
         || std::env::var("FOREST_PERFTEST").is_ok()
+        // The village-life collision check (`village_life::life_check`) audits LIVE townsfolk.
+        || std::env::var("FOREST_LIFECHECK").is_ok()
         // The forest walk preview is a static map, not a run — straight into the world.
         || crate::controls::walk_mode()
 }
