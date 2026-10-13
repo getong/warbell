@@ -651,20 +651,23 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
     let hold = crate::ork_fortress::CENTRE;
     // Near-black, denser, taller than the first cut — grey-on-grey it vanished against the
     // hazy sky + the snow massif behind the Hold (verification flag).
-    let smoke_mesh = meshes.add(Sphere::new(1.15).mesh().ico(1).unwrap());
+    // Soft round camera-facing puffs (not faceted spheres) — overlapping, they read as a body.
+    let smoke_mesh = meshes.add(crate::particles::soft_disc_mesh().scaled_by(Vec3::splat(3.6)));
     let smoke_mat = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.10, 0.095, 0.09, 0.8),
+        base_color: Color::srgba(0.10, 0.095, 0.09, 0.85),
         alpha_mode: AlphaMode::Blend,
         unlit: true,
+        cull_mode: None,
         ..default()
     });
     let hold_y = crate::worldmap::ground_at_world(hold.x, hold.y).unwrap_or(1.0);
-    for k in 0..10 {
-        let phase = k as f32 / 10.0;
+    for k in 0..16 {
+        let phase = k as f32 / 16.0;
         commands.spawn((
             Mesh3d(smoke_mesh.clone()),
             MeshMaterial3d(smoke_mat.clone()),
             Transform::from_xyz(hold.x, hold_y + 3.0, hold.y),
+            crate::particles::FaceCamera,
             SmokeMote {
                 base: Vec3::new(hold.x + 1.0, hold_y + 3.0, hold.y - 1.5),
                 speed: 0.055 + phase * 0.01,

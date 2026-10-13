@@ -367,7 +367,8 @@ fn setup_bolt_assets(
     let mesh = meshes.add(Sphere::new(0.11).mesh().ico(3).unwrap());
     let mat = materials.add(StandardMaterial {
         base_color: Color::BLACK,
-        emissive: LinearRgba::rgb(4.5, 14.0, 3.5),
+        // Sickly marsh-green, desaturated off the old neon (4.5, 14, 3.5) — still reads as a bolt.
+        emissive: LinearRgba::rgb(3.2, 5.2, 2.3),
         ..default()
     });
     commands.insert_resource(WarpBoltAssets { mesh, mat });
@@ -545,13 +546,16 @@ pub fn build(
         unlit: true,
         ..default()
     });
+    // Lit soft round smoke puffs (see camps.rs) — not unlit faceted spheres.
     let smoke_mat = std_mats.add(StandardMaterial {
-        base_color: Color::srgba(0.5, 0.5, 0.52, 0.4),
+        base_color: Color::srgba(0.46, 0.45, 0.44, 0.4),
+        perceptual_roughness: 1.0,
+        reflectance: 0.0,
         alpha_mode: AlphaMode::Blend,
-        unlit: true,
+        cull_mode: None,
         ..default()
     });
-    let smoke_puff = meshes.add(Sphere::new(0.5).mesh().ico(1).unwrap());
+    let smoke_puff = meshes.add(crate::particles::soft_disc_mesh().scaled_by(Vec3::splat(1.7)));
     // Fire as the camps draw it: crossed alpha flame cards (`flame_fx::flame_card_mesh`), never a
     // solid cone. The scale is baked into each mesh because `Wobble` / `Flicker` own the
     // transform scale.
@@ -835,6 +839,7 @@ pub fn build(
             MeshMaterial3d(smoke_mat.clone()),
             Transform::from_translation(fire).with_scale(Vec3::splat(0.01)),
             FortSmoke { base: fire + Vec3::Y * 0.8, phase: i as f32 / 4.0, speed: 0.28 },
+            crate::particles::FaceCamera,
             BiomeEntity,
         ));
     }
@@ -846,6 +851,7 @@ pub fn build(
             MeshMaterial3d(smoke_mat.clone()),
             Transform::from_translation(hp).with_scale(Vec3::splat(0.01)),
             FortSmoke { base: hp, phase: i as f32 / 2.0, speed: 0.22 },
+            crate::particles::FaceCamera,
             BiomeEntity,
         ));
     }

@@ -63,9 +63,11 @@ const RING_MUSH_STEM: u32 = 0xeadfca; // pale stem of the ring mushrooms
 const RING_MUSH_CAP: u32 = 0xc06a3a; // toadstool cap (warm orange-brown)
 
 // Firefly glow colour (sRGB → linear in the emissive). Warm yellow-green.
-const FIREFLY_GLOW: Color = Color::srgb(0.85, 1.0, 0.45);
-/// How strongly the firefly emits (drives bloom — high so it blooms).
-const FIREFLY_EMISSIVE: f32 = 60.0;
+const FIREFLY_GLOW: Color = Color::srgb(0.80, 0.86, 0.40);
+/// Firefly sprite diameter (world units) at full flash.
+const FIREFLY_SIZE: f32 = 0.15;
+/// HDR gain on the firefly tint — just enough for a whisper of bloom.
+const FIREFLY_EMISSIVE: f32 = 2.4;
 
 const SEED: u32 = 9173;
 const TAU: f32 = std::f32::consts::TAU;
@@ -378,11 +380,15 @@ pub fn build(
     // Small emissive spheres hovering ~0.6–1.5u up, scattered over the patch. Each gets
     // its own emissive material (so the renderer still batches by colour, and bloom
     // picks the glow up). ~40 motes, gently clustered for a "swarm" feel.
-    let firefly_mesh = meshes.add(Sphere::new(0.045).mesh().ico(1).expect("ico detail in range"));
+    // Real fireflies: tiny soft warm yellow-green points (a soft round sprite, additive) that only
+    // come out at dusk/night and blink (`bob_fireflies` drives both through the scale — no
+    // per-frame material writes). Dim HDR gain: a pinprick with a whisper of bloom, not a bead.
+    let firefly_mesh = meshes.add(crate::particles::soft_disc_mesh());
     let firefly_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.9, 1.0, 0.55),
-        emissive: LinearRgba::from(FIREFLY_GLOW) * FIREFLY_EMISSIVE,
-        unlit: true, // glow regardless of scene lighting → reliable bloom
+        base_color: Color::LinearRgba(LinearRgba::from(FIREFLY_GLOW) * FIREFLY_EMISSIVE),
+        unlit: true,
+        alpha_mode: AlphaMode::Add,
+        cull_mode: None,
         ..default()
     });
 
@@ -411,9 +417,10 @@ pub fn build(
         commands.spawn((
             Mesh3d(firefly_mesh.clone()),
             MeshMaterial3d(firefly_mat.clone()),
-            Transform::from_xyz(bx, by, bz),
+            Transform::from_xyz(bx, by, bz).with_scale(Vec3::ZERO),
             NotShadowCaster,
             BiomeEntity,
+            crate::particles::FaceCamera,
             Firefly {
                 base: Vec3::new(bx, by, bz),
                 phase: r.range(0.0, TAU),
@@ -428,9 +435,13 @@ pub fn build(
 
 /// Gentle independent bob + drift on every firefly (CPU animation via `Res<Time>`),
 /// pivoting around each mote's stored `base` so they wander but don't run away.
-fn bob_fireflies(time: Res<Time>, mut q: Query<(&mut Transform, &Firefly)>) {
+fn bob_fireflies(time: Res<Time>, dusk: Res<crate::particles::Dusk>, mut q: Query<(&mut Transform, &Firefly)>) {
     let t = time.elapsed_secs();
+    let hour = dusk.0;
     for (mut tf, f) in &mut q {
+        // Dark by day; at dusk each fly flashes on its own slow rhythm.
+        let b = crate::particles::firefly_blink(t, f.phase, 0.8 + f.speed * 0.6);
+        tf.scale = Vec3::splat(FIREFLY_SIZE * hour * b);
         let p = f.phase + t * f.speed;
         tf.translation.x = f.base.x + (p * 0.7).sin() * f.drift;
         tf.translation.z = f.base.z + (p * 0.9 + 1.3).cos() * f.drift;

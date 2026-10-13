@@ -79,13 +79,15 @@ fn setup_fx_assets(
 ) {
     // Warm, unlit, brightly-emissive spirit — reads as a glowing wisp (bloom catches it).
     let wisp_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 0.85, 0.55),
-        emissive: LinearRgba::rgb(3.0, 2.2, 1.0),
+        base_color: Color::LinearRgba(LinearRgba::rgb(1.6, 1.15, 0.6)),
         unlit: true,
+        alpha_mode: AlphaMode::Add,
+        cull_mode: None,
         ..default()
     });
     commands.insert_resource(FxAssets {
-        wisp_mesh: meshes.add(Sphere::new(0.2).mesh().ico(3).unwrap()),
+        // Soft round camera-facing glow (no solid ball): a faint warm candle-light soul.
+        wisp_mesh: meshes.add(crate::particles::soft_disc_mesh().scaled_by(Vec3::splat(0.75))),
         wisp_mat,
     });
 }
@@ -105,6 +107,7 @@ fn spawn_succession_fx(
             MeshMaterial3d(assets.wisp_mat.clone()),
             Transform::from_translation(ev.grave_at + Vec3::Y),
             SoulWisp { from: ev.grave_at + Vec3::Y, to: ev.rise_at + Vec3::Y, born: now },
+            crate::particles::FaceCamera,
         ));
     }
 }
@@ -151,6 +154,7 @@ fn spawn_rise_fx(
             MeshMaterial3d(mat.clone()),
             Transform::from_translation(ev.at + Vec3::Y * 0.9).with_scale(Vec3::splat(0.3)),
             RiseFlash { born: now, mat },
+            crate::particles::FaceCamera,
         ));
     }
 }
