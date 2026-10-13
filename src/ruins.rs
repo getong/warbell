@@ -416,7 +416,8 @@ pub fn spawn_landmark_model_parts(
                     e.insert(FxHover { bob_amp, bob_freq, spin_rate, phase });
                 }
                 Fx::Rise { rate, range, drift, grow, phase } => {
-                    e.insert(FxRise { rate, range, drift, grow, phase });
+                    // Rising parts are smoke puffs: soft round sprites kept facing the camera.
+                    e.insert((FxRise { rate, range, drift, grow, phase }, crate::particles::FaceCamera));
                 }
             }
             if let Some(p) = pulse {

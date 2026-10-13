@@ -131,12 +131,34 @@ fn update_dusk(clock: Option<Res<crate::scene::SkyClock>>, mut dusk: ResMut<Dusk
     }
 }
 
-fn face_camera(cam_q: Query<&GlobalTransform, With<Camera3d>>, mut q: Query<&mut Transform, With<FaceCamera>>) {
+fn face_camera(
+    cam_q: Query<&GlobalTransform, With<Camera3d>>,
+    parents: Query<&GlobalTransform, Without<FaceCamera>>,
+    mut q: Query<(&mut Transform, Option<&ChildOf>), With<FaceCamera>>,
+) {
     let Some(cam) = cam_q.iter().next() else { return };
     let rot = cam.compute_transform().rotation;
-    for mut tf in &mut q {
-        tf.rotation = rot;
+    for (mut tf, parent) in &mut q {
+        // A child sprite (e.g. a landmark model's chimney puff) cancels its parent's rotation.
+        tf.rotation = match parent.and_then(|c| parents.get(c.parent()).ok()) {
+            Some(pg) => pg.compute_transform().rotation.inverse() * rot,
+            None => rot,
+        };
     }
+}
+
+/// [`soft_disc_mesh`] with its vertex RGB tinted (alpha falloff kept) — for model parts whose
+/// shared material is white and whose colour rides the vertices.
+pub fn soft_disc_tinted(rgb: [f32; 3]) -> Mesh {
+    let mut m = soft_disc_mesh();
+    if let Some(bevy::mesh::VertexAttributeValues::Float32x4(cols)) = m.attribute_mut(Mesh::ATTRIBUTE_COLOR) {
+        for c in cols.iter_mut() {
+            c[0] *= rgb[0];
+            c[1] *= rgb[1];
+            c[2] *= rgb[2];
+        }
+    }
+    m
 }
 
 pub struct ParticlePlugin;

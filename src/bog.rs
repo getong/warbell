@@ -185,7 +185,7 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
     // a neon-cyan bulb. Low-saturation, low HDR gain.
     let glow_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.46, 0.56, 0.44),
-        emissive: LinearRgba::from(Color::srgb(0.52, 0.72, 0.56)) * 1.6,
+        emissive: LinearRgba::from(Color::srgb(0.50, 0.60, 0.52)) * 0.45,
         perceptual_roughness: 0.8,
         ..default()
     });
