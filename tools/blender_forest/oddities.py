@@ -155,11 +155,27 @@ def nest_snag():
     b.add(Chain(limb), MAIN, k=0.1)
     # A short dead side stub and the snapped crown.
     b.add(Chain([(P(-0.05, 2.6, 0.0), 0.12), (P(-0.45, 2.95, -0.2), 0.07)]), MAIN, k=0.06)
+    # Broken branch stubs all the way up: snapped short, a few with a splintered end.
+    stubs = [((0.0, 1.05, 0.0), (-0.52, 1.32, 0.3), 0.09), ((0.0, 1.6, 0.0), (0.18, 1.85, -0.55), 0.08),
+             ((0.0, 1.9, 0.0), (-0.6, 2.25, -0.12), 0.1), ((0.6, 2.42, 0.05), (0.85, 2.9, -0.2), 0.06),
+             ((1.15, 2.53, 0.1), (1.3, 2.75, 0.45), 0.045), ((0.0, 0.75, 0.0), (0.35, 0.95, 0.42), 0.07)]
+    for a0, a1, r in stubs:
+        b.add(Cone(P(*a0), P(*a1), r, r * 0.55), MAIN, k=0.05)
+        tip = P(*a1)
+        b.add(Cone(tip, tip + (P(*a1) - P(*a0)) * 0.25 + P(0.02, 0.03, 0.0), r * 0.4, 0.008), MAIN, k=0.01)  # splinter
     b.cut(RBox(P(0, 1.2, 0), (4, 2.02, 4), rot=rot_z(0.18) @ rot_x(-0.1)), k=0.02)
+    # The snapped crown: torn splinters standing proud of the break.
+    srng = np.random.default_rng(13)
+    for k in range(7):
+        a = k * math.tau / 7 + srng.uniform(-0.3, 0.3)
+        rr = 0.2 + srng.uniform(0, 0.06)
+        base_y = 3.02 + 0.18 * math.sin(a) - 0.1 * math.cos(a)
+        o = P(0.06 + math.cos(a) * rr, base_y - 0.12, -0.04 + math.sin(a) * rr)
+        b.add(Cone(o, o + P(math.cos(a) * 0.04, srng.uniform(0.2, 0.55), math.sin(a) * 0.04), 0.05, 0.006), MAIN, k=0.02)
     b.sub(Ellipsoid(P(0.18, 1.15, 0.31), (0.1, 0.16, 0.12)), DETAIL, k=0.03)  # knot hole
     b.sub(Ellipsoid(P(0.05, 3.25, 0.0), (0.2, 0.25, 0.2)), DETAIL, k=0.05)  # rotten crown hollow
-    bark = Tufts(9.0, (0, 1, 0), seed=7, n=12, stretch=0.92)
-    b.shag(Sphere(P(0, 1.5, 0), 4.0), 0.035, bark, soft=0.1)
+    bark = Tufts(14.0, (0, 1, 0), seed=7, n=14, stretch=0.96)
+    b.shag(Sphere(P(0, 1.5, 0), 4.0), 0.05, Fn(lambda p: bark(p) ** 1.8), soft=0.1)  # deep oak furrows
     b.cut(Ground(-0.3))
     axis_t = [p for p, _ in trunk]
     axis_l = [p for p, _ in limb]
@@ -177,14 +193,14 @@ def nest_snag():
 
     def col(p, n, ao, rg):
         moss = smoothstep(0.6, 0.0, p[1]) * 0.6 + 0.35 * max(0.0, n[2]) * smoothstep(2.4, 1.0, p[1])
-        base = np.array([0.78, 0.74, 0.7]) * (0.55 + 0.45 * ao)
+        base = np.array([0.86, 0.83, 0.8]) * (0.5 + 0.5 * ao)
         green = np.array([0.55, 0.66, 0.36]) * (0.55 + 0.45 * ao)
         c = base * (1 - moss) + green * moss
         if rg == DETAIL:
             c = c * 0.35
         return c
 
-    return build("odd_nest_snag", b, uv=uv, mat="bark_oak", col=col)
+    return build("odd_nest_snag", b, uv=uv, mat="bark_snag", col=col)  # weathered, bark-sloughing dead oak
 
 
 def nest():
@@ -204,7 +220,7 @@ def nest():
         band = 0.5 + 0.5 * np.sin(y * 85.0 + 0.6 * np.sin(a * 2 + ph[2]))
         return band ** 2.5
 
-    b.shag(Ellipsoid(P(0, -0.38, 0), (0.3, 0.42, 0.3)), 0.012, Fn(scallop), soft=0.03)
+    b.shag(Ellipsoid(P(0, -0.38, 0), (0.3, 0.42, 0.3)), 0.022, Fn(scallop), soft=0.03)
 
     def tone(ps, n):
         a = np.arctan2(ps[:, 2], ps[:, 0])
@@ -233,6 +249,9 @@ def hornet():
 
 
 # ───────────────────────────────────────────────────────────────── lantern toad
+WARTS = bumps(46, 3, 4.5)
+
+
 def toad_sdf():
     b = Body(h=0.0085, budget=4200)
     b.add(Ellipsoid(P(0, 0.23, -0.02), (0.29, 0.19, 0.34)), MAIN)
@@ -241,7 +260,8 @@ def toad_sdf():
     for s in (1, -1):
         b.add(Ellipsoid(P(s * 0.14, 0.37, 0.14), (0.075, 0.05, 0.12), rot=rot_y(s * 0.25)), ACCENT, k=0.04)  # parotoid
         b.add(Ellipsoid(P(s * 0.125, 0.385, 0.3), (0.075, 0.055, 0.07)), MAIN, k=0.035)  # brow ridge
-        b.add(Sphere(P(s * 0.13, 0.4, 0.315), 0.048), EYE, k=0.006)
+        b.add(Sphere(P(s * 0.135, 0.415, 0.315), 0.058), EYE, k=0.006)
+        b.add(Ellipsoid(P(s * 0.15, 0.425, 0.366), (0.024, 0.011, 0.012)), DETAIL, k=0.002)  # horizontal pupil
         # Front legs: shoulder -> elbow -> wrist, spread fingers.
         arm = [(P(s * 0.18, 0.22, 0.2), 0.07), (P(s * 0.27, 0.13, 0.27), 0.05), (P(s * 0.26, 0.035, 0.36), 0.04)]
         b.add(Chain(arm), MAIN, k=0.05)
@@ -257,10 +277,10 @@ def toad_sdf():
             a = s * (-0.1 + f * 0.17)
             d = P(math.sin(a) * 0.1, -0.005, math.cos(a) * 0.1)
             b.add(Cone(P(s * 0.38, 0.024, -0.03), P(s * 0.38, 0.018, -0.03) + d, 0.016, 0.009), SKIN, k=0.01)
-    b.sub(Ellipsoid(P(0, 0.25, 0.36), (0.235, 0.008, 0.13)), DETAIL, k=0.006)  # the long mouth line
+    b.sub(Ellipsoid(P(0, 0.25, 0.36), (0.235, 0.005, 0.13)), DETAIL, k=0.004)  # the long mouth line
     for s in (1, -1):
         b.sub(Sphere(P(s * 0.035, 0.305, 0.425), 0.008), DETAIL)  # nostrils
-    b.shag(Ellipsoid(P(0, 0.26, 0.0), (0.33, 0.22, 0.42)), 0.011, bumps(70, 3, 3.2), soft=0.02)
+    b.shag(Ellipsoid(P(0, 0.26, 0.0), (0.33, 0.22, 0.42)), 0.02, WARTS, soft=0.02)
     b.shag(Ellipsoid(P(0, 0.37, 0.14), (0.25, 0.08, 0.16)), 0.01, bumps(110, 9, 2.0), soft=0.02)
     b.cut(Ground(0.0))
     return b
@@ -278,7 +298,7 @@ def toad():
     def tint(ps, n):
         warm = smoothstep(0.3, 0.7, Tufts(9, (0, 0, 1), seed=4, n=8)(ps))
         flank = smoothstep(0.1, 0.5, np.abs(n[:, 0]))
-        return 0.55 * warm * flank
+        return np.clip(0.55 * warm * flank + 0.7 * WARTS(ps), 0, 1)  # rusty wart tips
 
     return build("odd_toad_body", b, tone=tone, tint=tint, axis=[P(0, 0.3, 0.45), P(0, 0.25, -0.35)], uv_scale=7.0)
 
@@ -300,13 +320,13 @@ def toad_sac():
 def vulture_body():
     b = Body(h=0.008, budget=3600)
     pitch = rot_x(-0.12)
-    b.add(Ellipsoid(P(0, 0.44, 0.0), (0.145, 0.125, 0.34), rot=pitch), MAIN)  # body
+    b.add(Ellipsoid(P(0, 0.44, 0.0), (0.17, 0.145, 0.36), rot=pitch), MAIN)  # body
     b.add(Ellipsoid(P(0, 0.43, 0.15), (0.12, 0.115, 0.13)), MAIN, k=0.07)  # breast / crop
     # Tail: a short broad fan.
     b.add(Squash(Sphere(P(0, 0, 0), 1.0), P(0, 0.36, -0.37), (0.12, 0.022, 0.17), rot=rot_x(0.2)), MAIN, k=0.05)
     # The ruff: a fluffy collar of lanceolate feathers at the neck base.
-    b.add(Ellipsoid(P(0, 0.55, 0.2), (0.12, 0.075, 0.09)), ACCENT, k=0.03)
-    neck = [(P(0, 0.56, 0.22), 0.042), (P(0, 0.64, 0.31), 0.034), (P(0, 0.69, 0.4), 0.036)]
+    b.add(Ellipsoid(P(0, 0.56, 0.2), (0.15, 0.09, 0.11)), ACCENT, k=0.03)
+    neck = [(P(0, 0.56, 0.22), 0.042), (P(0, 0.66, 0.31), 0.03), (P(0, 0.69, 0.4), 0.034)]
     b.add(Chain(neck), SKIN, k=0.025)
     b.add(Ellipsoid(P(0, 0.7, 0.45), (0.045, 0.043, 0.06)), SKIN, k=0.02)  # head
     b.add(Cone(P(0, 0.698, 0.49), P(0, 0.688, 0.565), 0.027, 0.016), HORN, k=0.008)  # bill
@@ -316,7 +336,7 @@ def vulture_body():
         b.add(Sphere(P(s * 0.033, 0.712, 0.475), 0.011), EYE, k=0.003)
         b.add(Ellipsoid(P(s * 0.11, 0.48, -0.03), (0.06, 0.1, 0.24), rot=rot_x(-0.3)), MAIN, k=0.05)  # wing shoulder
     ruff = Tufts(30, (0, 1, -1), seed=17, n=12, stretch=0.6)
-    b.shag(Ellipsoid(P(0, 0.55, 0.2), (0.14, 0.09, 0.11)), 0.018, ruff, soft=0.03)
+    b.shag(Ellipsoid(P(0, 0.56, 0.2), (0.17, 0.1, 0.13)), 0.03, ruff, soft=0.03)
     feathers = Tufts(18, (0, 0, -1), seed=12, n=10, stretch=0.85)
     b.shag(Ellipsoid(P(0, 0.42, -0.05), (0.2, 0.2, 0.45)), 0.008, feathers, soft=0.03)
     down = Tufts(60, (0, 0, -1), seed=3, n=8, stretch=0.3)
@@ -333,18 +353,21 @@ def vulture_body():
 def vulture_wing():
     """Left wing, spread (soaring), shoulder pivot at the origin; span ~0.95 out along +X."""
     b = Body(h=0.007, budget=2600)
-    th = 0.018
+    th = 0.03
     arm = [(P(0.0, 0.0, 0.05), 0.045), (P(0.36, 0.01, 0.09), 0.032), (P(0.6, 0.0, 0.05), 0.022)]
     b.add(Chain(arm), MAIN)
     b.add(Squash(Sphere(P(0, 0, 0), 1.0), P(0.3, 0.0, -0.1), (0.34, th, 0.21)), MAIN, k=0.03)  # secondaries
     b.add(Squash(Sphere(P(0, 0, 0), 1.0), P(0.58, 0.0, -0.05), (0.15, th * 0.9, 0.15)), MAIN, k=0.03)  # hand
     # Primaries: six slotted "fingers" splaying from the hand.
-    for k in range(6):
-        a = -0.55 + k * 0.2
-        root = P(0.62, 0.0, 0.03 - k * 0.025)
-        tip = root + P(math.cos(a) * (0.34 - abs(k - 2.5) * 0.02), 0.012 * k, math.sin(a) * 0.34)
+    for k in range(7):
+        a = -0.62 + k * 0.19
+        root = P(0.62, 0.006 * k, 0.04 - k * 0.024)
+        tip = root + P(math.cos(a) * (0.36 - abs(k - 3) * 0.022), 0.014 * k, math.sin(a) * 0.36)
         L = float(np.hypot((tip - root)[0], (tip - root)[2]))
-        b.add(Squash(Cone(P(0, 0, 0), P(1, 0, 0), 1.0, 0.35), root, (L, 0.012, 0.042), rot=rot_y(-a)), MAIN, k=0.012)
+        b.add(Squash(Cone(P(0, 0, 0), P(1, 0, 0), 1.0, 0.3), root, (L, 0.016, 0.04), rot=rot_y(-a)), MAIN, k=0.008)
+    # Overlapping covert rows: shingled ridges across the inner wing.
+    rows = Fn(lambda p: (0.5 + 0.5 * np.sin(p[:, 2] * 62.0 + p[:, 0] * 6.0)) ** 3)
+    b.shag(Squash(Sphere(P(0, 0, 0), 1.0), P(0.3, 0.02, -0.02), (0.36, 0.06, 0.16)), 0.009, rows, soft=0.03)
     serr = Tufts(40, (0, 0, -1), seed=8, n=10, stretch=0.95)
     b.shag(Squash(Sphere(P(0, 0, 0), 1.0), P(0.35, 0, -0.17), (0.38, 0.05, 0.08)), 0.008, serr, soft=0.02)
 
@@ -493,11 +516,92 @@ def antlion_pit():
     return bld.build("odd_antlion_pit", ["s_plaster"])  # fine, pale grain tinted to sand
 
 
+# ───────────────────────────────────────────────────────────────── wolverine
+# A low, long, heavy mustelid: arched back, short thick legs, big paws, a broad bear-like head with
+# small round ears, a bushy tail; dark chocolate coat with the pale buff side stripe running from the
+# shoulder to the tail root and a pale brow band. Body ~0.95 long, 0.42 at the hump (real scale).
+WOLV_SHOULDER = (0.115, 0.29, 0.25)  # left front-leg pivot (oddities.rs mirrors x for the right)
+WOLV_HIP = (0.12, 0.31, -0.3)
+WOLV_TAIL = (0.0, 0.36, -0.47)
+WOLV_FUR = Tufts(34, (0, 0, -1), seed=29, n=12, stretch=0.7)
+
+
+def wolv_stripe(ps, n):
+    """0..1 on the pale band: a curve along each flank from the shoulder, rising over the hips."""
+    z = ps[:, 2]
+    along = smoothstep(0.3, 0.16, z) * smoothstep(-0.56, -0.38, z)
+    centre = 0.3 + 0.07 * smoothstep(0.2, -0.45, z)
+    band = np.exp(-((ps[:, 1] - centre) / 0.045) ** 2)
+    side = smoothstep(0.25, 0.6, np.abs(n[:, 0]))
+    over_rump = smoothstep(-0.36, -0.46, z) * smoothstep(0.28, 0.36, ps[:, 1])  # the bands meet over the tail root
+    return np.clip(np.maximum(band * side, over_rump) * along, 0, 1)
+
+
+def wolverine_body():
+    b = Body(h=0.009, budget=5200)
+    b.add(Ellipsoid(P(0, 0.31, 0.12), (0.15, 0.13, 0.22)), MAIN)  # chest / shoulders
+    b.add(Ellipsoid(P(0, 0.33, -0.2), (0.16, 0.14, 0.27)), MAIN, k=0.1)  # arched loin and hips
+    b.add(Ellipsoid(P(0, 0.31, 0.34), (0.105, 0.1, 0.1)), MAIN, k=0.07)  # thick neck
+    b.add(Ellipsoid(P(0, 0.31, 0.45), (0.105, 0.085, 0.09)), MAIN, k=0.05)  # broad skull
+    b.add(Ellipsoid(P(0, 0.275, 0.55), (0.06, 0.055, 0.07)), SKIN, k=0.04)  # short muzzle
+    b.add(Sphere(P(0, 0.29, 0.615), 0.021), DETAIL, k=0.006)  # nose
+    for s in (1, -1):
+        b.add(Squash(Sphere(P(0, 0, 0), 1.0), P(s * 0.085, 0.385, 0.42), (0.035, 0.03, 0.016), rot=rot_z(s * 0.4)), MAIN, k=0.02)  # ear
+        b.add(Sphere(P(s * 0.05, 0.325, 0.53), 0.014), EYE, k=0.003)
+        b.add(Ellipsoid(P(s * 0.11, 0.25, 0.2), (0.06, 0.09, 0.08)), MAIN, k=0.05)  # shoulder mass
+        b.add(Ellipsoid(P(s * 0.12, 0.27, -0.3), (0.07, 0.1, 0.11)), MAIN, k=0.05)  # haunch
+    b.shag(Ellipsoid(P(0, 0.3, -0.05), (0.2, 0.19, 0.5)), 0.022, WOLV_FUR, soft=0.04)
+    b.shag(Ellipsoid(P(0, 0.2, -0.05), (0.17, 0.08, 0.4)), 0.03, Tufts(26, (0, -1, 0), seed=31, n=10, stretch=0.8), soft=0.03)  # belly fringe
+
+    def tone(ps, n):
+        brow = np.exp(-((ps[:, 2] - 0.47) / 0.035) ** 2) * smoothstep(0.31, 0.36, ps[:, 1])  # pale brow band
+        face = smoothstep(0.5, 0.58, ps[:, 2])
+        legs_low = smoothstep(0.22, 0.14, ps[:, 1])
+        base = 0.4 + 0.1 * (WOLV_FUR(ps) - 0.5) - 0.3 * legs_low - 0.25 * face
+        return np.clip(base + 0.62 * wolv_stripe(ps, n) + 0.45 * brow, 0, 1)
+
+    def tint(ps, n):
+        return 0.5 * wolv_stripe(ps, n)
+
+    return build("odd_wolv_body", b, tone=tone, tint=tint, axis=[P(0, 0.31, 0.6), P(0, 0.33, -0.5)], uv_scale=6.0)
+
+
+def wolverine_leg(front):
+    piv = WOLV_SHOULDER if front else WOLV_HIP
+    o = P(*piv)
+    b = Body(h=0.007, budget=1500)
+    if front:
+        b.add(Chain([(o, 0.06), (o + P(0.005, -0.15, 0.02), 0.047), (o + P(0.0, -0.265, 0.03), 0.04)]), MAIN, k=0.03)
+        paw = o + P(0.0, -0.272, 0.06)
+    else:
+        b.add(Chain([(o, 0.07), (o + P(0.0, -0.13, -0.05), 0.05), (o + P(0.0, -0.29, -0.02), 0.04)]), MAIN, k=0.03)
+        paw = o + P(0.0, -0.292, 0.03)
+    b.add(Ellipsoid(paw, (0.05, 0.026, 0.065)), MAIN, k=0.025)  # broad snowshoe paw
+    for k in range(5):  # pale, half-retractile claws
+        a = -0.5 + k * 0.25
+        c = paw + P(math.sin(a) * 0.035, -0.008, 0.055 + 0.01 * math.cos(a))
+        b.add(Cone(c, c + P(math.sin(a) * 0.01, -0.018, 0.028), 0.007, 0.002), HORN, k=0.004)
+    b.shag(Sphere(o + P(0, -0.1, 0), 0.16), 0.014, WOLV_FUR, soft=0.03)
+    b.cut(Ground(0.0))
+    tone = lambda ps, n: np.clip(0.12 + 0.12 * smoothstep(piv[1] - 0.12, piv[1], ps[:, 1]), 0, 1)
+    return build("odd_wolv_leg_f" if front else "odd_wolv_leg_h", b, origin=piv, tone=tone,
+                 axis=[o, o + P(0, -0.3, 0)], uv_scale=8.0)
+
+
+def wolverine_tail():
+    o = P(*WOLV_TAIL)
+    b = Body(h=0.007, budget=1300)
+    b.add(Chain([(o, 0.05), (o + P(0, -0.04, -0.13), 0.075), (o + P(0, -0.1, -0.28), 0.06), (o + P(0, -0.15, -0.36), 0.03)]), MAIN, k=0.04)
+    b.shag(Sphere(o + P(0, -0.07, -0.18), 0.25), 0.03, Tufts(30, (0, -0.4, -1), seed=37, n=12, stretch=0.85), soft=0.03)
+    tone = lambda ps, n: np.clip(0.18 + 0.4 * smoothstep(-0.52, -0.47, ps[:, 2]) * smoothstep(0.33, 0.37, ps[:, 1]), 0, 1)
+    return build("odd_wolv_tail", b, origin=WOLV_TAIL, tone=tone, axis=[o, o + P(0, -0.15, -0.36)], uv_scale=6.0)
+
+
 if __name__ == "__main__":
     clear_scene()
     only = set(sys.argv[sys.argv.index("--") + 1:]) if "--" in sys.argv else set()
     makers = [nest_snag, nest, hornet, toad, toad_sac, vulture_body, vulture_wing, vulture_legs, antlion_head, antlion_jaw,
-              antlion_pit]
+              antlion_pit, wolverine_body, lambda: wolverine_leg(True), lambda: wolverine_leg(False), wolverine_tail]
     objs = [m() for m in makers]
     export_glb(OUT / "oddities.glb", objs)
     print("ODDITIES_DONE")

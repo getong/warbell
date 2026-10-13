@@ -57,12 +57,12 @@ const WOLVERINE_HP: f32 = 120.0;
 
 // ── Palettes (coat ramp dark/base/light/tint + regions MAIN, SKIN, DETAIL, EYE, ACCENT, HORN) ──
 type Pal = ([u32; 4], [(u32, Surf); 6]);
-const PAL_NEST: Pal = ([0x5e584e, 0x8f877a, 0xc4bcaa, 0x7d6c52],
-    [(0x8f877a, Surf::Skin), (0x7a7062, Surf::Skin), (0x3e3022, Surf::Bone), (0x111111, Surf::Bone), (0x8f877a, Surf::Skin), (0x5a4a36, Surf::Bone)]);
+const PAL_NEST: Pal = ([0x6e675c, 0xa49c8c, 0xdcd4c2, 0x8a7656],
+    [(0xa49c8c, Surf::Skin), (0x7a7062, Surf::Skin), (0x3e3022, Surf::Bone), (0x111111, Surf::Bone), (0x8f877a, Surf::Skin), (0x5a4a36, Surf::Bone)]);
 const PAL_HORNET: Pal = ([0x1a120a, 0x7a4414, 0xd8a020, 0x000000],
     [(0, Surf::Scale), (0xd0c8b8, Surf::Bone), (0x4a2410, Surf::Scale), (0x111111, Surf::Bone), (0x7a3410, Surf::Scale), (0x111111, Surf::Bone)]);
 const PAL_TOAD: Pal = ([0x26221a, 0x4e4a30, 0xb4a682, 0x7a4e26],
-    [(0, Surf::Skin), (0x7a6c50, Surf::Skin), (0x1a120c, Surf::Skin), (0x6a4a10, Surf::Bone), (0x6a5434, Surf::Skin), (0x1a1a1a, Surf::Bone)]);
+    [(0, Surf::Skin), (0x7a6c50, Surf::Skin), (0x1a120c, Surf::Skin), (0xb08a28, Surf::Bone), (0x6a5434, Surf::Skin), (0x1a1a1a, Surf::Bone)]);
 const PAL_VULTURE: Pal = ([0x22180f, 0x6e5236, 0xbc9c70, 0x86603c],
     [(0, Surf::Fur), (0xb0aca4, Surf::Skin), (0x4a3c30, Surf::Skin), (0x1a0e08, Surf::Bone), (0xe2dac8, Surf::Fur), (0x8a8274, Surf::Bone)]);
 const PAL_VULTURE_LEGS: Pal = ([0x3a2a1a, 0x6e5236, 0xb8986c, 0x86603c],
@@ -73,7 +73,15 @@ const PAL_JAW: Pal = ([0x160c06, 0x5a3016, 0x9a6230, 0x6e3412],
     [(0, Surf::Bone), (0x5e4a38, Surf::Bone), (0x241a12, Surf::Bone), (0x0c0a08, Surf::Bone), (0x7c6a52, Surf::Bone), (0x22140c, Surf::Bone)]);
 /// Wolverine coat on the bear sculpt: near-black points, dark chocolate body, the pale buff of the
 /// flank band / brow, a rusty tint.
-const WOLVERINE_COAT: [u32; 4] = [0x15100c, 0x3a2a1e, 0xa88a5e, 0x6a4628];
+/// Wolverine: near-black legs, dark chocolate body, the buff side stripe and brow band (tone-ramp
+/// light end + tint), dark muzzle, pale claws.
+const PAL_WOLVERINE: Pal = ([0x15100c, 0x3a2a1e, 0xb09060, 0xb89868],
+    [(0, Surf::Fur), (0x2a201a, Surf::Skin), (0x0c0a08, Surf::Bone), (0x050505, Surf::Bone), (0x3a2a1e, Surf::Fur), (0xc8bca0, Surf::Bone)]);
+/// Model-space pivots (oddities.py WOLV_*): left front shoulder, left hip, tail root.
+const WOLV_SHOULDER: Vec3 = Vec3::new(0.115, 0.29, 0.25);
+const WOLV_HIP: Vec3 = Vec3::new(0.12, 0.31, -0.3);
+const WOLV_TAIL: Vec3 = Vec3::new(0.0, 0.36, -0.47);
+const WOLV_SCALE: f32 = 1.1;
 
 fn coat_mesh(kit: &crate::realforest::Kit, name: &str, pal: &Pal) -> Option<Mesh> {
     let l = crate::palette::lin;
@@ -118,7 +126,10 @@ struct Assets_ {
     ant_head: Handle<Mesh>,
     jaw_l: Handle<Mesh>,
     jaw_r: Handle<Mesh>,
-    wolverine: Option<crate::quadruped::QuadHandles>,
+    wolv_body: Handle<Mesh>,
+    wolv_tail: Handle<Mesh>,
+    /// Front-left, front-right, hind-left, hind-right.
+    wolv_legs: [Handle<Mesh>; 4],
 }
 
 fn build_assets(
@@ -159,7 +170,13 @@ fn build_assets(
         ant_head: m(meshes, "odd_antlion_head", &PAL_ANTLION)?,
         jaw_r: meshes.add(mirror_x(jaw.clone())),
         jaw_l: meshes.add(jaw),
-        wolverine: crate::quadruped::kit_quad_meshes_with(crate::quadruped::QuadSpecies::Bear, WOLVERINE_COAT).map(|q| q.upload(meshes)),
+        wolv_body: m(meshes, "odd_wolv_body", &PAL_WOLVERINE)?,
+        wolv_tail: m(meshes, "odd_wolv_tail", &PAL_WOLVERINE)?,
+        wolv_legs: {
+            let f = coat_mesh(kit, "odd_wolv_leg_f", &PAL_WOLVERINE)?;
+            let h = coat_mesh(kit, "odd_wolv_leg_h", &PAL_WOLVERINE)?;
+            [meshes.add(f.clone()), meshes.add(mirror_x(f)), meshes.add(h.clone()), meshes.add(mirror_x(h))]
+        },
     })
 }
 
@@ -237,6 +254,58 @@ struct Vulture {
 #[derive(Component)]
 struct Wing {
     right: bool,
+}
+
+/// A wolverine leg (child of the body root, pivot at the shoulder / hip).
+#[derive(Component)]
+struct WolvLeg {
+    front: bool,
+    right: bool,
+}
+
+#[derive(Component)]
+struct WolvTail;
+
+/// The wolverine's body, legs and tail under `root` (whose scale is WOLV_SCALE).
+fn attach_wolverine(commands: &mut Commands, root: Entity, a: &Assets_) {
+    commands.entity(root).with_children(|c| {
+        c.spawn((Transform::IDENTITY, Visibility::Inherited, Mesh3d(a.wolv_body.clone()), MeshMaterial3d(a.mat.clone())));
+        c.spawn((Transform::from_translation(WOLV_TAIL), Visibility::Inherited, Mesh3d(a.wolv_tail.clone()), MeshMaterial3d(a.mat.clone()), WolvTail));
+        for (i, (front, right)) in [(true, false), (true, true), (false, false), (false, true)].into_iter().enumerate() {
+            let mut piv = if front { WOLV_SHOULDER } else { WOLV_HIP };
+            if right {
+                piv.x = -piv.x;
+            }
+            c.spawn((Transform::from_translation(piv), Visibility::Inherited, Mesh3d(a.wolv_legs[i].clone()), MeshMaterial3d(a.mat.clone()),
+                WolvLeg { front, right }));
+        }
+    });
+}
+
+/// At a walk a diagonal stride; at speed the mustelid bound (front pair, then hind pair). The
+/// bushy tail sways and lifts with the pace.
+fn animate_wolverines(
+    drives: Query<&crate::quadruped::QuadDrive>,
+    mut legs: Query<(&WolvLeg, &ChildOf, &mut Transform), Without<WolvTail>>,
+    mut tails: Query<(&ChildOf, &mut Transform), With<WolvTail>>,
+) {
+    for (leg, parent, mut tf) in &mut legs {
+        let Ok(d) = drives.get(parent.parent()) else { continue };
+        let walk_off = if leg.front != leg.right { 0.0 } else { std::f32::consts::PI };
+        let bound_off = if leg.front { 0.0 } else { 2.2 } + if leg.right { 0.25 } else { 0.0 };
+        let off = walk_off * (1.0 - d.run_amt) + bound_off * d.run_amt;
+        let amp = (0.45 + 0.25 * d.run_amt) * d.moving_amt;
+        let mut swing = (d.phase + off).sin() * amp;
+        if d.attacking && leg.front {
+            swing -= 0.5 * d.attack_t; // reach forward with the claws
+        }
+        tf.rotation = Quat::from_rotation_x(-swing);
+    }
+    for (parent, mut tf) in &mut tails {
+        let Ok(d) = drives.get(parent.parent()) else { continue };
+        let sway = (d.phase * 0.5).sin() * (0.12 + 0.15 * d.moving_amt);
+        tf.rotation = Quat::from_rotation_y(sway) * Quat::from_rotation_x(0.25 * d.run_amt);
+    }
 }
 
 #[derive(Component)]
@@ -365,7 +434,7 @@ impl Plugin for OdditiesPlugin {
             )
                 .chain(),
         );
-        app.add_systems(Update, (animate_wings, animate_jaws, pulse_sacs, collapse_pits));
+        app.add_systems(Update, (animate_wings, animate_jaws, pulse_sacs, collapse_pits, animate_wolverines));
     }
 }
 
@@ -728,11 +797,10 @@ fn spawn_antlion(commands: &mut Commands, a: &Assets_, slot: usize, p: Vec2, _me
 }
 
 fn spawn_wolverine(commands: &mut Commands, a: &Assets_, slot: usize, p: Vec2, den: usize) {
-    let Some(h) = a.wolverine.clone() else { return };
     let y = footing(p.x, p.y).unwrap_or(0.0);
     let root = commands
         .spawn((
-            Transform::from_xyz(p.x, y, p.y).with_scale(Vec3::splat(0.62)),
+            Transform::from_xyz(p.x, y, p.y).with_scale(Vec3::splat(WOLV_SCALE)),
             Visibility::default(),
             Health { hp: WOLVERINE_HP, max: WOLVERINE_HP },
             Oddity,
@@ -751,7 +819,7 @@ fn spawn_wolverine(commands: &mut Commands, a: &Assets_, slot: usize, p: Vec2, d
             BiomeEntity,
         ))
         .id();
-    crate::quadruped::spawn_quad(commands, root, &a.mat, crate::quadruped::QuadSpecies::Bear, h);
+    attach_wolverine(commands, root, a);
 }
 
 // ── Brains ──────────────────────────────────────────────────────────────────────────────────
@@ -1105,9 +1173,11 @@ fn vulture_brain(
                 }
             }
         }
-        let bank = if v.state == VState::Soar { -0.32 } else { 0.0 };
+        let now = time.elapsed_secs();
+        let bank = if v.state == VState::Soar { -0.32 + 0.1 * (now * 0.45 + v.slot as f32).sin() } else { 0.0 };
         let pitch = match v.state {
-            VState::Feed => -0.25 + (time.elapsed_secs() * 3.0 + v.slot as f32).sin().max(0.0) * 0.35,
+            // Hunched over the carcass, head down, tearing now and then.
+            VState::Feed => 0.22 + (now * 3.0 + v.slot as f32).sin().max(0.0) * 0.3,
             VState::Dive | VState::Descend => 0.25,
             _ => 0.0,
         };
@@ -1130,7 +1200,12 @@ fn animate_wings(
         let s = if w.right { -1.0 } else { 1.0 };
         let ph = now + v.slot as f32 * 0.8;
         let (roll, yaw) = match v.state {
-            VState::Soar => (0.08 + 0.03 * (ph * 0.9).sin(), 0.0),
+            // Soaring: wings held in a shallow dihedral, a pair of slow deep beats every ~11 s.
+            VState::Soar => {
+                let cyc = ph.rem_euclid(11.0);
+                let beat = if cyc < 2.6 { (cyc / 2.6 * std::f32::consts::TAU * 2.0).sin() * 0.42 } else { 0.0 };
+                (0.08 + 0.03 * (ph * 0.9).sin() + beat, 0.0)
+            }
             VState::Climb | VState::Descend => ((ph * 6.0).sin() * 0.75 + 0.1, 0.05),
             VState::Dive => (-0.25, 0.45),
             // Half-folded and swept back along the flanks, the wrists mantling over the carcass.
@@ -1537,13 +1612,16 @@ fn stage_oddline(
         }
     });
     // Wolverine, standing.
-    if let Some(h) = a.wolverine.clone() {
+    {
         let p = at(31.0);
+        let mut drive = crate::quadruped::QuadDrive::new(crate::quadruped::QuadSpecies::Bear);
+        drive.moving_amt = 1.0;
+        drive.phase = 0.9; // mid-stride
         let root = commands
-            .spawn((Transform::from_translation(p).with_rotation(Quat::from_rotation_y(std::f32::consts::PI * 0.75)).with_scale(Vec3::splat(0.62)),
-                Visibility::default(), crate::quadruped::QuadDrive::new(crate::quadruped::QuadSpecies::Bear), Display))
+            .spawn((Transform::from_translation(p).with_rotation(Quat::from_rotation_y(std::f32::consts::PI * 0.75)).with_scale(Vec3::splat(WOLV_SCALE)),
+                Visibility::default(), drive, Display))
             .id();
-        crate::quadruped::spawn_quad(&mut commands, root, &a.mat, crate::quadruped::QuadSpecies::Bear, h);
+        attach_wolverine(&mut commands, root, &a);
     }
     info!("oddities: FOREST_ODDLINE staged at {base:?} (nest x+0, toad +7, vultures +14, antlion +23, wolverine +31)");
 }

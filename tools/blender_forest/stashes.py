@@ -76,6 +76,40 @@ def bundle(g, c, rot, rng, s=1.0, col=OILCLOTH):
         tube(g, ring, [0.009] * 13, 4, M_CLOTH, CA.ROPE if hasattr(CA, "ROPE") else (0.8, 0.68, 0.5), tile=0.2, cap=False)
 
 
+RAG = (0.66, 0.2, 0.14)  # a strip of madder-red cloth, sun-faded
+
+
+def cue(bld, rng, snow=False):
+    """The tell a sharp eye catches: freshly turned ground beside the cache and a faded red rag tied
+    to a cut stick (the owner's marker). Placed just outside the model's footprint, on its +X/+Z side."""
+    g = G(bld)
+    bb = bounds(bld)
+    x = bb["x"][1] + 0.35
+    z = min(bb["z"][1], 0.6) + 0.1
+    ground = (0.86, 0.86, 0.9) if snow else (0.3, 0.22, 0.15)
+    mound(g, (x - 0.15, 0.0, z - 0.25), 0.5, 0.4, 0.07, rng, col_fn=lambda p, n: scale(ground, 0.75 + 0.25 * n.y), tile=0.6)
+    for k in range(6):  # thrown-out clods
+        a = rng.uniform(0, math.tau)
+        r = rng.uniform(0.35, 0.65)
+        stone(g, (x - 0.15 + math.cos(a) * r, 0.03, z - 0.25 + math.sin(a) * r), (0.05, 0.035, 0.045), rng, mat=M_EARTH,
+              detail=1, col_fn=lambda p, n: scale(ground, 0.8), tile=0.4)
+    top = V(x + 0.06, 0.62, z + 0.04)
+    beam(g, [V(x, -0.1, z), top], 0.03, 0.03, mat=M_PLANK, col=(0.7, 0.6, 0.48), rng=rng, jag=(0.0, 0.04))
+    # The rag: knotted at the stick, its tail hanging and twisting in two panels (both faces drawn).
+    k0 = top + V(0.0, -0.06, 0.0)
+    pts = [k0, k0 + V(0.09, -0.05, 0.03), k0 + V(0.13, -0.17, 0.07), k0 + V(0.1, -0.3, 0.12)]
+    w = V(0.0, 0.0, 0.055)
+    for i in range(3):
+        a, b = pts[i], pts[i + 1]
+        q = [a, b, b + w * (0.8 - 0.2 * i), a + w * (1.0 - 0.2 * i)]
+        n = (q[1] - q[0]).cross(q[3] - q[0]).normalized()
+        col = scale(RAG, 1.0 - 0.12 * i)
+        uv = [(0, i / 3), (0, (i + 1) / 3), (1, (i + 1) / 3), (1, i / 3)]
+        g.poly(q, uv, [n] * 4, [col] * 4, M_CLOTH)
+        g.poly(q[::-1], uv[::-1], [-n] * 4, [scale(col, 0.8)] * 4, M_CLOTH)
+    return bld
+
+
 # ─────────────────────────────────────────────────────────────── forest
 def stash_hollow_log(rng):
     b = Builder()
@@ -357,11 +391,11 @@ def castaway_grotto(rng):
         for j in range(2):
             q = [pts[i][j], pts[i + 1][j], pts[i + 1][j + 1], pts[i][j + 1]]
             n = (q[1] - q[0]).cross(q[3] - q[0]).normalized()
-            col = mix((0.86, 0.8, 0.68), (0.66, 0.58, 0.46), 0.5 * j)  # salt-bleached sailcloth, stained low
+            col = mix((1.0, 0.96, 0.86), (0.84, 0.76, 0.62), 0.5 * j)  # salt-bleached sailcloth, stained low
             g.poly(q, [(i / 6, j / 2), ((i + 1) / 6, j / 2), ((i + 1) / 6, (j + 1) / 2), (i / 6, (j + 1) / 2)], [n] * 4, [col] * 4,
                    M_CLOTH)
             g.poly(q[::-1], [(i / 6, (j + 1) / 2), ((i + 1) / 6, (j + 1) / 2), ((i + 1) / 6, j / 2), (i / 6, j / 2)], [-n] * 4,
-                   [scale(col, 0.7)] * 4, M_CLOTH)
+                   [col] * 4, M_CLOTH)
     # Bough bed, a dead fire ring, a tin cup.
     for k in range(14):
         a = rng.uniform(-0.5, 0.5)
@@ -409,6 +443,8 @@ if __name__ == "__main__":
     objs = []
     for i, (name, fn) in enumerate(MODELS.items()):
         bld = fn(np.random.default_rng(8800 + i))
+        if name.startswith("stash_"):
+            cue(bld, np.random.default_rng(9900 + i), snow=name in ("stash_frozen_bundle", "stash_boat_crate"))
         print(name, bounds(bld))
         objs.append(bld.build(name, MATS))
     export_glb(OUT / "stashes.glb", objs)
