@@ -17,3 +17,15 @@ bundled with a download is executed.
 | Sentinel-2 cloudless 2016 | horizon islands' colour (`assets/isles/*_albedo.png`) | "Sentinel-2 cloudless - https://s2maps.eu by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016 & 2017)" | CC BY 4.0 | https://s2maps.eu | `tools/terrain_isles/fetch_isles.py` |
 
 Photographic textures from Poly Haven (CC0) are listed in `assets/forest_pbr/ATTRIBUTION.txt`.
+
+## Realistic NPC pipeline (experimental, `tools/npc_mpfb/`, not shipped in the game yet)
+
+| Asset | Author | Licence | Source |
+|---|---|---|---|
+| Bartender (rigged village woman) | CDmir, TinyWorlds | CC0 | https://opengameart.org/content/bartender |
+| Universal Animation Library 1 + 2 (Standard) | Quaternius | CC0 | https://opengameart.org/content/universal-animation-library |
+| MakeHuman system assets (bodies, skins, hair, eyes) | MakeHuman Community | CC0 | https://static.makehumancommunity.org/assets/assetpacks/makehuman_system_assets.html |
+| MPFB 2 (Blender add-on, tool only) | MakeHuman Community | GPL-3.0+ (tool; output is CC0) | https://extensions.blender.org/add-ons/mpfb/ |
+| Garments: toigo_wool_pants, toigo_long_full_skirt, culturalibre_male_boots, rehmanpolanski_beard_viking, wdg_scruffy_beard | toigo, culturalibre, rehmanpolanski, wdg | CC0 | MakeHuman asset packs pants01 / skirts01 / shoes01 / bodyparts05 |
+| Garments: elvs_male_boho_top1, punkduck_lace_up_blouse, elvs_ruffle_sleeve_peasant_blouse_1, mindfront_male_trousers_2, maciekg_leather_boots, punkduck_medieval_boots, punkduck_female_half-boots, punkduck_riding_boots, maciekg_wizard_robe, grinsegold_full_beard | elvs, punkduck, mindfront, maciekg, grinsegold | CC-BY (credit required) | MakeHuman asset packs shirts02 / shirts03 / pants02 / shoes03 / suits03 / bodyparts06 |
+| Fabric / leather textures (linen, wool, hessian, leather) | Poly Haven | CC0 | https://polyhaven.com |
