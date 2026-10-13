@@ -342,7 +342,7 @@ impl ShadowLevel {
             ShadowLevel::Off => None,
             ShadowLevel::Low => Some((1024, 100.0)),
             ShadowLevel::Medium => Some((2048, 150.0)),
-            ShadowLevel::High => Some((4096, 190.0)),
+            ShadowLevel::High => Some((4096, 165.0)),
         }
     }
 }

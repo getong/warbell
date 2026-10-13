@@ -399,6 +399,52 @@ fn perf_tick(world: &mut World) {
             .unwrap_or(0.0);
         (fps, ms, ent, rss)
     };
+    // Draw-count shape: Mesh3d entities, how many the camera can see, how many feed the shadow
+    // cascades (each cascade view re-bins every caster inside it — the render-thread cost driver).
+    let (m3d, m3d_vis, casters) = {
+        let mut q = world.query::<(&Mesh3d, &ViewVisibility, &InheritedVisibility, Has<bevy::light::NotShadowCaster>)>();
+        let mut t = (0u32, 0u32, 0u32);
+        for (_, vv, iv, nsc) in q.iter(world) {
+            t.0 += 1;
+            if vv.get() {
+                t.1 += 1;
+            }
+            if iv.get() && !nsc {
+                t.2 += 1;
+            }
+        }
+        t
+    };
+    let cascades: Vec<String> = {
+        let mut q = world.query::<&bevy::camera::visibility::CascadesVisibleEntities>();
+        q.iter(world)
+            .flat_map(|c| c.entities.values().map(|v| v.iter().map(|e| e.entities.len().to_string()).collect::<Vec<_>>().join("/")))
+            .collect()
+    };
+    // Who fills the farthest cascade: tag each caster by its game components (or engine-only shape).
+    {
+        let far: Vec<Entity> = {
+            let mut q = world.query::<&bevy::camera::visibility::CascadesVisibleEntities>();
+            q.iter(world).flat_map(|c| c.entities.values().filter_map(|v| v.last().map(|l| l.entities.clone()))).flatten().collect()
+        };
+        let mut hist: std::collections::HashMap<String, u32> = Default::default();
+        let comps = world.components();
+        for e in far {
+            let Ok(er) = world.get_entity(e) else { continue };
+            let names: Vec<String> = er.archetype().components().iter()
+                .filter_map(|id| comps.get_name(*id).map(|n| n.to_string()))
+                .filter(|n| n.contains("tileworld") || n.contains("MeshMaterial3d") || n.contains("VisibilityRange"))
+                .map(|n| short(&n.replace("MeshMaterial3d<", "M<")))
+                .collect();
+            *hist.entry(names.join(" ")).or_default() += 1;
+        }
+        let mut rows: Vec<_> = hist.into_iter().collect();
+        rows.sort_by(|a, b| b.1.cmp(&a.1));
+        for (sig, n) in rows.iter().take(14) {
+            info!("   farcascade {n:>5}  {}", sig.chars().take(160).collect::<String>());
+        }
+    }
+    info!("PERF draws: mesh3d={m3d} cam_visible={m3d_vis} shadow_casters(visible-tree)={casters} cascades=[{}]", cascades.join(" | "));
     let meshes = world.resource::<Assets<Mesh>>().len();
     let mats = world.resource::<Assets<StandardMaterial>>().len();
     let creature_mats = world.resource::<Assets<crate::creature::CreatureMaterial>>().len();

@@ -1882,7 +1882,7 @@ impl Armory {
         // Two glowing eyes on the head joint (head-local) — the menacing night-glow.
         commands.entity(head).with_children(|p| {
             for xf in ork_eye_xfs(variant) {
-                p.spawn((Mesh3d(self.eye_mesh.clone()), MeshMaterial3d(self.eye_mat.clone()), xf, OrkEye));
+                p.spawn((Mesh3d(self.eye_mesh.clone()), MeshMaterial3d(self.eye_mat.clone()), xf, OrkEye, bevy::light::NotShadowCaster));
             }
         });
         if let (true, Some(hand)) = (torch_bearer, off_hand) {
@@ -1923,7 +1923,7 @@ impl Armory {
         let head = crate::biped::spawn_biped(commands, root, &self.mat, t.biped.clone(), head_scale, 1.0, hip_dx, shoulder_dx, ORK_RIG_OFF, Some(ork_shield_xf())).0;
         commands.entity(head).with_children(|p| {
             for xf in ork_eye_xfs(variant) {
-                p.spawn((Mesh3d(self.eye_mesh.clone()), MeshMaterial3d(self.eye_mat.clone()), xf, OrkEye));
+                p.spawn((Mesh3d(self.eye_mesh.clone()), MeshMaterial3d(self.eye_mat.clone()), xf, OrkEye, bevy::light::NotShadowCaster));
             }
         });
         root
@@ -1962,7 +1962,7 @@ impl Armory {
         let head = crate::biped::spawn_biped(commands, root, &self.mat, t.biped.clone(), head_scale, 1.0, hip_dx, shoulder_dx, ORK_RIG_OFF, Some(ork_shield_xf())).0;
         commands.entity(head).with_children(|p| {
             for xf in ork_eye_xfs(variant) {
-                p.spawn((Mesh3d(self.eye_mesh.clone()), MeshMaterial3d(self.eye_mat.clone()), xf, OrkEye));
+                p.spawn((Mesh3d(self.eye_mesh.clone()), MeshMaterial3d(self.eye_mat.clone()), xf, OrkEye, bevy::light::NotShadowCaster));
             }
         });
         root

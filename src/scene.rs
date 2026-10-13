@@ -878,7 +878,7 @@ fn setup_sun(mut commands: Commands) {
         // wants a big warm ball: ~6× earth size, overexposed so Bloom halos it into a glow.
         SunDisk { angular_size: 0.060, intensity: 1.6 },
         CascadeShadowConfigBuilder {
-            num_cascades: 4,
+            num_cascades: std::env::var("FOREST_CASCADES").ok().and_then(|v| v.parse().ok()).unwrap_or(3),
             // 150 (was 75): with the elevated follow-cam most of the visible frame sits 60–150
             // tiles out, and a 75-tile cutoff left the whole mid/far ground shadowless — flat.
             // Long tree shadows ARE the scene's depth cue; the linear fog only fully wins by
@@ -909,7 +909,7 @@ fn setup_sun(mut commands: Commands) {
             ..default()
         },
         CascadeShadowConfigBuilder {
-            num_cascades: 4,
+            num_cascades: std::env::var("FOREST_CASCADES").ok().and_then(|v| v.parse().ok()).unwrap_or(3),
             maximum_distance: 150.0,
             first_cascade_far_bound: 12.0,
             ..default()

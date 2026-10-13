@@ -1155,6 +1155,7 @@ pub fn build(
                 Transform::from_translation(fire).with_scale(Vec3::splat(0.01)),
                 CampSmoke { base: fire + Vec3::Y * 0.4, phase: i as f32 / 5.0, speed: 0.3 },
                 crate::particles::FaceCamera,
+                bevy::light::NotShadowCaster,
                 BiomeEntity,
             ));
         }
