@@ -242,7 +242,8 @@ const HUT_SHROOM: u32 = 0x9a4a68; // bog-violet toadstools
 const HUT_SMOKE: u32 = 0x9a978e;
 // 2026-07-08: desaturated off neon (was srgb 0.49,1.0,0.6) — a sickly witchlight reads mature; a
 // pure fluorescent green read cartoonish/toylike.
-const WITCH_GREEN: Color = Color::srgb(0.44, 0.7, 0.46);
+/// Candle / hearth light seen through the hut's windows (warm, low — not a beacon).
+const CANDLE: Color = Color::srgb(1.0, 0.62, 0.3);
 
 /// Cauldron yard spot (model-local) — the wisps orbit above it.
 const CAULDRON: Vec3 = Vec3::new(1.75, 0.0, 1.3);
@@ -379,43 +380,30 @@ pub fn witch_hut() -> LandmarkModel {
     // ── Animated parts ──────────────────────────────────────────────────────────
     let mut anim: Vec<AnimPart> = Vec::new();
 
-    // Two green-lit windows (front + -X side), breathing out of phase.
-    let win = |w: f32, h: f32| flat_shaded(tbox(w, h, 0.1, Vec3::ZERO, 0xffffff));
+    // Candle-light from inside: a thin warm pane set BEHIND each window opening (the Blender
+    // body's front window -0.73..-0.37 x 2.13..2.47 on the z 0.7 wall, the side one on x -1.0), so
+    // what reads is a lit room seen through the frame, flickering a little.
+    let pane = |w: f32, h: f32| flat_shaded(tbox(w, h, 0.02, Vec3::ZERO, 0xffffff));
     anim.push(AnimPart::glowing(
-        win(0.3, 0.3),
-        Transform::from_xyz(-0.55, 2.3, 0.71).with_rotation(Quat::from_rotation_z(0.05)),
+        pane(0.36, 0.34),
+        Transform::from_xyz(-0.55, 2.3, 0.64),
         Fx::None,
-        Glow { color: WITCH_GREEN, strength: 2.8, pulse: Some((0.7, 0.35, 0.0)) },
+        Glow { color: CANDLE, strength: 1.05, pulse: Some((2.3, 0.18, 0.0)) },
     ));
     anim.push(AnimPart::glowing(
-        win(0.26, 0.34),
-        Transform::from_xyz(-1.06, 2.2, -0.25).with_rotation(Quat::from_rotation_y(FRAC_PI_2)),
+        pane(0.36, 0.36),
+        Transform::from_xyz(-0.94, 2.2, -0.25).with_rotation(Quat::from_rotation_y(FRAC_PI_2)),
         Fx::None,
-        Glow { color: WITCH_GREEN, strength: 2.8, pulse: Some((0.55, 0.35, 1.9)) },
+        Glow { color: CANDLE, strength: 0.95, pulse: Some((1.9, 0.2, 1.9)) },
     ));
 
-    // The brew surface — a glowing disc riding just under the cauldron rim.
+    // The brew: a murky surface just under the cauldron rim, the faintest bog-light in it.
     anim.push(AnimPart::glowing(
         flat_shaded(tinted(Cylinder::new(0.31, 0.05).mesh().resolution(10).build(), lin(0xffffff))),
         Transform::from_translation(CAULDRON + yv(0.94)),
         Fx::None,
-        Glow { color: WITCH_GREEN, strength: 3.6, pulse: Some((1.6, 0.3, 0.7)) },
+        Glow { color: Color::srgb(0.24, 0.27, 0.15), strength: 0.55, pulse: Some((1.1, 0.25, 0.7)) },
     ));
-    // Three wisps circling above the brew.
-    for (i, &(r, h, rate)) in [(0.3_f32, 1.15_f32, 1.1_f32), (0.42, 1.4, -0.8), (0.24, 1.65, 1.5)].iter().enumerate() {
-        anim.push(AnimPart::glowing(
-            flat_shaded(tinted(ico(0.05 + i as f32 * 0.012, 0), lin(0xffffff))),
-            Transform::from_translation(CAULDRON + Vec3::new(r, h, 0.0)),
-            Fx::Orbit {
-                centre: CAULDRON + yv(h),
-                rate,
-                bob_amp: 0.1,
-                bob_freq: 1.3 + i as f32 * 0.5,
-                phase: i as f32 * 2.1,
-            },
-            Glow { color: Color::srgb(0.5, 0.74, 0.52), strength: 3.4, pulse: None },
-        ));
-    }
 
     // Charms swinging from the eaves: bone-and-twig fetishes on cords.
     let charm = |long: f32| {
@@ -439,22 +427,29 @@ pub fn witch_hut() -> LandmarkModel {
             },
         ));
     }
-    // The door lantern: an amber counterpoint to all that green.
+    // The door lantern: an iron cage on a hook, a candle flame inside (cage and flame sway together).
+    let lantern_sway = || Fx::Sway { axis: Vec3::Z, amp: 0.1, freq: 1.5, phase: 0.6 };
+    let mut cage = vec![
+        tbox(0.015, 0.16, 0.015, yv(-0.08), HUT_STILT),
+        tbox(0.13, 0.025, 0.13, yv(-0.18), 0x23201c),
+        tbox(0.12, 0.02, 0.12, yv(-0.37), 0x23201c),
+    ];
+    for &(x, z) in &[(-0.055_f32, -0.055_f32), (0.055, -0.055), (-0.055, 0.055), (0.055, 0.055)] {
+        cage.push(tbox(0.014, 0.19, 0.014, Vec3::new(x, -0.275, z), 0x23201c));
+    }
+    anim.push(AnimPart::solid(flat_shaded(merged(cage)), Transform::from_xyz(0.78, 2.6, 0.78), lantern_sway()));
     anim.push(AnimPart::glowing(
-        flat_shaded(merged(vec![
-            tbox(0.02, 0.18, 0.02, yv(-0.09), HUT_STILT),
-            tbox(0.11, 0.15, 0.11, yv(-0.26), 0xffffff),
-        ])),
+        flat_shaded(merged(vec![tbox(0.03, 0.05, 0.03, yv(-0.31), 0xffffff), tbox(0.016, 0.03, 0.016, yv(-0.26), 0xffffff)])),
         Transform::from_xyz(0.78, 2.6, 0.78),
-        Fx::Sway { axis: Vec3::Z, amp: 0.12, freq: 1.5, phase: 0.6 },
-        Glow { color: Color::srgb_u8(0xff, 0xb4, 0x5e), strength: 4.0, pulse: Some((1.3, 0.25, 0.3)) },
+        lantern_sway(),
+        Glow { color: CANDLE, strength: 2.2, pulse: Some((2.7, 0.22, 0.3)) },
     ));
 
     // Chimney smoke: translucent puffs looping up out of the flue mouth — phases pack them
     // close so the column reads connected, not as beads on a string.
     for k in 0..4 {
         let mut m = AnimPart::solid(
-            flat_shaded(tinted(ico(0.21, 0).scaled_by(Vec3::new(1.0, 0.78, 1.0)), lin(HUT_SMOKE))),
+            tinted(ico(0.21, 2).scaled_by(Vec3::new(1.0, 0.78, 1.0)), lin(HUT_SMOKE)),
             Transform::from_xyz(-0.66, 4.02, -0.72),
             Fx::Rise { rate: 0.36, range: 1.55, drift: Vec2::new(0.34, 0.16), grow: 1.2, phase: k as f32 * 0.39 },
         );

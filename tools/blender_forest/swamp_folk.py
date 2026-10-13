@@ -369,20 +369,45 @@ def sf_basket(rng):
 
 
 # ─────────────────────────────────────────────────────────────── the Field of the Answered
+def old_turf_fn(rng):
+    """Turf on an old grave: patchy grass, bare brown where it slumped, darker at the wet foot."""
+    nz = Noise(rng, 4, 1.6)
+    grass = (0.27, 0.35, 0.14)
+    dry = (0.44, 0.43, 0.25)
+    bare = (0.33, 0.27, 0.2)
+
+    def f(p, n):
+        k = nz(p * 1.7)
+        c = mix(grass, dry, smoothstep(-0.2, 0.6, nz(p * 3.1 + V(4, 0, 1))))
+        c = mix(c, bare, smoothstep(0.25, 0.7, k) * (1 - smoothstep(0.6, 0.95, n.y)) * 0.9)
+        return scale(c, 0.7 + 0.3 * smoothstep(-0.12, 0.2, p.y))
+    return f
+
+
 def og_long_barrow(rng):
-    """Footprint 1.8 x 1.0 (half extents). The head (iron stone) at local -Z... laid along X: the
-    mound runs x -1.6..1.6, the iron stone stands at x -1.95."""
+    """Footprint 1.8 x 1.0 (half extents), laid along X (mound x -1.6..1.6, the iron stone at x -1.95).
+    An old grave long settled: low, broad, lopsided where one end slumped, sunk into the ground, grown
+    over with patchy turf and rushes; its kerb half-buried."""
     b = Builder()
     g = G(b)
     ks = stone_fn((0.85, 0.85, 0.8), rng, moss=0.7, damp_h=0.3, y0=-0.1, lichen=(0.9, 0.9, 0.78))
-    mound(g, (0.0, -0.05, 0.0), 1.65, 0.75, 0.5, rng, mat=M_EARTH, col_fn=turf_fn(rng), tile=1.0, rings=6, seg=24,
-          skirt=0.15, edge=0.08, power=0.7, rough=0.08)
-    kerb(g, (0.0, 0.0, 0.0), 1.65, 0.75, rng, ks, n=20, s=0.9)
-    iron_stone(g, (-1.95, 0.0, 0.0), math.pi / 2, rng, h=0.8, notches=7, lean=rng.uniform(-0.08, 0.08))
-    for j in range(4):
+    tf = old_turf_fn(rng)
+    mound(g, (0.0, -0.14, 0.0), 1.7, 0.85, 0.46, rng, mat=M_EARTH, col_fn=tf, tile=1.0, rings=8, seg=28,
+          skirt=0.18, edge=0.22, power=0.5, rough=0.32)
+    # the higher head end and a slumped foot break the pill outline
+    mound(g, (-0.7, -0.12, rng.uniform(-0.1, 0.1)), 0.85, 0.7, 0.42, rng, mat=M_EARTH, col_fn=tf, tile=1.0, rings=5,
+          seg=18, skirt=0.1, edge=0.25, power=0.55, rough=0.3)
+    mound(g, (1.05, -0.1, rng.uniform(-0.2, 0.2)), 0.8, 0.75, 0.16, rng, mat=M_EARTH, col_fn=tf, tile=1.0, rings=4,
+          seg=16, skirt=0.08, edge=0.3, power=0.7, rough=0.3)
+    kerb(g, (0.0, -0.1, 0.0), 1.7, 0.85, rng, ks, n=18, s=0.85, gap=(4.6, 5.4))
+    iron_stone(g, (-1.95, -0.08, 0.0), math.pi / 2, rng, h=0.8, notches=7, lean=rng.uniform(-0.12, 0.12))
+    for j in range(18):
         a = rng.uniform(0, 2 * math.pi)
-        sedge(g, (math.cos(a) * 1.1, 0.25, math.sin(a) * 0.4), rng, n=6, h=0.4, col=(0.58, 0.58, 0.32))
-    bowl(g, (-2.15, 0.02, 0.35), 0.1, rng, fill=(0.3, 0.32, 0.28))
+        r = rng.uniform(0.2, 1.05)
+        x, z = math.cos(a) * r * 1.5, math.sin(a) * r * 0.75
+        sedge(g, (x, 0.3 * max(0.0, 1 - r * r) - 0.04, z), rng, n=rng.integers(5, 10), h=rng.uniform(0.25, 0.5),
+              col=(0.55, 0.56, 0.3))
+    bowl(g, (-2.15, 0.0, 0.35), 0.1, rng, fill=(0.3, 0.32, 0.28))
     return b
 
 
@@ -396,28 +421,61 @@ def og_iron_stone(rng):
     return b
 
 
+def raw_soil_fn(rng):
+    """Fresh-dug grave earth: black peat turned up with streaks of grey clay and rusty sand, wetter
+    at the foot."""
+    nz = Noise(rng, 4, 2.4)
+    peat = (0.3, 0.25, 0.2)
+    clay = (0.52, 0.49, 0.44)
+    sand = (0.6, 0.45, 0.3)
+
+    def f(p, n):
+        k = nz(p * 2.6)
+        c = mix(peat, clay, smoothstep(0.35, 0.75, k) * 0.8)
+        c = mix(c, sand, smoothstep(0.45, 0.85, nz(p * 4.3 + V(3, 1, 0))) * 0.6)
+        return scale(c, (0.75 + 0.35 * smoothstep(-0.1, 0.25, p.y)) * (0.85 + 0.2 * nz(p * 9.0)))
+    return f
+
+
 def fresh_mound(rng, variant):
-    """A fresh grave along X: raw peat x -1.0..1.0, the head at x -1.2."""
+    """A fresh grave along X: raw heaped soil x -1.0..1.0, sunk at its edges, the head at x -1.2."""
     b = Builder()
     g = G(b)
-    pf = peat_fn(rng, base=(0.7, 0.6, 0.5), wet=0.55)
-    mound(g, (0.0, -0.04, 0.0), 1.05, 0.5, 0.42, rng, mat=M_PEAT, col_fn=pf, tile=0.8, rings=6, seg=20, skirt=0.15,
-          edge=0.1, power=0.8, rough=0.2)
-    # the spoil spread round its foot
-    mound(g, (0.0, -0.05, 0.0), 1.45, 0.9, 0.06, rng, mat=M_PEAT, col_fn=pf, tile=0.8, rings=3, seg=18, skirt=0.08)
-    clods(g, (0.0, 0.0, 0.0), 1.05, 0.5, 0.42, rng, pf, n=16)
+    rf = raw_soil_fn(rng)
+    # the heap: three overlapping shovel-loads, none quite in line -> lumpy, not a loaf
+    mound(g, (0.0, -0.1, 0.0), 1.0, 0.48, 0.34, rng, mat=M_PEAT, col_fn=rf, tile=0.7, rings=7, seg=24, skirt=0.12,
+          edge=0.28, power=0.55, rough=0.45)
+    for x in (-0.5, 0.05, 0.55):
+        mound(g, (x + rng.uniform(-0.1, 0.1), -0.06, rng.uniform(-0.08, 0.08)), rng.uniform(0.32, 0.45),
+              rng.uniform(0.26, 0.36), rng.uniform(0.12, 0.2), rng, mat=M_PEAT, col_fn=rf, tile=0.7, rings=4, seg=12,
+              skirt=0.05, edge=0.35, power=0.6, rough=0.5)
+    # spoil trodden flat round its foot
+    mound(g, (0.0, -0.08, 0.0), 1.5, 0.95, 0.09, rng, mat=M_PEAT, col_fn=rf, tile=0.8, rings=3, seg=20, skirt=0.06,
+          edge=0.35)
+    # clods and turned-up turf sods of every size, a few lying off the heap
+    for _ in range(40):
+        a = rng.uniform(0, 2 * math.pi)
+        r = rng.uniform(0.1, 1.15)
+        h = 0.36 * max(0.0, 1 - r * r) ** 0.6 - 0.04
+        sz = rng.uniform(0.03, 0.09)
+        stone(g, (math.cos(a) * r * 1.0, h, math.sin(a) * r * 0.5), (sz, sz * 0.6, sz * 0.85), rng, mat=M_PEAT,
+              detail=1, rough=0.35, cuts=2, tile=0.4, col_fn=rf)
+    for _ in range(3):
+        a = rng.uniform(0, 2 * math.pi)
+        stone(g, (math.cos(a) * 1.15, 0.0, math.sin(a) * 0.7), (0.12, 0.05, 0.09), rng, mat=M_PEAT, detail=1,
+              rough=0.2, cuts=1, tile=0.4, col_fn=old_turf_fn(rng))
     if variant == 0:
-        iron_stone(g, (-1.3, 0.0, 0.0), math.pi / 2, rng, h=0.6, w=0.34, notches=5, lean=rng.uniform(-0.1, 0.1))
-        bowl(g, (-1.15, 0.03, 0.5), 0.11, rng, fill=(0.3, 0.32, 0.3))
-        fish(g, (-1.13, 0.11, 0.5), V(1, 0.1, 0.3), rng, s=0.8)
-        fish(g, (-1.17, 0.12, 0.47), V(0.8, 0.1, -0.5), rng, s=0.7)
+        iron_stone(g, (-1.3, -0.06, 0.0), math.pi / 2, rng, h=0.6, w=0.34, notches=5, lean=rng.uniform(-0.12, 0.12))
+        bowl(g, (-1.15, 0.0, 0.5), 0.11, rng, fill=(0.3, 0.32, 0.3))
+        fish(g, (-1.13, 0.08, 0.5), V(1, 0.1, 0.3), rng, s=0.8)
+        fish(g, (-1.17, 0.09, 0.47), V(0.8, 0.1, -0.5), rng, s=0.7)
     else:
         # a stake at the head with a bone charm, a cleaver laid along the top
         pole(g, V(-1.3, -0.3, 0.0), V(-1.27, 0.75, 0.02), 0.04, 0.032, rng, mat=M_ROT, col=(0.9, 0.82, 0.7), sides=6)
         rope(g, [V(-1.27, 0.68, 0.04), V(-1.25, 0.52, 0.06)], r=0.005, col=(0.35, 0.28, 0.2))
         tusk(g, V(-1.25, 0.52, 0.06), V(0.2, -1, 0.1), rng, length=0.11, r=0.014)
-        cleaver(g, V(-0.45, 0.4, -0.05), V(1, -0.25, 0.08), rng, s=0.9)
-        bowl(g, (-1.1, 0.03, -0.5), 0.1, rng, fill=(0.45, 0.24, 0.12))
+        cleaver(g, V(-0.45, 0.27, -0.05), V(1, -0.25, 0.08), rng, s=0.9)
+        bowl(g, (-1.1, 0.0, -0.5), 0.1, rng, fill=(0.45, 0.24, 0.12))
     return b
 
 
@@ -438,7 +496,53 @@ def og_fish_bowl(rng):
     return b
 
 
+def sf_hut_clutter(rng):
+    """Hut-model-local (unscaled, the landmark spawns it x1.4): what an old woman keeps on her stilt
+    porch -- jars and dark bottles along the deck left of the ladder, a sill with two bottles under
+    the front window, a bucket and a sack right of the door, herbs drying head-down under the
+    right-hand eave. The ladder top (x -0.3..0.3) and the door (x 0.07..0.57) stay clear."""
+    b = Builder()
+    g = G(b)
+    deck = 1.42
+    for x, k in ((-1.15, 0.75), (-0.98, 0.6), (-0.84, 0.85)):
+        clay_jar(g, (x + rng.uniform(-0.02, 0.02), deck, 0.95 + rng.uniform(-0.04, 0.04)), k, rng, rag=rng.uniform() < 0.6)
+    glass = [(0.16, 0.22, 0.14), (0.24, 0.16, 0.1), (0.14, 0.17, 0.2)]
+
+    def bottle(c, h, col):
+        tint = lambda p, n: scale(col, 0.8 + 0.4 * smoothstep(0.3, 0.95, n.y + 0.4))
+        lathe(g, [(0.0, 0.0), (0.045 * h, 0.0), (0.05 * h, 0.12 * h), (0.045 * h, 0.2 * h), (0.017 * h, 0.27 * h),
+                  (0.016 * h, 0.34 * h), (0.0, 0.345 * h)], 10, c, M_IRON, tint, tile=0.2)
+        tube(g, [V(c[0], c[1] + 0.33 * h, c[2]), V(c[0], c[1] + 0.37 * h, c[2])], [0.014 * h, 0.012 * h], 6, M_BARK,
+             (0.55, 0.45, 0.32), tile=0.1)
+    for x, z, h in ((-0.7, 1.0, 1.0), (-0.62, 0.9, 0.8), (-0.53, 1.02, 1.15)):
+        bottle((x, deck, z), h, glass[rng.integers(0, 3)])
+    # the sill under the front window, two bottles on it
+    lbox(g, V(-0.55, 2.1, 0.76), (0.48, 0.035, 0.1), quat_y(0.0), M_STONE, [(0.45, 0.4, 0.34), None, (0.4, 0.35, 0.3)],
+         tile=0.3, grain=0)
+    bottle((-0.66, 2.12, 0.77), 0.7, glass[0])
+    bottle((-0.47, 2.12, 0.76), 0.6, glass[1])
+    # bucket + sack right of the door
+    wood = lambda p, n: scale((0.5, 0.42, 0.33), 0.8 + 0.2 * smoothstep(-0.3, 0.6, n.y))
+    lathe(g, [(0.0, 0.0), (0.12, 0.0), (0.14, 0.22), (0.125, 0.22), (0.11, 0.03), (0.0, 0.03)], 12,
+          (0.8, deck, 0.92), M_BARK, wood, tile=0.3)
+    for y in (0.05, 0.17):
+        tube(g, [V(0.8 + 0.135 * math.cos(a), deck + y, 0.92 + 0.135 * math.sin(a)) for a in np.linspace(0, 2 * math.pi, 13)],
+             [0.008] * 13, 4, M_IRON, (0.25, 0.24, 0.22), tile=0.1, cap=False)
+    stone(g, (1.08, deck + 0.13, 0.86), (0.15, 0.17, 0.12), rng, mat=M_CLOTH, detail=2, rough=0.12, cuts=1,
+          col_fn=lambda p, n: scale(RAG, 0.75 + 0.25 * n.y), tile=0.4, rot=quat_y(0.4))
+    # herbs drying head-down from a pole under the right-hand eave
+    pole(g, V(1.18, 2.72, -0.85), V(1.18, 2.74, 0.75), 0.022, 0.02, rng, col=(0.55, 0.48, 0.38), sides=6)
+    for k in range(7):
+        z = -0.75 + k * 0.24 + rng.uniform(-0.03, 0.03)
+        rope(g, [V(1.18, 2.72, z), V(1.18, 2.6, z)], r=0.005, col=TWINE)
+        herb_bundle(g, (1.18, 2.6, z), (rng.uniform(-0.1, 0.1), -1, rng.uniform(-0.1, 0.1)), rng, n=7,
+                    length=rng.uniform(0.22, 0.32), col=HERB if k % 3 else HERB_DRY,
+                    flower=(0.62, 0.5, 0.7) if k % 4 == 1 else None)
+    return b
+
+
 MODELS = {
+    "sf_hut_clutter": sf_hut_clutter,
     "sf_trade_stone": sf_trade_stone,
     "sf_wicket": sf_wicket,
     "sf_offer_herbs": sf_offer_herbs,
