@@ -293,6 +293,12 @@ pub struct LifeAgent {
     shift: f32,
     /// The yaw a busy (non-walking) resident turns to face — eased, never snapped.
     face: f32,
+    /// Walk: seconds spent not advancing (boxed in by a prop or another walker).
+    stall: f32,
+    /// Next time a passing neighbour may be greeted.
+    nod_cd: f32,
+    /// Walk: re-plans spent on this trip before giving it up.
+    replans: u8,
     inited: bool,
 }
 
@@ -581,16 +587,21 @@ fn life_setup(
         // r 2.05, angle a = 1.0 + k·2π/3, i.e. (2.05 cos a, 2.05 sin a), log axis tangent) — two
         // sitters on each, facing the fire, hips just forward of the log's crown.
         let f = fire.pos;
+        // The tripod's splayed legs (r 1.0) and the hot stones: nobody walks through the fire.
+        crate::blockers::add(f.x, f.y, 1.0);
+        crate::blockers::add_obb(f.x, f.y, 0.92, 0.92, std::f32::consts::FRAC_PI_4);
         for k in 0..3 {
             let a = 1.0 + k as f32 * TAU / 3.0;
             let lc = f + Vec2::new(a.cos(), a.sin()) * 2.05;
             // rot2(+X, yaw) = (cos yaw, −sin yaw) = the tangent (−sin a, cos a).
             let tangent_yaw = (-a.cos()).atan2(-a.sin());
+            // The log itself is solid (folk sit ON it, never walk THROUGH it).
+            crate::blockers::add_obb(lc.x, lc.y, 0.62, 0.16, tangent_yaw);
             add_seats(&mut w, lc, tangent_yaw, yaw_to(lc, f), LOG_TOP, &[-0.4, 0.4], 0.04, c, 0);
             // Standing room to warm the hands: in the gap between this log and the next, inside the
             // ring of logs and outside the tripod's legs (r 1.0).
             let g = a + TAU / 6.0;
-            let p = f + Vec2::new(g.cos(), g.sin()) * 1.55;
+            let p = f + Vec2::new(g.cos(), g.sin()) * 1.8;
             add_spot(&mut w, SpotKind::Fire, p, yaw_to(p, f), c, None, 0);
         }
     }
@@ -633,10 +644,14 @@ fn life_setup(
         let at = |x: f32, z: f32| tav.pos + rot2(Vec2::new(x, z), tav.yaw);
         let v = Zone::Village;
         add_seats(&mut w, at(-1.6, 2.75), tav.yaw, tav.yaw, PLANK_TOP, &[-0.32, 0.38], 0.0, v, 0);
+        // The trestle table and its two benches are SOLID (folk kept walking through the board);
+        // their seats are dropped rather than stepped over — the front bench is the tavern's
+        // sitting place. The barrel stack by the west end is solid too.
         let ty = tav.yaw + 0.08;
         let tc = at(1.15, 3.75);
-        add_seats(&mut w, tc + rot2(Vec2::new(0.0, 0.62), ty), ty, ty + PI, PLANK_TOP, &[-0.4, 0.4], 0.0, v, 0);
-        add_seats(&mut w, tc + rot2(Vec2::new(0.0, -0.6), ty), ty, ty, PLANK_TOP, &[-0.4, 0.4], 0.0, v, 0);
+        crate::blockers::add_obb(tc.x, tc.y, 0.9, 0.8, ty);
+        let bar = at(-2.72, 2.95);
+        crate::blockers::add_obb(bar.x, bar.y, 0.62, 0.38, tav.yaw);
     }
     // The village's own well.
     if let Some(vw) = village_well_pos() {
@@ -714,6 +729,9 @@ fn spawn_resident(
         it: false,
         shift: 0.0,
         face: 0.0,
+        stall: 0.0,
+        nod_cd: 0.0,
+        replans: 0,
         inited: false,
     };
     let mut ec = commands.entity(e);
@@ -774,6 +792,10 @@ fn life_houses(
     // where nothing of the house stands (never one on top of the other).
     if let Some((c, yaw, face, top, offs)) = house_seats(h.piece) {
         add_seats(&mut w, h.local(c.x, c.y), h.yaw + yaw, h.yaw + face, top, offs, 0.0, v, 0);
+        // The model's own porch bench is solid (folk stood inside it, on the sitters' laps).
+        let half = if offs.len() > 1 { 0.55 } else { 0.48 };
+        let bc = h.local(c.x, c.y);
+        crate::blockers::add_obb(bc.x, bc.y, half, 0.17, h.yaw + yaw);
         debug!("village_life: house {i} ({}) own bench at {}", h.piece, h.local(c.x, c.y));
     } else if let Some((c, yaw, face)) = house_new_bench(h.piece) {
         add_bench(&mut commands, &mut w, h.local(c.x, c.y), h.yaw + yaw, h.yaw + face, v, 0);
@@ -987,6 +1009,14 @@ fn find_spot(w: &LifeWorld, a: &LifeAgent, pos: Vec2, kind: SpotKind, rng: &mut 
         if s.house.is_some() && s.house != a.house && kind != SpotKind::Seat {
             continue; // someone else's garden / hens / doorstep
         }
+        if kind == SpotKind::Seat {
+            // A seat whose step-in point a prop now covers (a table, a bench, a new building)
+            // can't be reached without walking into it — skip it.
+            let p = approach(s, a.root_scale);
+            if crate::blockers::any_within(p.x, p.y, 0.08) {
+                continue;
+            }
+        }
         let own = if s.house.is_some() && s.house == a.house { -12.0 } else { 0.0 };
         // A sparring partner already waits on the other mark → join him.
         let own = own + if kind == SpotKind::Spar && w.spots.iter().any(|o| o.kind == SpotKind::Spar && o.bench == s.bench && o.taken.is_some()) { -20.0 } else { 0.0 };
@@ -1008,20 +1038,48 @@ fn release(w: &mut LifeWorld, a: &mut LifeAgent, me: Entity) {
     }
 }
 
-/// Plan a walk to `goal` (A* through the gates when far, else straight).
+/// Body radius the walk planner keeps clear of props (a person's shoulders, plus a hand).
+const WALK_R: f32 = 0.3;
+
+/// Plan a walk to `goal`: always an A* route (props and buildings are in the grid), then
+/// string-pulled into a few straight legs, so short trips go *around* a cauldron or a cart instead
+/// of greedily into it. A free-form goal (a stroll, a meeting point) is first moved off any prop;
+/// spot / door goals are exact and left alone (their approach points are checked when claimed).
 fn walk_to(a: &mut LifeAgent, from: Vec2, goal: Vec2, after: After, now: f32) {
+    let goal = match after {
+        After::Spot | After::Enter => goal,
+        _ => crate::navgrid::free_point(goal, WALK_R),
+    };
     a.goal = goal;
     a.after = after;
     a.path.clear();
     a.path_i = 0;
-    if from.distance(goal) > 7.0 {
-        let p = crate::navgrid::path_to(from, goal);
-        a.path.extend(p);
-    }
-    a.path.push(goal);
+    let mut raw = crate::navgrid::path_to(from, goal);
+    raw.push(goal);
+    a.path.extend(crate::navgrid::smooth_path(from, &raw, WALK_R * 0.85));
     a.st = St::Walk;
     a.t0 = now;
-    a.until = now + 90.0;
+    a.until = now + 30.0 + from.distance(goal) * 1.5;
+    a.stall = 0.0;
+}
+
+/// A walk that can't finish (boxed in, or out of time): never teleport the walker — drop the
+/// errand where they stand and think again. Going home is the exception only when the door is
+/// right there (stepping in hides them anyway).
+fn give_up(w: &mut LifeWorld, a: &mut LifeAgent, me: Entity, pos: Vec2, now: f32) -> bool {
+    let close = pos.distance(a.goal) < 1.2;
+    if close && matches!(a.after, After::Enter | After::Spot) {
+        return false; // close enough: let `arrive` settle it
+    }
+    release(w, a, me);
+    a.after = After::Nothing;
+    a.partner = None;
+    a.want_chat = false;
+    a.replans = 0;
+    a.st = St::Idle;
+    a.t0 = now;
+    a.until = now + rr(&mut a.rng, 1.0, 3.0);
+    true
 }
 
 fn go_home(a: &mut LifeAgent, from: Vec2, now: f32) {
@@ -1073,6 +1131,12 @@ fn life_brain(
     let phase = phase_of(clock.as_ref().map_or(0.25, |c| c.t), wave);
     let (hero, hero_alive) = hero_q.single().map(|h| (h.pos, true)).unwrap_or((Vec2::splat(1e6), false));
     let w = &mut *w;
+    // Everyone out on the street, for personal-space steering (sitters / indoors don't count).
+    let others: Vec<(Entity, Vec2)> = q
+        .iter()
+        .filter(|(_, a, ..)| !matches!(a.st, St::Indoors))
+        .map(|(e, _, v, ..)| (e, v.pos))
+        .collect();
 
     for (me, mut a, mut v, mut tf, mut vis) in &mut q {
         let a = &mut *a;
@@ -1141,6 +1205,25 @@ fn life_brain(
             a.face = yaw_to(pos, hero);
             say(&mut talk, &mut speak, now, hero, pos, gy, a.body.voice(), LifeCue::Greet, 5.0);
         }
+        // ── Neighbours: passing someone close ahead, a nod or a raised hand, then on their way ──
+        if a.st == St::Walk && now > a.nod_cd && a.body != Body::Kid && a.carry == Carry::None {
+            let ahead = fwd(v.facing);
+            let met = others.iter().find(|(oe, op)| {
+                let d = *op - pos;
+                let l = d.length();
+                *oe != me && Some(*oe) != a.partner && l > 0.9 && l < 2.6 && d.dot(ahead) > 0.6 * l
+            });
+            if let Some(&(_, op)) = met {
+                a.nod_cd = now + rr(&mut a.rng, 25.0, 50.0);
+                if r01(&mut a.rng) < 0.45 {
+                    let act = if r01(&mut a.rng) < 0.65 { Act::Nod } else { Act::Wave };
+                    a.st = St::Greet(act);
+                    a.t0 = now;
+                    a.until = now + 1.5;
+                    a.face = yaw_to(pos, op);
+                }
+            }
+        }
         // Kids drop their game to come and stare at the knight.
         if a.body == Body::Kid && hero_alive && hd < 9.0 && hd > 2.6 && now > a.stare_cd && matches!(a.st, St::Play | St::Idle) && !home_time {
             a.stare_cd = now + rr(&mut a.rng, 45.0, 80.0);
@@ -1170,27 +1253,75 @@ fn life_brain(
             St::Walk => {
                 let target = a.path.get(a.path_i).copied().unwrap_or(a.goal);
                 let last = a.path_i + 1 >= a.path.len();
-                let reach = if last { 0.18 } else { 0.9 };
-                if v.pos.distance(target) < reach || now > a.until {
-                    if !last && now <= a.until {
+                let reach = if last { 0.18 } else { 0.6 };
+                let out_of_time = now > a.until || a.stall > 1.6 && a.replans >= 2;
+                if out_of_time {
+                    v.moving = false;
+                    if !give_up(w, a, me, v.pos, now) {
+                        a.replans = 0;
+                        arrive(a, &mut v, w, &mut stalls, me, now, phase, hero, gy, &mut talk, &mut speak, &mut commands, &bank, &cfg);
+                    }
+                } else if v.pos.distance(target) < reach {
+                    if !last {
                         a.path_i += 1;
                     } else {
                         v.moving = false;
+                        a.replans = 0;
                         arrive(a, &mut v, w, &mut stalls, me, now, phase, hero, gy, &mut talk, &mut speak, &mut commands, &bank, &cfg);
                     }
+                } else if a.stall > 1.6 {
+                    // Wedged: re-plan from here (the route may have been cut by a new prop or a
+                    // crowd), at most twice before the errand is dropped.
+                    a.replans += 1;
+                    let (goal, after, until) = (a.goal, a.after, a.until);
+                    walk_to(a, v.pos, goal, after, now);
+                    a.until = until;
                 } else {
                     let near = v.pos.distance(hero) < crate::steer::LOD_R;
                     let speed = if a.body == Body::Kid && a.after == After::Nothing && a.it { v.speed * 1.25 } else { v.speed };
-                    match crate::steer::advance_lod(near, v.pos, v.facing, target, speed * dt, v.body_r, gy, 3.0 * dt) {
+                    // Personal space: someone close ahead → bear right round them (both walkers
+                    // keep right, so they pass like people); someone right on top → wait a beat.
+                    let dir = (target - v.pos).normalize_or_zero();
+                    let mut aim = target;
+                    let mut pace: f32 = 1.0;
+                    for &(oe, op) in &others {
+                        if oe == me || Some(oe) == a.partner {
+                            continue;
+                        }
+                        let d = op - v.pos;
+                        let dist = d.length();
+                        if dist > 1.6 || dist < 1e-3 {
+                            continue;
+                        }
+                        let ahead = d.dot(dir) / dist;
+                        if ahead < 0.35 {
+                            continue;
+                        }
+                        let right = Vec2::new(dir.y, -dir.x);
+                        let push = (1.6 - dist) / 1.6;
+                        aim += right * (1.2 * push) * v.pos.distance(target).min(2.0);
+                        if dist < 0.75 && ahead > 0.8 {
+                            pace = pace.min(0.25);
+                        }
+                    }
+                    let step = speed * pace * dt;
+                    let s = if near {
+                        crate::steer::advance_person(v.pos, v.facing, aim, step, v.body_r, gy, 3.0 * dt)
+                    } else {
+                        Some(crate::steer::advance_direct(v.pos, v.facing, aim, step, v.body_r, gy, 3.0 * dt))
+                    };
+                    match s {
                         Some(s) => {
                             v.facing = s.facing;
                             v.pos = s.pos;
-                            v.moving = s.moving;
+                            v.moving = s.moving && pace > 0.3;
+                            a.stall = if s.moving { (a.stall - dt).max(0.0) } else { a.stall + dt };
                         }
                         None => {
-                            // Boxed in: nudge the goal round the obstacle next frame.
+                            // Boxed in: turn toward an opening and count it.
                             v.moving = false;
-                            v.facing += 0.6;
+                            v.facing += 0.6 * dt * 3.0;
+                            a.stall += dt;
                         }
                     }
                 }
@@ -1276,9 +1407,10 @@ fn life_brain(
             St::Greet(_) => {
                 v.moving = false;
                 if now >= a.until {
-                    if a.path_i < a.path.len() && a.after != After::Nothing {
+                    if a.path_i < a.path.len() {
                         a.st = St::Walk;
-                        a.until = now + 60.0;
+                        a.until = now + 30.0 + v.pos.distance(a.goal) * 1.5;
+                        a.stall = 0.0;
                     } else {
                         a.st = St::Idle;
                         a.until = now + 0.5;
@@ -1454,7 +1586,11 @@ fn think(a: &mut LifeAgent, v: &Villager, w: &mut LifeWorld, stalls: &mut Stalls
     if let Some(i) = found {
         w.spots[i].taken = Some(me);
         a.spot = Some(i);
-        let to = approach(&w.spots[i], a.root_scale);
+        let s = &w.spots[i];
+        let to = approach(s, a.root_scale);
+        // A chore spot drawn against its prop (the woodpile, the coop, a bench) is worked from
+        // beside it, never from inside it.
+        let to = if s.kind == SpotKind::Seat { to } else { crate::navgrid::free_point(to, WALK_R * 0.9) };
         walk_to(a, pos, to, After::Spot, now);
         return;
     }

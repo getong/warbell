@@ -1144,6 +1144,7 @@ fn worker_steer(
             Without<crate::dying::Dying>,
         ),
     >,
+    mut stand: Local<Vec<(Vec2, Vec2)>>,
 ) {
     let dt = time.delta_secs().min(0.05);
     let tw = time.elapsed_secs_wrapped();
@@ -1156,7 +1157,17 @@ fn worker_steer(
         // (Woodcutters/miners leave for trees/rocks, so their plot-centre post is fine.)
         let is_farm = town.0.plots.get(worker.idx).filter(|p| p.is_built()).and_then(|p| p.kind)
             == Some(tileworld_core::town_store::BuildKind::Farm);
-        let work_pos = if is_farm { post + Vec2::new(1.1, 0.0) } else { post };
+        // The plot centre of a built workshop lies INSIDE its building's collider: stand at the
+        // nearest clear point beside it instead of walking into the wall (cached per post).
+        let work_pos = if is_farm {
+            post + Vec2::new(1.1, 0.0)
+        } else if let Some(&(_, p)) = stand.iter().find(|(k, _)| *k == post) {
+            p
+        } else {
+            let p = crate::navgrid::free_point(post, 0.3);
+            stand.push((post, p));
+            p
+        };
         let reach = if is_farm { 0.8 } else { 1.6 };
         let to = work_pos - v.pos;
         let dist = to.length();
@@ -2238,12 +2249,12 @@ fn pick_walk(v: &mut Villager, spots: &[Vec2], is_kid: bool) {
         let s = spots[(rng01(&mut v.rng) * spots.len() as f32) as usize % spots.len()];
         let ang = rng01(&mut v.rng) * TAU;
         let r = rng_range(&mut v.rng, 0.9, 1.7); // ring just outside the prop's blocker
-        v.target = s + Vec2::new(ang.cos() * r, ang.sin() * r);
+        v.target = crate::navgrid::free_point(s + Vec2::new(ang.cos() * r, ang.sin() * r), 0.3);
         v.gathering = true;
     } else {
         let ang = rng01(&mut v.rng) * TAU;
         let r = rng_range(&mut v.rng, v.wander_r * 0.3, v.wander_r);
-        v.target = v.home + Vec2::new(ang.cos() * r, ang.sin() * r);
+        v.target = crate::navgrid::free_point(v.home + Vec2::new(ang.cos() * r, ang.sin() * r), 0.3);
         v.gathering = false;
     }
     v.mode = Mode::Walk;

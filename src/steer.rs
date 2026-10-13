@@ -54,7 +54,7 @@ pub fn can_stand(x: f32, z: f32, r: f32, cur_y: f32) -> bool {
 /// of props (centre + lead point).
 pub fn step_clear(pos: Vec2, dir: Vec2, dist: f32, body_r: f32, cur_y: f32) -> bool {
     let blocks = crate::blockers::read();
-    step_clear_with(&blocks, pos, dir, dist, body_r, cur_y)
+    step_clear_with(&blocks, pos, dir, dist, body_r, cur_y, false)
 }
 
 /// [`step_clear`] against a blocker view the caller already holds, so a 9-heading steering fan
@@ -66,6 +66,7 @@ fn step_clear_with(
     dist: f32,
     body_r: f32,
     cur_y: f32,
+    shoulders: bool,
 ) -> bool {
     let np = pos + dir * dist;
     let lead = np + dir * body_r;
@@ -77,7 +78,19 @@ fn step_clear_with(
     if blocks.is_blocked(pos.x, pos.y) {
         return true;
     }
-    !blocks.is_blocked(np.x, np.y) && !blocks.is_blocked(lead.x, lead.y)
+    if blocks.is_blocked(np.x, np.y) || blocks.is_blocked(lead.x, lead.y) {
+        return false;
+    }
+    // People: also keep both shoulders (half a body ahead, a body-radius aside) off props, so a
+    // villager doesn't brush through the corner of a cart or a barrel the centre line misses.
+    if shoulders {
+        let side = Vec2::new(-dir.y, dir.x) * body_r;
+        let mid = np + dir * (body_r * 0.5);
+        if blocks.is_blocked(mid.x + side.x, mid.y + side.y) || blocks.is_blocked(mid.x - side.x, mid.y - side.y) {
+            return false;
+        }
+    }
+    true
 }
 
 /// Wrap an angle to (-π, π].
@@ -111,6 +124,35 @@ pub fn advance(
     cur_y: f32,
     max_turn_dt: f32,
 ) -> Option<Step> {
+    advance_with(pos, facing, goal, step_dist, body_r, cur_y, max_turn_dt, false)
+}
+
+/// [`advance`] for townsfolk: the same fan, but every step also clears both shoulders (see
+/// `step_clear_with`), so a walker keeps its whole body off props instead of just its centre line.
+#[allow(clippy::too_many_arguments)]
+pub fn advance_person(
+    pos: Vec2,
+    facing: f32,
+    goal: Vec2,
+    step_dist: f32,
+    body_r: f32,
+    cur_y: f32,
+    max_turn_dt: f32,
+) -> Option<Step> {
+    advance_with(pos, facing, goal, step_dist, body_r, cur_y, max_turn_dt, true)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn advance_with(
+    pos: Vec2,
+    facing: f32,
+    goal: Vec2,
+    step_dist: f32,
+    body_r: f32,
+    cur_y: f32,
+    max_turn_dt: f32,
+    shoulders: bool,
+) -> Option<Step> {
     let to = goal - pos;
     let dist = to.length();
     if dist < 1e-4 {
@@ -128,7 +170,7 @@ pub fn advance(
     let mut best_score = f32::NEG_INFINITY;
     for off in [0.0f32, 0.4, -0.4, 0.8, -0.8, 1.2, -1.2, 1.7, -1.7] {
         let dir = Vec2::from_angle(off).rotate(base);
-        if step_clear_with(&blocks, pos, dir, step_dist, body_r, cur_y) {
+        if step_clear_with(&blocks, pos, dir, step_dist, body_r, cur_y, shoulders) {
             let score = dir.dot(base) + 0.6 * dir.dot(cur_dir);
             if score > best_score {
                 best_score = score;
@@ -143,7 +185,7 @@ pub fn advance(
     let want = dir.x.atan2(dir.y);
     let new_facing = facing + wrap_pi(want - facing).clamp(-max_turn_dt, max_turn_dt);
     let fdir = Vec2::new(new_facing.sin(), new_facing.cos());
-    if step_clear_with(&blocks, pos, fdir, step_dist, body_r, cur_y) {
+    if step_clear_with(&blocks, pos, fdir, step_dist, body_r, cur_y, shoulders) {
         Some(Step { facing: new_facing, pos: pos + fdir * step_dist, moving: true })
     } else {
         Some(Step { facing: new_facing, pos, moving: false })
@@ -194,7 +236,7 @@ pub fn advance_direct(
     let blocks = crate::blockers::read();
     // Same gate as the near path — ground, step height AND props/walls/buildings; else pivot in
     // place (turn toward the goal, don't move) so the caller's stall clock can notice and re-plan.
-    if step_clear_with(&blocks, pos, fdir, step_dist, body_r, cur_y) {
+    if step_clear_with(&blocks, pos, fdir, step_dist, body_r, cur_y, false) {
         Step { facing: new_facing, pos: pos + fdir * step_dist, moving: true }
     } else {
         Step { facing: new_facing, pos, moving: false }

@@ -107,7 +107,42 @@ struct LookAssets {
 struct NpcCast {
     gltf: Vec<Handle<Gltf>>,
     mats: Vec<HashMap<&'static str, Handle<StandardMaterial>>>,
+    /// Per look: dyed-cloth variants, then hair-shade variants (index 0 = the look's own).
+    vars: Vec<(Vec<Handle<StandardMaterial>>, Vec<Handle<StandardMaterial>>)>,
     looks: Vec<Option<LookAssets>>,
+}
+
+/// Cloth dyes a village could afford (multiplied over the look's own albedo): undyed, madder
+/// russet, woad blue, weld/olive, a dark walnut-dyed, a sun-faded grey. Townsfolk sharing a look
+/// still read as different people across a street.
+const CLOTH_DYES: [Vec3; 6] = [
+    Vec3::new(1.0, 1.0, 1.0),
+    Vec3::new(1.12, 0.86, 0.78),
+    Vec3::new(0.82, 0.92, 1.1),
+    Vec3::new(1.02, 1.0, 0.76),
+    Vec3::new(0.7, 0.66, 0.62),
+    Vec3::new(1.05, 1.05, 1.05),
+];
+/// Hair shades over the card texture: own, darker brown, near-black, sandy, greying.
+const HAIR_SHADES: [Vec3; 5] = [
+    Vec3::new(1.0, 1.0, 1.0),
+    Vec3::new(0.62, 0.55, 0.5),
+    Vec3::new(0.38, 0.35, 0.34),
+    Vec3::new(1.35, 1.18, 0.9),
+    Vec3::new(1.25, 1.25, 1.25),
+];
+
+/// A stable per-person hash (outfit dye, hair, height) from the root entity.
+fn person_hash(e: Entity) -> u32 {
+    let mut h = e.index_u32().wrapping_mul(0x9E37_79B9) ^ 0x5bd1_e995;
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x2c1b_3c6d);
+    h ^ (h >> 12)
+}
+
+/// Livery looks keep their colours (a guard's tabard, the archer's kit, the priest's habit).
+fn uniform_look(look: u8) -> bool {
+    matches!(look, GUARD | ARCHER | PRIEST)
 }
 
 fn card_key(k: &str) -> &'static str {
@@ -122,6 +157,7 @@ fn card_key(k: &str) -> &'static str {
 fn load_cast(mut commands: Commands, server: Res<AssetServer>, mut materials: ResMut<Assets<StandardMaterial>>) {
     let mut gltf = Vec::new();
     let mut mats = Vec::new();
+    let mut vars = Vec::new();
     for name in LOOKS {
         gltf.push(server.load(format!("npc/npc_{name}.glb")));
         let tex = |m: &str| -> Handle<Image> { server.load(format!("npc/npc_{name}_{m}.dds")) };
@@ -155,9 +191,17 @@ fn load_cast(mut commands: Commands, server: Res<AssetServer>, mut materials: Re
                 m.insert(card_key(k), materials.add(card(k, rough)));
             }
         }
+        let tint = |base: StandardMaterial, k: Vec3| StandardMaterial { base_color: Color::srgb(k.x, k.y, k.z), ..base };
+        let cloth: Vec<_> = CLOTH_DYES.iter().map(|&k| materials.add(tint(atlas(true), k))).collect();
+        let hair: Vec<_> = if m.contains_key("npc_hair") {
+            HAIR_SHADES.iter().map(|&k| materials.add(tint(card("hair", 0.62), k))).collect()
+        } else {
+            Vec::new()
+        };
+        vars.push((cloth, hair));
         mats.push(m);
     }
-    commands.insert_resource(NpcCast { looks: (0..LOOKS.len()).map(|_| None).collect(), gltf, mats });
+    commands.insert_resource(NpcCast { looks: (0..LOOKS.len()).map(|_| None).collect(), gltf, mats, vars });
 }
 
 /// Build each look's animation graph once its GLB is in (clip name -> graph node).
@@ -197,8 +241,12 @@ fn attach_skins(
         // Cancel the root's studio scale (kids / women / per-look build): the cast carries its own
         // real proportions, a child model is simply a shorter person.
         let s = WORLD_PER_M / tf.scale.x.max(1e-3);
+        // Nobody is the same size: ±5% height, ±6% build (feet stay on the ground — the pivot).
+        let h = person_hash(e);
+        let tall = 0.95 + 0.1 * ((h >> 4) & 255) as f32 / 255.0;
+        let broad = 0.94 + 0.12 * ((h >> 12) & 255) as f32 / 255.0;
         let child = commands
-            .spawn((WorldAssetRoot(look.scene.clone()), Transform::from_scale(Vec3::splat(s)), SkinOf(e)))
+            .spawn((WorldAssetRoot(look.scene.clone()), Transform::from_scale(Vec3::new(s * broad, s * tall, s * broad)), SkinOf(e)))
             .observe(skin_ready)
             .id();
         commands.entity(e).add_child(child).try_insert(Skinned {
@@ -242,7 +290,15 @@ fn skin_ready(
             sk.player = Some(d);
         }
         if let Ok(mn) = mat_names.get(d) {
-            if let Some(m) = look.mats.get(mn.0.as_str()) {
+            // This person's own dye and hair shade (a stable pick per root entity).
+            let h = person_hash(*root);
+            let (cloth, hair) = &cast.vars[sk.look as usize];
+            let var = match mn.0.as_str() {
+                "npc_cloth" if !uniform_look(sk.look) => cloth.get((h % cloth.len() as u32) as usize),
+                "npc_hair" if !matches!(sk.look, ELDER_M | ELDER_F | MERCHANT | WOODCUTTER) => hair.get(((h >> 8) % hair.len().max(1) as u32) as usize),
+                _ => None,
+            };
+            if let Some(m) = var.or_else(|| look.mats.get(mn.0.as_str())) {
                 // Skinned bounds follow the rest pose only; a crouch / sit / swing would cull wrongly.
                 commands.entity(d).insert((MeshMaterial3d(m.clone()), NoFrustumCulling));
             }

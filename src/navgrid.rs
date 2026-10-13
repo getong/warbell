@@ -137,6 +137,67 @@ pub fn path_to_avoiding(from: Vec2, to: Vec2, max_nodes: u32, extra: &[(f32, f32
         .collect()
 }
 
+/// Can a body of radius `r` walk the straight line `a → b`? Samples every 0.25u: each point must
+/// keep `r` off every blocker and stay on footing within one terrace step of the last sample.
+pub fn clear_line(view: &blockers::BlockView, a: Vec2, b: Vec2, r: f32) -> bool {
+    let len = a.distance(b);
+    let n = (len / 0.25).ceil().max(1.0) as i32;
+    let mut y = crate::steer::footing(a.x, a.y);
+    for i in 1..=n {
+        let q = a.lerp(b, i as f32 / n as f32);
+        if view.any_within(q.x, q.y, r) {
+            return false;
+        }
+        let qy = crate::steer::footing(q.x, q.y);
+        match (y, qy) {
+            (Some(p), Some(c)) if (p - c).abs() <= crate::steer::MAX_STEP => y = qy,
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// **String-pull** an A* route: from `from`, jump to the farthest waypoint still reachable in a
+/// straight clear line ([`clear_line`]), so a walker cuts the tile staircase into a few long,
+/// natural legs instead of zig-zagging from tile centre to tile centre.
+pub fn smooth_path(from: Vec2, pts: &[Vec2], r: f32) -> Vec<Vec2> {
+    let view = blockers::read();
+    let mut out = Vec::new();
+    let mut at = from;
+    let mut i = 0;
+    while i < pts.len() {
+        let mut j = pts.len() - 1;
+        while j > i && !clear_line(&view, at, pts[j], r) {
+            j -= 1;
+        }
+        out.push(pts[j]);
+        at = pts[j];
+        i = j + 1;
+    }
+    out
+}
+
+/// The nearest point to `p` (searching rings out to ~3.2u) that keeps a body of radius `r` clear
+/// of every blocker — so an activity spot drawn against a prop is approached from beside it, not
+/// from inside it. Returns `p` itself when it's already clear (or nothing clear is near).
+pub fn free_point(p: Vec2, r: f32) -> Vec2 {
+    let view = blockers::read();
+    if !view.any_within(p.x, p.y, r) {
+        return p;
+    }
+    for ring in 1..=16 {
+        let d = ring as f32 * 0.2;
+        for k in 0..12 {
+            let a = k as f32 * std::f32::consts::TAU / 12.0;
+            let q = p + Vec2::new(a.cos(), a.sin()) * d;
+            if !view.any_within(q.x, q.y, r) && crate::steer::footing(q.x, q.y).is_some() {
+                return q;
+            }
+        }
+    }
+    p
+}
+
 /// A cached A* route (followed + smoothed by `steer::advance`) — the keep-march of a wave
 /// invader, or a freed captive's march home to the courtyard. Both thread the gates this way.
 #[derive(Component, Default)]

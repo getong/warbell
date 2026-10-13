@@ -238,7 +238,7 @@ mod tests {
 
     #[test]
     fn surf_rewrites_only_alpha() {
-        let mut m = bevy::prelude::Mesh::from(bevy::math::primitives::Cuboid::new(1.0, 1.0, 1.0));
+        let mut m = bevy::prelude::Mesh::from(bevy::prelude::Cuboid::new(1.0, 1.0, 1.0));
         let n = m.count_vertices();
         m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![[0.2, 0.4, 0.6, 1.0]; n]);
         let m = surf(m, Surf::Metal);

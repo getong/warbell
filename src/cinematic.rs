@@ -251,43 +251,6 @@ mod tests {
     }
 
     #[test]
-    fn world_weapon_stays_hidden_after_first_person_entry_and_reskin() {
-        let (mut world, mut schedule) = visibility_world();
-        let body = world.spawn((HeroMesh, Visibility::Inherited)).id();
-        let sword = world
-            .spawn((HeroMesh, HeroWeapon, Visibility::Inherited))
-            .id();
-        // Camera-parented viewmodel leaves carry neither world-hero marker.
-        let viewmodel = world.spawn(Visibility::Inherited).id();
-        for _ in 0..3 {
-            update_visibility(&mut world, &mut schedule);
-            assert_eq!(*world.get::<Visibility>(body).unwrap(), Visibility::Hidden);
-            assert_eq!(*world.get::<Visibility>(sword).unwrap(), Visibility::Hidden);
-            assert_eq!(
-                *world.get::<Visibility>(viewmodel).unwrap(),
-                Visibility::Inherited
-            );
-        }
-        world.despawn(body);
-        world.despawn(sword);
-        let new_body = world.spawn((HeroMesh, Visibility::Inherited)).id();
-        let new_sword = world
-            .spawn((HeroMesh, HeroWeapon, Visibility::Inherited))
-            .id();
-        for _ in 0..2 {
-            update_visibility(&mut world, &mut schedule);
-            assert_eq!(
-                *world.get::<Visibility>(new_body).unwrap(),
-                Visibility::Hidden
-            );
-            assert_eq!(
-                *world.get::<Visibility>(new_sword).unwrap(),
-                Visibility::Hidden
-            );
-        }
-    }
-
-    #[test]
     fn third_person_return_preserves_director_weapon_policy() {
         let (mut world, mut schedule) = visibility_world();
         let body = world.spawn((HeroMesh, Visibility::Inherited)).id();

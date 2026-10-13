@@ -2287,6 +2287,25 @@ fn register_house_blocker(i: usize) {
     let p = COLLISION_PAD;
     let h = &houses()[i];
     crate::blockers::add_obb(h.pos.x, h.pos.y, h.half.x + p, h.half.y + p, h.yaw);
+    // Its burgage yard too — hurdles, garden bed, shed / woodpile / coop / hayrick — so folk walk
+    // round them (and through the yard gate, which stays open).
+    for (c, half, yaw) in house_yard_solids(h) {
+        crate::blockers::add_obb(c.x, c.y, half.x, half.y, yaw);
+    }
+}
+
+/// The solid footprints of house `h`'s yard pieces (world centre, half-extents, yaw), from the kit
+/// models' own bounds. The wattle gate is left open. Empty until the kit is loaded.
+fn house_yard_solids(h: &HouseSite) -> Vec<(Vec2, Vec2, f32)> {
+    let Some(kit) = crate::realforest::get() else { return Vec::new() };
+    house_yard(h)
+        .into_iter()
+        .filter(|(piece, ..)| *piece != "town_fence_wattle_gate")
+        .filter_map(|(piece, x, z, yaw)| {
+            let (half, _) = kit.extents(piece)?;
+            Some((h.local(x, z), half.max(Vec2::splat(0.08)), h.yaw + yaw))
+        })
+        .collect()
 }
 
 /// Drop the lazily-registered wall / curtain / tower / house collision boxes by their centres (the
@@ -2309,6 +2328,9 @@ fn clear_castle_blockers() {
     }
     for h in houses() {
         crate::blockers::remove_box_near(h.pos.x, h.pos.y, 0.3);
+        for (c, ..) in house_yard_solids(h) {
+            crate::blockers::remove_box_near(c.x, c.y, 0.05);
+        }
     }
     for tp in town_plots().iter().filter(|tp| tp.is_lean_to()) {
         if let Some((c, _)) = tp.solid_centre() {
