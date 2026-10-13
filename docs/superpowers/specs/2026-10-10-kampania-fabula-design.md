@@ -9,6 +9,14 @@
 > wiążące** i zostaną wycięte. Z istniejącego kodu bierzemy tylko mechaniki.
 >
 > **v2 (2026-10-11):** przegląd dziur logicznych. Rejestr poprawek jest w §11.
+>
+> **v2.1 (2026-10-14, decyzje autora):** (1) **Prolog zaczyna się na statku** — gracz gra Wata jako
+> giermka, widzi Harrowa, a katastrofę i śmierć Harrowa ogląda w czterech klatkach z pioruna. Zwrot A
+> jest więc tajemnicą przed *światem* (Idris demaskuje w Rozdz. 8, wieś dowiaduje się w Rozdz. 11),
+> nie przed graczem — ironia dramatyczna zamiast zagadki. Ziarna A z §5 zostają jako ziarna *dla
+> świata*. (2) **Dzwon ma umknąć** — do Rozdz. 10 żadna scena nie jest o dzwonie, a każde ziarno B ma
+> głośniejsze fałszywe wyjaśnienie (rytuał szamanów / Korona / Pasha). Rozpisane w
+> `2026-10-13-kampania-scenariusz-design.md` §1.5 i §3b.
 
 ---
 

@@ -1,7 +1,10 @@
 # Warbell — scenariusz kampanii: sceny, dialogi, reżyseria (draft v2)
 
-**Status:** 2026-10-14, przepisany od zera pod master spec
-`2026-10-10-kampania-fabula-design.md` (v2). Ten dokument **nie zmienia** fabuły, obsady ani
+**Status:** 2026-10-14 v2.1 — pod master spec `2026-10-10-kampania-fabula-design.md` (v2) z dwiema
+decyzjami autora z 2026-10-14 (naniesione też w masterze): **(1) prolog zaczyna się na statku i gracz od
+początku wie, że jest giermkiem** — zwrot A jest tajemnicą przed *światem*, nie przed graczem (ironia
+dramatyczna zamiast zagadki); **(2) dzwon ma umknąć** — żadna scena przed Rozdz. 10 nie jest *o* dzwonie,
+każde ziarno dostaje głośniejsze fałszywe wyjaśnienie (§1.5 i §3b). Ten dokument **nie zmienia** fabuły, obsady ani
 struktury z mastera — rozpisuje je na sceny, ujęcia i linie. Gdzie master coś ustala, master wygrywa.
 Trailer i stara 3-nocna kampania (`crates/core/src/campaign.rs`) są obsolete i nie są tu źródłem.
 
@@ -15,9 +18,9 @@ Tekst w grze: angielski. Dokument: polski.
 ognisko, VO 2–3 postaci bez zmiany kamery (80% fabuły) · **T2** letterbox, 3–6 ujęć, aktorzy, VO,
 skip spacją (~16 scen, §12.5 mastera, ~15–18 min łącznie).
 
-**Twarze.** Brak lip-synca i mimiki. Wat jest w hełmie publicznie do Rozdz. 11, prywatnie bez hełmu
-od Rozdz. 8. **Pierwsze ujęcie jego twarzy to Rozdz. 8** — wcześniej: hełm, plecy, dłonie, sylwetka
-pod ogniem, reakcje otoczenia. To nie ograniczenie, to ziarno zwrotu A.
+**Twarze.** Brak lip-synca i mimiki. Gracz widzi twarz Wata w prologu (na statku, jako giermek) i
+w scenach prywatnych; **świat** widzi ją dopiero w Rozdz. 8 (Idris) i publicznie w Rozdz. 11. Hełm w
+kadrze = „kto patrzy” — przy świadkach kamera trzyma hełm, plecy, dłonie; sam na sam może pokazać twarz.
 
 **Animacje postaci** — trzy pule, każda akcja aktora w tym dokumencie ma tag:
 
@@ -54,11 +57,23 @@ Master: *suchy, zmęczony, autoironiczny; żarty per akt od kpin przez zmęczeni
    którą gra. „Ser Godric doesn't do stairs.” Nigdy nie przekracza granicy w żart o samej masce.
 4. **Crane jest uprzejmy i to jest straszne.** Nigdy ironii, nigdy groźby wprost. Komedia bierze się
    z tego, że mówi dokładnie to, co robi, a brzmi jak pomoc.
-5. **Pip nie żartuje.** Jest jedyną szczerą osobą i dlatego jego linie bolą najbardziej.
-6. **Orki nie są śmieszne.** Od Rozdz. 10 mówią prosto i rzeczowo; to ludzie są śmieszni, bo tego
+5. **Dzwon ma umknąć.** To najważniejsza reguła dokumentu. Zwrot B („to dzwon ich wołał”) działa
+   tylko, jeśli gracz w Rozdz. 10 ma *wow*, a nie *no przecież*. Dlatego:
+   - **Żadna scena przed Rozdz. 10 nie jest o dzwonie.** Dzwon jest w tle: jedna z trzech rzeczy w
+     ruinach, jeden z trzech edyktów, jeden rytuał dnia obok wypłaty i ogniska.
+   - **Każde ziarno dostaje głośniejsze fałszywe wyjaśnienie** wypowiedziane przez NPC-a, który w to
+     wierzy (lista w §3b). Gracz ma mieć do Rozdz. 10 trzy *własne* teorie: rytuał szamanów, Pasha,
+     Korona — i wszystkie trzy są częściowo prawdziwe, więc nie wyglądają jak zmyłki.
+   - Nikt **nie reaguje** na dzwon w kadrze. Hamid nie krzywi się „na dzwon” — ma ból głowy po
+     klatce. Crane nie mówi o dzwonie — mówi o dyscyplinie. Pip mówi o dzwonie jak o *swoim* —
+     to charakter, nie wskazówka.
+   - Ziarna wizualne (inskrypcja na szkicu = inskrypcja na dzwonie, bębny po dzwonie) są **nigdy
+     nie komentowane**. Kto zobaczy, zobaczy. Reszta dostanie to w Rozdz. 10 i wróci sprawdzić.
+6. **Pip nie żartuje.** Jest jedyną szczerą osobą i dlatego jego linie bolą najbardziej.
+7. **Orki nie są śmieszne.** Od Rozdz. 10 mówią prosto i rzeczowo; to ludzie są śmieszni, bo tego
    nie słyszeli.
-7. **Jedna pointa na scenę.** Linia ≤ 14 słów. Scena T2 w limicie z §12.5 mastera.
-8. **Akt IV nie ma żartów.** Maud bez ironii (master §9). Ostatni żart w grze pada w Rozdz. 11 i
+8. **Jedna pointa na scenę.** Linia ≤ 14 słów. Scena T2 w limicie z §12.5 mastera.
+9. **Akt IV nie ma żartów.** Maud bez ironii (master §9). Ostatni żart w grze pada w Rozdz. 11 i
    mówi go Wat przed śmiercią.
 
 Kalibracja:
@@ -67,7 +82,7 @@ Kalibracja:
 - WAT: „Ser Godric would like to be left alone.” MAUD: „Ser Godric would like a lot of things.”
 - CRANE: „The Crown provides.” MAUD: „The Crown provides *forms*.” CRANE: „Forms are how the Crown
   knows you exist, Reeve.”
-- PIP: „It's the only thing on this island that does what it's told.”
+- HARROW: „Nobody looks at the man behind the shield, Wat. That's the point of you.”
 - GARROK: „Four hundred and eleven times you rang. Four hundred and eleven times we came. Tell me
   again which of us is the fool.”
 
@@ -77,7 +92,8 @@ Kalibracja:
 
 | Postać | Głos | Tik językowy |
 |---|---|---|
-| **Wat** („Ser Godric”) | 40, chrypa, suchy | mówi o Ser Godricu w 3. os.; nie czyta; krótkie zdania; nigdy się nie tłumaczy |
+| **Ser Godric Harrow** (prolog) | 50, głęboki, znudzony | mówi do Wata jak do mebla; jedno zdanie o Tessarine bez nazwy |
+| **Wat** („Ser Godric”) | 40, chrypa (publicznie) / własny głos (prywatnie) | mówi o Ser Godricu w 3. os.; nie czyta; krótkie zdania; nigdy się nie tłumaczy |
 | **Maud** (reeve) | 40–50, deadpan, ludowy | kpi z Wata publicznie; „Write it down.”; w Akcie IV zero ironii |
 | **Pip** (12) | chłopięcy, szczery | mówi o dzwonie jak o osobie („she”) |
 | **Hamid** | 30–40, ciepły, szybki, południe | targuje się o wszystko, także o prawdę; krzywi się na dzwon |
@@ -99,28 +115,67 @@ Format: **Trigger** (z §12.3 mastera: PUSH / PULL / EDGE) → **T2 reżyseria**
 
 ### PROLOG — „Landfall”
 
-#### P.1 — T2 „Sztorm i wrak” (60–90 s) · trigger: Nowa gra
+Prolog ma trzy ruchy: **statek** (gracz jest giermkiem i to widzi), **piorun** (cztery klatki, które
+mówią wszystko bez jednego słowa), **plaża** (gracz w cudzej zbroi). Od P.2 świat zna „Ser Godrica”,
+a gracz zna Wata. Cała reszta gry to ironia dramatyczna.
 
-Cel: gracz dostaje postać w hełmie i nigdy nie dostaje jej twarzy. Dzwon okrętowy = pierwsze
-ziarno B.
+#### P.0 — T2 → grywalne „Na pokładzie” (90 s + ~2 min interakcji) · trigger: Nowa gra
 
-1. Czerń. Deszcz, drewno, krzyk. **Dzwon okrętowy** bije na alarm, nierówno. Tytuł: *KELL*.
-2. **Ujęcie 1** — z wody, nisko, pod kątem na pokład: sylwetki marynarzy `[A:Idle_Rail_Call]`
-   (ciągną sznur dzwonu), ktoś w kaftanie `[A:Push]` przy relingu. Fala `[C]`. Cięcie.
-3. **Ujęcie 2** — plaża, mgła, deszcz (`FOREST_TIME` ≈ 0.02 + rain). Przez ramię zakutej postaci:
-   leży `[A:LayToIdle` klatka 0`]`, hełm na głowie. W kadrze przed nią: ciało w prostym kaftanie w
-   falach, twarzą w dół. Ręka postaci w zbroi podnosi się — ujęcie na **dłoń w rękawicy**, nie na
-   hełm.
-4. **Ujęcie 3** — Maud (z boku, mokra, `[A:Crouch_Idle_Loop]`) chwyta postać za naramiennik i
-   **obraca kamerę** — dosłownie: kamera robi pan razem z jej ruchem w stronę lądu. Fala zabiera
-   ciało `[C: prop + wykładnicze przesunięcie + fade]` poza kadrem.
-   > MAUD: Up. On your feet, Ser Godric.
-   > *(cisza; postać nie odpowiada — gracz jeszcze nie wie, że to znaczące)*
-   > MAUD: *(ciszej, tylko dla niego)* Buckle's on the left. You know that better than I do.
-5. **Ujęcie 4** — pochodnie między drzewami `[A:Idle_Torch_Loop ×5]`. Warkot. Fade na gameplay.
+Cel: pokazać Harrowa raz, z bliska, i dać graczowi *zrobić* coś jako giermek, zanim mu to zabierzemy.
 
-**Gameplay:** tutorial walki (obóz orków z `camps.rs`, odpowiedź lokalna na dzwon okrętowy —
-master §6.2). Kamera TPS, hełm zamknięty, bez barków bohatera. Wat **milczy** przez cały prolog.
+1. Czerń. Skrzypienie, morze, deszcz na płótnie. Tytuł: *KELL — three days out*.
+2. **Ujęcie 1** — kajuta, lampa `[A:Idle_Lantern_Loop]` kołysze się. Harrow siedzi `[A:Sitting_Idle_Loop]`
+   w pełnej zbroi bez hełmu; hełm na stole. Twarz widać — jedyna osoba w prologu, której twarz jest
+   w kadrze od razu. **Wat (gracz, twarz widoczna, kaftan) klęczy przy nim** `[A:Fixing_Kneeling]`
+   i dopina nagolennik. Kamera za Watem, nisko — perspektywa giermka.
+   > HARROW: Tighter. *(pauza)* You've done that strap every day for fifteen years and it's still
+   > wrong.
+   > WAT: Yes, Ser.
+   > HARROW: Forty peasants and a Reeve. That's what the Crown sends a man after the eastern
+   > campaign. *(patrzy w okno)* Do you know what they said about me in the city? Before it burned?
+   > WAT: No, Ser.
+   > HARROW: Neither do I. Nobody looks at the man behind the shield, Wat. That's the point of you.
+3. **Interakcja (gracz steruje Watem, kamera TPS, kajuta + korytarz pod pokładem):** trzy drobne
+   zadania giermka, każde jedno `E`: **zapiąć naramiennik** (Harrow: „Left. It's *always* the left.”
+   — ziarno: Wat zna każdy pasek), **odnieść hełm na skrzynię** `[A:PickUp_Table]`, **zanieść list
+   Reeve** — Maud pod pokładem `[A:Sitting_Talking_Loop]` z osadnikami; pierwsze spotkanie:
+   > MAUD: You're his boy.
+   > WAT: His squire.
+   > MAUD: *(bierze list — cięcie, prop zmienia właściciela)* Same thing, from down here. Does he
+   > ever come out?
+   > WAT: He's resting.
+   > MAUD: Resting. *(do osadników, głośniej)* The knight's resting. Sleep well, everyone, we're
+   > guarded by a man who's *resting*.
+   Po trzecim zadaniu Harrow: „Sleep, Wat. I'll want you at first light, and I'll want you *awake*.”
+   Gracz idzie do hamaka → `[A:LayToIdle` wstecz`]` → czerń.
+
+**Pointa P.0:** „That's the point of you.” — Harrow nieświadomie pisze Watowi instrukcję na całą grę.
+
+#### P.1 — T2 „Piorun” (45 s) · trigger: automatycznie po P.0
+
+Cztery klatki. Każda to **jedno ujęcie oświetlone jednym piorunem** (`[C]`: flash 0.3 s pełnej
+jasności → 2 s ciemności z deszczem i dźwiękiem → kolejny). Między klatkami czerń, nie przejścia.
+Zero dialogu. Zero muzyki — deszcz, drewno, i **gdzieś w tym** dzwon okrętowy, nierówny, jak każdy
+dzwon alarmowy na każdym statku (nie eksponować; to jeden z pięciu dźwięków).
+
+- **Czerń** — Wat się budzi (dźwięk: krzyk, dzwon okrętowy, trzask kadłuba). Napis: nic.
+- **Klatka 1 — piorun:** pokład przechylony, rafa, marynarze `[A:Idle_Rail_Call]` przy dzwonie, woda
+  przez burtę. Czerń.
+- **Klatka 2 — piorun:** plaża, z perspektywy Wata na kolanach w piasku `[A:Crouch_Idle]`: **orki
+  biegną na kamerę** `[A:Sprint_Loop ×6]` z pochodniami `[A:Idle_Torch_Loop]`, z lasu. Czerń.
+- **Klatka 3 — piorun:** Harrow w zbroi, bez hełmu, **leży** `[A:Death01` ostatnia klatka`]`, topór
+  obok, ork nad nim `[A:Sword_Idle]`. Maud w kadrze z boku, patrzy na Wata. Czerń.
+- **Klatka 4 — piorun:** **dłonie Wata zapinają naramiennik** — zbliżenie, lewy pasek, ten sam co w
+  P.0. Druga para dłoni (Maud) trzyma płytę. Hełm Harrowa na piasku, kamera na nim. Czerń.
+
+Fade z czerni na gameplay: Wat w hełmie, miecz Harrowa, deszcz. Pierwszy ork. Tutorial walki.
+
+**Gameplay plaży:** obóz orków z `camps.rs` (odpowiedź lokalna na dzwon okrętowy — master §6.2; gracz
+tego nie wie, dla niego to „orki z lasu, bo wyspa”). Kamera TPS, hełm zamknięty. Wat **milczy**.
+Jedyna linia to Maud, w trakcie walki, z tyłu:
+> MAUD: *(do osadników)* Ser Godric's up! Behind him, all of you!
+
+Gracz wie, że to nieprawda. Czterdziestu ludzi nie. To jest cała gra w jednym zdaniu.
 
 **T0 po walce:** *„Hold the beach till dawn.”*
 
@@ -142,8 +197,8 @@ jej plecami**, twarzą do tłumu.
 
 Cięcie: koperta ląduje w satchelu (toast „Sealed dispatch — cannot be sold or dropped”).
 
-Pointa sceny: „The rest is who to thank.” Gracz śmieje się z Korony; na drugim przejściu wie, że
-Maud właśnie rozdała role czterdziestu świadkom w trzech zdaniach.
+Pointa sceny: „The rest is who to thank.” Gracz *wie*, że Maud właśnie rozdała role czterdziestu
+świadkom w trzech zdaniach, i patrzy, czy ktoś się zorientuje. Nikt. Osadnik pyta o dach.
 
 **T1 marsz King's Road** (walk-and-talk, kamera gracza, VO):
 > PIP: *(dogania)* Is it true? About the axe?
@@ -161,11 +216,12 @@ Maud właśnie rozdała role czterdziestu świadkom w trzech zdaniach.
 Ruiny. Kamera niska, przez bramę bez wrót, tilt w górę na kamienną wieżę: w niej dzwon, cały,
 patyna, sznur zgniły. Pip pierwszy przy sznurze `[A:Idle_Rail_Loop]`, głowa zadarta.
 
-> PIP: It's whole. Hundred years and it's *whole*.
-> MAUD: *(patrzy na wieżę, nie na dzwon)* Everything else here is rubble. Mind that.
+> PIP: *(biegnie od rzeczy do rzeczy)* There's a well! There's a — that's a chapel, that was a
+> chapel — there's a *bell*. Up there. It's whole.
+> MAUD: The well's whole too. Start with the well.
 > PIP: Can I—
-> MAUD: At dusk. Not before. King's orders. *(do siebie)* God help us, we've got one thing that
-> works.
+> MAUD: At dusk. King's orders, one of them. *(rozgląda się po ruinie)* God help us. A well, a
+> bell, and a wall and a half.
 
 Tytuł na czerni: **ACT I — THE TOLL**.
 
@@ -177,8 +233,10 @@ Tytuł na czerni: **ACT I — THE TOLL**.
 
 Jedyna scena T2 Aktu I. Pip na platformie `[A:Idle_Rail_Call]`, wieś w dole patrzy w górę
 `[A:Idle_Loop ×N]`, postać w hełmie na murze, plecami do kamery, miecz w dłoni `[A:Sword_Idle]`.
-Dzwon `[C: swing_bell]`. Kamera odjeżdża nad las; w ciemności zapalają się pochodnie, **a potem
-bębny — z opóźnieniem dokładnie jednej sekundy po ostatnim uderzeniu**. Nikt tego nie komentuje.
+Dzwon `[C: swing_bell]`. Kamera odjeżdża nad las — **ale scena jest o wsi, nie o dzwonie**: w dole
+ludzie zajmują mury, ktoś gasi ognisko, Maud liczy głowy. Pochodnie w lesie zapalają się w tle,
+między wyciem wilków a wiatrem; bębny wchodzą pod koniec, pod kamerą już na murze. Nikt nie patrzy w
+las. Gracz, który patrzy, zobaczy. Reszta zobaczy w Rozdz. 10 i wróci.
 
 > PIP: *(zdyszany, dumny)* Did you hear her? That's *mine*. She's the only thing on this island that
 > does what it's told.
@@ -208,11 +266,17 @@ T1 ognisko:
 > PIP: *(z posłania, słabo)* Don't let anyone else ring her.
 > MAUD: *(po pauzie)* …Fine. One night. The King can write me a letter.
 
-**Noc cicha** (oskryptowana, `siege.rs` noc bez fali). Zero bębnów. Rano:
-> SETTLER: Not a one. Not a single one. Luck like that, we should skip it more often.
-> MAUD: Luck like that, we don't talk about. Dig.
+**Ten sam dzień** gracz rozbija obóz szamanów (tytułowy „Ritual”). **Noc cicha** (oskryptowana,
+`siege.rs` noc bez fali). Rano — i to jest kluczowe — **wieś ma gotowe wyjaśnienie, które brzmi
+lepiej niż prawda:**
+> SETTLER: Not a one! Not a single one. You broke their *ritual*, Ser Godric. That's what it was.
+> That's what brought them. Burn the shamans, the rest go home.
+> MAUD: *(patrzy na wieżę; jedna sekunda; potem na osadnika)* …Could be. Dig.
 
-(Nikt nie wyciąga wniosku. Gracz może.)
+Od tej chwili „rytuał szamanów” to **oficjalna teoria wsi** i barki ją powtarzają do Rozdz. 10
+(„Another camp burned, another quiet night coming, you'll see”). Gracz, który pali obozy, dostaje
+*pozorne* potwierdzenie: po każdym spalonym obozie noc jest lżejsza (bo lokalne obozy to część
+fali — prawdziwy efekt, fałszywa przyczyna). Dzwon nie pada w tej scenie ani razu.
 
 #### Rozdz. 4 „The Muster” — T1 po uwolnieniu (Hamid)
 
@@ -223,11 +287,14 @@ chwieje się `[B:Stumble]` (do czasu: `[A:Walk_Loop` speed 0.5`]`).
 > HAMID: I'm the Pasha's *caravan*. The man is in the desert, and he's going to ask me what I
 > was worth. *(patrzy na hełm)* …Ser Godric Harrow. He'll want to hear that too.
 
-Hamid zostaje w wiosce (ranny). **Ziarno B:** przy pierwszym zmierzchu po powrocie, gdy Pip dzwoni,
-Hamid **odwraca się od wieży** `[A:Idle_No_Loop` 1 cykl`]` i nuci. T1 jeśli gracz podejdzie:
-> HAMID: Nothing. A song. From the pot. *(pauza)* They sing when it rings. Did you know that?
-> WAT: Orks sing?
-> HAMID: Everybody sings, knight. Not everybody gets subtitles.
+Hamid zostaje w wiosce (ranny). **Ziarno B, zakopane:** Hamid ma „ból głowy po klatce” i o zmierzchu
+siedzi w izbie, nie na dziedzińcu `[A:Sitting_Idle_Loop]`. Nuci. T1 jeśli gracz podejdzie:
+> HAMID: Head. Three weeks of their drums, knight, you'd have a head too.
+> WAT: What's the song?
+> HAMID: Theirs. They sing in the evenings. *(pauza)* Not what you'd expect. Sad. Like somebody's
+> leaving for work.
+Gracz słyszy: anegdota z niewoli. Hamid „ma ból głowy o zmierzchu” przez całą grę; nikt tego nie
+łączy. Drugie ziarno Hamida (zna ich mowę) pada mimochodem w Rozdz. 5 w drodze, w żarcie o cenach.
 
 Tytuł: **ACT II — THE WILDS**.
 
@@ -281,18 +348,27 @@ Od tej sceny `rival.rs` → `Warned` → `Harassing` (niekrwawe wypady, master �
 biomach (`wyspa-opowiada`), kolejność dowolna. Pisane tak, by każda była o czymś innym, a razem
 składały zdanie, którego żadna nie mówi.
 
+Zasada: **strony są kroniką kolonii, nie śledztwem.** Czytelnik ma polubić Anselma i jego
+Gubernatora, dowiedzieć się o soli, gorączce i Starych, a dzwon ma być wzmianką liturgiczną.
+
 1. **Las — lądowanie.** *„Day six. Good timber, no natives — so says the Captain, who has walked as
-   far as the beach. I have walked to the ridge. There are paths up here, and they are not ours.”*
+   far as the beach. I have walked to the ridge. There are paths up here, and they are not ours.
+   Two men down with the sweating fever already. The Governor says it will pass with the dry.”*
 2. **Pustynia — piramida.** *„The southern people trade salt for iron and will not cross the stones
    after dark. They say the stones listen. The Captain says the stones are stones. I have begun to
-   prefer the southern people.”*
-3. **Skały — dzwon.** *„The bell is hung for the Hours. Brother Oswin rang Vespers. Iron answered
-   iron from the marsh, and by Matins we were nine fewer. The Governor says we ring again, so that
-   the Crown may hear the Hours kept. I have asked who, exactly, is listening.”*
-4. **Śnieg — pustelnia.** *„I have stopped ringing. I have stopped most things. They have stopped
-   coming. I set this down for someone cleverer than me, because I have had a year to understand
-   it and I only understand that it is simple.”*
+   prefer the southern people. The fever has not passed with the dry.”*
+3. **Skały — wieża.** *„The tower is finished and the bell hung for the Hours, so the Crown may hear
+   them kept even here. Brother Oswin has the Vespers and takes it very seriously. Fourteen dead of
+   the fever now. The marsh people have begun to come at night; the Captain says it is the fever
+   drawing them, as wolves to a sick herd. I do not think wolves count.”*
+4. **Śnieg — pustelnia.** *„I have gone north. I have stopped most things. They have stopped coming
+   — or I have stopped being worth the walk. I set this down for someone cleverer than me. I have
+   had a year to understand it and I only understand that it is simple, and that the Governor did
+   not want it to be.”*
 5. **Bagno — kaplica** (ostatnia, zalana — scena T2 poniżej).
+
+Uwaga: **gorączka jest prawdziwa.** Crane w Rozdz. 7 mówi „fever” i strony to *potwierdzają* — gracz,
+który czytał, nie łapie go na kłamstwie, tylko na *niepełnej prawdzie*. To lepsze ziarno niż kłamstwo.
 
 **T2 Kaplica.** Woda po kolana, światło z góry, dzwon na szkicu. Kamera: zbliżenie na stronę w
 dłoni Wata `[A:PickUp_Table]`; **inskrypcja na szkicu** jest tą samą, którą gracz widzi na dzwonie
@@ -301,15 +377,16 @@ w forcie (ten sam font/decal). Tekst strony pokazany z rozmytym środkiem:
 > *„…came only after we rang ▒▒▒▒▒▒▒▒▒▒▒▒▒ the Governor will not let us stop ▒▒▒▒▒▒”*
 
 Maud (jeśli w drużynie; w przeciwnym razie czyta Hamid):
-> MAUD: *(czyta na głos, bo Wat „nie widzi”)* „…came only after we rang.” Then water. „…the
-> Governor will not let us stop.” Then water.
-> WAT: Who came?
-> MAUD: It doesn't say.
-> WAT: What's the drawing?
-> MAUD: *(długa pauza)* A bell. *(składa stronę)* Ours.
-> HAMID *(jeśli obecny, cicho)*: I told you they sing.
+> MAUD: *(czyta na głos, bo Wat „nie widzi”)* „…came only after we rang…” Water. „…the Governor
+> will not let us stop…” Water. *(obraca stronę)* The rest's gone.
+> WAT: Rang what?
+> MAUD: Doesn't say. The Hours, I'd think. Monks. *(patrzy na szkic; krótko)* He drew the tower.
+> Decent hand. *(składa stronę)* He didn't like his Governor much, did he.
+> WAT: Nobody likes their Governor.
 
-Zero muzyki w tej scenie. Tylko woda.
+Scena kończy się na *Gubernatorze*, nie na dzwonie — i tak gracz ją zapamięta: „ktoś nie dał im
+przestać”. Co „przestać” — dopowie Garrok. Inskrypcja na szkicu jest w kadrze 2 sekundy, nie jest
+komentowana. Zero muzyki w tej scenie. Tylko woda.
 
 #### Rozdz. 7 „The Commissioner” — T2 „Statki w zatoce” (60–90 s) · trigger: świt po Rozdz. 6, limit 2 nocy (PUSH)
 
@@ -323,11 +400,14 @@ sekundę** `[B:Look_Around]` (do czasu: obrót głowy przez transform), potem na
 > MAUD: The Crown provides *forms*.
 > CRANE: Forms are how the Crown knows you exist, Reeve. *(do Wata)* Your dispatches?
 > WAT: Lost. In the wreck.
-> CRANE: *(nie patrzy na wrak)* A pity. *(uśmiech w głosie)* Then we'll start fresh. First edict,
-> effective this dusk: the King's bell is rung, and no one silences it. Not fever, not fog, not a
-> Reeve with a good heart.
+> CRANE: *(nie patrzy na wrak)* A pity. *(uśmiech w głosie)* Then we'll start fresh. Three edicts,
+> effective this dusk. *(odlicza na palcach `[A:Interact]`)* A tithe of grain to the Crown stores.
+> A curfew after the King's bell. And the Hours kept — bell at dusk, no exceptions, not fever nor
+> fog nor a Reeve with a good heart.
 > MAUD: *(bez emocji)* He's heard about the fever.
 > CRANE: The Crown hears everything, eventually. It's the *eventually* that keeps me employed.
+
+Trzeci edykt jest trzeci, nie pierwszy; gracz zapamięta dziesięcinę, bo ta boli w ekonomii.
 
 **Pointa:** „A pity.” — on wie, co jest w kopercie. Gracz nie. Jeszcze.
 
@@ -337,13 +417,16 @@ sekundę** `[B:Look_Around]` (do czasu: obrót głowy przez transform), potem na
 > CRANE: Chroniclers write what sells, Ser Godric. Fever doesn't sell. *(pauza)* Neither does
 > truth, as a rule, but one lives in hope.
 
-**Noc incydentu (oskryptowana, T1 + barki):** żołnierz Korony wyławia dzwon okrętowy z piasku i
-uderza w niego dla żartu. Obóz Korony w zatoce zostaje zaatakowany przez orki z najbliższego obozu
-(master §6.2 — odpowiedź lokalna). Rano, T1:
-> CRANE: *(spokojnie, do sierżanta)* See that no one touches that bell again.
-> SERGEANT: Sir, it's just a—
-> CRANE: I'm aware what it is, Sergeant. That's rather the point.
-> *(Wat słyszy to z boku. Maud też. Hamid, jeśli obecny, przestaje nucić.)*
+**Noc incydentu (oskryptowana, T1 + barki):** żołnierze Korony piją na plaży; jeden wyławia dzwon
+okrętowy z piasku i bije w niego do pijackiej piosenki — **jeden z wielu hałasów tej nocy** (bębny,
+śpiew, strzały na wiwat). Obóz Korony zostaje zaatakowany przez orki z najbliższego obozu (master
+§6.2). Rano, T1 — i scena jest o *dyscyplinie*:
+> CRANE: *(spokojnie, do sierżanta)* Flog the singers. No drink on the beach, no fires above
+> knee-height, and nobody makes a noise after dark that I didn't order. *(odchodzi)* We are not
+> *peasants*, Sergeant.
+> SERGEANT: Sir.
+> *(Wat słyszy to z boku. Brzmi jak oficer po złej nocy. Jest oficerem po złej nocy. Tylko gracz,
+> który pamięta cichą noc Pipa, może zauważyć, czego Crane NIE zrobił: nie zapytał, skąd orki.)*
 
 **Edykty (T0 karta o świcie, od teraz):** przyjmij/odrzuć, efekt na ekonomię/noce. Teksty edyktów
 w jednym rejestrze: *„By order of the Lord Commissioner: …”* + jedno zdanie, które brzmi jak pomoc i
@@ -374,8 +457,9 @@ wieśniaków** (master §11/14). Kamera zaczyna za Idrisem, nisko.
 > have killed me already. Harrow did not *fidget*. *(cicho)* Who are you?
 > *(Cisza. Crane nie rusza się. Maud zamyka oczy.)*
 > *(Wat podnosi ręce do hełmu. Kamera: **tylko dłonie** przez trzy sekundy `[C: swap mesh +
-> 3-klatkowy klip]`. Potem cięcie na reakcję Idrisa. Potem — **pierwsza twarz w grze** —
-> zbliżenie, bez muzyki.)*
+> 3-klatkowy klip]` — ten sam lewy pasek co w P.0 i w klatce 4 prologu. Potem cięcie na reakcję
+> Idrisa, Crane'a, Maud — **świat widzi twarz po raz pierwszy**; gracz zna ją od statku, więc
+> ujęcie jest o *nich*, nie o nim. Bez muzyki.)*
 > WAT: *(bez chrypy — pierwszy raz normalnym głosem)* Wat. I carried his shield.
 > IDRIS: *(prawie śmiech)* A footman. The Crown sent me a *footman*.
 > WAT: The Crown didn't send me. The sea did. The Crown sent *him*. He's in it.
@@ -397,7 +481,8 @@ Hełm wraca na głowę w ostatnim ujęciu `[C]`. Tytuł: **ACT III — THE HOLD*
 #### Rozdz. 9 „Under the Helm” — tylko T1
 
 **Ognisko Wat–Maud, prywatnie, Wat bez hełmu** (model swap w strefie ogniska bez świadków; master
-§6.4). Najdłuższa rozmowa T1 w grze (~90 s), skip-owalna.
+§6.4). Najdłuższa rozmowa T1 w grze (~90 s), skip-owalna. Gracz zna twarz Wata od P.0 — ta scena
+nie *ujawnia*, tylko pozwala mu wreszcie *mówić* własnym głosem.
 > MAUD: You fidget. He's right.
 > WAT: He had fifteen years of me fidgeting behind him. I know what it looks like from the front
 > now.
@@ -457,7 +542,11 @@ coraz bliżej Garroka, nigdy bliżej Wata.
 > old, knight. I would like to die of it.
 
 **Pointa:** „You always do. We only ever answer.” Zwrot B wypowiedziany w całości — przez orka,
-spokojnie, jak liczba.
+spokojnie, jak liczba. **Reżyseria „wow”:** po „Four hundred and eleven times you rang” — **cięcie
+na 1,5 s montażu wstecz** `[C: 4 stopklatki z wcześniejszych scen]`: klatka 1 prologu (marynarze przy
+dzwonie okrętowym), cicha noc (pusta wieża), szkic z kaplicy (inskrypcja), pijany żołnierz Crane'a z
+dzwonem. Bez dźwięku. Powrót na Garroka. To jedyny montaż wsteczny w grze — gracz dostaje wszystkie
+ziarna naraz i rozumie, że *widział je wszystkie*.
 
 **T1 marsz powrotny (Hamid tłumaczy barki mijanych orków — napisy już działają):**
 - ORK (mijany): „Not tonight. The iron voice again.”
@@ -575,8 +664,8 @@ Brama, od zewnątrz. Crane sam, z białą chorągiewką, żołnierze w tle. Maud
 Pip siedzi na platformie `[A:Sitting_Idle_Loop]`, serce dzwonu na kolanach `[C: prop]`. Maud wchodzi.
 > PIP: I hid her heart. Nobody can ring her without it. *(pauza)* Not even me.
 > MAUD: I know.
-> PIP: He said she was the only thing that did what it was told. *(patrzy na dzwon)* She did. She
-> did exactly what she was told. That's the whole problem, isn't it.
+> PIP: She's the only thing on this island that ever did what it was told. *(patrzy na dzwon)*
+> That's the whole problem, isn't it.
 > MAUD: *(siada obok)* Yes.
 > PIP: *(podaje serce — cięcie, prop zmienia właściciela)* You decide. You're the Reeve. *(pauza)*
 > I don't want to be the one who decides. I'm twelve.
@@ -622,6 +711,26 @@ Karta końcowa: *„The bell rang 4XX times. You ordered 4X of them.”* Pod ni�
 
 ---
 
+## 3b. Mapa ziaren: co gracz ma myśleć zamiast prawdy
+
+| Ziarno (prawda) | Gdzie | O czym jest scena *naprawdę* dla gracza | Fałszywe wyjaśnienie (kto je mówi) |
+|---|---|---|---|
+| dzwon okrętowy → orki na plaży | P.1 | katastrofa, śmierć Harrowa, zbroja | „wyspa pełna orków” (nikt nie pyta) |
+| cicha noc bez dzwonu | Rozdz. 3 | gorączka Pipa, Maud łamie rozkaz | **„rozbiliście rytuał szamanów”** (osadnik; staje się teorią wsi) |
+| Hamid źle znosi zmierzch | Rozdz. 4 | niewola, orki śpiewają | „ból głowy po bębnach” (Hamid) |
+| orki atakują karawany Pashy | Rozdz. 5 | konflikt z Idrisem, Tessarine | **„Korona przywiozła wojnę”** (Idris — i ma rację co do skutku) |
+| inskrypcja na szkicu = na dzwonie | Rozdz. 6 | Anselm nie lubił Gubernatora; gorączka | „the Hours, monks” (Maud) |
+| „came only after we rang” | Rozdz. 6 | j.w. | zalane, „rang the Hours” |
+| edykt „bell at dusk” | Rozdz. 7 | dziesięcina (ta boli), godzina policyjna | trzeci z trzech, rutyna |
+| pijany dzwon → atak na obóz Korony | Rozdz. 7 | dyscyplina Crane'a | „hałas ściągnął ich z lasu” (sierżant) — technicznie prawda |
+| Crane: „fever” | Rozdz. 7 | pierwsza kolonia | strony Anselma **potwierdzają** gorączkę |
+| orki nie atakują wieży | cała gra (AI) | — | nikt nie zauważa; w Rozdz. 10 Maud: „They never touched the tower.” |
+| pochodnie/bębny po dzwonie | Rozdz. 1 | wieś zajmuje mury | — (wizualne, niekomentowane) |
+
+Trzy konkurencyjne teorie gracza do Rozdz. 10: **rytuał** (wieś), **Korona przyniosła wojnę**
+(Idris), **Pasha** (po spichlerzu). Każda jest częściowo prawdziwa, żadna nie jest o dzwonie. Garrok
+nie obala ich — on dodaje czwartą, która wyjaśnia trzy poprzednie.
+
 ## 4. Bank rozmów T1 — ogniska i barki per akt
 
 Master §6.4: barki *od żartów przez zmęczenie do ciszy*. Każdy akt ma własną pulę; kilka na start.
@@ -629,13 +738,13 @@ Master §6.4: barki *od żartów przez zmęczenie do ciszy*. Każdy akt ma włas
 **Akt I (kpina — Maud odciąga uwagę od hełmu):**
 - MAUD: „Ser Godric inspected the wall. The wall is inspected. The wall is also still a hole.”
 - SETTLER: „Does he sleep in it?” MAUD: „Would you take it off, with what's out there?”
-- PIP: „She's louder than yesterday. I think she likes it.”
+- PIP: „The well's clean. I did the well. Nobody says anything about the well.”
 - WAT: „Ser Godric is not a carpenter.” MAUD: „Ser Godric isn't a lot of things. Hold the plank.”
 
 **Akt II (zmęczenie; żarty rzadsze, celniejsze):**
 - HAMID: „In the desert we have a saying about men in helmets. It doesn't translate. It isn't
   kind.”
-- MAUD: „Edict says ring it at dawn too, now. Twice the bell, same orks. The Crown's generous.”
+- MAUD: „Tithe's a third now. Edict says it's for our protection. From what, it doesn't say.”
 - SETTLER: „Six dead, and the Commissioner sent *grain*.” MAUD: „He sent grain and thirty men.
   Count both.”
 - CRANE: „The Crown does not interfere with a Reeve's counting.”
@@ -657,7 +766,8 @@ Master §6.4: barki *od żartów przez zmęczenie do ciszy*. Każdy akt ma włas
 
 | Scena | `[A]` gotowe | `[B]` Mixamo | `[C]` nasze |
 |---|---|---|---|
-| P.1 Sztorm | Rail_Call, Push, LayToIdle, Crouch_Idle, Idle_Torch | — | pokład w sztormie, fala zabiera ciało, deszcz |
+| P.0 Pokład | Sitting_Idle, Fixing_Kneeling, PickUp_Table, Idle_Lantern, Sitting_Talking, LayToIdle | — | kajuta + międzypokład (wnętrze statku), hełm/list propy |
+| P.1 Piorun | Rail_Call, Crouch_Idle, Sprint ×6, Idle_Torch, Death01 (Harrow), Sword_Idle | — | **4 stopklatki z piorunem** (flash → czerń), dłonie na pasku (ten sam klip co P.0 i Rozdz. 8) |
 | P.2 Rozkazy | Sitting_Idle ×N, Talking, FoldArms | — | pergamin, czerwona koperta (propy dłoni) |
 | P.3 Fort | Rail_Loop | — | wieża kamienna + dzwon z inskrypcją (decal) |
 | 1 Pierwszy dzwon | Rail_Call, Sword_Idle | — | swing_bell (jest), pochodnie-potem-bębny timing |
@@ -668,7 +778,7 @@ Master §6.4: barki *od żartów przez zmęczenie do ciszy*. Każdy akt ma włas
 | 8 Najazd | Death01, Walk_Carry | Death02 | **spichlerz** (collapse + ogień), szabla prop |
 | 8 Demaskowanie | Fixing_Kneeling, Sword_Attack | **Kneel** | **hełm zdejmowany** (swap + dłonie), pierwsza twarz |
 | 9 Ognisko | Sitting_Talking | — | hełm prop obok |
-| 10 Garrok | Sitting_Idle (orczy rig!), Idle_No, Sprint (młode) | Shrug | tron, miasto Hold (środowisko), **napisy pod warkot** |
+| 10 Garrok | Sitting_Idle (orczy rig!), Idle_No, Sprint (młode) | Shrug | tron, miasto Hold (środowisko), **napisy pod warkot**, montaż wsteczny 4 stopklatek |
 | 11a Krąg | Walk, Hit_Chest, Death01, Sprint, Fixing_Kneeling | Collapse | bełty, kusznicy w zaroślach, gong 3× |
 | 11b Koperta | Idle ×N, Interact, FoldArms, Walk_Formal | — | koperta, serce dzwonu odczepiane |
 | 11c Śmierć | Sword_Block, Hit_Knockback, Death01 | — | zasuwa bramy, kamera Maud, slow-mo bez wisp |
@@ -704,6 +814,6 @@ Opcja: UAL Pro (~$10, CC0, ten sam rig, bez retargetu) może mieć Kneel/Shrug/P
 
 1. `cutscene.rs`: `SceneScript` (RON) → kolejka ujęć (kamera/aktor-klip/linia/hold), `Modal::Cutscene`,
    letterbox, skip, `subtitles::force`; harness `FOREST_SCENE=<id>` pod `FOREST_CLIP`.
-2. Prototyp **P.2 „Maud czyta rozkazy”** (najtańsza scena: jeden plan, dwa propy, same `[A]`) —
-   ocena, czy aktorstwo bez twarzy w ogóle niesie.
+2. Prototyp **P.1 „Piorun”** (4 stopklatki, zero dialogu, same `[A]` + flash) — najtańszy test, czy
+   „klatka z pioruna” niesie; potem **P.2** jako test aktorstwa bez twarzy.
 3. Dopiero potem `[B]` z Mixamo i propy `[C]`.
