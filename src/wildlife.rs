@@ -1200,6 +1200,7 @@ pub fn populate(
                 Species::PolarBear,
                 Species::Camel,
                 Species::Boar, // the brown bear (boar plan on the bear rig)
+                Species::Rabbit, // the downloaded rabbit (`creatures_dl.py`)
             ];
             for (i, sp) in line.iter().enumerate() {
                 if let (Some(plan), Some((_, tmpl))) = (
@@ -1208,7 +1209,9 @@ pub fn populate(
                 ) {
                     let x = p[0] + i as f32 * 2.6 - 5.2;
                     let z = p[1];
-                    spawn_one(commands, &mat, tmpl, plan, x, z, Vec2::new(x, z), 7 + i as u32);
+                    // Display only: the prey here (rabbit) holds still instead of bolting.
+                    let plan = Plan { flee_r: 0.0, wander_r: 0.5, ..*plan };
+                    spawn_one(commands, &mat, tmpl, &plan, x, z, Vec2::new(x, z), 7 + i as u32);
                 }
             }
         }

@@ -137,6 +137,25 @@ fn bxr(w: f32, h: f32, d: f32, off: Vec3, rot: Quat, c: u32) -> Mesh {
 /// child (built in tail-local space, front edge at its origin) that `swish_tails` swings.
 /// `back`/`flank`/`fin` are the three tone hexes for this fish variety.
 fn build_fish(back: u32, flank: u32, fin: u32) -> (Mesh, Mesh) {
+    // The downloaded pike (`dl_creatures.glb`, `creatures_dl.py`): its painted skin is baked into
+    // the vertex colours; the body/tail split sits at the same peduncle (z = -0.29). Each variety
+    // keeps a hint of its own hue over the pike's olive.
+    if let Some(k) = crate::realforest::get() {
+        if let (Some(mut body), Some(mut tail)) = (k.raw_part("dl_pike_body"), k.raw_part("dl_pike_tail")) {
+            let t = crate::palette::lin(flank);
+            let l = (t[0] + t[1] + t[2]) / 3.0;
+            let hue = [0.75 + 0.25 * t[0] / l.max(1e-3), 0.75 + 0.25 * t[1] / l.max(1e-3), 0.75 + 0.25 * t[2] / l.max(1e-3)];
+            for m in [&mut body, &mut tail] {
+                if let Some(bevy::mesh::VertexAttributeValues::Float32x4(cols)) = m.attribute_mut(Mesh::ATTRIBUTE_COLOR) {
+                    for c in cols.iter_mut() {
+                        *c = [c[0] * hue[0], c[1] * hue[1], c[2] * hue[2], 1.0];
+                    }
+                }
+            }
+            let _ = (back, fin);
+            return (body, tail);
+        }
+    }
     // Body: a tapered spindle of boxes from the tail peduncle (−Z) to the nose (+Z).
     let body = group(vec![
         bx(0.13, 0.17, 0.22, Vec3::new(0.0, 0.0, 0.0), flank), // mid body

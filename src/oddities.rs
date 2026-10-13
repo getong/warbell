@@ -45,8 +45,10 @@ pub struct Oddity;
 const NEST_AT: Vec3 = Vec3::new(1.22, 2.36, 0.1);
 /// Antlion jaw pivot in the head's frame (`oddities.py` JAW_PIVOT).
 const JAW_PIVOT: Vec3 = Vec3::new(0.12, 0.15, 0.2);
-/// The vulture's shoulder pivots in its body frame.
+/// The vulture's shoulder pivots in its body frame (the sculpted `odd_vulture_*` set).
 const SHOULDER: Vec3 = Vec3::new(0.1, 0.47, 0.0);
+/// Shoulder of the downloaded raven-based vulture (`dl_vulture_*`, `creatures_dl.py` DL_SHOULDER).
+const DL_SHOULDER: Vec3 = Vec3::new(0.127, 0.408, 0.169);
 const PIT_R: f32 = 3.7;
 
 const NEST_HP: f32 = 40.0;
@@ -123,6 +125,8 @@ struct Assets_ {
     vul_wing_l: Handle<Mesh>,
     vul_wing_r: Handle<Mesh>,
     vul_legs: Handle<Mesh>,
+    /// Wing pivot of whichever vulture set loaded.
+    vul_shoulder: Vec3,
     ant_head: Handle<Mesh>,
     jaw_l: Handle<Mesh>,
     jaw_r: Handle<Mesh>,
@@ -139,7 +143,9 @@ fn build_assets(
 ) -> Option<Assets_> {
     let kit = crate::realforest::get().filter(|k| k.has("odd_toad_body"))?;
     let m = |meshes: &mut Assets<Mesh>, n: &str, p: &Pal| coat_mesh(kit, n, p).map(|x| meshes.add(x));
-    let wing = coat_mesh(kit, "odd_vulture_wing", &PAL_VULTURE)?;
+    // The downloaded, realistic vulture (`dl_creatures.glb`) when present; else the sculpt.
+    let vul = if kit.has("dl_vulture_body") { "dl_vulture" } else { "odd_vulture" };
+    let wing = coat_mesh(kit, &format!("{vul}_wing"), &PAL_VULTURE)?;
     let jaw = coat_mesh(kit, "odd_antlion_jaw", &PAL_JAW)?;
     let mut sac = kit.raw_part("odd_toad_sac")?;
     sac.remove_attribute(Mesh::ATTRIBUTE_UV_0);
@@ -163,10 +169,11 @@ fn build_assets(
             perceptual_roughness: 0.15,
             ..default()
         }),
-        vul_body: m(meshes, "odd_vulture_body", &PAL_VULTURE)?,
+        vul_body: m(meshes, &format!("{vul}_body"), &PAL_VULTURE)?,
         vul_wing_r: meshes.add(mirror_x(wing.clone())),
         vul_wing_l: meshes.add(wing),
-        vul_legs: m(meshes, "odd_vulture_legs", &PAL_VULTURE_LEGS)?,
+        vul_legs: m(meshes, &format!("{vul}_legs"), &PAL_VULTURE_LEGS)?,
+        vul_shoulder: if vul == "dl_vulture" { DL_SHOULDER } else { SHOULDER },
         ant_head: m(meshes, "odd_antlion_head", &PAL_ANTLION)?,
         jaw_r: meshes.add(mirror_x(jaw.clone())),
         jaw_l: meshes.add(jaw),
@@ -726,9 +733,10 @@ fn spawn_vulture(commands: &mut Commands, a: &Assets_, slot: usize, s: &Slot) {
 fn attach_vulture_parts(commands: &mut Commands, a: &Assets_, e: Entity, legs_hidden: bool) {
     commands.entity(e).with_children(|c| {
         for right in [false, true] {
-            let x = if right { -SHOULDER.x } else { SHOULDER.x };
+            let sh = a.vul_shoulder;
+            let x = if right { -sh.x } else { sh.x };
             c.spawn((
-                Transform::from_xyz(x, SHOULDER.y, SHOULDER.z),
+                Transform::from_xyz(x, sh.y, sh.z),
                 Visibility::Inherited,
                 Mesh3d(if right { a.vul_wing_r.clone() } else { a.vul_wing_l.clone() }),
                 MeshMaterial3d(a.mat.clone()),

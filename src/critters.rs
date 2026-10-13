@@ -287,7 +287,30 @@ fn boar() -> CreatureSpec {
 }
 
 // ─── Rabbit ───────────────────────────────────────────────────────────────────────
+/// The downloaded rabbit (`dl_creatures.glb`, `tools/blender_forest/creatures_dl.py`: CDmir's CC0
+/// OpenGameArt rabbit, its rig split into the box rig's parts and its painted coat baked into the
+/// vertex colours). Pivots = the source bones' heads (`creatures_dl.py` RABBIT_*).
+fn kit_rabbit() -> Option<CreatureSpec> {
+    let k = crate::realforest::get().filter(|k| k.has("dl_rabbit_torso"))?;
+    let leg = |n: &str, side: f32, pivot: Vec3| -> Option<PartDef> {
+        Some(PartDef { kind: PartKind::Leg(side), pivot, mesh: k.raw_part(&format!("dl_rabbit_leg_{n}"))? })
+    };
+    Some(CreatureSpec {
+        torso: k.raw_part("dl_rabbit_torso")?,
+        parts: vec![
+            leg("fr", 1.0, v(-0.049, 0.167, 0.229))?,
+            leg("fl", -1.0, v(0.049, 0.167, 0.229))?,
+            leg("br", -1.0, v(-0.054, 0.222, -0.052))?,
+            leg("bl", 1.0, v(0.054, 0.222, -0.052))?,
+            PartDef { kind: PartKind::Head, pivot: v(0.0, 0.205, 0.244), mesh: k.raw_part("dl_rabbit_head")? },
+        ],
+    })
+}
+
 fn rabbit() -> CreatureSpec {
+    if let Some(s) = kit_rabbit() {
+        return s;
+    }
     const FUR: u32 = 0x9a8a78;
     const DARK: u32 = 0x6f6052;
     const EAR_IN: u32 = 0xcaa090;
