@@ -32,7 +32,7 @@ const TERRITORY_R: f32 = 11.0;
 const DAY_MAX: f32 = 0.35;
 
 #[derive(Component)]
-struct Butterfly {
+pub(crate) struct Butterfly {
     /// Per-instance phase so each wanders/flaps out of step.
     phase: f32,
     /// Stable scattered territory radius (3..TERRITORY_R), so each keeps its own patch of air.

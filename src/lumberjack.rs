@@ -634,6 +634,9 @@ fn attach_log(
                     // frame shifted by the rig's drop); rotated so the log lies across the body (X).
                     Transform::from_translation(crate::player::anim::LOG_CRADLE + Vec3::Y * crate::villagers::VIL_RIG_OFF)
                         .with_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)),
+                    // On a realistic skin the log is glued between its hands (the fixed cradle above
+                    // is only the studio-rig fallback — it left the log floating off the carry clip).
+                    crate::npc_skin::CarriedLoad { across: true },
                 ))
                 .id();
         });

@@ -60,7 +60,7 @@ impl Plugin for NpcSkinPlugin {
             return;
         }
         app.add_systems(Startup, load_cast)
-            .add_systems(Update, (finish_cast, attach_skins, hide_studio_rigs, copy_tools, drive_skins).chain());
+            .add_systems(Update, (finish_cast, attach_skins, hide_studio_rigs, copy_tools, drive_skins, carry_loads).chain());
     }
 }
 
@@ -86,10 +86,19 @@ pub struct Skinned {
     speed: f32,
     pub hand_r: Option<Entity>,
     pub hand_l: Option<Entity>,
+    /// The skin's pelvis joint (read by the `FOREST_LIFECHECK` seat check).
+    pub pelvis: Option<Entity>,
     /// Hand-held props copied from the studio rig: (entity, right hand?, grip -> head distance).
     props: Vec<(Entity, bool, f32)>,
     /// Which grip the props are in (true = the two-handed work / fight grip).
     work_grip: bool,
+}
+
+impl Skinned {
+    /// The spawned glTF instance (the visible body) under the gameplay root.
+    pub fn inst(&self) -> Entity {
+        self.inst
+    }
 }
 
 /// Points the glTF instance back at its gameplay root (read by the ready observer).
@@ -259,6 +268,7 @@ fn attach_skins(
             speed: 0.0,
             hand_r: None,
             hand_l: None,
+            pelvis: None,
             props: Vec::new(),
             work_grip: false,
         });
@@ -307,6 +317,7 @@ fn skin_ready(
             match n.as_str() {
                 "hand_r" => sk.hand_r = Some(d),
                 "hand_l" => sk.hand_l = Some(d),
+                "pelvis" => sk.pelvis = Some(d),
                 _ => {}
             }
         }
@@ -321,6 +332,38 @@ fn hide_studio_rigs(mut rigs: Query<(&ChildOf, &mut Visibility), With<BipedRig>>
         if skinned.contains(parent.parent()) && *vis != Visibility::Hidden {
             *vis = Visibility::Hidden;
         }
+    }
+}
+
+/// A two-handed load (a log, a bundle of planks) carried by a skinned person: a child of the
+/// gameplay root that [`carry_loads`] keeps glued between the skin's real hand bones every frame, so
+/// the load rides the carry clip's arms (bob, sway and all) instead of floating at a fixed offset.
+/// Its mesh is authored in METRES (the skin's own scale); `across` lays it across the body (a log
+/// on both palms), otherwise it points the way the carrier faces.
+#[derive(Component, Clone, Copy)]
+pub struct CarriedLoad {
+    pub across: bool,
+}
+
+/// Seat every [`CarriedLoad`] on the midpoint of its carrier's hands (+ a hair up and forward, so the
+/// fingers wrap the sides rather than the load sinking into the palms), level with the carrier's
+/// facing. Reads last frame's bone poses in the ROOT's own frame, so the carrier's walk never
+/// skates the load.
+fn carry_loads(
+    roots: Query<(&Skinned, &GlobalTransform)>,
+    mut loads: Query<(&ChildOf, &CarriedLoad, &mut Transform)>,
+    bones: Query<&GlobalTransform>,
+) {
+    for (parent, load, mut tf) in &mut loads {
+        let Ok((sk, root_gt)) = roots.get(parent.parent()) else { continue };
+        let Some((hr, hl)) = hands(sk) else { continue };
+        let (Ok(r), Ok(l)) = (bones.get(hr), bones.get(hl)) else { continue };
+        let k = root_gt.scale().x.max(1e-3);
+        let mid = root_gt.affine().inverse().transform_point3((r.translation() + l.translation()) * 0.5);
+        let m = WORLD_PER_M / k; // metres → this root's local units
+        tf.translation = mid + Vec3::new(0.0, 0.02, 0.03) * m;
+        tf.rotation = if load.across { Quat::from_rotation_y(std::f32::consts::FRAC_PI_2) } else { Quat::IDENTITY };
+        tf.scale = Vec3::splat(m);
     }
 }
 
@@ -429,6 +472,7 @@ fn drive_skins(
     mut roots: Query<(&mut Skinned, &BipedDrive, &GlobalTransform, Has<crate::dying::Dying>, Option<&SkinClip>)>,
     mut players: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
     mut props: Query<&mut Transform>,
+    mut prop_vis: Query<&mut Visibility>,
 ) {
     let dt = time.delta_secs();
     if dt <= 0.0 {
@@ -468,6 +512,18 @@ fn drive_skins(
             ("Idle_Loop", false, 1.0)
         };
         let Some(look) = cast.looks[sk.look as usize].as_ref() else { continue };
+        // A scripted / life-act clip (`SkinClip`) puts its own prop in the hands (a hammer, a plank
+        // bundle…): the trade tool carried by the outfit would hang there wrong (a hoe held upside
+        // down through a kneel), so it is hidden for the act and comes back with the work clips.
+        let acting = !dying && !d.attacking && hint.is_some_and(|h| !h.0.is_empty());
+        let want_vis = if acting { Visibility::Hidden } else { Visibility::Inherited };
+        for &(pe, _, _) in &sk.props {
+            if let Ok(mut v) = prop_vis.get_mut(pe) {
+                if *v != want_vis {
+                    *v = want_vis;
+                }
+            }
+        }
         if clip != sk.clip {
             let Some(&node) = look.nodes.get(clip) else { continue };
             let first = sk.clip.is_empty();
