@@ -36,6 +36,22 @@ token-heavy, low-judgement tasks to an **Opus subagent** (cheaper) via the `Agen
 Rule of thumb: **Fable decides, Opus fetches.** If the task is mostly "read a lot / look at a lot"
 and little judgement, hand it to an Opus subagent and keep the conclusion, not the file dumps.
 
+## Assets: download first, model second
+
+**Standing permission from the user (2026-10-13): whenever an asset can be downloaded instead of
+built, download it** — 3D models (creatures, animals, props, buildings), animations, textures, HDRIs,
+SFX. Hand-modelling in Blender is the fallback, not the default.
+
+- **Licences:** prefer CC0 (Poly Haven, ambientCG, Quaternius, Kenney, Sketchfab CC0 filter). CC-BY
+  is OK — record author + licence + URL in `assets/CREDITS.md`. No NC/ND/editorial-only, no ripped game assets.
+- **Fit the game:** realistic look (KCD2-like), PBR, correct real-world scale, reasonable poly count
+  (decimate / bake LODs in Blender), retexture to match the scanned palette, export through the
+  existing `tools/blender_forest/` pipeline into the kit GLBs.
+- **Safety:** each download into its own new empty folder outside the repo (e.g.
+  `C:/Users/skibi/Documents/Codex/downloads/<name>/`), never run scripts that come with it, only
+  import mesh/texture/anim files.
+- Voices are the exception: no TTS / voice-model downloads.
+
 ## Commands
 
 ```bash
