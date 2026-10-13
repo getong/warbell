@@ -3138,6 +3138,32 @@ mod body_cache_tests {
     }
 }
 
+/// Which realistic cast member (`npc_skin::LOOKS`) wears this townsperson: trade / militia
+/// outfits map 1:1, everyone else is a seeded pick of the plain villagers (women by the studio
+/// look's `is_woman` rule, so a reskin keeps the same sex), kids a boy or girl.
+fn skin_look(kind: Kind, seed: u32, kid: bool) -> u8 {
+    use crate::npc_skin as ns;
+    let h = seed.wrapping_mul(0x9E37_79B9) >> 27;
+    if kid {
+        return if seed.wrapping_mul(0x85EB_CA6B).rotate_right(13) & 1 == 0 { ns::BOY } else { ns::GIRL };
+    }
+    match kind {
+        Kind::Guard { .. } => ns::GUARD,
+        Kind::Archer { .. } => ns::ARCHER,
+        Kind::Worker { trade: Trade::Farmer, .. } => ns::FARMER,
+        Kind::Worker { trade: Trade::Woodcutter, .. } => ns::WOODCUTTER,
+        Kind::Worker { trade: Trade::Miner, .. } => ns::MINER,
+        Kind::Peasant { .. } => {
+            let woman = crate::peasant_model::is_woman(crate::peasant_model::PeasantKind::Unemployed, false, seed % crate::peasant_model::LOOKS);
+            if woman {
+                [ns::VILLAGER_F1, ns::VILLAGER_F2, ns::VILLAGER_F1, ns::ELDER_F][(h % 4) as usize]
+            } else {
+                [ns::VILLAGER_M, ns::VILLAGER_M, ns::MERCHANT, ns::ELDER_M, ns::PRIEST][(h % 5) as usize]
+            }
+        }
+    }
+}
+
 /// Build a townsperson's body on the shared studio biped skeleton (`biped.rs`): one [`spawn_biped`]
 /// call whose `rig` child carries [`BipedRig`] so a re-skin can drop + rebuild the whole skeleton in
 /// place. Shared by [`spawn`] (fresh) + [`reskin_townsfolk`] (job change). `kid` builds a child
@@ -3165,6 +3191,7 @@ fn build_biped_body(
     };
     let key = vil_biped_key(kind, seed, kid, desert);
     let tool = crate::peasant_model::held_tool(key.kind);
+    commands.entity(root).try_insert(crate::npc_skin::SkinRequest(skin_look(kind, seed, kid)));
     let mat = mat.clone();
     // Resolve the shared assets when these spawn commands flush. This keeps the existing spawn
     // API usable from campaign, RTS and rebuild callers without a global cache or extra borrows.

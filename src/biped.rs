@@ -153,6 +153,7 @@ pub fn animate_biped(
         Has<crate::player::Hero>,
         Option<&PoseOverride>,
         Option<&crate::player::anim::ork::OrkMotion>,
+        Has<crate::npc_skin::SkinRequest>,
     )>,
     mut parts: Query<(&BipedPart, &mut Transform)>,
     // Reused across frames so a full siege+town's worth of bipeds doesn't heap-alloc a fresh map
@@ -162,7 +163,10 @@ pub fn animate_biped(
     let now = time.elapsed_secs();
     let cam_p = cam.iter().next().map(|g| g.translation());
     poses.clear();
-    poses.extend(drives.iter().filter_map(|(e, d, gt, is_hero, over, ork)| {
+    poses.extend(drives.iter().filter_map(|(e, d, gt, is_hero, over, ork, skinned)| {
+        if skinned {
+            return None; // hidden studio rig under a realistic skin (`npc_skin`): nothing to pose
+        }
         if !is_hero {
             // No transform yet (spawned this frame) → pose it; the cull needs a real position.
             if let (Some(cp), Some(gt)) = (cam_p, gt) {

@@ -26,6 +26,7 @@ mod meshkit; // shared low-poly mesh helpers (tinted/merged/flat_shaded) — see
 mod audio;
 mod banner;
 mod biped;
+mod npc_skin; // realistic skinned townsfolk (MPFB cast + UAL clips) over the studio rig
 mod biome;
 mod bridges;
 mod biome_desert;
@@ -339,7 +340,9 @@ fn main() {
         .add_plugins((
             scenes::ScenesPlugin, // hand-staged looped trailer tableaus (F1 Director → Scenes)
             creature::CreaturePlugin, // registers the shared creature ExtendedMaterial (hero/orks/wildlife)
-            biped::BipedPlugin, // shared studio rig+animator for non-hero bipeds (orcs/peasants)
+            // shared studio rig+animator for non-hero bipeds (orcs/peasants) + the realistic skinned
+            // townsfolk drawn over it
+            (biped::BipedPlugin, npc_skin::NpcSkinPlugin),
             quadruped::QuadrupedPlugin, // shared studio quadruped rig+animator (wildlife mammals)
             chest::ChestPlugin, // scattered loot chests: Wood/Relic tiers + juicy opens + Gnashfang mimics
             boss::BossPlugin, // Biome Wardens: per-biome world bosses + boon rewards + reward dialog

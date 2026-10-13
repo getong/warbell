@@ -42,6 +42,7 @@ pub fn run() {
         .add_plugins(crate::creature::CreaturePlugin) // the shared CreatureMaterial + its shader
         .add_plugins(crate::quadruped::QuadrupedPlugin) // poses any previewed quadruped from its QuadDrive
         .add_plugins(crate::biped::BipedPlugin) // poses any previewed ork/peasant biped from its BipedDrive
+        .add_plugins(crate::npc_skin::NpcSkinPlugin) // realistic skin over previewed townsfolk
         .add_plugins(crate::capture::CapturePlugin) // FOREST_SHOT / FOREST_CLIP (+ _ORBIT turntable)
         .add_plugins(crate::ruins::RuinsFxPlugin) // landmark part animators (sails/orbits/pulses)
         .insert_resource(GlobalAmbientLight { brightness: 160.0, ..default() })
@@ -778,6 +779,19 @@ fn spawn_viewer_peasant(
         ..default()
     };
     crate::biped::spawn_biped_scaled(commands, body, mat, h, rig.head_scale, 1.0, hip_dx, shoulder_dx, -0.06 - rig.drop, Some(shield_xf), rig.limbs);
+    // The realistic cast member the same townsperson wears in town (`npc_skin`).
+    use crate::npc_skin as ns;
+    use crate::peasant_model::PeasantKind as K;
+    let skin_look = match kind {
+        _ if kid => if look % 2 == 0 { ns::BOY } else { ns::GIRL },
+        K::Woodcutter => ns::WOODCUTTER,
+        K::Farmer => ns::FARMER,
+        K::Miner => ns::MINER,
+        K::Guard => ns::GUARD,
+        K::Archer => ns::ARCHER,
+        K::Unemployed => [ns::VILLAGER_M, ns::VILLAGER_F1, ns::VILLAGER_F2, ns::ELDER_M, ns::ELDER_F, ns::PRIEST, ns::MERCHANT][look as usize % 7],
+    };
+    commands.entity(body).insert(ns::SkinRequest(skin_look));
 }
 
 /// Three-point-ish lighting: a shadowed key, a soft fill from the opposite side, a back rim.

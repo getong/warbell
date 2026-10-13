@@ -160,6 +160,13 @@ fn main() {
     let dir = PathBuf::from(DIR);
     // `PACK_ONLY=creature` (or `ground` / `struct`) re-packs just that array set and skips every
     // other file — for regenerating one set when the other PNG intermediates aren't on disk.
+    // `NPC_SRC=<export dir>`: pack the skinned townsfolk maps (`tools/npc_mpfb/export_game.py`)
+    // into `assets/npc/` instead — atlas albedo sRGB, normal / orm linear, hair-card RGBA keeps its
+    // alpha-test coverage per mip. Copies each `npc_<name>.glb` along and skips everything else.
+    if let Ok(src) = std::env::var("NPC_SRC") {
+        pack_npc(Path::new(&src));
+        return;
+    }
     let only = std::env::var("PACK_ONLY").ok();
     // Ground + structure re-skin: three layers per map → one array file each.
     for (prefix, names) in [("ground", &GROUND[..]), ("struct", &STRUCT[..]), ("creature", &CREATURE[..]), ("alpine", &ALPINE[..]), ("people", &PEOPLE[..])] {
@@ -223,5 +230,31 @@ fn main() {
         let (px, w, h) = load(&png);
         let chain = mips(px, w, h, srgb, card.then_some(CARD_CUTOFF));
         write_dds(&png.with_extension("dds"), vec![Layer::Px(chain)], srgb, alpha);
+    }
+}
+
+/// Alpha-test cutoff the skinned-townsfolk card materials use (`npc_skin::CARD_CUTOFF`).
+const NPC_CARD_CUTOFF: f32 = 0.5;
+
+fn pack_npc(src: &Path) {
+    let out_dir = PathBuf::from("assets/npc");
+    std::fs::create_dir_all(&out_dir).expect("assets/npc");
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(src).expect("NPC_SRC").map(|e| e.unwrap().path()).collect();
+    entries.sort();
+    for p in entries {
+        let name = p.file_name().unwrap().to_string_lossy().to_string();
+        if name.ends_with(".glb") || name.ends_with(".json") {
+            std::fs::copy(&p, out_dir.join(&name)).expect("copy");
+            continue;
+        }
+        if !name.ends_with(".png") {
+            continue;
+        }
+        let stem = name.trim_end_matches(".png");
+        let linear = stem.ends_with("_normal") || stem.ends_with("_orm");
+        let card = !linear && !stem.ends_with("_albedo");
+        let (px, w, h) = load(&p);
+        let chain = mips(px, w, h, !linear, card.then_some(NPC_CARD_CUTOFF));
+        write_dds(&out_dir.join(format!("{stem}.dds")), vec![Layer::Px(chain)], !linear, card);
     }
 }

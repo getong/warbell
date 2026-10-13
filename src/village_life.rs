@@ -36,6 +36,7 @@ use crate::audio::director::Speak;
 use crate::audio::lines::{Concept, LifeCue, LifeVoice};
 use crate::biome::BiomeEntity;
 use crate::biped::{BipedPart, PoseOverride};
+use crate::npc_skin::SkinClip;
 use crate::player::anim::village::{self as clip, Act, Carry, SitAct};
 use crate::player::anim::Pose;
 use crate::player::Joint;
@@ -50,7 +51,7 @@ impl Plugin for VillageLifePlugin {
             .init_resource::<LifeTalk>()
             .init_resource::<Stalls>()
             .add_systems(Startup, load_life_sfx)
-            .add_systems(Update, (life_setup, life_houses, life_props).chain())
+            .add_systems(Update, (life_setup, life_houses, life_props, props_to_skin).chain())
             .add_systems(
                 Update,
                 (life_brain, life_social, vendor_life, guard_barks)
@@ -836,6 +837,32 @@ fn prop_assets(meshes: &mut Assets<Mesh>, mats: &mut Assets<StandardMaterial>) -
     ];
     let _ = (clay, cloth);
     PropAssets { parts }
+}
+
+/// Marks a resident whose hand props were moved onto its realistic skin's hand bones.
+#[derive(Component)]
+struct PropsOnSkin;
+
+/// Residents with a realistic skin hide the studio rig, props and all: move each hand-prop
+/// carrier onto the skin's hand bone (the sack rides the hidden torso; carrying uses the
+/// carry clip instead).
+fn props_to_skin(
+    mut commands: Commands,
+    q: Query<(Entity, &LifeProps, &crate::npc_skin::Skinned), Without<PropsOnSkin>>,
+) {
+    for (e, pr, sk) in &q {
+        let Some((hr, hl)) = crate::npc_skin::hands(sk) else { continue };
+        for &(h, c) in &pr.items {
+            let right = match h {
+                Held::None | Held::Sack => continue,
+                Held::Basket | Held::Stick => false,
+                _ => true,
+            };
+            commands.entity(if right { hr } else { hl }).add_child(c);
+            commands.entity(c).try_insert(crate::npc_skin::elbow_to_hand(right));
+        }
+        commands.entity(e).try_insert(PropsOnSkin);
+    }
 }
 
 /// Give every new resident its hand props once its rig exists (hidden until an act shows them).
@@ -1919,19 +1946,69 @@ fn state_key(st: St) -> u32 {
     }
 }
 
+/// Chat turns: the lead talks on even 3-second beats, the partner on odd ones; the listener
+/// crosses arms, nods, now and then laughs.
+fn chat_act(a: &LifeAgent, v: &Villager, age: f32) -> Act {
+    let beat = ((age / 3.2) as i32 + if a.lead { 0 } else { 1 }) % 2 == 0;
+    let flavour = ((age / 3.2) as u32 + (v.phase * 10.0) as u32) % 4;
+    if beat {
+        Act::Talk
+    } else if flavour == 0 {
+        Act::Laugh
+    } else if flavour == 1 {
+        Act::Nod
+    } else {
+        Act::Listen
+    }
+}
+
+/// The realistic-NPC (`npc_skin`) clip standing in for a standing act.
+fn act_clip(act: Act) -> &'static str {
+    match act {
+        Act::Stand | Act::Hide => "",
+        Act::Talk | Act::Laugh | Act::Haggle | Act::Browse => "Idle_Talking_Loop",
+        Act::Listen | Act::Stare | Act::Yawn => "Idle_FoldArms_Loop",
+        Act::Nod => "Yes",
+        Act::Wave | Act::Call | Act::Bow => "Idle_Rail_Call",
+        Act::Sweep => "Push_Loop",
+        Act::Draw | Act::Hang | Act::Pay => "Interact",
+        Act::Scatter => "Farm_PlantSeed",
+        Act::Weed => "Farm_Harvest",
+        Act::Hammer | Act::Saw => "Fixing_Kneeling",
+        Act::Warm => "Idle_Lantern_Loop",
+        Act::Lift => "PickUp_Table",
+        Act::Spar => "Sword_Regular_B",
+    }
+}
+
+/// Skin clip for a life state (`""` while walking/idling: the locomotion drive picks).
+fn skin_clip(st: St, chat: Act) -> &'static str {
+    match st {
+        St::Indoors | St::Walk | St::Idle | St::Play => "",
+        St::SitDown => "Sitting_Enter",
+        St::StandUp => "Sitting_Exit",
+        St::Sit(SitAct::Talk | SitAct::Laugh) => "Sitting_Talking_Loop",
+        St::Sit(_) => "Sitting_Idle_Loop",
+        St::Do(act) | St::Greet(act) => act_clip(act),
+        St::Chat => act_clip(chat),
+        St::Buy(0 | 1) => "Idle_Talking_Loop",
+        St::Buy(_) => "Interact",
+    }
+}
+
 #[allow(clippy::type_complexity)]
 fn life_animate(
     time: Res<Time>,
     mut commands: Commands,
     cam: Query<&GlobalTransform, With<Camera3d>>,
-    mut q: Query<(Entity, &mut LifeAgent, &Villager, &GlobalTransform, &mut PoseOverride, Option<&mut LifeAnim>, Option<&mut LifeProps>)>,
-    mut vendors: Query<(&VendorLife, &GlobalTransform, &mut PoseOverride, &crate::villagers::Villager), Without<LifeAgent>>,
+    mut q: Query<(Entity, &mut LifeAgent, &Villager, &GlobalTransform, &mut PoseOverride, Option<&mut LifeAnim>, Option<&mut LifeProps>, Option<&mut SkinClip>)>,
+    mut vendors: Query<(Entity, &VendorLife, &GlobalTransform, &mut PoseOverride, &crate::villagers::Villager, Option<&mut SkinClip>), Without<LifeAgent>>,
     mut vis: Query<&mut Visibility>,
 ) {
     let now = time.elapsed_secs();
     let dt = time.delta_secs();
     let cam_p = cam.iter().next().map(|g| g.translation());
-    for (e, mut a, v, gt, mut over, anim, props) in &mut q {
+    for (e, mut a, v, gt, mut over, anim, props, hint) in &mut q {
         if a.st == St::Indoors {
             continue;
         }
@@ -1966,22 +2043,7 @@ fn life_animate(
                 let k = clip::envelope(age, 1.9, 0.5);
                 clip::stand(act, t, if act == Act::Bow { k } else { 1.0 })
             }
-            St::Chat => {
-                // Turns: the lead talks on even 3-second beats, the partner on odd ones; the
-                // listener crosses arms, nods, now and then laughs.
-                let beat = ((age / 3.2) as i32 + if a.lead { 0 } else { 1 }) % 2 == 0;
-                let flavour = ((age / 3.2) as u32 + (v.phase * 10.0) as u32) % 4;
-                let act = if beat {
-                    Act::Talk
-                } else if flavour == 0 {
-                    Act::Laugh
-                } else if flavour == 1 {
-                    Act::Nod
-                } else {
-                    Act::Listen
-                };
-                clip::stand(act, t, 1.0)
-            }
+            St::Chat => clip::stand(chat_act(&a, v, age), t, 1.0),
             St::Buy(stage) => {
                 let act = match stage {
                     0 => Act::Browse,
@@ -1994,6 +2056,17 @@ fn life_animate(
         let mut pose = pose;
         if a.look.abs() > 0.01 && !matches!(a.st, St::SitDown | St::StandUp) {
             clip::look(&mut pose, a.look, -0.05);
+        }
+        let want = skin_clip(a.st, chat_act(&a, v, age));
+        match hint {
+            Some(mut h) => {
+                if h.0 != want {
+                    h.0 = want;
+                }
+            }
+            None => {
+                commands.entity(e).try_insert(SkinClip(want));
+            }
         }
         let key = state_key(a.st);
         match anim {
@@ -2038,7 +2111,18 @@ fn life_animate(
             }
         }
     }
-    for (vl, gt, mut over, v) in &mut vendors {
+    for (ve, vl, gt, mut over, v, hint) in &mut vendors {
+        let want = act_clip(vl.act);
+        match hint {
+            Some(mut h) => {
+                if h.0 != want {
+                    h.0 = want;
+                }
+            }
+            None => {
+                commands.entity(ve).try_insert(SkinClip(want));
+            }
+        }
         if let Some(cp) = cam_p {
             if gt.translation().distance_squared(cp) > POSE_CULL2 {
                 continue;
