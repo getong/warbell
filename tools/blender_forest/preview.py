@@ -4,6 +4,7 @@ name (the same mapping the game uses) and renders a lineup with Eevee.
     blender -b --factory-startup --python tools/blender_forest/preview.py -- <out.png> [glb ...]
 """
 import math
+import os
 import sys
 from pathlib import Path
 
@@ -15,6 +16,10 @@ from common import OUT, REPO, clear_scene  # noqa: E402
 argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 out_png = Path(argv[0]).resolve() if argv else REPO / "shots" / "realforest" / "blender_preview.png"
 glbs = argv[1:] or ["trees.glb"]
+# Small pieces: PREVIEW_DIST=7 PREVIEW_SPACING=2.2 PREVIEW_Z=0.7 frames them close.
+DIST = float(os.environ.get("PREVIEW_DIST", 26))
+SPACING = float(os.environ.get("PREVIEW_SPACING", 4.2))
+TARGET_Z = float(os.environ.get("PREVIEW_Z", 2.4))
 
 clear_scene()
 scene = bpy.context.scene
@@ -94,7 +99,7 @@ for o in objs:
     o.rotation_euler = (math.radians(90), 0, 0)  # glTF import already Y-up->Z-up; keep upright
     o.rotation_euler = (0, 0, 0)
     if not lod1:
-        x += 4.2
+        x += SPACING
 for o in objs:
     if o.name.endswith("lod1"):
         twin = scene.objects.get(o.name.replace("lod1", "lod0"))
@@ -105,14 +110,17 @@ for o in objs:
 bpy.ops.mesh.primitive_plane_add(size=200, location=(x / 2, 0, 0))
 plane = bpy.context.object
 gm = bpy.data.materials.new("ground_litter")
-pbr_material(gm, "ground_litter")
-mapping = gm.node_tree.nodes.new("ShaderNodeMapping")
-mapping.inputs["Scale"].default_value = (70, 70, 70)
-coord = gm.node_tree.nodes.new("ShaderNodeTexCoord")
-gm.node_tree.links.new(coord.outputs["UV"], mapping.inputs[0])
-for n in gm.node_tree.nodes:
-    if n.type == "TEX_IMAGE":
-        gm.node_tree.links.new(mapping.outputs[0], n.inputs[0])
+if (OUT / "ground_litter_albedo.png").exists():
+    pbr_material(gm, "ground_litter")
+    mapping = gm.node_tree.nodes.new("ShaderNodeMapping")
+    mapping.inputs["Scale"].default_value = (70, 70, 70)
+    coord = gm.node_tree.nodes.new("ShaderNodeTexCoord")
+    gm.node_tree.links.new(coord.outputs["UV"], mapping.inputs[0])
+    for n in gm.node_tree.nodes:
+        if n.type == "TEX_IMAGE":
+            gm.node_tree.links.new(mapping.outputs[0], n.inputs[0])
+else:  # the ground PNG intermediates aren't on disk: plain dull-earth floor
+    gm.diffuse_color = (0.22, 0.17, 0.11, 1)
 plane.data.materials.append(gm)
 plane.data.color_attributes.new("Col", "FLOAT_COLOR", "POINT")
 for c in plane.data.color_attributes[0].data:
@@ -134,8 +142,8 @@ cam = bpy.data.cameras.new("cam")
 cam.lens = 35
 co = bpy.data.objects.new("cam", cam)
 scene.collection.objects.link(co)
-target = Vector((x / 2 - 2.1, 3, 2.4))
-co.location = target + Vector((0, -26, 4))
+target = Vector((x / 2 - SPACING / 2, 3 if DIST > 15 else 0, TARGET_Z))
+co.location = target + Vector((0, -DIST, 4 if DIST > 15 else TARGET_Z * 0.5))
 co.rotation_euler = (target - co.location).to_track_quat("-Z", "Y").to_euler()
 scene.camera = co
 scene.render.filepath = str(out_png)

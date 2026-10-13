@@ -161,7 +161,7 @@ pub struct Kit {
 }
 
 /// Material sets by the names Blender exported: (name, PBR set file stem, foliage card?).
-const MATERIALS: [(&str, &str, bool); 46] = [
+const MATERIALS: [(&str, &str, bool); 50] = [
     ("bark_oak", "bark_oak", false),
     ("bark_beech", "bark_beech", false),
     ("bark_pine", "bark_pine", false),
@@ -242,6 +242,13 @@ const MATERIALS: [(&str, &str, bool); 46] = [
     ("s_rotwood", "s_rotwood", false),
     ("s_rust", "s_rust", false),
     ("bogwater", "bogwater", false),
+    // Scanned small props (scanned_props.glb, tools/blender_forest/scanned_props.py; Poly Haven CC0
+    // models): the shrub_02 saplings that make the bushes (leaf geometry, drawn double-sided — see
+    // `pbr_material`), the sea-chest crates, and the wine barrel (its look baked onto a lathe).
+    ("ph_shrub_02", "ph_shrub_02", false),
+    ("ph_wine_barrel_01", "ph_wine_barrel_01", false),
+    ("ph_wooden_crate_01", "ph_wooden_crate_01", false),
+    ("ph_wooden_crate_02", "ph_wooden_crate_02", false),
 ];
 
 impl Kit {
@@ -249,8 +256,10 @@ impl Kit {
         MATERIALS.iter().position(|m| m.0 == name)
     }
 
+    /// Model index by exported name; a LOD-paired model (`bush_a_lod0`/`_lod1`) also answers to its
+    /// bare name, so scatter tables can say `"bush_a"` (they did, and silently drew nothing).
     fn model(&self, name: &str) -> Option<usize> {
-        self.by_name.get(name).copied()
+        self.by_name.get(name).copied().or_else(|| self.by_name.get(&format!("{name}_lod0")).copied())
     }
 
     fn pick(&self, names: &[&str], roll: f32) -> Option<usize> {
@@ -1277,7 +1286,7 @@ fn pbr_material(images: &mut Assets<Image>, set: &str, card: bool) -> Result<Sta
     let ormh = images.add(load::texture(&format!("forest_pbr/{set}_ormh.png"), false, None)?);
     // `FOREST_NONORMAL=s_rubble,...`: A/B knob, drop these sets' normal maps.
     let no_normal = std::env::var("FOREST_NONORMAL").is_ok_and(|v| v.split(',').any(|s| s.trim() == set));
-    Ok(StandardMaterial {
+    let mut m = StandardMaterial {
         base_color_texture: Some(albedo),
         normal_map_texture: (!no_normal).then_some(normal),
         occlusion_texture: Some(ormh.clone()),
@@ -1287,7 +1296,13 @@ fn pbr_material(images: &mut Assets<Image>, set: &str, card: bool) -> Result<Sta
         metallic: 1.0,
         reflectance: 0.35,
         ..default()
-    })
+    };
+    if set == "ph_shrub_02" {
+        // The shrub scan is single-layer leaf geometry: draw both faces, lit with the flipped normal.
+        m.cull_mode = None;
+        m.double_sided = true;
+    }
+    Ok(m)
 }
 
 fn try_build(
@@ -1332,11 +1347,11 @@ fn try_build(
     let wind = [mat_index["canopy"], mat_index["undergrowth"], mat_index["swamp_cards"]];
     let mut models = Vec::new();
     let mut by_name = HashMap::new();
-    for glb in ["forest_pbr/trees.glb", "forest_pbr/undergrowth.glb", "forest_pbr/props.glb", "forest_pbr/structures.glb", "forest_pbr/wayside.glb", "forest_pbr/stories_warm.glb", "forest_pbr/creatures.glb", "forest_pbr/animals.glb", "forest_pbr/people.glb", "forest_pbr/orks.glb", "forest_pbr/stories_cold.glb", "forest_pbr/snowmen.glb", "forest_pbr/wardens.glb", "forest_pbr/alpine_flora.glb", "forest_pbr/market.glb", "forest_pbr/castle_kit.glb", "forest_pbr/town_kit.glb", "forest_pbr/biome_props.glb", "forest_pbr/swamp_flora.glb", "forest_pbr/ork_camps.glb", "forest_pbr/sites_warm.glb", "forest_pbr/rival_kit.glb", "forest_pbr/stories_castaways.glb", "forest_pbr/landmarks.glb", "forest_pbr/ork_hold.glb", "forest_pbr/wild_sites.glb", "forest_pbr/bridges_kit.glb", "forest_pbr/meadow_kit.glb", "forest_pbr/caravan.glb", "forest_pbr/oddities.glb", "forest_pbr/stashes.glb", "forest_pbr/swamp_folk.glb", "forest_pbr/dl_creatures.glb"] {
+    for glb in ["forest_pbr/trees.glb", "forest_pbr/undergrowth.glb", "forest_pbr/props.glb", "forest_pbr/structures.glb", "forest_pbr/wayside.glb", "forest_pbr/stories_warm.glb", "forest_pbr/creatures.glb", "forest_pbr/animals.glb", "forest_pbr/people.glb", "forest_pbr/orks.glb", "forest_pbr/stories_cold.glb", "forest_pbr/snowmen.glb", "forest_pbr/wardens.glb", "forest_pbr/alpine_flora.glb", "forest_pbr/market.glb", "forest_pbr/castle_kit.glb", "forest_pbr/town_kit.glb", "forest_pbr/biome_props.glb", "forest_pbr/swamp_flora.glb", "forest_pbr/ork_camps.glb", "forest_pbr/sites_warm.glb", "forest_pbr/rival_kit.glb", "forest_pbr/stories_castaways.glb", "forest_pbr/landmarks.glb", "forest_pbr/ork_hold.glb", "forest_pbr/wild_sites.glb", "forest_pbr/bridges_kit.glb", "forest_pbr/meadow_kit.glb", "forest_pbr/caravan.glb", "forest_pbr/oddities.glb", "forest_pbr/stashes.glb", "forest_pbr/swamp_folk.glb", "forest_pbr/dl_creatures.glb", "forest_pbr/scanned_props.glb"] {
         // The townsfolk parts (people.glb) and the skinned ork bodies (orks.glb) are optional:
         // without them the villagers keep their box-built bodies (`peasant_model`) and the orks
         // their per-joint creatures.glb parts; the rest of the kit still loads.
-        if (glb.ends_with("people.glb") || glb.ends_with("orks.glb") || glb.contains("/stories_") || glb.contains("/sites_") || glb.ends_with("snowmen.glb") || glb.ends_with("wardens.glb") || glb.ends_with("alpine_flora.glb") || glb.ends_with("market.glb") || glb.ends_with("castle_kit.glb") || glb.ends_with("town_kit.glb") || glb.ends_with("biome_props.glb") || glb.ends_with("swamp_flora.glb") || glb.ends_with("ork_camps.glb") || glb.ends_with("rival_kit.glb") || glb.ends_with("landmarks.glb") || glb.ends_with("ork_hold.glb") || glb.ends_with("wild_sites.glb") || glb.ends_with("bridges_kit.glb") || glb.ends_with("meadow_kit.glb") || glb.ends_with("caravan.glb") || glb.ends_with("oddities.glb") || glb.ends_with("stashes.glb") || glb.ends_with("swamp_folk.glb") || glb.ends_with("dl_creatures.glb"))
+        if (glb.ends_with("people.glb") || glb.ends_with("orks.glb") || glb.contains("/stories_") || glb.contains("/sites_") || glb.ends_with("snowmen.glb") || glb.ends_with("wardens.glb") || glb.ends_with("alpine_flora.glb") || glb.ends_with("market.glb") || glb.ends_with("castle_kit.glb") || glb.ends_with("town_kit.glb") || glb.ends_with("biome_props.glb") || glb.ends_with("swamp_flora.glb") || glb.ends_with("ork_camps.glb") || glb.ends_with("rival_kit.glb") || glb.ends_with("landmarks.glb") || glb.ends_with("ork_hold.glb") || glb.ends_with("wild_sites.glb") || glb.ends_with("bridges_kit.glb") || glb.ends_with("meadow_kit.glb") || glb.ends_with("caravan.glb") || glb.ends_with("oddities.glb") || glb.ends_with("stashes.glb") || glb.ends_with("swamp_folk.glb") || glb.ends_with("dl_creatures.glb") || glb.ends_with("scanned_props.glb"))
             && !load::asset_path(glb).exists()
         {
             warn!("realforest: {glb} missing — falling back to the older bodies");

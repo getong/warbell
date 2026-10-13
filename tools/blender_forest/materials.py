@@ -56,6 +56,19 @@ for name, mid, pre, arm in PROPS:
     else:
         write_pbr_set(name, diff, nor, ph_model_tex(mid, f"{pre}_rough_1k.jpg"), sat=0.92)
 
+# Scanned small props (scanned_props.py): the Poly Haven models' own texture sets, 1k.
+# (name, model id, saturation, gain). Packed arm = AO / roughness / metal. (ph_wine_barrel_01 is BAKED by
+# scanned_props.py instead, onto a clean lathe.)
+SCANNED = [
+    ("ph_shrub_02", "shrub_02", 0.95, 1.0),
+    ("ph_wooden_crate_01", "wooden_crate_01", 0.9, 1.0),
+    ("ph_wooden_crate_02", "wooden_crate_02", 0.9, 1.0),
+]
+for name, mid, sat, gain in SCANNED:
+    a = ph_model_tex(mid, f"{mid}_arm_1k.jpg")
+    write_pbr_set(name, ph_model_tex(mid, f"{mid}_diff_1k.jpg"), ph_model_tex(mid, f"{mid}_nor_gl_1k.jpg"),
+                  (a, 1), ao=(a, 0), sat=sat, gain=gain)
+
 # Structure re-skin layers (`realforest::reskin`): wood / stone / cloth DETAIL textures laid
 # triplanar over the low-poly buildings' vertex colours. Albedo is normalised to a 0.5 per-channel
 # mean so the shader can multiply it onto the authored vertex colour (x2) without shifting it.
