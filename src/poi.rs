@@ -701,6 +701,10 @@ pub fn populate(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &
 
 /// A tiny low-poly crow: body + swept wings (rotated so local -Z is the flight direction).
 fn crow_mesh() -> Mesh {
+    // The downloaded raven (`dl_creatures.glb`, `creatures_dl.py`), wings spread, when present.
+    if let Some(m) = crate::realforest::get().and_then(|k| k.raw_part("dl_crow")) {
+        return m;
+    }
     let mut v = Vec::new();
     v.push(tint(
         Sphere::new(0.16).mesh().ico(1).unwrap().scaled_by(Vec3::new(0.8, 0.7, 1.5)),
