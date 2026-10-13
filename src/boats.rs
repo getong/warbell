@@ -104,6 +104,28 @@ fn fleet_assets(
         cull_mode: None,
         ..default()
     });
+
+    // If Blender-exported `boats.glb` exists in the forest kit assets, use its high-character
+    // models (ork war galley, ork raider, mysterious pale lantern junk). Fall back cleanly to the
+    // procedural low-poly hulls if missing.
+    if let Ok(glb_nodes) = crate::realforest::load::read_glb("forest_pbr/boats.glb") {
+        let mut map: std::collections::HashMap<String, Mesh> = std::collections::HashMap::new();
+        for (name, prims) in glb_nodes {
+            if let Some(first) = prims.into_iter().next() {
+                map.insert(name, first.mesh);
+            }
+        }
+        let order = ["ork_galley", "ork_raider", "pale_lantern"];
+        let glb_variants: Vec<Handle<Mesh>> = order
+            .iter()
+            .filter_map(|name| map.remove(*name))
+            .map(|mesh| meshes.add(mesh))
+            .collect();
+        if glb_variants.len() == order.len() {
+            return (mat, glb_variants);
+        }
+    }
+
     let variants = (0..PALETTES.len()).map(|v| meshes.add(build_boat(v))).collect();
     (mat, variants)
 }
