@@ -371,7 +371,12 @@ reads it to drop a beaten warden). `Lives.heirs` mirrors `town.population`, so i
   output — Bevy issue #17530 — washing the world to flat sky; (3) the heavy prepass+post stack
   (Depth/Normal/MotionVector prepass + SSAO + DOF + godrays + outline + bloom) throws a hard **wgpu
   Validation Error → the app quits**. Don't re-attempt it. Anything "in front of the lens" (a FP
-  weapon/arms view-model, a HUD-in-world overlay) must live in the ONE camera. The working FP
+  weapon/arms view-model, a HUD-in-world overlay) must live in the ONE camera. **Oct 2026: first person now looks out of the REAL third-person rig** (`camera::fp_head_track`:
+  eye on the head joint, head + upper-arm/pauldron meshes hidden, torso bent by look pitch, shoulders
+  pushed forward/down in FP; tune with `FOREST_FPHEAD="fwd,up"`, `FOREST_FPARM="fwd,down"`,
+  `FOREST_FP_PITCH=<rad>`). The hero root is X-mirrored (`HERO_SCALE_V`; hero materials cull FRONT)
+  so the knight is right-handed. The viewmodel described next is legacy, hidden unless `FOREST_FPVM=1`.
+  The (legacy) FP
   view-model (**rebuilt from scratch, Sept 2026** — the old one re-used the third-person rig's arms
   through a handedness mirror + Euler angles solved against a tilted hand frame, and was junk) is
   `player/viewmodel.rs`: purpose-built sword / shield / fist / forearm meshes
