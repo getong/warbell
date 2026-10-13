@@ -1,19 +1,19 @@
 //! **The Field of the Answered** — the orks' graveyard on the swamp's north edge, beside the road the
 //! night waves walk (design: `docs/superpowers/specs/2026-10-13-zywa-wyspa-design.md` §2 item 7, §4).
-//! It grew out of the old "Ork Barrows" discovery site (`wild_sites.rs`): that barrow group is now the
-//! field's oldest corner, with rows of turfed long barrows and notched iron grave stones behind it
-//! and, toward the road, two rows of FRESH graves (a fixed set — the field does not change as the
+//! It grew out of the old "Ork Barrows" discovery site (`wild_sites.rs`): two great sunken mounds are
+//! the field's oldest corner, with turfed long barrows of every size and notched iron grave stones
+//! behind them and, toward the road, two rows of FRESH graves (a fixed set — the field does not change as the
 //! story moves on).
 //!
 //! By day one or two old ork mourners tend the graves (brainless puppets, never in a hit query);
-//! they leave when the hero comes near. Two E verbs, no comment either way:
-//! - **"Leave an offering"** (meat or fish): a Resist blessing, once a day.
-//! - **"Take grave goods"** (once): +40 gold and an ork axe — and `graveyard_desecrated`: the
+//! they leave when the hero comes near. One choice, made once (either ends both verbs):
+//! - **"Leave an offering"** (meat or fish): a ten-minute Resist blessing.
+//! - **"Take grave goods"**: +40 gold and an ork axe — and `graveyard_desecrated`: the
 //!   mourners never come back and two more berserkers march for two nights (`siege::NightMods`).
 //!
 //! Planned at build phase 4 after `wild_sites::plan` (a spiral search round the spec's spot, world
 //! (-25, 105)), folded into `poi::story_clearings`; spawned at phase 32. Models: `swamp_folk.glb`
-//! (`tools/blender_forest/swamp_folk.py`, the `og_*` pieces) + `wild_sites.glb`'s `site_ork_barrows`.
+//! (`tools/blender_forest/swamp_folk.py`, the `og_*` pieces).
 
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 use std::sync::Mutex;
@@ -42,7 +42,7 @@ const LORE: &str = "Row on row of ork graves. The newest earth is still soft.";
 /// The fresh graves (two rows toward the road).
 pub const FRESH: usize = 13;
 const OFFER_ITEMS: [&str; 4] = ["meat", "croc_steak", "elk_jerky", "feast"];
-const BLESS_MS: f64 = 60_000.0;
+const BLESS_MS: f64 = 600_000.0;
 const GRAVE_GOLD: i64 = 40;
 /// Mourners leave when the hero comes this close, and are gone past [`MOURNER_GONE`] from him.
 const MOURNER_SHY: f32 = 15.0;
@@ -85,10 +85,17 @@ pub fn overlaps_planned(x: f32, z: f32, r: f32) -> bool {
 
 // ── Layout (field-local; front = -Z toward the road / the castle) ─────────────────────
 
-/// The old barrow group (wild_sites.glb), turned like the field.
-const CORE: (Vec2, f32) = (Vec2::new(-4.4, 3.6), 0.0);
-/// Old long barrows `(pos, yaw)` (og_long_barrow runs along its local X, head stone at -X).
-const LONG: [(Vec2, f32); 3] = [(Vec2::new(3.4, 1.7), 0.05), (Vec2::new(3.1, 4.3), -0.04), (Vec2::new(2.6, 6.9), 0.1)];
+/// Old long barrows `(pos, yaw, scale)` (og_long_barrow runs along its local X, head stone at -X).
+const LONG: [(Vec2, f32, Vec3); 3] = [
+    (Vec2::new(3.4, 1.7), 0.05, Vec3::new(1.0, 0.7, 1.0)),
+    (Vec2::new(3.1, 4.3), -0.04, Vec3::new(0.82, 0.55, 0.9)),
+    (Vec2::new(2.6, 6.9), 0.1, Vec3::new(1.18, 0.8, 1.1)),
+];
+/// The oldest graves, where the field began: two great mounds, sunk low.
+const OLDEST: [(Vec2, f32, Vec3); 2] = [
+    (Vec2::new(-4.6, 2.5), 0.12, Vec3::new(1.3, 0.85, 1.35)),
+    (Vec2::new(-3.9, 5.4), -0.2, Vec3::new(1.05, 0.62, 1.2)),
+];
 /// Lone notched iron stones (old graves sunk flat).
 const STONES: [(Vec2, f32); 5] =
     [(Vec2::new(-0.2, 1.5), 0.1), (Vec2::new(-0.5, 4.2), -0.2), (Vec2::new(-0.1, 7.1), 0.15), (Vec2::new(-7.8, -0.4), 0.3), (Vec2::new(7.6, 0.1), -0.25)];
@@ -109,7 +116,7 @@ pub fn fresh_slot(k: usize) -> Vec2 {
 }
 
 fn every_piece() -> impl Iterator<Item = Vec2> {
-    let mut v: Vec<Vec2> = vec![CORE.0];
+    let mut v: Vec<Vec2> = OLDEST.iter().map(|l| l.0).collect();
     v.extend(LONG.iter().map(|l| l.0));
     v.extend(STONES.iter().map(|s| s.0));
     v.extend((0..FRESH).map(fresh_slot));
@@ -230,9 +237,9 @@ pub fn populate(commands: &mut Commands) {
         .spawn((Transform::from_xyz(field.pos.x, y, field.pos.y), Visibility::default(), FieldRoot, BiomeEntity))
         .id();
     crate::landmarks::attach_story(commands, root, NAME, LORE);
-    let mut place = |name: &str, l: Vec2, yaw: f32, r: f32, solid: Option<(f32, f32)>| {
+    let mut place = |name: &str, l: Vec2, yaw: f32, r: f32, solid: Option<(f32, f32)>, s: Vec3, sink: f32| {
         let p = field.at(l);
-        let tf = Transform::from_xyz(p.x, seat(p, r), p.y).with_rotation(Quat::from_rotation_y(field.yaw + yaw));
+        let tf = Transform::from_xyz(p.x, seat(p, r) - sink, p.y).with_rotation(Quat::from_rotation_y(field.yaw + yaw)).with_scale(s);
         if let Some(e) = kit.spawn_static_with(commands, name, tf, range()) {
             commands.entity(e).insert(BiomeEntity);
         }
@@ -240,27 +247,21 @@ pub fn populate(commands: &mut Commands) {
             crate::blockers::add_obb(p.x, p.y, hw, hd, field.yaw + yaw);
         }
     };
-    if kit.has("site_ork_barrows") {
-        place("site_ork_barrows", CORE.0, CORE.1, 3.0, None);
-        // The old group's masses (wild_sites' solids for it), turned into place.
-        for (x, z, hw, hd) in [(0.0, 0.3, 2.4, 1.3), (-2.7, -1.4, 0.25, 0.25)] {
-            let p = field.at(CORE.0 + Vec2::new(x, z));
-            crate::blockers::add_obb(p.x, p.y, hw, hd, field.yaw + CORE.1);
-        }
-    }
-    for &(l, yaw) in &LONG {
-        place("og_long_barrow", l, yaw, 1.5, Some((1.7, 0.8)));
+    // Old barrows of every size, long settled (each its own scale, so no two read alike).
+    for &(l, yaw, s) in LONG.iter().chain(OLDEST.iter()) {
+        place("og_long_barrow", l, yaw, 1.5 * s.x, Some((1.7 * s.x, 0.8 * s.z)), s, 0.04);
     }
     for &(l, yaw) in &STONES {
-        place("og_iron_stone", l, yaw, 0.4, Some((0.3, 0.2)));
+        place("og_iron_stone", l, yaw, 0.4, Some((0.3, 0.2)), Vec3::ONE, 0.0);
     }
     for k in 0..FRESH {
         let model = if (k * 7 + 3) % 3 == 0 { "og_fresh_mound_b" } else { "og_fresh_mound_a" };
         let jitter = ((k as f32 * 2.399).sin()) * 0.08;
-        place(model, fresh_slot(k), FRAC_PI_2 + jitter, 0.9, None);
+        let s = Vec3::new(0.86 + 0.22 * ((k as f32 * 1.7).sin() * 0.5 + 0.5), 1.1 + 0.35 * ((k as f32 * 2.9).cos() * 0.5 + 0.5), 0.9 + 0.15 * ((k as f32 * 0.9).sin() * 0.5 + 0.5));
+        place(model, fresh_slot(k), FRAC_PI_2 + jitter, 0.9, None, s, 0.03);
     }
     for (k, &l) in BOWLS.iter().enumerate() {
-        place("og_fish_bowl", l, k as f32 * 1.7, 0.15, None);
+        place("og_fish_bowl", l, k as f32 * 1.7, 0.15, None, Vec3::ONE, 0.0);
     }
     crate::blockers::reserve_visual(field.pos.x, field.pos.y, FOOT);
     for (at, marker) in [(OFFER_AT, 0), (GOODS_AT, 1)] {
@@ -291,7 +292,6 @@ fn graveyard_verbs(
     mut commands: Commands,
     mut ev: MessageReader<Interacted>,
     time: Res<Time>,
-    siege: Res<Siege>,
     mut flags: ResMut<WorldFlags>,
     mut night_mods: ResMut<crate::siege::NightMods>,
     mut player: ResMut<crate::player::PlayerRes>,
@@ -300,24 +300,24 @@ fn graveyard_verbs(
     mut buffs: ResMut<crate::inventory::Buffs>,
     mut floats: ResMut<FloatQueue>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
-    offer: Query<&GlobalTransform, With<OfferSpot>>,
+    offer: Query<(Entity, &GlobalTransform), With<OfferSpot>>,
     goods: Query<(Entity, &GlobalTransform), With<GoodsSpot>>,
     mourners: Query<Entity, With<Mourner>>,
 ) {
     let now = time.elapsed_secs();
-    // A desecrated field keeps no grave goods to take.
-    if flags.is("graveyard_desecrated") {
+    // One choice, once: honoured or robbed, the field asks nothing more of him.
+    if flags.is("graveyard_desecrated") || flags.is("graveyard_offered") {
         for (e, _) in &goods {
+            commands.entity(e).try_remove::<Interactable>();
+        }
+        for (e, _) in &offer {
             commands.entity(e).try_remove::<Interactable>();
         }
     }
     for Interacted(e) in ev.read() {
-        if let Ok(gt) = offer.get(*e) {
+        if let Ok((_, gt)) = offer.get(*e) {
             let head = gt.translation() + Vec3::Y * 1.6;
-            let day = siege.wave_index as i64 + 10;
-            if flags.get("graveyard_offered_day") == day {
-                floats.0.push(FloatReq { world: head, text: "The bowls are full.".into(), color: Color::srgb(0.7, 0.7, 0.75), scale: 0.9 });
-                cues.write(crate::audio::AudioCue::UiSelect);
+            if flags.is("graveyard_offered") || flags.is("graveyard_desecrated") {
                 continue;
             }
             let Some(item) = OFFER_ITEMS.iter().find(|id| inv.0.count_item(id) > 0) else {
@@ -326,7 +326,7 @@ fn graveyard_verbs(
                 continue;
             };
             inv.0.consume_item(item, 1);
-            flags.set("graveyard_offered_day", day);
+            flags.set("graveyard_offered", 1);
             buffs.0.apply_buff(BuffKind::Resist, BLESS_MS, 0.6, now as f64);
             floats.0.push(FloatReq { world: head, text: format!("{} — {}", NAME, BuffKind::Resist.label()), color: Color::srgb(0.7, 1.0, 0.85), scale: 1.1 });
             cues.write(crate::audio::AudioCue::Forage);
@@ -385,7 +385,7 @@ fn mourners(
         if let Some(arm) = armory.as_deref() {
             for (i, variant) in [crate::orks::OrkVariant::Shaman, crate::orks::OrkVariant::Grunt].into_iter().enumerate() {
                 let a = field.at(fresh_slot(i * 3) + Vec2::new(0.9, 0.0));
-                let b = field.at(if i == 0 { OFFER_AT } else { CORE.0 + Vec2::new(0.0, -3.4) });
+                let b = field.at(if i == 0 { OFFER_AT } else { OLDEST[0].0 + Vec2::new(0.0, -2.4) });
                 let face = field.yaw + PI;
                 let e = arm.0.spawn_prop(&mut commands, variant, crate::orks::Faction::Red, Vec3::new(a.x, ground(a), a.y), face, 0.92);
                 commands.entity(e).insert((Mourner { tend: [a, b], leg: 0, pause: 4.0 + 3.0 * i as f32, fleeing: None }, BiomeEntity));

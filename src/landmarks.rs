@@ -248,7 +248,7 @@ fn meta(b: Biome) -> Meta {
             lore: WITCH_HUT_LORE_SHUT,
             buff: BuffKind::Resist,
             buff_mag: 0.6,
-            beacon: Color::srgb(0.31, 0.94, 0.90), // bright cyan over murk
+            beacon: Color::srgb(0.72, 0.86, 0.42), // firefly yellow-green over murk (muted in spawn_beacon)
             gear: "dragon_plate", // Dragonscale Plate (42%) — payment the witch never collected
         },
     }

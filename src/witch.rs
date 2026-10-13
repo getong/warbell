@@ -40,7 +40,8 @@ use crate::siege::{GamePhase, Siege};
 /// The hut landmark's spawn scale (`ruins::populate_landmarks`).
 const HUT_SCALE: f32 = 1.4;
 /// Hut-model-local spots (unscaled): where she stands for each chore, and what she faces.
-const STIR_AT: Vec2 = Vec2::new(1.12, 1.95);
+/// She stirs from the cauldron's yard side, out from under the deck (in the light of its fire).
+const STIR_AT: Vec2 = Vec2::new(2.4, 1.85);
 const CAULDRON: Vec2 = Vec2::new(1.75, 1.3);
 const RACK: Vec2 = Vec2::new(-1.85, 2.8);
 const RACK_AT: Vec2 = Vec2::new(-1.85, 3.25);
@@ -205,7 +206,7 @@ pub struct WitchPlugin;
 
 impl Plugin for WitchPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (stage_env, spawn_yard, attach_props, sync_yard, hut_lore).run_if(crate::rts::in_campaign))
+        app.add_systems(Update, (stage_env, spawn_yard, attach_props, sync_yard, hut_lore, hearth_fx).run_if(crate::rts::in_campaign))
             .add_systems(Update, stoop.after(crate::biped::animate_biped))
             .add_sim_systems((seffa_brain, stone_and_shop, goat_life).run_if(crate::rts::in_campaign));
     }
@@ -240,6 +241,7 @@ fn spawn_yard(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut creature_mats: ResMut<Assets<crate::creature::CreatureMaterial>>,
+    mut std_mats: ResMut<Assets<StandardMaterial>>,
     landmarks: Query<&crate::landmarks::Landmark>,
     existing: Query<(), With<TradeStone>>,
     now: Res<Time>,
@@ -283,6 +285,18 @@ fn spawn_yard(
     if let Some(e) = kit.spawn_static_with(&mut commands, "sf_wicket", Transform::from_xyz(hinge.x, ground(hinge) - 0.04, hinge.y).with_rotation(stone_rot), range()) {
         commands.entity(e).insert((BiomeEntity, Wicket { closed: stone_rot }));
     }
+    // Her clutter on the stilt porch (jars, bottles, a bucket, herbs under the eave), hut-local.
+    if let Some(e) = kit.spawn_static_with(
+        &mut commands,
+        "sf_hut_clutter",
+        Transform::from_xyz(hut.pos.x, hut.y, hut.pos.y)
+            .with_rotation(Quat::from_rotation_y(hut.yaw))
+            .with_scale(Vec3::splat(HUT_SCALE)),
+        range(),
+    ) {
+        commands.entity(e).insert(BiomeEntity);
+    }
+    spawn_hearth_fx(&mut commands, &mut meshes, &mut std_mats, &hut);
     place(&mut commands, "sf_herb_rack", RACK, 0.0);
     place(&mut commands, "sf_goat_stake", STAKE, 0.4);
     // Her goat on its tether (the island's goat is the small deer rig, as in `wildlife`).
@@ -351,7 +365,139 @@ fn spawn_yard(
         rig.limbs,
     );
     info!("witch: Old Seffa's yard at the hut {:.1},{:.1} (stone {:.1},{:.1})", hut.pos.x, hut.pos.y, sp.x, sp.y);
-    let _ = hut.y;
+}
+
+// ── The cauldron fire, its steam and embers; fireflies over the yard at dusk ─────────────
+
+/// A puff of steam off the brew: rises, swells, fades, loops.
+#[derive(Component)]
+struct Steam {
+    from: Vec3,
+    period: f32,
+    phase: f32,
+}
+/// A spark off the fire under the pot.
+#[derive(Component)]
+struct Ember {
+    from: Vec3,
+    period: f32,
+    phase: f32,
+}
+/// A firefly wandering round its home at dusk / night, blinking.
+#[derive(Component)]
+struct Firefly {
+    home: Vec3,
+    phase: f32,
+}
+
+fn spawn_hearth_fx(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &mut Assets<StandardMaterial>, hut: &Hut) {
+    let c = hut.at(CAULDRON);
+    let base = Vec3::new(c.x, hut.y, c.y);
+    // The fire under the pot: flame cards + a flickering point light (faint by day, a pool at night).
+    commands.spawn((
+        Mesh3d(meshes.add(crate::flame_fx::flame_card_mesh(0.5))),
+        MeshMaterial3d(crate::flame_fx::flame_card_material(mats)),
+        Transform::from_translation(base + Vec3::Y * 0.03),
+        bevy::light::NotShadowCaster,
+        crate::camps::Flicker { phase: 0.9 },
+        crate::firelight::torch_light(0.9),
+        BiomeEntity,
+    ));
+    let puff = meshes.add(Sphere::new(1.0).mesh().uv(14, 9));
+    for k in 0..7 {
+        let m = mats.add(StandardMaterial {
+            base_color: Color::srgba(0.86, 0.87, 0.84, 0.0),
+            alpha_mode: AlphaMode::Blend,
+            perceptual_roughness: 1.0,
+            ..default()
+        });
+        commands.spawn((
+            Mesh3d(puff.clone()),
+            MeshMaterial3d(m),
+            Transform::from_translation(base).with_scale(Vec3::ZERO),
+            bevy::light::NotShadowCaster,
+            Steam { from: base + Vec3::Y * 0.97 * HUT_SCALE, period: 4.2 + (k % 3) as f32 * 0.6, phase: k as f32 / 7.0 },
+            BiomeEntity,
+        ));
+    }
+    let spark = meshes.add(Sphere::new(1.0).mesh().ico(1).expect("ico"));
+    let ember_mat = mats.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.5, 0.16),
+        emissive: LinearRgba::rgb(5.0, 1.7, 0.35),
+        unlit: true,
+        ..default()
+    });
+    for k in 0..5 {
+        let a = k as f32 * 2.4;
+        let from = base + Vec3::new(a.cos() * 0.62, 0.12, a.sin() * 0.62);
+        commands.spawn((
+            Mesh3d(spark.clone()),
+            MeshMaterial3d(ember_mat.clone()),
+            Transform::from_translation(from).with_scale(Vec3::ZERO),
+            bevy::light::NotShadowCaster,
+            Ember { from, period: 1.9 + (k % 3) as f32 * 0.45, phase: k as f32 * 0.37 },
+            BiomeEntity,
+        ));
+    }
+    let fly_mat = mats.add(StandardMaterial {
+        base_color: Color::srgb(0.85, 1.0, 0.45),
+        emissive: LinearRgba::rgb(2.6, 3.4, 0.7),
+        unlit: true,
+        ..default()
+    });
+    for k in 0..9 {
+        let a = k as f32 * 2.399;
+        let r = 2.2 + (k % 4) as f32 * 0.9;
+        let l = YARD_C + Vec2::new(a.cos(), a.sin()) * r / HUT_SCALE;
+        let p = hut.at(l);
+        commands.spawn((
+            Mesh3d(spark.clone()),
+            MeshMaterial3d(fly_mat.clone()),
+            Transform::from_xyz(p.x, ground(p) + 0.6, p.y).with_scale(Vec3::ZERO),
+            bevy::light::NotShadowCaster,
+            Firefly { home: Vec3::new(p.x, ground(p) + 0.5 + (k % 3) as f32 * 0.45, p.y), phase: a },
+            BiomeEntity,
+        ));
+    }
+}
+
+/// Steam swells and fades as it rises; embers spit up and wink out; fireflies drift and blink once
+/// the light goes.
+#[allow(clippy::type_complexity)]
+fn hearth_fx(
+    time: Res<Time>,
+    clock: Option<Res<crate::scene::SkyClock>>,
+    mut mats: ResMut<Assets<StandardMaterial>>,
+    mut steam: Query<(&Steam, &mut Transform, &MeshMaterial3d<StandardMaterial>), (Without<Ember>, Without<Firefly>)>,
+    mut embers: Query<(&Ember, &mut Transform), (Without<Steam>, Without<Firefly>)>,
+    mut flies: Query<(&Firefly, &mut Transform), (Without<Steam>, Without<Ember>)>,
+) {
+    let t = time.elapsed_secs();
+    for (s, mut tf, m) in &mut steam {
+        let u = ((t / s.period) + s.phase).fract();
+        let drift = Vec3::new((t * 0.4 + s.phase * 6.0).sin() * 0.25, 0.0, (t * 0.3 + s.phase * 4.0).cos() * 0.2) * u;
+        tf.translation = s.from + Vec3::Y * (u * 1.7) + drift;
+        let r = 0.07 + 0.24 * u;
+        tf.scale = Vec3::new(r, r * 0.72, r);
+        if let Some(mut mat) = mats.get_mut(&m.0) {
+            mat.base_color.set_alpha(0.09 * (u * PI).sin().powf(1.6));
+        }
+    }
+    for (e, mut tf) in &mut embers {
+        let u = ((t / e.period) + e.phase).fract();
+        let wig = Vec3::new((t * 5.0 + e.phase * 9.0).sin(), 0.0, (t * 4.3 + e.phase * 7.0).cos()) * 0.05;
+        tf.translation = e.from + Vec3::Y * (u * 1.3) + wig + Vec3::new(0.12, 0.0, 0.05) * u;
+        tf.scale = Vec3::splat(0.014 * (1.0 - u) * if u < 0.85 { 1.0 } else { 0.0 });
+    }
+    let dusk = clock.map(|c| crate::scene::night_of(c.t)).unwrap_or(0.0);
+    let show = ((dusk - 0.25) / 0.3).clamp(0.0, 1.0);
+    for (f, mut tf) in &mut flies {
+        let ph = f.phase;
+        tf.translation = f.home
+            + Vec3::new((t * 0.21 + ph).sin() * 1.3, (t * 0.33 + ph * 1.7).sin() * 0.35, (t * 0.17 + ph * 0.6).cos() * 1.3);
+        let blink = ((t * 0.9 + ph * 3.1).sin() * 0.5 + 0.5).powf(3.0);
+        tf.scale = Vec3::splat(0.022 * show * (0.25 + 0.75 * blink));
+    }
 }
 
 /// Hang the staff (right hand) and the basket (left forearm) on her rig once its joints exist.
@@ -725,7 +871,10 @@ pub fn shot_cams() -> Vec<(String, Transform)> {
     vec![
         cam("witch_yard", hut.at(Vec2::new(4.2, 9.0)), 2.6, hut.at(Vec2::new(0.4, 2.4)), 1.2),
         cam("witch_stone", hut.at(Vec2::new(-1.4, 7.3)), 1.6, hut.at(STONE), 0.5),
-        cam("witch_seffa", hut.at(Vec2::new(3.4, 3.9)), 1.6, hut.at(STIR_AT), 1.0),
+        cam("witch_seffa", hut.at(Vec2::new(4.6, 4.2)), 1.7, hut.at(Vec2::new(1.9, 1.5)), 1.0),
+        cam("witch_porch", hut.at(Vec2::new(-1.6, 5.2)), 3.2, hut.at(Vec2::new(-0.3, 1.0)), 2.2),
+        // Last (it moves the clock): the yard at dusk — the fire under the pot, fireflies.
+        cam("witch_yard_dusk@0.51", hut.at(Vec2::new(4.2, 8.0)), 2.2, hut.at(Vec2::new(1.2, 2.0)), 1.0),
     ]
 }
 
