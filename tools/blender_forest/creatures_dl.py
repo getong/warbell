@@ -39,7 +39,7 @@ MAIN, SKIN, DETAIL, EYE, ACCENT, HORN = range(6)
 
 
 # ─────────────────────────────────────────────────────────────── extraction (Blender coords)
-def grab(blend, mesh_name, images):
+def grab(blend, mesh_name, images, uv_name="UVMap"):
     """Open `blend` (autoexec off), evaluate `mesh_name` in its armature's REST pose with all
     modifiers, and return verts (world), polys, per-loop UVs, per-vertex dominant bone, bone heads
     and the texture(s) as float arrays (row 0 = bottom, like UV v)."""
@@ -61,7 +61,7 @@ def grab(blend, mesh_name, images):
     verts = np.array([tuple(mw @ v.co) for v in me.vertices])
     names = {i: g.name for i, g in enumerate(ob.vertex_groups)}
     dom = [names.get(max(v.groups, key=lambda g: g.weight).group, "") if v.groups else "" for v in me.vertices]
-    uvl = me.uv_layers.get("UVMap") or me.uv_layers.active
+    uvl = me.uv_layers.get(uv_name) or me.uv_layers.active
     polys, uvs = [], []
     for p in me.polygons:
         polys.append(list(p.vertices))
@@ -267,7 +267,7 @@ def rabbit():
     }
     objs = []
     taken = head.copy()
-    colour = raw_colour(1.05, 0.9)
+    colour = raw_colour(0.78, 1.15)  # the painted coat reads washed-out in game light: wild-brown it
     piv = xf(src["bones"]["Neck"])[0]
     objs.append(part("dl_rabbit_head", src, head, xf, piv, colour))
     rust_vec("RABBIT_HEAD", piv)
@@ -284,7 +284,8 @@ def rabbit():
 # ───────────────────────────────────────────────────────────────── pike
 def pike():
     tiles = [DL / f"esox/x/tex/ESOX-V2.100{i}.png" for i in range(1, 5)]
-    src = grab(DL / "esox/x/esoxV2-wip2.blend", "Esox-Lucios", tiles)
+    # Only tile 1001 is the colour map (UVMap.001); the other tiles are normal / spec maps.
+    src = grab(DL / "esox/x/esoxV2-wip2.blend", "Esox-Lucios", tiles[:1], uv_name="UVMap.001")
     V = src["verts"]
     split_y = src["bones"]["Spine.003"][1]
     # fish.rs hangs the tail child at z = -0.29: scale so the split lands there, 0.62u long.

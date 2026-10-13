@@ -673,6 +673,26 @@ fn spawn_model(
             commands.entity(root).insert(crate::quadruped::QuadDrive::new(species));
             crate::quadruped::spawn_quad(commands, root, mat, species, h);
         }
+        // A box-rig critter (`critters.rs`) in its rest pose: `FOREST_VIEW=critter:rabbit|cat|scorpion|croc`
+        // (the rabbit is the downloaded model, `creatures_dl.py`).
+        s if s.starts_with("critter") => {
+            use crate::critters::Species;
+            let sp = match s.rsplit(':').next() {
+                Some("cat") => Species::Cat,
+                Some("scorpion") => Species::Scorpion,
+                Some("croc") => Species::BogCroc,
+                _ => Species::Rabbit,
+            };
+            let spec = crate::critters::build(sp);
+            let torso = meshes.add(spec.torso);
+            let parts: Vec<_> = spec.parts.into_iter().map(|p| (p.pivot, meshes.add(p.mesh))).collect();
+            commands.entity(root).with_children(|c| {
+                c.spawn((Mesh3d(torso), MeshMaterial3d(mat.clone())));
+                for (pivot, m) in parts {
+                    c.spawn((Mesh3d(m), MeshMaterial3d(mat.clone()), Transform::from_translation(pivot)));
+                }
+            });
+        }
         // A biome-warden boss (static rest pose — torso + limb parts at their pivots, at the real
         // root scale). `FOREST_VIEW=boss:forest|snow|rocky|desert|swamp` picks the warden.
         s if s.starts_with("boss") || s.starts_with("warden") => {
