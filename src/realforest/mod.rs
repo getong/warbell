@@ -33,9 +33,14 @@ use crate::terrain::TerrainMaterial;
 
 /// LOD0 → LOD1 cross-fade distance (world units, dithered over ±[`LOD_BAND`]).
 pub const LOD_NEAR: f32 = 30.0;
-const LOD_BAND: f32 = 2.0;
-/// The swamp's narrower crossfade half-width (see [`Kit::attach_tree_narrow`]).
-pub const LOD_BAND_NARROW: f32 = 0.5;
+/// Abrupt everywhere: Bevy's LOD0/LOD1 dither is a screen-stable 4×4 checkerboard
+/// (`pbr_functions::visibility_range_dither`, keyed on `frag_coord` only) that neither SMAA nor
+/// TAA can resolve, so every tree parked inside a band wore a crisp grid of "dots" — first fixed
+/// in the swamp with a ±0.5 band, then still visible on forest trees at ~30u under TAA. A swap
+/// at 30u reads far softer than a held dither pattern (and skips the dither pipeline entirely).
+const LOD_BAND: f32 = 0.0;
+/// Kept for the swamp's call sites; same abrupt swap as everywhere else.
+pub const LOD_BAND_NARROW: f32 = LOD_BAND;
 /// Far cull, same as the low-poly trees (fog has them by then).
 const TREE_FAR: f32 = 180.0;
 /// A kit prop only blocks when it's at least this tall (scaled, ~knee height on the 1.3u hero)…

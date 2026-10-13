@@ -1006,7 +1006,9 @@ fn apply_quality(
         if taa {
             e.insert((
                 TemporalAntiAliasing::default(),
-                ContrastAdaptiveSharpening { enabled: true, sharpening_strength: 0.45, denoise: false },
+                // Light touch: at 0.45 the sharpener re-crunched the alpha-tested leaf edges TAA had just
+                // softened, so distant canopies read harsh and stair-stepped.
+                ContrastAdaptiveSharpening { enabled: true, sharpening_strength: 0.2, denoise: false },
             ));
         } else {
             e.remove::<(TemporalAntiAliasing, TemporalJitter, MipBias, ContrastAdaptiveSharpening)>();
