@@ -2,12 +2,12 @@
 // exactly like `foliage_wind.wgsl`, and also evaluates last frame's offset so TAA gets true
 // motion vectors for the swaying leaves instead of ghosting them.
 
-#import bevy_pbr::{
-    mesh_functions,
-    prepass_io::{Vertex, VertexOutput},
-    view_transformations::position_world_to_clip,
-}
-#import bevy_render::globals::Globals
+import bevy_pbr::{
+    render::mesh_functions,
+    prepass::io::{Vertex, VertexOutput, decompress_vertex},
+    render::view_transformations::position_world_to_clip,
+};
+import bevy_render::globals::Globals;
 
 // The prepass / shadow view layout carries Globals at binding 1 (bevy_pbr `prepass_view_layout_*`)
 // but `prepass_bindings` doesn't declare it, so bind it here. Wind clock = `globals.time`, same as
@@ -18,7 +18,7 @@ struct FoliageWind {
     wind: vec4<f32>,
     tint: vec4<f32>,
 };
-@group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> fw: FoliageWind;
+@group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> fw: FoliageWind;
 
 fn fw_hash(p: vec2<f32>) -> f32 {
     return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.547);
@@ -34,52 +34,47 @@ fn wind_offset(wp: vec3<f32>, origin: vec3<f32>, w: f32, t: f32) -> vec3<f32> {
 }
 
 @vertex
-fn vertex(vertex: Vertex) -> VertexOutput {
+fn vertex(vertex_in: Vertex) -> VertexOutput {
     var out: VertexOutput;
+    let vertex = decompress_vertex(vertex_in, vertex_in.instance_index);
     let world_from_local = mesh_functions::get_world_from_local(vertex.instance_index);
     let origin = world_from_local[3].xyz;
     var w = 0.0;
-#ifdef VERTEX_UVS_B
+@if(VERTEX_UVS_B) {
     w = vertex.uv_b.x;
     out.uv_b = vertex.uv_b;
-#endif
+}
 
     let wp = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position, 1.0)).xyz;
     out.world_position = vec4<f32>(wp + wind_offset(wp, origin, w, fw_globals.time), 1.0);
     out.position = position_world_to_clip(out.world_position.xyz);
-#ifdef UNCLIPPED_DEPTH_ORTHO_EMULATION
+@if(UNCLIPPED_DEPTH_ORTHO_EMULATION) {
     out.unclipped_depth = out.position.z;
     out.position.z = min(out.position.z, 1.0);
-#endif
+}
 
-#ifdef VERTEX_UVS_A
+@if(VERTEX_UVS_A)
     out.uv = vertex.uv;
-#endif
 
-#ifdef NORMAL_PREPASS_OR_DEFERRED_PREPASS
-#ifdef VERTEX_NORMALS
+@if(NORMAL_PREPASS_OR_DEFERRED_PREPASS) {
+@if(VERTEX_NORMALS)
     out.world_normal = mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex.instance_index);
-#endif
-#ifdef VERTEX_TANGENTS
+@if(VERTEX_TANGENTS)
     out.world_tangent = mesh_functions::mesh_tangent_local_to_world(world_from_local, vertex.tangent, vertex.instance_index);
-#endif
-#endif
+}
 
-#ifdef VERTEX_COLORS
+@if(VERTEX_COLORS)
     out.color = vertex.color;
-#endif
 
-#ifdef MOTION_VECTOR_PREPASS
+@if(MOTION_VECTOR_PREPASS) {
     let prev_model = mesh_functions::get_previous_world_from_local(vertex.instance_index);
     let pwp = mesh_functions::mesh_position_local_to_world(prev_model, vec4<f32>(vertex.position, 1.0)).xyz;
     out.previous_world_position = vec4<f32>(pwp + wind_offset(pwp, prev_model[3].xyz, w, fw_globals.time - fw_globals.delta_time), 1.0);
-#endif
+}
 
-#ifdef VERTEX_OUTPUT_INSTANCE_INDEX
+@if(VERTEX_OUTPUT_INSTANCE_INDEX)
     out.instance_index = vertex.instance_index;
-#endif
-#ifdef VISIBILITY_RANGE_DITHER
+@if(VISIBILITY_RANGE_DITHER)
     out.visibility_range_dither = mesh_functions::get_visibility_range_dither_level(vertex.instance_index, world_from_local[3]);
-#endif
     return out;
 }

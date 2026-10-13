@@ -15,7 +15,7 @@
 //! - a wider, fainter spray VEIL wraps the core; MIST shells billow off the plunge pool; a FOAM
 //!   disc churns on the pool; a FEEDER brook walks up the plateau's thalweg from the lip, so the
 //!   water visibly arrives from above.
-//! Every surface animates in `assets/shaders/waterfall.wgsl` off `globals.time` — no per-frame
+//! Every surface animates in `assets/shaders/waterfall.wesl` off `globals.time` — no per-frame
 //! system, no material or mesh writes.
 
 use std::f32::consts::TAU;
@@ -32,7 +32,7 @@ use bevy::shader::ShaderRef;
 use crate::biome::BiomeEntity;
 use crate::palette::lin;
 
-const FALLS_SHADER: &str = "shaders/waterfall.wgsl";
+const FALLS_SHADER: &str = "shaders/waterfall.wesl";
 
 pub struct VistaPlugin;
 impl Plugin for VistaPlugin {

@@ -3,23 +3,25 @@
 // (warm + saturated = wood, desaturated = stone, other = cloth); the albedo detail is normalised to
 // a 0.5 mean, so `colour * detail * 2` keeps the authored colour while adding the scan's grain.
 
-#import bevy_pbr::{
-    pbr_fragment::pbr_input_from_standard_material,
-    pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing, visibility_range_dither},
-    pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
-    forward_io::{VertexOutput, FragmentOutput},
-}
+import bevy_pbr::{
+    render::pbr_fragment::pbr_input_from_standard_material,
+    render::pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
+    render::pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
+    render::forward_io::{VertexOutput, FragmentOutput},
+};
+@if(VISIBILITY_RANGE_DITHER)
+import bevy_pbr::render::pbr_functions::visibility_range_dither;
 
 struct ReskinParams {
     // x = wood, y = stone, z = cloth world units per repeat; w = detail strength.
     tile: vec4<f32>,
 };
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> rs: ReskinParams;
-@group(#{MATERIAL_BIND_GROUP}) @binding(101) var rs_albedo: texture_2d_array<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(102) var rs_normal: texture_2d_array<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(103) var rs_ormh: texture_2d_array<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(104) var rs_samp: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> rs: ReskinParams;
+@group(constants::MATERIAL_BIND_GROUP) @binding(101) var rs_albedo: texture_2d_array<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(102) var rs_normal: texture_2d_array<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(103) var rs_ormh: texture_2d_array<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(104) var rs_samp: sampler;
 
 struct Tri {
     albedo: vec3<f32>,
@@ -51,9 +53,8 @@ fn tri(layer: i32, p: vec3<f32>, n: vec3<f32>, w: vec3<f32>, tile: f32) -> Tri {
 
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
-#ifdef VISIBILITY_RANGE_DITHER
+@if(VISIBILITY_RANGE_DITHER)
     visibility_range_dither(in.position, in.visibility_range_dither);
-#endif
     var pbr_input = pbr_input_from_standard_material(in, is_front);
     let c = pbr_input.material.base_color.rgb;
     let mx = max(c.r, max(c.g, c.b));

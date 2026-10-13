@@ -11,6 +11,7 @@
 //! stay ungated. Numbers live in `town_store` (test-gated).
 
 use bevy::prelude::*;
+use crate::ui::widgets::Button;
 use tileworld_core::town_store::{BuildKind, Cost, MAX_HOUSES, PopEvent, PlotState, Town, POP_PER_HOUSE};
 
 use crate::castle::{Mats, VillageMats, M};
@@ -1594,8 +1595,8 @@ fn sync_build_rings(
                     7,
                     if selected { 1.0 } else { 0.0 },
                 );
-                if mt.0 != want.0 {
-                    mt.0 = want.0;
+                if mt.value != want.value {
+                    mt.value = want.value;
                 }
                 *vis = Visibility::Visible;
             }

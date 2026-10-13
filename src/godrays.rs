@@ -33,13 +33,14 @@ use bevy::{
 
 use crate::scene::Sun;
 
-const SHADER_ASSET_PATH: &str = "shaders/godrays.wgsl";
+const SHADER_ASSET_PATH: &str = "shaders/godrays.wesl";
 
 /// Per-camera god-rays settings (also the shader uniform). Field ORDER must match the WGSL
 /// `Settings` struct exactly — both sides apply the same std140-ish layout, so identical
 /// declaration order = identical offsets. `sun_screen` / `sun_color` / `fade` are driven each frame
 /// by [`drive_godrays`]; the rest are the authored look (overridable via `FOREST_GODRAYS`).
 #[derive(Component, Clone, Copy, ExtractComponent, ShaderType)]
+#[extract_app(RenderApp)]
 pub struct GodRays {
     /// Ray tint — the live sun colour (linear RGB), driven per-frame.
     pub sun_color: Vec3,

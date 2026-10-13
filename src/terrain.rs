@@ -1,5 +1,5 @@
 //! Biome ground: a flat plane lit by the vision-shader `ExtendedMaterial`
-//! (`assets/shaders/terrain.wgsl`) plus a procedurally-generated detail texture (port
+//! (`assets/shaders/terrain.wesl`) plus a procedurally-generated detail texture (port
 //! of `terrainDetail.ts`). One big plane covers far past the 32×32 populated patch so
 //! the ground reads to the fog horizon. The base colour, detail-ramp and shader params
 //! all come from the active [`BiomeConfig`], so every biome reuses this one material.
@@ -22,7 +22,7 @@ pub const FOREST: f32 = 32.0;
 #[allow(dead_code)] // ditto
 pub const HALF: f32 = FOREST / 2.0;
 
-const TERRAIN_SHADER: &str = "shaders/terrain.wgsl";
+const TERRAIN_SHADER: &str = "shaders/terrain.wesl";
 
 pub type TerrainMaterial = ExtendedMaterial<StandardMaterial, ForestExtension>;
 
@@ -72,7 +72,7 @@ pub struct ForestExtension {
     #[texture(109)]
     #[sampler(110)]
     pub fp_mask: Handle<Image>,
-    /// Alpine terrain (`crate::alpine`, `assets/shaders/alpine.wgsl`): snow / meadow / scree /
+    /// Alpine terrain (`crate::alpine`, `assets/shaders/alpine.wesl`): snow / meadow / scree /
     /// rock PBR layers as 2D arrays + the RGBA8 alpine mask. Placeholders until
     /// `alpine::patch_terrain` binds them (`alpine.on.x == 1`).
     #[uniform(111)]

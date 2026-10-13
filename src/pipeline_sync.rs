@@ -131,9 +131,12 @@ fn hold_prepass_until_main_ready(
         if !held_view.is_empty() {
             let pending_view = pending.0.entry(key).or_default();
             held_view.retain(|&(e, me)| {
-                let keep = visible.entity_pair_is_visible(e, me)
-                    && main_view.get(&me).is_none_or(|&id| !ready(&pipeline_cache, id));
-                if !keep {
+                let still_visible = visible.entity_pair_is_visible(e, me);
+                let keep = still_visible && main_view.get(&me).is_none_or(|&id| !ready(&pipeline_cache, id));
+                // Only a mesh that is STILL visible goes back through the retry list. One that left
+                // view is simply forgotten: Bevy 0.20 re-bins it through `added_entities` when it
+                // re-enters, so also queueing it here bins it twice ("already binned" panic).
+                if !keep && still_visible {
                     pending_view.current_frame.insert((e, me));
                 }
                 keep
@@ -239,6 +242,7 @@ fn log_pipeline_report(cache: Res<PipelineCache>, mut frame: Local<u64>) {
                 d.label.as_deref().unwrap_or("?").to_string(),
                 format!("cs {:?}", d.shader.path().map(|p| p.to_string()).unwrap_or_else(|| format!("{:?}", d.shader.id()))),
             ),
+            _ => ("mesh-pipeline".to_string(), String::new()),
         };
         *by_kind.entry(state.clone()).or_default() += 1;
         if lines.len() < 24 {

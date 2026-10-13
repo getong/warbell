@@ -12,18 +12,18 @@
 //   kind 3  STREAM — the feeder brook on the plateau above the lip: dark clear water with white
 //                    riffles running toward the lip (uv.x across, uv.y = metres downstream).
 
-#import bevy_pbr::{
-    pbr_fragment::pbr_input_from_standard_material,
-    pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
-    forward_io::{VertexOutput, FragmentOutput},
-    mesh_view_bindings::{globals, view},
-}
+import bevy_pbr::{
+    render::pbr_fragment::pbr_input_from_standard_material,
+    render::pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
+    render::forward_io::{VertexOutput, FragmentOutput},
+    render::mesh_view_bindings::{globals, view},
+};
 
 struct FallsParams {
     // x = kind, y = mist base y (kind 1), z = mist height (kind 1), w = seed
     p: vec4<f32>,
 };
-@group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> falls: FallsParams;
+@group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> falls: FallsParams;
 
 fn hash2(p: vec2<f32>) -> f32 {
     return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453);

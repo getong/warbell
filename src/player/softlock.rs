@@ -187,8 +187,8 @@ pub fn soft_lock(
         tf.rotate_y(dt * RING_SPIN);
         let ease = ring.shown * ring.shown * (3.0 - 2.0 * ring.shown);
         let want = combat_marks::tag(MarkKind::Ring, RING_ALPHA * ease, 0, 0.0);
-        if tag.0 != want.0 {
-            tag.0 = want.0;
+        if tag.value != want.value {
+            tag.value = want.value;
         }
     }
 }

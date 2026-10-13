@@ -5,20 +5,22 @@
 // sky) broken up by a world-space noise, and softens the mapped normal + raises roughness so it
 // reads as powder, not paint.
 
-#import bevy_pbr::{
-    pbr_fragment::pbr_input_from_standard_material,
-    pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing, visibility_range_dither},
-    pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
-    forward_io::{VertexOutput, FragmentOutput},
-    mesh_view_bindings::view,
-}
+import bevy_pbr::{
+    render::pbr_fragment::pbr_input_from_standard_material,
+    render::pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing},
+    render::pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
+    render::forward_io::{VertexOutput, FragmentOutput},
+    render::mesh_view_bindings::view,
+};
+@if(VISIBILITY_RANGE_DITHER)
+import bevy_pbr::render::pbr_functions::visibility_range_dither;
 
 struct FoliageWind {
     wind: vec4<f32>,
     // x = crown tint strength, y = snow amount 0..1
     tint: vec4<f32>,
 };
-@group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> fw: FoliageWind;
+@group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> fw: FoliageWind;
 
 fn sk_hash(p: vec2<f32>) -> f32 {
     var p3 = fract(vec3<f32>(p.x, p.y, p.x) * 0.1031);
@@ -39,11 +41,10 @@ fn sk_noise(p: vec2<f32>) -> f32 {
 
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
-#ifdef VISIBILITY_RANGE_DITHER
+@if(VISIBILITY_RANGE_DITHER)
     visibility_range_dither(in.position, in.visibility_range_dither);
-#endif
     var pbr_input = pbr_input_from_standard_material(in, is_front);
-    pbr_input.material.base_color = alpha_discard(pbr_input.material, pbr_input.material.base_color);
+    pbr_input.material.base_color = alpha_discard(pbr_input.material.flags, pbr_input.material.alpha_cutoff, pbr_input.material.base_color);
 
     let amount = fw.tint.y;
     if amount > 0.0 {

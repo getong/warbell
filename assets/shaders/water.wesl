@@ -17,12 +17,12 @@
 //   4. A thin, broken foam line hugging the bank (none on the bog).
 // Fog, haze, DoF and tonemapping all apply as on any opaque surface — the water is in the prepass.
 
-#import bevy_pbr::{
-    pbr_fragment::pbr_input_from_standard_material,
-    pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
-    forward_io::{VertexOutput, FragmentOutput},
-    mesh_view_bindings::{globals, lights},
-}
+import bevy_pbr::{
+    render::pbr_fragment::pbr_input_from_standard_material,
+    render::pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
+    render::forward_io::{VertexOutput, FragmentOutput},
+    render::mesh_view_bindings::{globals, lights},
+};
 
 struct WaterParams {
     // x = ripple strength (normal-tilt multiplier, 1 = as authored), y = river flow speed (world
@@ -32,16 +32,16 @@ struct WaterParams {
     region: vec4<f32>,
 };
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> water: WaterParams;
+@group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> water: WaterParams;
 // RGBA8 water field (`worldmap::bake_water_field`, linear-filtered): R = signed distance to the
 // bank (−SHORE_LAND … +SHORE_MAX world units), G = 0..INLAND_G inland (river / lake / pool) weight
 // with the bog mask stacked above it (255), BA = river flow (0.5-biased XZ).
-@group(#{MATERIAL_BIND_GROUP}) @binding(101) var field_tex: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(102) var field_samp: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(101) var field_tex: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(102) var field_samp: sampler;
 // Tileable slope map (`water::ripple_map`, repeat + mipmapped + anisotropic): RG = slope
 // (0.5-biased), B = the slope std-dev a mip averaged away, A = height.
-@group(#{MATERIAL_BIND_GROUP}) @binding(103) var ripple_tex: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(104) var ripple_samp: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(103) var ripple_tex: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(104) var ripple_samp: sampler;
 
 // Keep in sync with `worldmap::SHORE_MAX` / `worldmap::SHORE_LAND`.
 const SHORE_MAX: f32 = 8.0;

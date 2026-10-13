@@ -1670,7 +1670,7 @@ fn kit_clutter(commands: &mut Commands, kind: u32, pos: Vec3, rot: Quat, p: Vec2
         1 => kit_prop(commands, "stump_a", pos - Vec3::Y * 0.06, rot, 0.85 + 0.5 * r1),
         3 => kit_prop(commands, "ork_spikes", pos, rot, 0.8 + 0.25 * r2),
         // Mud pools: the flat hexagonal decals read as low-poly tiles on the scanned mire floor
-        // (terrain.wgsl's earth layer already draws the trampled mud) — nothing to spawn.
+        // (terrain.wesl's earth layer already draws the trampled mud) — nothing to spawn.
         2 => crate::realforest::get().is_some(),
         _ => false,
     }

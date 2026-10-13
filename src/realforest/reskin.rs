@@ -43,7 +43,7 @@ pub struct ReskinExt {
 
 impl MaterialExtension for ReskinExt {
     fn fragment_shader() -> ShaderRef {
-        "shaders/reskin.wgsl".into()
+        "shaders/reskin.wesl".into()
     }
 }
 

@@ -243,8 +243,8 @@ fn fade_blood(
             continue;
         }
         let want = combat_marks::tag(MarkKind::BloodDry, STAIN_ALPHA * (1.0 - f), b.seed, 0.0);
-        if tag.0 != want.0 {
-            tag.0 = want.0;
+        if tag.value != want.value {
+            tag.value = want.value;
         }
     }
 }

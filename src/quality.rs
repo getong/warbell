@@ -132,7 +132,7 @@ pub enum AoLevel {
     Ultra,
 }
 
-/// Procedural ground-shader detail lane (`terrain.wgsl` `params2`): relief bump + the fine
+/// Procedural ground-shader detail lane (`terrain.wesl` `params2`): relief bump + the fine
 /// noise/imprint octaves. `Low` is the cheap path (skips the expensive per-fragment layers).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum TerrainDetail {
@@ -506,7 +506,7 @@ fn build_eye_adaptation_curve(mut commands: Commands, mut curves: ResMut<Assets<
         return;
     }
     let pts = [Vec2::new(-12.0, -12.0 + a), Vec2::new(r - a, r), Vec2::new(r + a, r), Vec2::new(8.0, 8.0 - a)];
-    match AutoExposureCompensationCurve::from_curve(bevy::math::cubic_splines::LinearSpline::new(pts)) {
+    match AutoExposureCompensationCurve::from_curve(bevy::curve::cubic_splines::LinearSpline::new(pts)) {
         Ok(c) => {
             commands.insert_resource(EyeAdaptationCurve(curves.add(c)));
         }
@@ -670,14 +670,14 @@ fn detect_adapter_quality(
 
     use wgpu::DeviceType;
     let weak = matches!(
-        info.0.device_type,
+        info.device_type,
         DeviceType::IntegratedGpu | DeviceType::VirtualGpu | DeviceType::Cpu
     );
     if weak {
         info!(
             "Integrated/virtual GPU detected (adapter: {:?}, type: {:?}) — starting on Low quality.",
-            info.0.name,
-            info.0.device_type
+            info.name,
+            info.device_type
         );
         *quality = GraphicsQuality::Low;
     }
@@ -727,14 +727,14 @@ fn disable_gpu_clustering_on_weak_gpu(
             let Some(info) = adapter_info.as_ref() else { return };
             use wgpu::DeviceType;
             !matches!(
-                info.0.device_type,
+                info.device_type,
                 DeviceType::IntegratedGpu | DeviceType::VirtualGpu | DeviceType::Cpu
             )
         }
     };
 
     if !keep_gpu {
-        let name = adapter_info.as_ref().map(|i| i.0.name.clone()).unwrap_or_default();
+        let name = adapter_info.as_ref().map(|i| i.name.clone()).unwrap_or_default();
         info!(
             "Disabling GPU light clustering (adapter: {name:?}) — falling back to stable CPU \
              clustering to avoid the per-frame readback stall and the DeviceLost crash (issue #67)."
@@ -880,7 +880,7 @@ fn apply_quality(
                 // occluded ~17% of the forest's (large) ambient term and the whole wood went dark.
                 // Measured: 1.0 keeps the contact grounding at ~3% overall darkening.
                 let thickness = std::env::var("FOREST_AO_THICK").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0);
-                e.insert(ScreenSpaceAmbientOcclusion { quality_level: level, constant_object_thickness: thickness });
+                e.insert(ScreenSpaceAmbientOcclusion { quality_level: level, constant_object_thickness: thickness, ..default() });
             }
             None => {
                 e.remove::<ScreenSpaceAmbientOcclusion>();

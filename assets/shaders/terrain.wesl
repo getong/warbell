@@ -11,14 +11,16 @@
 //       texture's mean luminance.
 // Params (detailScale, detailStrength, variation, mean) come in one vec4 uniform.
 
-#import bevy_pbr::{
-    pbr_fragment::pbr_input_from_standard_material,
-    pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing, visibility_range_dither},
-    pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
-    forward_io::{VertexOutput, FragmentOutput},
-    mesh_view_bindings::{view, lights},
-}
-#import warbell::alpine::{alpine_apply, alpine_sand}
+import bevy_pbr::{
+    render::pbr_fragment::pbr_input_from_standard_material,
+    render::pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
+    render::pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
+    render::forward_io::{VertexOutput, FragmentOutput},
+    render::mesh_view_bindings::{view, lights},
+};
+@if(VISIBILITY_RANGE_DITHER)
+import bevy_pbr::render::pbr_functions::visibility_range_dither;
+import super::alpine::{alpine_apply, alpine_sand};
 
 struct ForestParams {
     // x=detailScale, y=detailStrength, z=variation, w=meanLuminance
@@ -33,24 +35,24 @@ struct ForestParams {
     pbr_region: vec4<f32>,
 };
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> forest: ForestParams;
-@group(#{MATERIAL_BIND_GROUP}) @binding(101) var detail_tex: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(102) var detail_samp: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> forest: ForestParams;
+@group(constants::MATERIAL_BIND_GROUP) @binding(101) var detail_tex: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(102) var detail_samp: sampler;
 // Ground masks (RG8, `worldmap::ground_mask_image`): R = cart-wheel ruts (`roads::bake_rut_mask`,
 // twin grooves beside artery centrelines), G = eroded-bank weight (`worldmap::bank_profile`).
 // Fragment-resolution because ~0.5u grooves are far below the 1u vertex-colour grid.
-@group(#{MATERIAL_BIND_GROUP}) @binding(103) var rut_tex: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(104) var rut_samp: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(103) var rut_tex: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(104) var rut_samp: sampler;
 // Realistic forest floor (`realforest`): three scanned layers as 2D arrays - 0 litter, 1 moss,
 // 2 path - sRGB albedo, OpenGL normal, and linear AO / roughness / metal / HEIGHT (alpha).
-@group(#{MATERIAL_BIND_GROUP}) @binding(105) var fp_albedo: texture_2d_array<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(106) var fp_normal: texture_2d_array<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(107) var fp_ormh: texture_2d_array<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(108) var fp_samp: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(105) var fp_albedo: texture_2d_array<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(106) var fp_normal: texture_2d_array<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(107) var fp_ormh: texture_2d_array<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(108) var fp_samp: sampler;
 // RGBA8 mask: R = forest weight (soft-edged tile mask), G = road strength, B = contact darkening
 // around trunks / solid props.
-@group(#{MATERIAL_BIND_GROUP}) @binding(109) var fp_mask: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(110) var fp_mask_samp: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(109) var fp_mask: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(110) var fp_mask_samp: sampler;
 
 // World units covered by one repeat of each forest-floor layer (different on purpose so the
 // three repeats never line up), and the deepest parallax displacement in world units.
@@ -311,9 +313,8 @@ fn fragment(
     // drape's straight ramp over a mesa tier punched through the cliff walls: the
     // "terrain shows through the mountains" bug. Also the reason `spawn_terrain_sheet`'s
     // "dithered crossfade" comment was aspirational — the dither was never wired.
-#ifdef VISIBILITY_RANGE_DITHER
+@if(VISIBILITY_RANGE_DITHER)
     visibility_range_dither(in.position, in.visibility_range_dither);
-#endif
 
     var pbr_input = pbr_input_from_standard_material(in, is_front);
 

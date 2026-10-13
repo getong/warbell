@@ -3,7 +3,7 @@
 //! ONE `ExtendedMaterial<StandardMaterial, WaterExt>` draws every water surface on the island —
 //! the sea, the four rivers, the lake + its brooks and the swamp bog pools are all the single
 //! `SEA_Y` plane showing through the carved terrain. Its FRAGMENT shader
-//! (`assets/shaders/water.wgsl`) is a single-pass, physically-plausible water model:
+//! (`assets/shaders/water.wesl`) is a single-pass, physically-plausible water model:
 //!
 //! - **Normals** from a procedural tileable *slope* map ([`ripple_map`], baked here at startup —
 //!   no texture download) sampled in 2–3 scrolling layers; river layers are **flow-mapped** along
@@ -51,7 +51,7 @@ const BANK_RAMP: f32 = 3.0;
 const Z_MIN: f32 = -90.0;
 const Z_MAX: f32 = 90.0;
 
-const WATER_SHADER: &str = "shaders/water.wgsl";
+const WATER_SHADER: &str = "shaders/water.wesl";
 
 // ── Centerline math (one source of truth for mesh + queries) ────────────────────
 

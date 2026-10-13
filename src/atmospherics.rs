@@ -37,13 +37,14 @@ use bevy::{
 
 use crate::scene::Sun;
 
-const SHADER_ASSET_PATH: &str = "shaders/atmospherics.wgsl";
+const SHADER_ASSET_PATH: &str = "shaders/atmospherics.wesl";
 
 /// Per-camera atmospherics settings (also the shader uniform). Field ORDER must match the
 /// WGSL `Settings` struct exactly. `world_from_clip` / `cam_pos` / `sun_dir` / `fog_color` /
 /// `glow_color` / `time` / `fade` are driven each frame by [`drive_atmospherics`]; the rest
 /// are the authored look (overridable via `FOREST_ATMO` for screenshot-harness tuning).
 #[derive(Component, Clone, Copy, ExtractComponent, ShaderType)]
+#[extract_app(RenderApp)]
 pub struct Atmospherics {
     /// Inverse view-projection — clip → world unprojection (driven per frame).
     pub world_from_clip: Mat4,
@@ -283,7 +284,7 @@ pub(crate) fn atmospherics_pass(
     let Some(settings_binding) = uniforms.uniforms().binding() else {
         return;
     };
-    let Some(depth_view) = prepass.depth_view() else {
+    let Some(depth_view) = prepass.depth_only_view() else {
         return;
     };
 

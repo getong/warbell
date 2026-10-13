@@ -15,17 +15,16 @@
 // just below the ground horizon still lights the deck from below (the pink/orange dusk underlight).
 // Distance fades the deck out into the Atmosphere's own horizon haze.
 
-#import bevy_pbr::mesh_view_bindings::{view, lights, globals}
-
+import bevy_pbr::render::mesh_view_bindings::{view, lights, globals};
 struct CloudParams {
     // x deck height (world y) · y texture tile (world units) · z coverage 0..1 · w max opacity
     shape: vec4<f32>,
     // xy wind (world units / s) · z detail tile (world units) · w horizon fade distance
     wind: vec4<f32>,
 };
-@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: CloudParams;
-@group(#{MATERIAL_BIND_GROUP}) @binding(1) var noise_tex: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(2) var noise_samp: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> params: CloudParams;
+@group(constants::MATERIAL_BIND_GROUP) @binding(1) var noise_tex: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(2) var noise_samp: sampler;
 
 struct Vin {
     @location(0) position: vec3<f32>,

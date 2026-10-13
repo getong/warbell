@@ -1122,8 +1122,8 @@ fn sync_rune_ring(
     let want = tag(MarkKind::Rune, 0.95, seed, active.progress);
     if !existing.is_empty() {
         for (_, mut mt) in &mut existing {
-            if mt.0 != want.0 {
-                mt.0 = want.0;
+            if mt.value != want.value {
+                mt.value = want.value;
             }
         }
         return;

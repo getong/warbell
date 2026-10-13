@@ -3323,7 +3323,7 @@ pub(crate) fn ground_color(x: f32, z: f32) -> [f32; 4] {
         // outside the shoulder — grass thinning toward the road, like a real trodden margin.
         // (Wheel ruts are NOT painted here: ~0.5u grooves are far below the 1-unit vertex-colour
         // resolution — they live in the fragment-resolution rut mask the terrain shader samples,
-        // see `roads::bake_rut_mask` + `terrain.wgsl`.)
+        // see `roads::bake_rut_mask` + `terrain.wesl`.)
         let core_w = smoothstep(0.30, 0.55, road_s);
         let verge_w = smoothstep(0.02, 0.14, road_s) * (1.0 - smoothstep(0.18, 0.34, road_s));
         col = mix3(col, lin3(road_col), (verge_w * 0.28 + core_w * road_blend).min(1.0));
@@ -3343,14 +3343,14 @@ pub(crate) fn ground_color(x: f32, z: f32) -> [f32; 4] {
 /// line up to a tile off the rendered bank.
 const FIELD_RES: usize = 2;
 /// Signed bank-distance range encoded in the field's R channel, world units: −[`SHORE_LAND`]
-/// (inside the bank) … +[`SHORE_MAX`] offshore. Keep both in sync with `assets/shaders/water.wgsl`.
+/// (inside the bank) … +[`SHORE_MAX`] offshore. Keep both in sync with `assets/shaders/water.wesl`.
 const SHORE_MAX: f32 = 8.0;
 const SHORE_LAND: f32 = 1.0;
 /// How far (base units) river flow keeps pushing past the channel edge before fading out — so a
 /// river mouth's current carries a little way into the sea / lake instead of stopping dead.
 const FLOW_FADE: f32 = 2.5;
 /// G-channel value of fully-inland water in the water field (bog = 255 sits above it, so the shader
-/// splits the two lanes at `INLAND_G / 255`). Keep in sync with `assets/shaders/water.wgsl`.
+/// splits the two lanes at `INLAND_G / 255`). Keep in sync with `assets/shaders/water.wesl`.
 const INLAND_G: f32 = 100.0;
 
 /// Two-pass 8-neighbour chamfer distance transform (≈Euclidean, in texels): `d` holds 0 at the
@@ -4367,7 +4367,7 @@ fn spawn_terrain_sheet(
                 // "underfoot chunk stuck in low-res" bug), a window that re-opens on every world/biome
                 // rebuild. Baking the real AABB here closes that gap.
                 use bevy::camera::primitives::MeshAabb;
-                let aabb = mesh.compute_aabb();
+                let aabb = mesh.get_aabb();
                 // Terrain LOD: past TERRAIN_LOD the full-res chunk (1 quad/tile + walls +
                 // marching-squares banks) hands off to a stride-4 coarse drape — ~1/16th the
                 // vertices for the distant majority of the island. The band is a dithered
@@ -4382,7 +4382,7 @@ fn spawn_terrain_sheet(
                 // checkerboards with see-through holes ("the ground looks slightly
                 // transparent"), and at screen edges one sibling could frustum-cull while
                 // the other still dithered.
-                let shared = match (aabb, coarse.as_ref().and_then(|c| c.compute_aabb())) {
+                let shared = match (aabb, coarse.as_ref().and_then(|c| c.get_aabb())) {
                     (Some(a), Some(b)) => {
                         let min = a.min().min(b.min());
                         let max = a.max().max(b.max());

@@ -9,6 +9,15 @@
 
 use bevy::ecs::relationship::RelatedSpawnerCommands;
 use bevy::prelude::*;
+
+/// Drop-in for the legacy `bevy::ui::widget::Button`, which Bevy 0.20 deprecated into an
+/// unconstructible alias. Same requires (a `Node` that blocks picking + an `Interaction` that
+/// `ui_focus_system` keeps updating), so every `Interaction`-driven menu/HUD button works unchanged.
+/// Shadows the prelude's (ambiguous) `Button` wherever it's imported explicitly.
+#[derive(Component, Default, Debug, Clone, Copy)]
+#[require(Node, bevy::ui::FocusPolicy::Block, Interaction)]
+pub struct Button;
+
 use bevy::ui::widget::NodeImageMode;
 use bevy::ui::{BackgroundGradient, ColorStop, Gradient, LinearGradient};
 

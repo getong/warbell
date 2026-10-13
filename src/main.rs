@@ -66,6 +66,7 @@ mod density_report; // test-only 40u planned-site density audit (living-island s
 mod defenses;
 mod distant_isles;
 mod dof;
+mod filmgrade;
 mod dying;
 mod economy;
 mod tree_ui;
@@ -247,7 +248,7 @@ fn main() {
         app.add_plugins((
             bevy::app::ScheduleRunnerPlugin::run_loop(std::time::Duration::ZERO),
             // Render components still install removal hooks in a backend-free app.
-            bevy::render::sync_world::SyncWorldPlugin,
+            bevy::extract::sync_world::SyncWorldPlugin::<bevy::render::RenderApp>::default(),
         ));
     }
     app
@@ -271,6 +272,7 @@ fn main() {
             decor::DecorPlugin, // firefly bob system (decor itself spawned per-biome)
             dof::DofPlugin,     // custom CoC bokeh depth-of-field post pass (player-focused)
         ))
+        .add_plugins(filmgrade::FilmGradePlugin) // final RDR2-style look pass: split-tone, vibrance, S-curve, sharpen
         .add_plugins(gates::GatesPlugin) // gates shut at dusk, open at dawn; ork-only solid, hackable
         .add_plugins(market::MarketPlugin) // the living market on the west lane: stalls, vendors, vendor greetings
         .add_plugins(flame_fx::FlameFxPlugin) // brazier / fire-basket flame cards

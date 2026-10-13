@@ -18,6 +18,7 @@ use bevy::ecs::relationship::RelatedSpawnerCommands;
 use bevy::ecs::schedule::IntoScheduleConfigs;
 use bevy::ecs::system::ScheduleSystem;
 use bevy::prelude::*;
+use crate::ui::widgets::Button;
 
 use crate::ui::anim::{anim, anim_btn, AnimKind};
 use crate::ui::fonts::{label, UiFonts, FONT_BODY, FONT_DISPLAY, FONT_LABEL};

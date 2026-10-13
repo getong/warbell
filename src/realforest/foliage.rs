@@ -40,10 +40,10 @@ pub fn wind_enabled() -> bool {
 
 impl MaterialExtension for FoliageExt {
     fn vertex_shader() -> ShaderRef {
-        "shaders/foliage_wind.wgsl".into()
+        "shaders/foliage_wind.wesl".into()
     }
     fn prepass_vertex_shader() -> ShaderRef {
-        if wind_enabled() { "shaders/foliage_wind_prepass.wgsl".into() } else { ShaderRef::Default }
+        if wind_enabled() { "shaders/foliage_wind_prepass.wesl".into() } else { ShaderRef::Default }
     }
 }
 

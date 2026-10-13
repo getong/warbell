@@ -664,7 +664,7 @@ fn setup_camera(
     // side airy — crushed blacks were a big part of the old "harsh" read.
     grading.shadows.gain = 1.05;
 
-    commands.spawn((
+    let cam = commands.spawn((
         Camera3d::default(),
         // far=230 (was the 1000 default). The Linear fog reaches full horizon colour by 190
         // tiles (biome.rs), so everything past ~190 is solid fog — invisible but still drawn at
@@ -736,6 +736,12 @@ fn setup_camera(
         // Toon edge-outline (runs before the blur): crisp object silhouettes. Tunable in F1.
         crate::outline::default_outline(),
         crate::controls::FlyCam::new(yaw, pitch),
+    )).id();
+    // Final film-grade pass (`filmgrade.rs`); `FOREST_GRADE=0` leaves it off for A/B.
+    if let Some(g) = crate::filmgrade::default_film_grade() {
+        commands.entity(cam).insert(g);
+    }
+    commands.entity(cam).insert((
         // Listener for spatial wildlife audio (see `audio.rs`). `gap` = ear separation in
         // world units; scaled by the global `SpatialScale` set in `main.rs`.
         SpatialListener::new(4.0),

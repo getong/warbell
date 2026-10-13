@@ -20,12 +20,12 @@
 //   bits 12..19  seed (shape variation)
 //   bits 20..27  aux (shockwave: age 0..255)
 
-#import bevy_pbr::{
-    pbr_fragment::pbr_input_from_standard_material,
-    pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
-    forward_io::{VertexOutput, FragmentOutput},
-    mesh_functions,
-}
+import bevy_pbr::{
+    render::pbr_fragment::pbr_input_from_standard_material,
+    render::pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
+    render::forward_io::{VertexOutput, FragmentOutput},
+    render::mesh_functions,
+};
 
 const KIND_RING: u32 = 0u;
 const KIND_SHOCK: u32 = 1u;
@@ -111,7 +111,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 
     var out: FragmentOutput;
 
-#ifdef BLEND_MULTIPLY
+@if(BLEND_MULTIPLY) {
     // ── Stains: multiply the lit ground (premultiplied: dst * (c·a + 1 − a)) ──
     var c = vec3<f32>(1.0);
     var a = 0.0;
@@ -133,7 +133,8 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     }
     a = a * strength;
     out.color = vec4<f32>(c * a, a);
-#else
+}
+@else {
     // ── Light marks: lit pale matte albedo + a dark halo, premultiplied ──
     var albedo = vec3<f32>(0.0);
     var light_a = 0.0; // coverage of the pale line
@@ -247,6 +248,6 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     lit = main_pass_post_lighting_processing(pbr_input, vec4<f32>(lit.rgb, 1.0));
     let total_a = clamp(light_a + dark_a * (1.0 - light_a), 0.0, 1.0);
     out.color = vec4<f32>(lit.rgb * light_a, total_a);
-#endif
+}
     return out;
 }

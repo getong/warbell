@@ -11,7 +11,7 @@
 //!   whole chunk of ferns+grass is one draw (they share one atlas), same culling as the old cover.
 //! - **Ground**: three scanned forest-floor layers (litter / moss / path) with height maps, splatted
 //!   by the terrain shader inside the forest with height-blending and parallax occlusion mapping
-//!   (`terrain.wgsl`, `FP_*`). The forest/road mask is baked once from the tile map.
+//!   (`terrain.wesl`, `FP_*`). The forest/road mask is baked once from the tile map.
 //!
 //! Placement, spacing, blockers, chop/regrow and determinism are untouched: `biome::scatter_region`
 //! still makes every decision and only asks [`Kit`] *what to draw* at the very end.
@@ -1419,7 +1419,7 @@ fn model_extents(parts: &[Part], mats: &[KitMat]) -> (Vec2, f32, f32) {
     (half, trunk, height)
 }
 
-/// Ground layers, in texture-array order (`terrain.wgsl` indexes them 0/1/2).
+/// Ground layers, in texture-array order (`terrain.wesl` indexes them 0/1/2).
 const LAYERS: [&str; 3] = ["litter", "moss", "path"];
 
 pub(crate) fn build_kit(

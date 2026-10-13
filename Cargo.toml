@@ -14,8 +14,8 @@ edition = "2024"
 # without it the in-memory WAV `AudioSource`s panic on play with `UnrecognizedFormat`.
 # `bevy_ui_widgets` (new in 0.19) brings the headless core widgets — Slider / Checkbox /
 # RadioButton — used by the graphics Settings page (`ui/graphics_menu.rs`).
-bevy = { version = "0.19.1", features = ["wav", "bevy_ui_widgets", "dds"] }
-bevy_egui = "0.41" # live debug-tuning panel (egui), targets bevy 0.19
+bevy = { version = "0.20.0", features = ["wav", "bevy_ui_widgets", "dds"] }
+bevy_egui = "0.43.1" # live debug-tuning panel (egui), targets bevy 0.20
 # Pure, deterministic game logic vendored from the ditched port (zero deps, edition 2024).
 # Source of the parity-tested stores: pathfinding, waves, upgrades, inventory, animals, etc.
 # `serde` feature on so the save system can persist Player/Bag/Town/ResourceState (savegame.rs).
@@ -23,10 +23,10 @@ tileworld_core = { path = "crates/core", features = ["serde"] }
 # Save/continue: JSON snapshot of a run, written at each dawn (`src/savegame.rs`).
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# Same wgpu major bevy 0.19 depends on (29.x) — used in quality.rs to inspect
+# Same wgpu major bevy 0.20 depends on (30.x) — used in quality.rs to inspect
 # RenderAdapterInfo::device_type for the hardware-aware startup preset. Kept at the bare major so
 # cargo unifies it with bevy's own wgpu (same compiled crate → DeviceType types match).
-wgpu = { version = "29", default-features = false }
+wgpu = { version = "30", default-features = false }
 # Runtime window icon (taskbar / title-bar / Alt-Tab): winit's window class ships hIcon=0, so it
 # does NOT adopt the exe's embedded icon for the live window — we set it ourselves in
 # `src/window_icon.rs`. `winit` (pinned to bevy_winit's 0.30 so the WinitWindow types unify) gives

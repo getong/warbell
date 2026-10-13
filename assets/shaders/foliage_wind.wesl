@@ -12,12 +12,12 @@
 // every foliage mesh for the main pass, the prepass and each shadow cascade every frame (~10 ms
 // of CPU on the 1.5x map).
 
-#import bevy_pbr::{
-    mesh_functions,
-    forward_io::{Vertex, VertexOutput},
-    view_transformations::position_world_to_clip,
-    mesh_view_bindings::globals,
-}
+import bevy_pbr::{
+    render::mesh_functions,
+    render::forward_io::{Vertex, VertexOutput, decompress_vertex},
+    render::view_transformations::position_world_to_clip,
+    render::mesh_view_bindings::globals,
+};
 
 struct FoliageWind {
     // x, y unused (the wind clock is `globals.time`, see the header), z = amplitude (world units at
@@ -26,7 +26,7 @@ struct FoliageWind {
     // x = crown tint strength (0..1), yzw reserved
     tint: vec4<f32>,
 };
-@group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> fw: FoliageWind;
+@group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> fw: FoliageWind;
 
 fn fw_hash(p: vec2<f32>) -> f32 {
     return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.547);
@@ -43,31 +43,29 @@ fn wind_offset(wp: vec3<f32>, origin: vec3<f32>, w: f32, t: f32) -> vec3<f32> {
 }
 
 @vertex
-fn vertex(vertex: Vertex) -> VertexOutput {
+fn vertex(vertex_in: Vertex) -> VertexOutput {
     var out: VertexOutput;
+    let vertex = decompress_vertex(vertex_in, vertex_in.instance_index);
     let world_from_local = mesh_functions::get_world_from_local(vertex.instance_index);
     let origin = world_from_local[3].xyz;
 
-#ifdef VERTEX_NORMALS
+@if(VERTEX_NORMALS)
     out.world_normal = mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex.instance_index);
-#endif
 
     var w = 0.0;
-#ifdef VERTEX_UVS_B
+@if(VERTEX_UVS_B) {
     w = vertex.uv_b.x;
     out.uv_b = vertex.uv_b;
-#endif
+}
     out.world_position = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position, 1.0));
     out.world_position = vec4<f32>(out.world_position.xyz + wind_offset(out.world_position.xyz, origin, w, globals.time), 1.0);
     out.position = position_world_to_clip(out.world_position.xyz);
 
-#ifdef VERTEX_UVS_A
+@if(VERTEX_UVS_A)
     out.uv = vertex.uv;
-#endif
-#ifdef VERTEX_TANGENTS
+@if(VERTEX_TANGENTS)
     out.world_tangent = mesh_functions::mesh_tangent_local_to_world(world_from_local, vertex.tangent, vertex.instance_index);
-#endif
-#ifdef VERTEX_COLORS
+@if(VERTEX_COLORS) {
     // Crown colour variety: each tree (its own origin) leans yellow-green, mid or deep blue-green,
     // and merged undergrowth chunks drift in broad patches — no more one-green forest.
     let n = clamp(fw_hash(floor(origin.xz * 2.0)) * 0.6
@@ -76,12 +74,10 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     let cool = vec3<f32>(0.80, 0.93, 0.88);
     let tint = mix(vec3<f32>(1.0), mix(warm, cool, n), fw.tint.x);
     out.color = vec4<f32>(vertex.color.rgb * tint, vertex.color.a);
-#endif
-#ifdef VERTEX_OUTPUT_INSTANCE_INDEX
+}
+@if(VERTEX_OUTPUT_INSTANCE_INDEX)
     out.instance_index = vertex.instance_index;
-#endif
-#ifdef VISIBILITY_RANGE_DITHER
+@if(VISIBILITY_RANGE_DITHER)
     out.visibility_range_dither = mesh_functions::get_visibility_range_dither_level(vertex.instance_index, world_from_local[3]);
-#endif
     return out;
 }

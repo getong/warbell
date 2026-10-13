@@ -6,7 +6,7 @@
 //! - **Ground layers** ([`patch_terrain`]): a 4-layer texture array (snow / alpine meadow / scree /
 //!   rock, `tools/blender_forest/alpine.py` → `pack_forest_textures` → `forest_pbr/alpine_*.dds`)
 //!   plus an RGBA8 mask baked once per map ([`bake_mask`]) are bound into every world terrain
-//!   material. `assets/shaders/alpine.wgsl` splats them: slope- and height-driven snow cover with
+//!   material. `assets/shaders/alpine.wesl` splats them: slope- and height-driven snow cover with
 //!   patchy edges, drifts at wall feet and sparkle, triplanar rock on cliff faces and steep
 //!   slopes, talus scree at the wall feet, and the meadow under / around the snow line.
 //! - **Mountain geometry** lives in `worldmap` (it needs the private tile grid) as two child
@@ -57,7 +57,7 @@ struct AlpineShader(Handle<Shader>);
 impl Plugin for AlpinePlugin {
     fn build(&self, app: &mut App) {
         snowkit::register(app);
-        let shader = app.world().resource::<AssetServer>().load::<Shader>("shaders/alpine.wgsl");
+        let shader = app.world().resource::<AssetServer>().load::<Shader>("shaders/alpine.wesl");
         app.insert_resource(AlpineShader(shader));
         app.add_systems(Update, patch_terrain);
     }

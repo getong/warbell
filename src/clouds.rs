@@ -2,7 +2,7 @@
 //! old low-poly icosphere puffs (which sat at y 42–80, right in front of the enlarged town's
 //! build-mode camera).
 //!
-//! One camera-centred sphere drawn with [`CloudSkyMaterial`] (`assets/shaders/clouds.wgsl`):
+//! One camera-centred sphere drawn with [`CloudSkyMaterial`] (`assets/shaders/clouds.wesl`):
 //! the vertex stage re-centres it on the camera and pins it to the far plane, so it only ever
 //! fills SKY pixels — it can't sit between any camera and the world, at any height. The fragment
 //! stage ray-casts a virtual deck at [`DECK_HEIGHT`] and samples a baked tileable Perlin-Worley
@@ -55,10 +55,10 @@ pub struct CloudSkyMaterial {
 
 impl Material for CloudSkyMaterial {
     fn vertex_shader() -> ShaderRef {
-        "shaders/clouds.wgsl".into()
+        "shaders/clouds.wesl".into()
     }
     fn fragment_shader() -> ShaderRef {
-        "shaders/clouds.wgsl".into()
+        "shaders/clouds.wesl".into()
     }
     fn alpha_mode(&self) -> AlphaMode {
         AlphaMode::Blend

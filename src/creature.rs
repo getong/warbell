@@ -1,7 +1,7 @@
 //! Shared creature material: an `ExtendedMaterial<StandardMaterial, CreatureExt>` that all
 //! animated rigs (hero, orks, wildlife) draw against — replacing their plain white
 //! `StandardMaterial`s. Hue still lives in `ATTRIBUTE_COLOR.rgb`; the **alpha** channel now
-//! carries a per-vertex SURFACE CODE that `assets/shaders/creature.wgsl` reads to apply a
+//! carries a per-vertex SURFACE CODE that `assets/shaders/creature.wesl` reads to apply a
 //! subtle procedural texture (fur/scale/stone/metal/hide/bone/cloth) in model space, plus a
 //! per-surface roughness/spec response. Props/trees/scatter keep their own white material —
 //! this is creatures only.
@@ -16,7 +16,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderType};
 use bevy::shader::ShaderRef;
 
-const CREATURE_SHADER: &str = "shaders/creature.wgsl";
+const CREATURE_SHADER: &str = "shaders/creature.wesl";
 
 pub type CreatureMaterial = ExtendedMaterial<StandardMaterial, CreatureExt>;
 
@@ -208,7 +208,7 @@ mod tests {
     }
 
     /// The load-bearing contract: each `surf_code` must decode back to its own family under the
-    /// shader's bucket thresholds. `classify` mirrors the if-ladder in `assets/shaders/creature.wgsl`
+    /// shader's bucket thresholds. `classify` mirrors the if-ladder in `assets/shaders/creature.wesl`
     /// — keep the two in sync. Without this, retuning a code (or adding a surface) silently
     /// mis-textures vertices with no compile error.
     #[test]

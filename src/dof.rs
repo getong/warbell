@@ -25,7 +25,7 @@ use bevy::{
     },
 };
 
-const SHADER_ASSET_PATH: &str = "shaders/dof.wgsl";
+const SHADER_ASSET_PATH: &str = "shaders/dof.wesl";
 /// MUST equal the main camera's real near plane (`scene::default_projection`, `near: 0.04`).
 /// Bevy builds `perspective_infinite_reverse_rh`, so the prepass depth is exactly
 /// `near / z` — the shader inverts it as `near / d`, and any mismatch scales EVERY
@@ -45,6 +45,7 @@ const NEAR: f32 = 0.04;
 /// Per-camera bokeh-DoF settings (also the shader uniform). `focal` is overwritten each frame
 /// by `scene::drive_dof_focus` (camera→player distance / a fixed mid-ground plane in free-cam).
 #[derive(Component, Default, Clone, Copy, ExtractComponent, ShaderType)]
+#[extract_app(RenderApp)]
 pub struct Dof {
     /// Focus distance (tiles).
     pub focal: f32,
@@ -182,7 +183,7 @@ pub(crate) fn dof_pass(
     let Some(settings_binding) = uniforms.uniforms().binding() else {
         return;
     };
-    let Some(depth_view) = prepass.depth_view() else {
+    let Some(depth_view) = prepass.depth_only_view() else {
         return;
     };
 

@@ -26,7 +26,7 @@ use bevy::{
     },
 };
 
-const SHADER_ASSET_PATH: &str = "shaders/outline.wgsl";
+const SHADER_ASSET_PATH: &str = "shaders/outline.wesl";
 /// Also stale vs the camera's real `near: 0.04` (`scene::default_projection`) — but harmless
 /// here, unlike `dof.rs`: the shader only uses it in the RATIO `abs(dn - dc) / dc`, where a
 /// constant scale factor cancels. Deliberately NOT "fixed" to 0.04 — the only behavioural delta
@@ -36,6 +36,7 @@ const NEAR: f32 = 0.1;
 
 /// Per-camera outline settings (also the shader uniform).
 #[derive(Component, Default, Clone, Copy, ExtractComponent, ShaderType)]
+#[extract_app(RenderApp)]
 pub struct Outline {
     /// Edge sample offset, in pixels (line thickness).
     pub thickness: f32,
@@ -149,7 +150,7 @@ pub(crate) fn outline_pass(
         return;
     };
     // Needs BOTH prepass textures; skip (pass-through) if either is missing this frame.
-    let (Some(depth_view), Some(normal_view)) = (prepass.depth_view(), prepass.normal_view())
+    let (Some(depth_view), Some(normal_view)) = (prepass.depth_only_view(), prepass.normal_view())
     else {
         return;
     };

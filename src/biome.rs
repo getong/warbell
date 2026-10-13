@@ -906,7 +906,7 @@ fn merge_props(props: Vec<PendingProp>) -> Option<Mesh> {
 }
 
 // ── Ground "fertility" field — the cure for "vegetation doesn't match the ground". ───────────
-// The terrain shader (`terrain.wgsl`) paints the meadow as drifting patches: worn/bald trodden
+// The terrain shader (`terrain.wesl`) paints the meadow as drifting patches: worn/bald trodden
 // dirt, damp moss hollows, sun-dried golden sweeps, lush well-watered green, and grey-tan bare-
 // earth blotches (the "szare placki"). But the cover scatterer rolled a FIXED per-tile chance
 // everywhere — a uniform salt-and-pepper carpet that ignored all of that. So the ground and the

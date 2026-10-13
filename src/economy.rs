@@ -5,6 +5,7 @@
 //! panel (open with **U**); buying a node deducts gold+stone and enacts its typed effect.
 
 use bevy::prelude::*;
+use crate::ui::widgets::Button;
 use tileworld_core::inventory::{item_def, sell_value};
 use tileworld_core::player::Player;
 use tileworld_core::shop_catalog::{discounted_price, vendor_items, ShopVendor};

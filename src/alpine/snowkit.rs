@@ -25,10 +25,10 @@ pub struct SnowKitExt {
 
 impl MaterialExtension for SnowKitExt {
     fn vertex_shader() -> ShaderRef {
-        "shaders/foliage_wind.wgsl".into()
+        "shaders/foliage_wind.wesl".into()
     }
     fn fragment_shader() -> ShaderRef {
-        "shaders/alpine_snowkit.wgsl".into()
+        "shaders/alpine_snowkit.wesl".into()
     }
 }
 

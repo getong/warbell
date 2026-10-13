@@ -4,7 +4,7 @@
 //!
 //! They used to be flat `Annulus` / `Circle` meshes (12–40 hard segments, flat unlit amber or a
 //! solid disc) — with the realistic PBR forest around them they read as low-poly stamps. Now every
-//! mark is ONE flat quad drawn by `assets/shaders/ground_mark.wgsl`, which builds the shape
+//! mark is ONE flat quad drawn by `assets/shaders/ground_mark.wesl`, which builds the shape
 //! analytically (feathered gaussian lines, noise-frayed edges, seeded satellite droplets), so there
 //! is no polygon edge anywhere and no two pools are the same disc.
 //!
@@ -27,7 +27,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::AsBindGroup;
 use bevy::shader::ShaderRef;
 
-const SHADER: &str = "shaders/ground_mark.wgsl";
+const SHADER: &str = "shaders/ground_mark.wesl";
 
 /// Positive depth bias so a mark lying on the courtyard cobble (an opaque slab at y≈0.04) wins the
 /// depth tie instead of z-fighting it — same value + reason as `aftermath`'s old decals.
@@ -125,7 +125,7 @@ pub fn draped_disc(centre: Vec2, diameter: f32, res: u32, lift: f32) -> (Mesh, V
 pub fn tag(kind: MarkKind, alpha: f32, seed: u32, aux: f32) -> MeshTag {
     let a = (alpha.clamp(0.0, 1.0) * 255.0).round() as u32;
     let x = (aux.clamp(0.0, 1.0) * 255.0).round() as u32;
-    MeshTag(a | (kind as u32) << 8 | (seed & 0xff) << 12 | x << 20)
+    MeshTag::new(a | (kind as u32) << 8 | (seed & 0xff) << 12 | x << 20)
 }
 
 /// The shared quad + the two material recipes. Every mark spawns `Mesh3d(quad)` with one of them.
@@ -226,8 +226,8 @@ fn drive_mark_fades(
         let squash = tf.scale.z / tf.scale.x.max(1e-4);
         tf.scale = Vec3::new(s, 1.0, s * squash);
         let want = tag(f.kind, f.a0 * (1.0 - k * k * (3.0 - 2.0 * k)), f.seed, grow);
-        if mt.0 != want.0 {
-            mt.0 = want.0;
+        if mt.value != want.value {
+            mt.value = want.value;
         }
     }
 }

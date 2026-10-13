@@ -406,7 +406,7 @@ const HURT_TEST_STEPS: i32 = 4;
 
 // ── 2. Enemy HP bars (billboard follower entities, one shader quad each) ────
 //
-// Each bar is ONE quad drawn by `assets/shaders/hp_bar.wgsl` (rim + iron frame + channel + blood
+// Each bar is ONE quad drawn by `assets/shaders/hp_bar.wesl` (rim + iron frame + channel + blood
 // fill + damage trail, all in the fragment shader). Every bar shares one mesh + one material; the
 // per-bar values (hp, trail, hit flash) ride the instance `MeshTag`, so the renderer instances
 // the whole horde's bars into a single draw, and a damage tick rewrites one `u32` — never a
@@ -431,7 +431,7 @@ pub struct HpBarMaterial {
 
 impl Material for HpBarMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/hp_bar.wgsl".into()
+        "shaders/hp_bar.wesl".into()
     }
 }
 
@@ -494,7 +494,7 @@ fn spawn_hp_bar(commands: &mut Commands, assets: &HpBarAssets, e: Entity, y: f32
         MeshMaterial3d(assets.mat.clone()),
         Transform::default(),
         Visibility::Hidden,
-        MeshTag(pack_bar_tag(1.0, 1.0, 0.0)),
+        MeshTag::new(pack_bar_tag(1.0, 1.0, 0.0)),
         HpBar { ork: e, y, trail: crate::ui::vitals::DamageTrail::new(1.0) },
         bevy::light::NotShadowCaster,
         crate::biome::BiomeEntity,
@@ -666,8 +666,8 @@ fn drive_hp_bars(
         // Only WRITE the tag when it actually moves: assigning through `Mut` marks the component
         // changed whether or not the value differs, which re-extracts that mesh instance.
         let want = pack_bar_tag(ratio, bar.trail.shown, bar.trail.flash(now));
-        if mesh_tag.0 != want {
-            mesh_tag.0 = want;
+        if mesh_tag.value != want {
+            mesh_tag.value = want;
         }
     }
 }

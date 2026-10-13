@@ -17,10 +17,10 @@
 // All widths are in SCREEN PIXELS (from the uv derivatives), box-filtered over one pixel, so the
 // rim/frame stay exactly 1px crisp whatever distance or size the CPU side gives the quad.
 
-#import bevy_pbr::{
-    forward_io::VertexOutput,
-    mesh_functions,
-}
+import bevy_pbr::{
+    render::forward_io::VertexOutput,
+    render::mesh_functions,
+};
 
 struct HpBarStyle {
     fill_hi: vec4<f32>,  // fill colour at the channel's top edge (linear)
@@ -29,7 +29,7 @@ struct HpBarStyle {
     frame: vec4<f32>,    // frame line, lit (top) edge (linear); the bottom edge is a darker cut of it
     empty: vec4<f32>,    // drained channel (linear)
 };
-@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> style: HpBarStyle;
+@group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> style: HpBarStyle;
 
 // Coverage of the pixel centred at `d` (1px wide) by the interval [a, b] — an exact box filter for
 // an axis-aligned edge, so a sub-pixel bar position antialiases instead of popping a row on/off.

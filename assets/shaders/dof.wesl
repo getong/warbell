@@ -5,7 +5,7 @@
 // background that fall outside it. A depth-aware gather weights each tap by its own CoC so a
 // sharp subject doesn't bleed into the blurred distance (the classic single-pass halo).
 
-#import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput
+import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput;
 
 @group(0) @binding(0) var screen_texture: texture_2d<f32>;
 @group(0) @binding(1) var texture_sampler: sampler;

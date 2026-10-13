@@ -3,14 +3,14 @@
 // model-space value-noise, and subtly perturbs base colour / roughness / normal per surface
 // family. PBR lighting (sun/IBL/fog/exposure) stays exact. Output is forced opaque so the
 // repurposed alpha never leaks into transparency.
-#import bevy_pbr::{
-    pbr_fragment::pbr_input_from_standard_material,
-    pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
-    pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
-    mesh_functions,
-    mesh_view_bindings::view,
-    forward_io::{VertexOutput, FragmentOutput},
-}
+import bevy_pbr::{
+    render::pbr_fragment::pbr_input_from_standard_material,
+    render::pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
+    render::pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
+    render::mesh_functions,
+    render::mesh_view_bindings::view,
+    render::forward_io::{VertexOutput, FragmentOutput},
+};
 
 struct CreatureParams {
     params: vec4<f32>,
@@ -19,18 +19,18 @@ struct CreatureParams {
     pbr: vec4<f32>,
 };
 // Bevy injects the material bind-group index; hardcoding @group(2) breaks on pipeline changes.
-@group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> creature: CreatureParams;
-@group(#{MATERIAL_BIND_GROUP}) @binding(101) var ft_alb: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(102) var ft_alb_s: sampler;
-@group(#{MATERIAL_BIND_GROUP}) @binding(103) var ft_mr: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(104) var ft_mr_s: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> creature: CreatureParams;
+@group(constants::MATERIAL_BIND_GROUP) @binding(101) var ft_alb: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(102) var ft_alb_s: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(103) var ft_mr: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(104) var ft_mr_s: sampler;
 // Scanned surface detail layers (mode 2), one layer per surface code.
-@group(#{MATERIAL_BIND_GROUP}) @binding(105) var cd_alb: texture_2d_array<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(106) var cd_s: sampler;
-@group(#{MATERIAL_BIND_GROUP}) @binding(107) var cd_ormh: texture_2d_array<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(105) var cd_alb: texture_2d_array<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(106) var cd_s: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(107) var cd_ormh: texture_2d_array<f32>;
 // Townsfolk garment layers (0 linen, 1 wool, 2 leather, 3 skin), same sampler.
-@group(#{MATERIAL_BIND_GROUP}) @binding(108) var pp_alb: texture_2d_array<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(109) var pp_ormh: texture_2d_array<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(108) var pp_alb: texture_2d_array<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(109) var pp_ormh: texture_2d_array<f32>;
 
 fn cd_tri(t: texture_2d_array<f32>, layer: i32, p: vec3<f32>, n: vec3<f32>, sc: f32) -> vec4<f32> {
     let w = ft_tri_w(n);
@@ -132,8 +132,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     var gloss = 0.0;
     // Skinned townsfolk flag their garment kind as UV1.y = 48 + layer (63 = none); -1 elsewhere.
     var pkind = -1.0;
-#ifdef VERTEX_UVS_A
-#ifdef VERTEX_UVS_B
+@if(VERTEX_UVS_A && VERTEX_UVS_B) {
     // GPU-SKINNED bodies (the townsfolk, `peasant_model::skinned_body`) carry their REST-pose
     // position in UV0.xy + UV1.x, flagged by UV1.y = 64: texture in that space so the detail layers
     // ride a bending limb instead of swimming through it, and weight the projections by the
@@ -147,14 +146,12 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     ork_body = in.uv_b.y > 64.5;
     gloss = clamp(in.uv_b.y - 65.0, 0.0, 1.0);
     pkind = select(-1.0, in.uv_b.y - 48.0, in.uv_b.y > 47.5 && in.uv_b.y < 51.5);
-#endif
-#endif
+}
 
-#ifdef VERTEX_COLORS
+@if(VERTEX_COLORS)
     let surf = in.color.a;        // surface code (see Surf::surf_code)
-#else
+@else
     let surf = 1.0;               // uncoloured mesh: the neutral skin bucket
-#endif
     let strength = creature.params.x;
     let relief = creature.params.y;
     let spec_lift = creature.params.z;
@@ -177,7 +174,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         var k = creature.pbr.z * select(1.0, 0.45, layer == 1);
         var rgb = pbr_input.material.base_color.rgb;
         var bump = creature.pbr.y;
-#ifdef VERTEX_UVS_A
+@if(VERTEX_UVS_A) {
         // The animal kit (animals.glb) bakes FUR-FLOW coordinates into UV0 (u = around the part's
         // axis + 16 as the flag, v = along the hair from root to tip). There the strand / clump
         // layer is laid along the flow at full strength — oriented clumps read as a coat, where
@@ -202,7 +199,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
             let rim = pow(1.0 - ndv, 3.0);
             rgb = rgb * (0.88 + 0.5 * rim);
         }
-#endif
+}
         // Ork skin: one tile of pores reads as a fine rash on a big body, so a COARSE octave of
         // the same skin layer (~3.4x larger: creases, folds, the lumpy hide over the muscle)
         // is mixed in — albedo blotches + height — which also breaks the tiling. Gradients are

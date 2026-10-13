@@ -27,12 +27,10 @@
 // roughness, so the regular (shadowed) sun specular glints off them — no emissive hack, and glints
 // vanish in shadow like real ones. Faded out with distance (sub-pixel cells would only shimmer).
 
-#define_import_path warbell::alpine
-
-#import bevy_pbr::{
-    pbr_types::PbrInput,
-    mesh_view_bindings::{view, lights},
-}
+import bevy_pbr::{
+    render::pbr_types::PbrInput,
+    render::mesh_view_bindings::{view, lights},
+};
 
 struct AlpineParams {
     // x = 1 when the layers + mask are bound; y = sparkle strength; z = snow-cover bias
@@ -41,13 +39,13 @@ struct AlpineParams {
     region: vec4<f32>,
 };
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(111) var<uniform> alp: AlpineParams;
-@group(#{MATERIAL_BIND_GROUP}) @binding(112) var alp_albedo: texture_2d_array<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(113) var alp_normal: texture_2d_array<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(114) var alp_ormh: texture_2d_array<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(115) var alp_samp: sampler;
-@group(#{MATERIAL_BIND_GROUP}) @binding(116) var alp_mask: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(117) var alp_mask_samp: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(111) var<uniform> alp: AlpineParams;
+@group(constants::MATERIAL_BIND_GROUP) @binding(112) var alp_albedo: texture_2d_array<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(113) var alp_normal: texture_2d_array<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(114) var alp_ormh: texture_2d_array<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(115) var alp_samp: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(116) var alp_mask: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(117) var alp_mask_samp: sampler;
 
 // World units per repeat (different on purpose so the repeats never line up).
 const T_SNOW: f32 = 5.6;

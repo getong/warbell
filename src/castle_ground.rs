@@ -204,7 +204,7 @@ pub fn sample(wx: f32, wz: f32) -> CastleGround {
 // They replace the old low-poly "tilled field" meshes (`poi::field`: a dark box bed with box crop
 // rows inside a post-and-rail fence — the "wooden rafts" lying on the meadow). Like the castle yard
 // they are ground, not geometry: the scanned soil layer from the realforest mask (R + G), with
-// the plough rows drawn analytically by `terrain.wgsl` (`field_sample`, its own copy of this
+// the plough rows drawn analytically by `terrain.wesl` (`field_sample`, its own copy of this
 // table): straight, evenly spaced ridges along the long axis with raked-light relief, a straight
 // soil edge and a grassy headland. (The 0.35u rut mask only managed soft blobs, so inside a
 // field the shader ignores the furrows `roads::bake_rut_mask` still presses in.)
@@ -253,7 +253,7 @@ pub fn field_at(wx: f32, wz: f32) -> Option<(f32, f32)> {
         {
             return None;
         }
-        // (The plough rows themselves are drawn by `terrain.wgsl`'s `field_sample`.)
+        // (The plough rows themselves are drawn by `terrain.wesl`'s `field_sample`.)
         return Some((smoothstep(-0.6, 0.6, edge), f.plough));
     }
     None
@@ -292,16 +292,16 @@ mod tests {
         }
     }
 
-    /// `terrain.wgsl` draws the plough rows analytically from its own copy of the field table
+    /// `terrain.wesl` draws the plough rows analytically from its own copy of the field table
     /// (`FIELD_A` / `FIELD_B`); it must stay in step with `FIELDS`.
     #[test]
     fn field_table_matches_shader() {
-        let wgsl = include_str!("../assets/shaders/terrain.wgsl");
+        let wgsl = include_str!("../assets/shaders/terrain.wesl");
         for f in &FIELDS {
             let a = format!("vec4<f32>({:?}, {:?}, {:?}, {:?})", f.c.x, f.c.y, f.half.x, f.half.y);
             let b = format!("vec2<f32>({:?}, {:?})", f.yaw, f.plough);
-            assert!(wgsl.contains(&a), "terrain.wgsl FIELD_A is missing {a}");
-            assert!(wgsl.contains(&b), "terrain.wgsl FIELD_B is missing {b}");
+            assert!(wgsl.contains(&a), "terrain.wesl FIELD_A is missing {a}");
+            assert!(wgsl.contains(&b), "terrain.wesl FIELD_B is missing {b}");
         }
         assert!(wgsl.contains(&format!("array<vec4<f32>, {}>", FIELDS.len())));
     }

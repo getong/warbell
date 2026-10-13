@@ -62,8 +62,8 @@ fn sync_team_rings(
                     Side::Rival => 1.0,
                 };
                 let t = tag(MarkKind::Select, 0.9, 3, aux);
-                if mt.0 != t.0 {
-                    mt.0 = t.0;
+                if mt.value != t.value {
+                    mt.value = t.value;
                 }
                 *vis = Visibility::Visible;
             }
