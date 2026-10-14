@@ -1,7 +1,7 @@
 """Export Andrey's "Brown Bear (animated)" (Sketchfab, CC-BY 4.0) as the game bear GLB: skinned body +
 PBR materials + the clip set `src/animal_skin.rs` plays.
 
-    blender -b --python export_bear.py -- <brown_bear_animated.glb> <out.glb> <withers_m> <tris>
+    blender -b --python export_bear.py -- <brown_bear_animated.glb> <out.glb> <withers_m> <tris> [brown|polar]
 
 The download is a Cinema 4D joint rig (Cyrillic joint names, mangled; addressed here by their unique
 numeric suffix) with one in-place walk. Imported with the TEMPERANCE bone heuristic so every bone
@@ -9,7 +9,8 @@ points at its child, then each leg gets an IK control at the ankle / wrist (two-
 copying the control's rotation, so a planted paw stays flat). The source walk keeps the IK off; the
 authored Idle / Run / Attack drive the controls the way `export_wolf.py` drives the wolf. The coat is
 warmed from near-black to a brown-bear brown, the body decimated to ~`tris` triangles, the whole
-scaled so the withers stand `withers_m`.
+scaled so the withers stand `withers_m`. `polar` re-dyes the coat a creamy white instead (the polar
+bear), keeping the source's light-and-shade so the nose, lips and claws stay dark.
 """
 import bpy, math, sys
 import numpy as np
@@ -17,6 +18,7 @@ from mathutils import Matrix, Quaternion, Vector
 
 argv = sys.argv[sys.argv.index("--") + 1:]
 SRC, OUT, WITHERS_M, TRIS = argv[0], argv[1], float(argv[2]), int(argv[3])
+COAT = argv[4] if len(argv) > 4 else "brown"
 FPS = 24
 
 
@@ -96,7 +98,13 @@ for mat in bpy.data.materials:
     px = px.reshape(-1, 4)
     mean = px[:, :3].mean(axis=0)
     # warm, lift the near-black coat to a brown bear's brown (linear-ish gain on sRGB values)
-    px[:, :3] = np.clip(px[:, :3] * np.array([1.45, 1.22, 1.0], dtype=np.float32) + np.array([0.012, 0.006, 0.0], dtype=np.float32), 0, 1)
+    if COAT == "polar":
+        # cream white with the source's relative light and shade (dark nose / lips / claws stay dark)
+        lum = px[:, :3] @ np.array([0.3, 0.59, 0.11], dtype=np.float32)
+        detail = np.sqrt(np.clip(lum / max(float(lum.mean()), 1e-4), 0, 2.5))
+        px[:, :3] = np.clip(np.outer(detail * 0.78, np.array([0.95, 0.92, 0.84], dtype=np.float32)), 0, 1)
+    else:
+        px[:, :3] = np.clip(px[:, :3] * np.array([1.45, 1.22, 1.0], dtype=np.float32) + np.array([0.012, 0.006, 0.0], dtype=np.float32), 0, 1)
     img.pixels.foreach_set(px.ravel())
     img["warmed"] = True
     img.update()

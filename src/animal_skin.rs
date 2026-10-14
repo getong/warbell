@@ -10,6 +10,7 @@
 //!   on its rebuilt leg IK (`tools/animals/export_wolf.py`).
 //! - `bear.glb` — Andrey's CC-BY "Brown Bear (animated)"; source Amble, Walk / Run / Attack / Idle
 //!   authored on its rebuilt leg IK (`tools/animals/export_bear.py`).
+//! - `polar_bear.glb` — the same bear, re-dyed creamy white and stood taller (`export_bear.py … polar`).
 //!
 //! Runtime contract: the wildlife brain is untouched; it keeps writing [`Animal`] + [`QuadDrive`] and
 //! the studio rig still exists under the root (hidden once the skin shows). [`drive_skins`] picks the
@@ -45,7 +46,7 @@ struct Kind {
     die: Option<&'static str>,
 }
 
-const KINDS: [Kind; 4] = [
+const KINDS: [Kind; 5] = [
     // Deer walk: the planted hoof covers `duty` (0.64) of the authored stride, so its native speed is
     // the stride speed over that duty. The source gallop covers ~4x the walk's stride a second.
     Kind {
@@ -80,11 +81,20 @@ const KINDS: [Kind; 4] = [
         attack: Some(("Attack", 20.0 / 24.0)),
         die: None,
     },
+    Kind {
+        file: "animals/polar_bear.glb",
+        gaits: &[("Amble", 0.506), ("Walk", 1.320), ("Run", 4.457)],
+        idles: &["Idle"],
+        grazes: &["Idle"],
+        attack: Some(("Attack", 20.0 / 24.0)),
+        die: None,
+    },
 ];
 const DOE: usize = 0;
 const STAG: usize = 1;
 const WOLF: usize = 2;
 const BEAR: usize = 3;
+const POLAR: usize = 4;
 /// An elk is a big stag.
 const ELK_SIZE: f32 = 1.18;
 /// The brain's strike window (`wildlife::quad_drive`).
@@ -182,6 +192,7 @@ fn attach_skins(
             Species::Elk => (STAG, ELK_SIZE),
             Species::Wolf => (WOLF, 1.0),
             Species::Boar => (BEAR, 1.0),
+            Species::PolarBear => (POLAR, 1.0),
             _ => continue,
         };
         let Some(m) = models.ready[kind].as_ref() else { continue };
