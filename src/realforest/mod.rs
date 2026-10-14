@@ -673,7 +673,9 @@ impl Kit {
                         } else if road > 0.12 {
                             if c < 0.55 { pick(&GRASS, 0.8 + d * 0.5) } else if c < 0.75 { pick(&FLOWERS, 0.85 + d * 0.4) } else { None }
                         } else if c < 0.50 {
-                            pick(&GRASS, 0.7 + d * 0.5)
+                            // Clumped, not sprinkled (`meadow_clump`): `c/0.5` re-uses the roll.
+                            let (keep, sc) = crate::biome::meadow_clump_gate(x, z);
+                            if c * 2.0 < keep { pick(&GRASS, (0.7 + d * 0.5) * sc) } else { None }
                         } else if c < 0.56 && !crate::blockers::any_within(x, z, 0.35) {
                             pick(&PEBBLES, 0.12 + d * 0.14)
                         } else {
@@ -736,10 +738,13 @@ impl Kit {
                 for k in 0..3u32 {
                     let (a, b) = rolls(gx + 0.13 + k as f32 * 0.71, gz + 0.29 - k as f32 * 0.43);
                     let (c, d) = rolls(gx - 0.31 - k as f32 * 0.17, gz + 0.47 + k as f32 * 0.59);
-                    if c > fert * drift {
+                    let (x, z) = (gx + a, gz + b);
+                    // Open meadow: the sward gathers into clumps (tall heart, short rim) with clean
+                    // ground between them (`meadow_clump`) instead of an even fertility sprinkle.
+                    let (keep, clump_s) = if meadow { crate::biome::meadow_clump_gate(x, z) } else { (fert * drift, 1.0) };
+                    if c > keep {
                         continue;
                     }
-                    let (x, z) = (gx + a, gz + b);
                     if !mask(x, z)
                         || crate::roads::road_strength(x, z) > 0.3
                         || crate::blockers::any_within(x, z, 0.3)
@@ -785,6 +790,7 @@ impl Kit {
                         (self.pick(&FLOWERS, c), 0.85)
                     };
                     let Some(m) = pick else { continue };
+                    let s = s * clump_s;
                     let (pos, rot) = lie(m, x, z, d * 131.0 % std::f32::consts::TAU);
                     chunks.push(self, m, pos, rot, s, Tier::LushNear);
                     if k % 2 == 0 && d < 0.85 {
@@ -1355,7 +1361,7 @@ fn try_build(
         // crown / undergrowth colour variety (see `foliage`).
         mats.push(match name {
             "canopy" => KitMat::Foliage(foliage_mats.add(foliage::material(m, 0.025, 1.2, 0.6))),
-            "undergrowth" => KitMat::Foliage(foliage_mats.add(foliage::material(m, 0.035, 2.5, 0.35))),
+            "undergrowth" => KitMat::Foliage(foliage_mats.add(foliage::ground_match(foliage::material(m, 0.035, 2.5, 0.35), 0.8, 0.6, 0.6))),
             // Hanging moss / willow whips swing a touch more than a crown edge.
             "swamp_cards" => KitMat::Foliage(foliage_mats.add(foliage::material(m, 0.03, 1.6, 0.4))),
             _ => KitMat::Std(materials.add(m)),

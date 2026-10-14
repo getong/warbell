@@ -57,8 +57,12 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
     out.uv = vertex.uv;
 
 @if(NORMAL_PREPASS_OR_DEFERRED_PREPASS) {
-@if(VERTEX_NORMALS)
-    out.world_normal = mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex.instance_index);
+@if(VERTEX_NORMALS) {
+    // Same up-lean as the main pass (SSAO reads these normals).
+    let nrm = mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex.instance_index);
+    let nroot = 1.0 - smoothstep(0.0, 0.55, w);
+    out.world_normal = normalize(mix(nrm, vec3<f32>(0.0, 1.0, 0.0), fw.tint.w * (0.4 + 0.6 * nroot)));
+}
 @if(VERTEX_TANGENTS)
     out.world_tangent = mesh_functions::mesh_tangent_local_to_world(world_from_local, vertex.tangent, vertex.instance_index);
 }

@@ -20,9 +20,11 @@ pub type FoliageMaterial = ExtendedMaterial<StandardMaterial, FoliageExt>;
 
 #[derive(Clone, Copy, ShaderType, Debug)]
 pub struct FoliageWind {
-    /// x = time, y = previous frame's time, z = amplitude (world units at weight 1), w = ripple.
+    /// x = blade-root ground match (see `ground_match`), y unused, z = amplitude (world units at
+    /// weight 1), w = ripple.
     pub wind: Vec4,
-    /// x = crown tint strength.
+    /// x = crown tint strength, y = snow amount (`alpine::snowkit` twins), z = olive meadow grade
+    /// (green-only, fragment stage), w = shading-normal lean toward world up (see `ground_match`).
     pub tint: Vec4,
 }
 
@@ -41,6 +43,9 @@ pub fn wind_enabled() -> bool {
 impl MaterialExtension for FoliageExt {
     fn vertex_shader() -> ShaderRef {
         "shaders/foliage_wind.wesl".into()
+    }
+    fn fragment_shader() -> ShaderRef {
+        "shaders/foliage_grade.wesl".into()
     }
     fn prepass_vertex_shader() -> ShaderRef {
         if wind_enabled() { "shaders/foliage_wind_prepass.wesl".into() } else { ShaderRef::Default }
@@ -65,6 +70,27 @@ pub fn material(base: StandardMaterial, amplitude: f32, ripple: f32, tint: f32) 
             wind: FoliageWind { wind: Vec4::new(0.0, 0.0, amplitude, ripple), tint: Vec4::new(tint, 0.0, 0.0, 0.0) },
         },
     }
+}
+
+/// Undergrowth only: make the grass / weed / flower cards sit IN the sward instead of on it —
+/// `root` lifts the dark blade base into the ground's straw-olive, `grade` pulls the vivid and the
+/// deep greens toward the meadow's olive, `up` leans the shading normal to world up (fully at the
+/// root) so crossed cards stop printing hard planes at the ground line. The grade only touches
+/// green-dominant texels (white daisies, yellow / purple flowers and straw stalks keep their hue).
+/// `FOREST_GRASSGRADE="root,grade,up"` overrides the three for tuning.
+pub fn ground_match(mut mat: FoliageMaterial, root: f32, grade: f32, up: f32) -> FoliageMaterial {
+    let mut v = [root, grade, up];
+    if let Ok(env) = std::env::var("FOREST_GRASSGRADE") {
+        for (slot, s) in v.iter_mut().zip(env.split(',')) {
+            if let Ok(x) = s.trim().parse() {
+                *slot = x;
+            }
+        }
+    }
+    mat.extension.wind.wind.x = v[0];
+    mat.extension.wind.tint.z = v[1];
+    mat.extension.wind.tint.w = v[2];
+    mat
 }
 
 // No per-frame wind tick: the shaders read Bevy's `globals.time`. Writing the clock into these

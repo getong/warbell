@@ -975,6 +975,24 @@ pub fn ground_patch(x: f32, z: f32) -> GroundPatch {
     }
 }
 
+/// 0..1 open-meadow CLUMP field: the grass / weeds / flowers of the sward gather into ~3-6u
+/// clumps (1 at a clump's heart, easing to 0 at its rim) with real stretches of clean sward
+/// between them — not the even per-tile sprinkle that reads as polka-dot noise across an open
+/// field. Scatter gates density on it AND scales plants by it, so a clump is tall in the middle
+/// and short at the edge. Fertility still thins clumps on the worn / bare patches.
+pub fn meadow_clump(x: f32, z: f32) -> f32 {
+    let n = ter_noise(x * 0.17 + 41.0, z * 0.17 + 23.0) * 0.72 + ter_noise(x * 0.53 + 8.0, z * 0.53 + 66.0) * 0.28;
+    let fert = ground_patch(x, z).fertility;
+    fg_smoothstep(0.50, 0.74, n) * (0.45 + 0.55 * fert)
+}
+
+/// Meadow plant keep-chance + scale from [`meadow_clump`]: (probability a candidate survives, scale
+/// multiplier). A sparse short sprinkle survives between clumps so the sward isn't sterile.
+pub fn meadow_clump_gate(x: f32, z: f32) -> (f32, f32) {
+    let c = meadow_clump(x, z);
+    (0.035 + 0.965 * c, 0.55 + 0.7 * c)
+}
+
 /// 0..1 forest-understorey drift field: broad (~40u) patches where the plants clump, opening to
 /// near-bare clearings between them. Used by the realistic forest's undergrowth layer.
 pub fn forest_drift(x: f32, z: f32) -> f32 {
@@ -1510,6 +1528,17 @@ pub fn scatter_region(
                     if r.next() > fert {
                         continue;
                     }
+                    // Open meadow: clumps, not a sprinkle (`meadow_clump`). Position-hashed so the
+                    // RNG stream (and every later placement) is unchanged.
+                    let mut clump_s = 1.0;
+                    if cfg.name == "Grass" {
+                        let (keep, sc) = meadow_clump_gate(x, z);
+                        let (a, b) = crate::realforest::rolls(x + 0.71, z - 0.37);
+                        if (a * 0.6 + b * 0.4) > keep {
+                            continue;
+                        }
+                        clump_s = sc;
+                    }
                     let py = height_fn(x, z);
                     // Species LEAN by patch dampness: scale each class's chance by its affinity so
                     // ferns/clover/mushrooms cluster in the damp green hollows and grass + sun-
@@ -1529,7 +1558,7 @@ pub fn scatter_region(
                             acc += c.chance * affinity(i);
                             if target < acc {
                                 let vi = pick_weighted(&c.weights, r.next());
-                                let s = r.range(c.scale.0, c.scale.1);
+                                let s = r.range(c.scale.0, c.scale.1) * clump_s;
                                 if story_clearings.overlaps(x, z, c.visual_radii[vi] * s) { break; }
                                 // Ground cover → the chunk's cover bucket (NotShadowCaster +
                                 // distance-fade, applied once per merged chunk in `spawn_chunks`).

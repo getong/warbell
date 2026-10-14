@@ -137,7 +137,7 @@ pub fn sample(wx: f32, wz: f32) -> CastleGround {
     // almost everywhere, a few worn-grass islands where nobody stands.
     let (cx, cz, w, d) = (COURTYARD.0, COURTYARD.1, COURTYARD.2 * 2.0, COURTYARD.3 * 2.0);
     let din = (w / 2.0 - (wx - cx).abs()).min(d / 2.0 - (wz - cz).abs());
-    let plaza = smoothstep(-1.4, 1.2, din + (n_mid - 0.5) * 2.2) * (0.72 + 0.28 * smoothstep(0.3, 0.6, n_lo));
+    let plaza = smoothstep(-1.8, 1.6, din + (n_mid - 0.5) * 1.3) * (0.72 + 0.28 * smoothstep(0.3, 0.6, n_lo));
 
     // Inside the walls: the guards' path worn a stride in from the wall foot, grass surviving in
     // tufts hard against the stones. Outside: a fainter siege-trodden strip along the foot.
@@ -158,11 +158,12 @@ pub fn sample(wx: f32, wz: f32) -> CastleGround {
     };
 
     // Worn yard between the houses: bald patches of earth in the trodden grass.
-    let yard = if d_in > 1.2 { smoothstep(0.52, 0.78, n_lo) * 0.62 * (0.6 + 0.4 * n_hi) } else { 0.0 };
+    let yard = if d_in > 1.2 { smoothstep(0.48, 0.86, n_lo) * 0.62 * (0.6 + 0.4 * n_hi) } else { 0.0 };
 
     // The working corners (`castle::build`): mud round the well, a cart stand, chips and bark
-    // round the wood yard, straw spill by the hay store, the market square churned to mud.
-    let near = |c: Vec2, r: f32| 1.0 - smoothstep(r * 0.45, r, p.distance(c) + (n_mid - 0.5) * 1.2);
+    // round the wood yard, straw spill by the hay store, the market square trodden to bare earth.
+    // A soft brush (wide falloff, light fray): a hard ragged rim read as a torn mud decal.
+    let near = |c: Vec2, r: f32| 1.0 - smoothstep(r * 0.35, r * 1.1, p.distance(c) + (n_mid - 0.5) * 0.7);
     let at = |t: (f32, f32, f32)| Vec2::new(t.0, t.1);
     let well_pos = crate::castle::town_plot("well").map_or(Vec2::new(5.5, KEEP_FRONT + 2.8), |tp| tp.pos);
     let well = near(well_pos, 3.0) * 0.85;
@@ -261,7 +262,9 @@ pub fn field_at(wx: f32, wz: f32) -> Option<(f32, f32)> {
 
 /// Is `(wx, wz)` on a field (cover / clutter keep off the ploughed soil)?
 pub fn in_field(wx: f32, wz: f32) -> bool {
-    field_at(wx, wz).is_some_and(|(w, _)| w > 0.05)
+    // 0.35, not ~0: the sward's tufts grow out over the feathered soil rim (`field_sample`), so
+    // the strip's edge is hidden under grass instead of cut against it.
+    field_at(wx, wz).is_some_and(|(w, _)| w > 0.35)
 }
 
 /// The fields' world XZ bounds (min, max), for the realforest mask's field pass.

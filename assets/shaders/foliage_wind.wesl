@@ -20,10 +20,11 @@ import bevy_pbr::{
 };
 
 struct FoliageWind {
-    // x, y unused (the wind clock is `globals.time`, see the header), z = amplitude (world units at
-    // weight 1), w = ripple
+    // x = blade-root ground match (undergrowth only), y unused (the wind clock is `globals.time`,
+    // see the header), z = amplitude (world units at weight 1), w = ripple
     wind: vec4<f32>,
-    // x = crown tint strength (0..1), yzw reserved
+    // x = crown tint strength (0..1); y = snow amount (`alpine::snowkit` twins); z = olive meadow
+    // grade (fragment, `foliage_grade.wesl`); w = shading-normal lean toward world up
     tint: vec4<f32>,
 };
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> fw: FoliageWind;
@@ -49,13 +50,19 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
     let world_from_local = mesh_functions::get_world_from_local(vertex.instance_index);
     let origin = world_from_local[3].xyz;
 
-@if(VERTEX_NORMALS)
-    out.world_normal = mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex.instance_index);
-
     var w = 0.0;
 @if(VERTEX_UVS_B) {
     w = vertex.uv_b.x;
     out.uv_b = vertex.uv_b;
+}
+    // 1 at a blade's rooted base, 0 from mid-blade up.
+    let root = 1.0 - smoothstep(0.0, 0.55, w);
+
+@if(VERTEX_NORMALS) {
+    // Undergrowth cards shade like the ground they stand on: the normal leans to world up (fully
+    // at the root), so crossed cards don't print hard light/dark planes where they meet the sward.
+    let nrm = mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex.instance_index);
+    out.world_normal = normalize(mix(nrm, vec3<f32>(0.0, 1.0, 0.0), fw.tint.w * (0.4 + 0.6 * root)));
 }
     out.world_position = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position, 1.0));
     out.world_position = vec4<f32>(out.world_position.xyz + wind_offset(out.world_position.xyz, origin, w, globals.time), 1.0);
@@ -73,7 +80,12 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
     let warm = vec3<f32>(1.10, 1.05, 0.78);
     let cool = vec3<f32>(0.80, 0.93, 0.88);
     let tint = mix(vec3<f32>(1.0), mix(warm, cool, n), fw.tint.x);
-    out.color = vec4<f32>(vertex.color.rgb * tint, vertex.color.a);
+    // Lift the dark (0.55x) blade root toward the ground's own straw-olive so a clump fades into
+    // the terrain instead of starting with a dark green cut line (the fragment grade then pulls
+    // the remaining green toward olive).
+    let ground = vec3<f32>(1.4, 1.12, 1.0);
+    let rgb = mix(vertex.color.rgb * tint, ground, root * fw.wind.x);
+    out.color = vec4<f32>(rgb, vertex.color.a);
 }
 @if(VERTEX_OUTPUT_INSTANCE_INDEX)
     out.instance_index = vertex.instance_index;

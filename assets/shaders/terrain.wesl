@@ -126,7 +126,7 @@ fn field_sample(p: vec2<f32>) -> FieldHit {
         // Same local frame as `castle_ground::field_at`.
         let l = vec2<f32>(cs * d.x - sn * d.y, sn * d.x + cs * d.y);
         let e = max(abs(l.x) - a.z, abs(l.y) - a.w);
-        if e > 1.3 {
+        if e > 1.7 {
             continue;
         }
         let long_x = a.z >= a.w;
@@ -134,13 +134,17 @@ fn field_sample(p: vec2<f32>) -> FieldHit {
         let along = select(l.y, l.x, long_x);
         let half_along = select(a.w, a.z, long_x);
         let half_across = select(a.z, a.w, long_x);
-        // A slight hand-ploughed wobble on the edge, never a blob.
+        // A slight hand-ploughed wobble on the rows' ends, never a blob.
         let wob = (ter_noise(p * 1.3 + vec2<f32>(7.0, 3.0)) - 0.5) * 0.18;
-        o.zone = 1.0 - smoothstep(0.8, 1.3, e);
-        o.soil = 1.0 - smoothstep(-0.12, 0.12, e + wob);
-        // Rows stop short of the ends (the headland where the team turned) and of the sides.
+        // The soil edge itself is FEATHERED (~1u) and frayed by two octaves: turned earth thinning
+        // out into the sward with grass tongues reaching in, not a flat rectangle stuck on the grass.
+        let fray = (ter_noise(p * 0.9 + vec2<f32>(21.0, 5.0)) - 0.5) * 0.55
+                 + (ter_noise(p * 3.1 + vec2<f32>(2.0, 47.0)) - 0.5) * 0.35;
+        o.zone = 1.0 - smoothstep(1.2, 1.7, e);
+        o.soil = 1.0 - smoothstep(-0.55, 0.40, e + fray);
+        // Rows stop short of the ends (the headland where the team turned) and of the frayed sides.
         let rows = (1.0 - smoothstep(-0.95, -0.55, abs(along) - half_along + wob))
-                 * (1.0 - smoothstep(-0.30, -0.05, abs(across) - half_across + wob));
+                 * (1.0 - smoothstep(-0.65, -0.20, abs(across) - half_across + wob));
         // A slight sideways meander so the rows are hand-drawn, not ruled.
         let ac = across + (ter_noise(vec2<f32>(along * 0.35, f32(i) * 7.0)) - 0.5) * 0.10;
         let ph = ac * (6.2831853 / FURROW_P);
@@ -562,8 +566,11 @@ fn fragment(
         // Layer weights: trails -> path, broad damp patches -> moss, the rest -> leaf litter.
         // Ragged trail edge: two noise octaves wobble the road mask so the litter eats into the
         // path in tongues instead of along the mask's straight iso-line.
-        let edge = (ter_noise(wp * 0.45 + vec2<f32>(17.0, 3.0)) - 0.5) * 0.45
-                 + (ter_noise(wp * 1.7 + vec2<f32>(4.0, 29.0)) - 0.5) * 0.25;
+        // Open ground (meadow, village, plaza, glades — not the plough strips) takes a calmer brush:
+        // a packed-earth track, softer fray, no forest-floor litter contrast (see the path tap).
+        let open_g = glade * (1.0 - fld_on * fld.soil);
+        let edge = ((ter_noise(wp * 0.45 + vec2<f32>(17.0, 3.0)) - 0.5) * 0.45
+                 + (ter_noise(wp * 1.7 + vec2<f32>(4.0, 29.0)) - 0.5) * 0.25) * mix(1.0, 0.5, open_g);
         // (No "grass strip between the ruts" carved out of the road field any more: it keyed on a
         // thin G band (0.88-0.97) that also runs just OUTSIDE every rut and along the castle lanes'
         // centrelines, so it drew hairline grass slivers with texel-stepped edges down every road —
@@ -586,7 +593,8 @@ fn fragment(
         let h0 = fp_heights(wp, w, wp_dx, wp_dy);
         let hb = w + h0 * 0.6;
         let hm = max(hb.x, max(hb.y, hb.z));
-        w = max(hb - (hm - 0.32), vec3<f32>(0.0));
+        // A wider band on open ground: the texel-driven crisp edge read as torn patches there.
+        w = max(hb - (hm - mix(0.32, 0.58, open_g)), vec3<f32>(0.0));
         w = w / max(w.x + w.y + w.z, 1e-4);
 
         // Parallax occlusion mapping: march the view ray down through the height field
@@ -687,8 +695,20 @@ fn fragment(
             let u = fp_uv2(pw);
             let gx = wp_dx / FP_T2;
             let gy = wp_dy / FP_T2;
-            alb += w.z * textureSampleGrad(fp_albedo, fp_samp, u, 2, gx, gy).rgb;
-            nts += w.z * (textureSampleGrad(fp_normal, fp_samp, u, 2, gx, gy).rgb * 2.0 - 1.0);
+            var a2 = textureSampleGrad(fp_albedo, fp_samp, u, 2, gx, gy).rgb;
+            var n2 = textureSampleGrad(fp_normal, fp_samp, u, 2, gx, gy).rgb * 2.0 - 1.0;
+            // The scanned path is woodland soil full of leaves, sticks and wet pockets — right under
+            // the trees, but on an open plaza / meadow track it read as a dirty torn patch. There it
+            // becomes packed, sun-dried earth: litter contrast flattened toward the layer's mean,
+            // lighter and sandier, a gentler relief. Plough strips keep the dark soil.
+            if open_g > 0.01 {
+                let mean = textureSampleLevel(fp_albedo, fp_samp, vec2<f32>(0.5), 2, 12.0).rgb;
+                let packed = (mean + (a2 - mean) * 0.42) * vec3<f32>(1.30, 1.20, 1.02);
+                a2 = mix(a2, packed, open_g * 0.85);
+                n2 = mix(n2, vec3<f32>(0.0, 0.0, 1.0), open_g * 0.45);
+            }
+            alb += w.z * a2;
+            nts += w.z * n2;
             orm += w.z * textureSampleGrad(fp_ormh, fp_samp, u, 2, gx, gy).rgb;
         }
         // Broad value drift so the repeats never read as a grid from a distance.
@@ -739,7 +759,7 @@ fn fragment(
         // Wet mud + puddles on the trail: the path layer darkens toward damp earth, and water
         // pools in its LOW texels (height below a noise-varied water line, deeper in the ruts).
         // Puddles are near-black, glassy and flat, so the IBL sky and sun glint off them.
-        let damp = w.z * (0.45 + 0.55 * ter_noise(wp * 0.11 + vec2<f32>(41.0, 7.0)));
+        let damp = w.z * (0.45 + 0.55 * ter_noise(wp * 0.11 + vec2<f32>(41.0, 7.0))) * (1.0 - 0.7 * open_g);
         alb *= 1.0 - 0.22 * damp;
         alb *= mix(vec3<f32>(1.0), bank_tint, bank_fp / fp_w) * (1.0 - 0.48 * bank_damp);
         // Small, scattered puddles: mostly IN the ruts, occasionally in a dip — never a flooded track.
@@ -747,7 +767,7 @@ fn fragment(
         let water_line = smoothstep(0.70, 0.92, ter_noise(wp * 0.16 + vec2<f32>(13.0, 57.0))) * 0.35 + rut * 0.32 * pocket;
         // No puddles standing on a bank slope (the bank's own damp band handles the wet look).
         let puddle = clamp((water_line - hit_h) * 10.0, 0.0, 1.0) * w.z * smoothstep(0.5, 0.8, path)
-            * (1.0 - smoothstep(0.0, 0.2, bank));
+            * (1.0 - smoothstep(0.0, 0.2, bank)) * (1.0 - 0.8 * open_g);
         alb = mix(alb, alb * 0.16, puddle);
         rgb = mix(rgb, alb, fp_w);
         // Tangent frame of the planar XZ mapping: u runs along +X, v along +Z, and an OpenGL
