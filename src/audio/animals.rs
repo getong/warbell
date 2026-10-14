@@ -60,7 +60,8 @@ pub(crate) fn load_voices(asset: Res<AssetServer>, mut commands: Commands) {
     // Wolf: a long dramatic howl — rarity 4.0 stretches its idle gap to ~2–5 min so it lands as a
     // rare, atmospheric call rather than constant howling.
     add(Species::Wolf, 1.0, 4.0, &["audio/wolf-1.ogg", "audio/wolf-2.ogg"]);
-    add(Species::Boar, 1.0, 1.0, &["audio/boar-1.ogg", "audio/boar-2.ogg"]);
+    // Boar: the forest bruiser wears the brown bear (`animal_skin.rs`), so it growls like one.
+    add(Species::Boar, 1.1, 1.0, &["audio/bear-growl.ogg", "audio/bear-roar.ogg"]);
     // Elk: no recording yet → silent (no entry).
     commands.insert_resource(Voices(m));
 }

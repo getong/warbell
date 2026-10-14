@@ -1,14 +1,20 @@
-//! Realistic skinned red deer for the wild `Deer` / `Elk` herds, replacing the studio quad rig the way
-//! `npc_skin` replaces the studio villager body.
+//! Realistic skinned wildlife — red deer (the `Deer` / `Elk` herds), grey wolf, brown bear (the
+//! `Boar` slot: the game's forest bruiser has always worn the bear rig) — replacing the studio quad rig
+//! the way `npc_skin` replaces the studio villager body.
 //!
-//! Content: `assets/animals/deer_doe.glb` / `deer_stag.glb` — CDmir's CC0 red deer (OpenGameArt),
-//! skinned + PBR textured, with Idle / Idle2 / LookAround / Eat / Run / Die from the source and a
-//! Walk authored on export (`tools/animals/export_deer.py`). Facing +Z like the studio rig, feet at 0.
+//! Content (`assets/animals/`, credits in `assets/CREDITS.md`), each skinned + PBR textured, facing +Z
+//! like the studio rig with its feet at 0, in real metres:
+//! - `deer_doe.glb` / `deer_stag.glb` — CDmir's CC0 red deer; Idle / Idle2 / LookAround / Eat / Run /
+//!   Die from the source, Walk authored on export (`tools/animals/export_deer.py`).
+//! - `wolf.glb` — kenchoo's CC-BY "Grey Wolf Rebuilt"; source Idle, Walk / Trot / Run / Attack authored
+//!   on its rebuilt leg IK (`tools/animals/export_wolf.py`).
+//! - `bear.glb` — Andrey's CC-BY "Brown Bear (animated)"; source Amble, Walk / Run / Attack / Idle
+//!   authored on its rebuilt leg IK (`tools/animals/export_bear.py`).
 //!
 //! Runtime contract: the wildlife brain is untouched; it keeps writing [`Animal`] + [`QuadDrive`] and
 //! the studio rig still exists under the root (hidden once the skin shows). [`drive_skins`] picks the
-//! clip from the brain's state and the root's REAL ground speed and paces the gait clips to it.
-//! `FOREST_NOANIMALSKIN=1` turns it off.
+//! gait whose native ground speed best fits the root's REAL ground speed and paces it to that speed,
+//! so the planted feet stay put. `FOREST_NOANIMALSKIN=1` turns it off.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -23,14 +29,66 @@ use crate::npc_skin::WORLD_PER_M;
 use crate::quadruped::{QuadDrive, QuadJoint, QuadPart};
 use crate::wildlife::Animal;
 
-/// (file, hip height m, Walk ground speed m/s at 1x — `export_deer.py` logs it).
-const MODELS: [(&str, f32, f32); 2] = [("animals/deer_doe.glb", 1.12, 1.222), ("animals/deer_stag.glb", 1.30, 1.418)];
+/// One skinned animal model and how to play it.
+struct Kind {
+    file: &'static str,
+    /// Locomotion clips, slowest first, with the ground speed (real m/s) each covers at 1x — the
+    /// exporters log it. A planted foot slides back at exactly this speed.
+    gaits: &'static [(&'static str, f32)],
+    /// Standing loops, taken in turns (~10 s each).
+    idles: &'static [&'static str],
+    /// Standing loops while grazing.
+    grazes: &'static [&'static str],
+    /// A strike, played once across the brain's 0.45 s strike window: (clip, its length in s).
+    attack: Option<(&'static str, f32)>,
+    /// Played once on death (otherwise the pose freezes while `dying.rs` tips the body over).
+    die: Option<&'static str>,
+}
+
+const KINDS: [Kind; 4] = [
+    // Deer walk: the planted hoof covers `duty` (0.64) of the authored stride, so its native speed is
+    // the stride speed over that duty. The source gallop covers ~4x the walk's stride a second.
+    Kind {
+        file: "animals/deer_doe.glb",
+        gaits: &[("Walk", 1.222 / 0.64), ("Run", 1.222 * 4.0)],
+        idles: &["Idle", "Idle2", "LookAround"],
+        grazes: &["Eat", "Eat", "LookAround", "Eat", "Idle"],
+        attack: None,
+        die: Some("Die"),
+    },
+    Kind {
+        file: "animals/deer_stag.glb",
+        gaits: &[("Walk", 1.418 / 0.64), ("Run", 1.418 * 4.0)],
+        idles: &["Idle", "Idle2", "LookAround"],
+        grazes: &["Eat", "Eat", "LookAround", "Eat", "Idle"],
+        attack: None,
+        die: Some("Die"),
+    },
+    Kind {
+        file: "animals/wolf.glb",
+        gaits: &[("Walk", 1.493), ("Trot", 3.520), ("Run", 5.760)],
+        idles: &["Idle"],
+        grazes: &["Idle"],
+        attack: Some(("Attack", 14.0 / 24.0)),
+        die: None,
+    },
+    Kind {
+        file: "animals/bear.glb",
+        gaits: &[("Amble", 0.428), ("Walk", 1.117), ("Run", 3.771)],
+        idles: &["Idle"],
+        grazes: &["Idle"],
+        attack: Some(("Attack", 20.0 / 24.0)),
+        die: None,
+    },
+];
 const DOE: usize = 0;
 const STAG: usize = 1;
-/// The source run's ground speed against its walk (the gallop covers ~4x the walk's ground a second).
-const RUN_K: f32 = 4.0;
+const WOLF: usize = 2;
+const BEAR: usize = 3;
 /// An elk is a big stag.
 const ELK_SIZE: f32 = 1.18;
+/// The brain's strike window (`wildlife::quad_drive`).
+const STRIKE_S: f32 = 0.45;
 const ANIM_CULL2: f32 = 90.0 * 90.0;
 const FADE: Duration = Duration::from_millis(300);
 
@@ -53,22 +111,22 @@ struct Model {
 }
 
 #[derive(Resource)]
-struct DeerModels {
+struct AnimalModels {
     gltf: Vec<Handle<Gltf>>,
     ready: Vec<Option<Model>>,
 }
 
-/// On a deer's gameplay root: its skin instance + animation state.
+/// On an animal's gameplay root: its skin instance + animation state.
 #[derive(Component)]
 pub struct AnimalSkin {
-    model: usize,
+    kind: usize,
     inst: Entity,
     player: Option<Entity>,
     clip: &'static str,
     last: Vec3,
     speed: f32,
-    /// World units a second the Walk covers at 1x for this body.
-    walk: f32,
+    /// World units per real metre of this body (the per-animal size jitter included).
+    k: f32,
 }
 
 /// On the skin instance: the gameplay root it dresses.
@@ -81,19 +139,19 @@ struct SkinOf(Entity);
 struct Reveal(u8);
 
 fn load_models(mut commands: Commands, server: Res<AssetServer>) {
-    commands.insert_resource(DeerModels {
-        gltf: MODELS.iter().map(|m| server.load(m.0)).collect(),
-        ready: MODELS.iter().map(|_| None).collect(),
+    commands.insert_resource(AnimalModels {
+        gltf: KINDS.iter().map(|k| server.load(k.file)).collect(),
+        ready: KINDS.iter().map(|_| None).collect(),
     });
 }
 
 fn finish_models(
-    mut models: ResMut<DeerModels>,
+    mut models: ResMut<AnimalModels>,
     server: Res<AssetServer>,
     gltfs: Res<Assets<Gltf>>,
     mut graphs: ResMut<Assets<AnimationGraph>>,
 ) {
-    for i in 0..MODELS.len() {
+    for i in 0..KINDS.len() {
         if models.ready[i].is_some() || !server.is_loaded_with_dependencies(models.gltf[i].id()) {
             continue;
         }
@@ -113,21 +171,22 @@ fn hash(e: Entity) -> u32 {
 
 fn attach_skins(
     mut commands: Commands,
-    models: Res<DeerModels>,
-    mut deer: Query<(Entity, &mut Animal, &Transform), (With<QuadDrive>, Without<AnimalSkin>, Without<crate::dying::Dying>)>,
+    models: Res<AnimalModels>,
+    mut animals: Query<(Entity, &mut Animal, &Transform), (With<QuadDrive>, Without<AnimalSkin>, Without<crate::dying::Dying>)>,
 ) {
-    for (e, mut a, tf) in &mut deer {
-        let elk = match a.species {
-            Species::Deer => false,
-            Species::Elk => true,
-            _ => continue,
-        };
+    for (e, mut a, tf) in &mut animals {
         let h = hash(e);
         // the herds are mostly hinds with the odd stag; every elk is a bull
-        let model = if elk || h % 100 < 35 { STAG } else { DOE };
-        let Some(m) = models.ready[model].as_ref() else { continue };
+        let (kind, extra) = match a.species {
+            Species::Deer => (if h % 100 < 35 { STAG } else { DOE }, 1.0),
+            Species::Elk => (STAG, ELK_SIZE),
+            Species::Wolf => (WOLF, 1.0),
+            Species::Boar => (BEAR, 1.0),
+            _ => continue,
+        };
+        let Some(m) = models.ready[kind].as_ref() else { continue };
         // ±5% size, nobody the same
-        let size = (0.95 + 0.1 * ((h >> 8) & 255) as f32 / 255.0) * if elk { ELK_SIZE } else { 1.0 };
+        let size = (0.95 + 0.1 * ((h >> 8) & 255) as f32 / 255.0) * extra;
         // cancel the root's studio scale: the model is in real metres
         let s = WORLD_PER_M * size / tf.scale.x.max(1e-3);
         a.clear_bob();
@@ -143,13 +202,13 @@ fn attach_skins(
             }
         });
         commands.entity(e).try_insert(AnimalSkin {
-            model,
+            kind,
             inst: child,
             player: None,
             clip: "",
             last: tf.translation,
             speed: 0.0,
-            walk: MODELS[model].2 * WORLD_PER_M * size,
+            k: WORLD_PER_M * size,
         });
     }
 }
@@ -157,7 +216,7 @@ fn attach_skins(
 fn skin_ready(
     ready: On<WorldInstanceReady>,
     mut commands: Commands,
-    models: Res<DeerModels>,
+    models: Res<AnimalModels>,
     of: Query<&SkinOf>,
     children: Query<&Children>,
     players: Query<(), With<AnimationPlayer>>,
@@ -170,14 +229,14 @@ fn skin_ready(
     if sk.inst != inst {
         return;
     }
-    let Some(m) = models.ready[sk.model].as_ref() else { return };
+    let Some(m) = models.ready[sk.kind].as_ref() else { return };
     for d in children.iter_descendants(inst) {
         if players.contains(d) {
             commands.entity(d).insert((AnimationGraphHandle(m.graph.clone()), AnimationTransitions::new()));
             sk.player = Some(d);
         }
         if meshes.contains(d) {
-            // skinned bounds follow the rest pose only; a lying-down death would cull wrongly
+            // skinned bounds follow the rest pose only; a lunge or a fall would cull wrongly
             commands.entity(d).insert(NoFrustumCulling);
         }
     }
@@ -208,13 +267,13 @@ fn reveal_skins(
     }
 }
 
-/// Pick + cross-fade each deer's clip from its brain state and real ground speed.
+/// Pick + cross-fade each animal's clip from its brain state and real ground speed.
 fn drive_skins(
     time: Res<Time>,
     cam: Query<&GlobalTransform, With<Camera3d>>,
     mut roots: Query<(Entity, &mut AnimalSkin, &Animal, &QuadDrive, &GlobalTransform, Has<crate::dying::Dying>)>,
     mut players: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
-    models: Res<DeerModels>,
+    models: Res<AnimalModels>,
 ) {
     let dt = time.delta_secs();
     if dt <= 0.0 {
@@ -225,33 +284,53 @@ fn drive_skins(
     for (e, mut sk, a, d, gt, dying) in &mut roots {
         let Some(pe) = sk.player else { continue };
         let Ok((mut player, mut tr)) = players.get_mut(pe) else { continue };
+        let kind = &KINDS[sk.kind];
         let p = gt.translation();
         let v = Vec2::new(p.x - sk.last.x, p.z - sk.last.z).length() / dt;
         sk.last = p;
         sk.speed += (v.min(14.0) - sk.speed) * (dt * 6.0).min(1.0);
         let far = cam_p.is_some_and(|c| c.distance_squared(p) > ANIM_CULL2);
-        let walking = matches!(sk.clip, "Walk" | "Run");
-        let moving = sk.speed > if walking { 0.12 } else { 0.3 };
-        let walk = sk.walk;
+        let native = |clip: &str| kind.gaits.iter().find(|g| g.0 == clip).map(|g| g.1 * sk.k);
+        let stepping = native(sk.clip).is_some();
+        let moving = sk.speed > if stepping { 0.12 } else { 0.3 };
         let h = hash(e);
         let (clip, once, rate): (&'static str, bool, f32) = if dying {
-            ("Die", true, 1.0)
-        } else if moving && (d.attacking || (a.hurrying() && sk.speed > walk * 1.6) || sk.speed > walk * 2.4) {
-            ("Run", false, (sk.speed / (walk * RUN_K)).clamp(0.6, 1.5))
+            match kind.die {
+                Some(c) => (c, true, 1.0),
+                None => (sk.clip, false, 0.0), // freeze mid-stride; `dying.rs` tips the body over
+            }
+        } else if let (true, Some((c, len))) = (d.attacking, kind.attack) {
+            (c, true, len / STRIKE_S)
         } else if moving {
-            ("Walk", false, (sk.speed / walk).clamp(0.5, 1.9))
+            // The gait whose native speed is nearest the body's (in ratio), with a little stickiness
+            // so a speed hovering between two gaits doesn't flicker them.
+            let fit = |n: f32| (sk.speed / n).ln().abs();
+            let mut best = kind.gaits[0].0;
+            let mut best_fit = f32::MAX;
+            for &(g, _) in kind.gaits {
+                let f = fit(native(g).unwrap()) - if g == sk.clip { 0.25 } else { 0.0 };
+                if f < best_fit {
+                    best = g;
+                    best_fit = f;
+                }
+            }
+            // a fleeing / charging animal never dawdles in its slowest gait
+            if a.hurrying() && kind.gaits.len() > 1 && best == kind.gaits[0].0 && sk.speed > native(kind.gaits[0].0).unwrap() * 1.3 {
+                best = kind.gaits[1].0;
+            }
+            (best, false, (sk.speed / native(best).unwrap()).clamp(0.55, 1.7))
         } else if a.grazing() {
             // a grazing deer mostly has its head down, now and then lifting it to look round
             let turn = (now / 9.0) as u32 + h % 5;
-            (["Eat", "Eat", "LookAround", "Eat", "Idle"][(turn % 5) as usize], false, 1.0)
+            (kind.grazes[turn as usize % kind.grazes.len()], false, 1.0)
         } else {
             let turn = (now / 11.0) as u32 + h % 3;
-            (["Idle", "Idle2", "LookAround"][(turn % 3) as usize], false, 1.0)
+            (kind.idles[turn as usize % kind.idles.len()], false, 1.0)
         };
-        if clip != sk.clip {
-            let Some(&node) = models.ready[sk.model].as_ref().and_then(|m| m.nodes.get(clip)) else { continue };
+        if clip != sk.clip && !clip.is_empty() {
+            let Some(&node) = models.ready[sk.kind].as_ref().and_then(|m| m.nodes.get(clip)) else { continue };
             let first = sk.clip.is_empty();
-            let anim = tr.play(&mut player, node, if first { Duration::ZERO } else { FADE });
+            let anim = tr.play(&mut player, node, if first { Duration::ZERO } else if once { FADE / 3 } else { FADE });
             if !once {
                 anim.repeat();
             }
