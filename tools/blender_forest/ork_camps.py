@@ -1670,9 +1670,6 @@ def ram_beam(rng, burnt=False):
             x = 2.45 + k * 0.17
             y = 0.06 + 0.1 * (k % 2)
             pole(g, V(x, y, -1.6), V(x + 0.05, y, 1.0), 0.06, 0.05, rng, col=wood, sides=6)
-        # A hide half-pulled over the first rafters.
-        grid = [[(x0 - 1.0 * (1 - u) * 0.95, -0.1 + 2.2 * u, z) for z in np.linspace(-2.6, -1.0, 3)] for u in np.linspace(0.0, 1.0, 4)]
-        sheet(g, grid, M_HIDE, lambda u, v: scale(HIDE, 0.85 + 0.15 * v), tile=0.8, double=True)
     else:
         for k in range(5):
             a = V(x0 + rng.uniform(-1.4, 1.4), 0.05, rng.uniform(-2.8, 0.0))

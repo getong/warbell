@@ -613,14 +613,21 @@ fn cove_sd(x: f32, z: f32) -> f32 {
 /// Wider than the island's normal foreshore so a ship's worth of wreckage and a later quay fit on
 /// it.
 fn cove_beach(x: f32, z: f32) -> bool {
+    cove_beach_w(x, z).is_some_and(|(sd, w)| sd < w)
+}
+
+/// The cove beach's `(signed distance from the waterline, sand width)` near the bay, `None` away
+/// from it — shared by the tile class ([`cove_beach`]) and the ground tint, which must agree: a
+/// Sand tile left grass-green gets neither the sand nor the forest-floor texture and shows the raw
+/// vertex green (the neon band on the Wreck Cove beach).
+fn cove_beach_w(x: f32, z: f32) -> Option<(f32, f32)> {
     let sd = cove_sd(x, z);
     if !(0.0..6.0).contains(&sd) {
-        return false;
+        return None;
     }
     // −1 at the mouth … +1 at the head.
     let east = ((x - COVE_C.0) * COVE_IN.0 + (z - COVE_C.1) * COVE_IN.1) / COVE_R.0;
-    let w = 0.4 + 3.6 * smoothstep(0.05, 0.85, east) + 0.7 * (vnoise(x * 0.5 + 2.0, z * 0.5 - 9.0) - 0.5);
-    sd < w
+    Some((sd, 0.4 + 3.6 * smoothstep(0.05, 0.85, east) + 0.7 * (vnoise(x * 0.5 + 2.0, z * 0.5 - 9.0) - 0.5)))
 }
 
 /// Does a coast cell of this biome/class get the smooth marching-squares SEA cut (the `sea_field`
@@ -3349,7 +3356,10 @@ pub(crate) fn ground_color(x: f32, z: f32) -> [f32; 4] {
     // Sandy coast fade — damped inside the Blight: `dist_from_coast` only knows the OLD
     // island shape, so without the damp the whole southern landmass would tint to beach.
     let dco = dist_from_coast(x, z) as f32;
-    col = mix3(col, lin3(p.sand), smoothstep(3.5, 0.5, dco) * 0.85 * (1.0 - blight_w));
+    // The cove's broad landing beach runs far past the 3.5-unit coast fade: tint it by its own
+    // width so the whole Sand class reads as sand (and gets the shader's sand texture).
+    let cove_k = cove_beach_w(x, z).map_or(0.0, |(sd, w)| smoothstep(w + 0.6, w - 0.4, sd));
+    col = mix3(col, lin3(p.sand), smoothstep(3.5, 0.5, dco).max(cove_k) * 0.85 * (1.0 - blight_w));
     // Universal mottle — value jitter + a slow warm/cool hue wander over the *blended*
     // colour, so biome interiors (forest, sand, snow…) get texture too, not just the open
     // grass. Multiplicative and small: it breaks the flat fill without recolouring a biome.

@@ -1125,8 +1125,19 @@ fn pick_patrol(o: &mut Ork) {
     let ang = rng01(&mut o.rng) * TAU;
     let r = rng_range(&mut o.rng, o.wander_r * 0.3, o.wander_r);
     // Wander around the ork's OWN spot (not the shared camp centre), so the warband mills as
-    // four loose orbits instead of one converging knot.
+    // four loose orbits instead of one converging knot. A target inside a camp prop (the ram log,
+    // a woodpile) parked the ork pressed into it until the next pick: re-roll, else stay home.
     o.target = o.anchor + Vec2::new(ang.cos() * r, ang.sin() * r);
+    for _ in 0..4 {
+        if !crate::blockers::any_within(o.target.x, o.target.y, o.body_r + 0.3) {
+            break;
+        }
+        let (ang, r) = (rng01(&mut o.rng) * TAU, rng_range(&mut o.rng, o.wander_r * 0.3, o.wander_r));
+        o.target = o.anchor + Vec2::new(ang.cos() * r, ang.sin() * r);
+    }
+    if crate::blockers::any_within(o.target.x, o.target.y, o.body_r + 0.3) {
+        o.target = o.anchor;
+    }
     o.mode = OrkMode::Patrol;
     o.timer = rng_range(&mut o.rng, 3.0, 7.0);
 }

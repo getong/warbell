@@ -515,15 +515,27 @@ pub fn toggle_first_person(
 /// respects `fp.blend`, keeping the world sword hidden between transition edges.
 pub fn fp_body_visibility(
     fp: Res<FirstPerson>,
+    hero_q: Query<&Hero>,
     mut parts: Query<(&super::HeroPart, &mut Visibility), Without<super::HeroMesh>>,
     mut leaves: Query<(&ChildOf, &mut Visibility), With<super::HeroMesh>>,
     joints: Query<&super::HeroPart>,
 ) {
     use super::Joint;
     let want = if fp.blend > 0.5 { Visibility::Hidden } else { Visibility::Inherited };
+    // A sprint (weapons always sheathed) pumps the bare forearms forward and up toward the
+    // midline — straight through the eye, a dark slab filling the frame and smeared to grain by
+    // motion blur. KCD-style, the empty hands simply leave the view while sprinting: hide the
+    // whole elbow subtree (forearm, gauntlet, hand) past a third of the run blend.
+    let sprint = hero_q.single().is_ok_and(|h| h.run_amt > 0.3);
+    let want_fore = if fp.blend > 0.5 && sprint { Visibility::Hidden } else { Visibility::Inherited };
     for (p, mut vis) in &mut parts {
-        if p.joint == Joint::Head && *vis != want {
-            *vis = want;
+        let w = match p.joint {
+            Joint::Head => want,
+            Joint::ElbowL | Joint::ElbowR => want_fore,
+            _ => continue,
+        };
+        if *vis != w {
+            *vis = w;
         }
     }
     // The upper arms + pauldrons swing right past the eye in the third-person clips (a dark slab

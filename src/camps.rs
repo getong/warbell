@@ -445,10 +445,13 @@ const LAYOUTS: [Layout; 10] = [
         flag: Vec3::new(3.9, 2.5, 0.2),
         cage: None,
         spare_cages: &[],
-        warband: [(-0.3, 0.6), (-2.0, -1.6), (0.3, 3.4), (2.8, 1.4)],
+        // Off the ram line: the old (-0.3, 0.6) / (0.3, 3.4) spots stood the warband inside the log.
+        warband: [(-0.8, -0.4), (-2.0, -1.6), (-0.4, 4.1), (3.2, 2.9)],
         crew: &[OrkVariant::Grunt, OrkVariant::Berserker, OrkVariant::Grunt, OrkVariant::Berserker],
         blockers: &[
-            (1.2, 0.45, 0.45, 3.4, 0.0),
+            (1.2, 0.45, 0.6, 3.6, 0.0),   // the ram log (r 0.36, z -2.9..3.8 + iron cap)
+            (1.2, -1.8, 1.05, 0.85, 0.0), // its rafter frame over the tail
+            (2.7, -0.3, 0.35, 1.35, 0.0), // spare rafters on the ground
             (-3.75, 0.55, 0.95, 1.85, 0.0),
             (-1.2, -3.4, 1.25, 0.45, 0.0),
             (3.4, -3.4, 1.35, 0.85, 0.0),

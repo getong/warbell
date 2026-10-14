@@ -633,6 +633,19 @@ impl Kit {
         meadow: bool,
     ) {
         const LITTER: [&str; 4] = ["litter_a", "litter_b", "litter_c", "litter_d"];
+        // Flat ground sheets (leaf litter, twigs) lie ALONG the slope: yawed-only, a 1u card on a
+        // 30° knoll hangs its downhill half ~0.4u in the air. Tilt them onto the local normal
+        // (central differences of the same `height_fn` the mesh is placed with) and sink a touch.
+        let flat: Vec<usize> = LITTER.iter().chain(&["branches_a"]).filter_map(|n| self.model(n)).collect();
+        let lie = |m: usize, x: f32, z: f32, yaw: f32| -> (Vec3, Quat) {
+            let y = height_fn(x, z);
+            if !flat.contains(&m) {
+                return (Vec3::new(x, y, z), Quat::from_rotation_y(yaw));
+            }
+            let e = 0.4;
+            let n = Vec3::new(height_fn(x - e, z) - height_fn(x + e, z), 2.0 * e, height_fn(x, z - e) - height_fn(x, z + e)).normalize();
+            (Vec3::new(x, y - 0.02, z), Quat::from_rotation_arc(Vec3::Y, n) * Quat::from_rotation_y(yaw))
+        };
         const GRASS: [&str; 4] = ["grass_a", "grass_b", "grass_c", "grass_d"];
         const PEBBLES: [&str; 6] = ["rock_01_a", "rock_01_c", "rock_01_e", "rock_02_b", "rock_02_d", "rock_02_f"];
         const FERN: [&str; 3] = ["fern_a", "fern_b", "fern_c"];
@@ -706,8 +719,8 @@ impl Kit {
                         None
                     };
                     if let Some((m, s)) = choice {
-                        let rot = Quat::from_rotation_y(c * 97.0 % std::f32::consts::TAU);
-                        if chunks.push(self, m, Vec3::new(x, height_fn(x, z), z), rot, s, Tier::Clutter) {
+                        let (pos, rot) = lie(m, x, z, c * 97.0 % std::f32::consts::TAU);
+                        if chunks.push(self, m, pos, rot, s, Tier::Clutter) {
                             self.register_solid(m, x, z, s, rot);
                         }
                     }
@@ -772,8 +785,7 @@ impl Kit {
                         (self.pick(&FLOWERS, c), 0.85)
                     };
                     let Some(m) = pick else { continue };
-                    let pos = Vec3::new(x, height_fn(x, z), z);
-                    let rot = Quat::from_rotation_y(d * 131.0 % std::f32::consts::TAU);
+                    let (pos, rot) = lie(m, x, z, d * 131.0 % std::f32::consts::TAU);
                     chunks.push(self, m, pos, rot, s, Tier::LushNear);
                     if k % 2 == 0 && d < 0.85 {
                         chunks.push(self, m, pos, rot, s * 1.35, Tier::LushFar);

@@ -1384,7 +1384,7 @@ def crown_depot(rng):
     beam(g, [V(-HX - 0.1, yf - 0.08, HZ + 0.02), V(HX + 0.1, yf - 0.08, HZ + 0.02)], 0.16, 0.16, up=(0, 0, 1), mat=M_TIMBER,
          col=TF, rng=rng)
     th = math.atan2(yf - yb, 2 * HZ)
-    lbox(g, V(0, (yf + yb) / 2 + 0.1, 0.1), (2 * HX + 0.5, 0.07, 2 * HZ / math.cos(th) + 0.7), quat_x(th), M_PLANK,
+    lbox(g, V(0, (yf + yb) / 2 + 0.1, 0.1), (2 * HX + 0.5, 0.07, 2 * HZ / math.cos(th) + 0.7), quat_x(-th), M_PLANK,
          [(0.45, 0.4, 0.36), None, (0.6, 0.54, 0.46)], tile=1.2, grain=0)
     lbox(g, V(0, 0.07, 0), (2 * HX - 0.1, 0.06, 2 * HZ - 0.1), quat_y(0.0), M_PLANK, (0.45, 0.4, 0.34), tile=0.8)
     painted_crate(g, rng, V(-0.9, 0.35, -0.6), (0.62, 0.5, 0.5), 0.0)
