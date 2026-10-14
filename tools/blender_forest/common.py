@@ -117,6 +117,17 @@ def grade(srgb, sat=1.0, gain=1.0):
     return lin_to_srgb((luma + (lin - luma) * sat) * gain)
 
 
+def olive_grade(srgb, strength):
+    """Pull GREEN-dominant texels toward the meadow's olive (red lifted toward the green, green eased
+    a touch, blue kept), in linear light. Neutral / yellow / purple / white texels keep their hue, so
+    daisies, lupines and straw stalks are untouched. Returned as sRGB."""
+    lin = srgb_to_lin(srgb)
+    r, g, b = lin[..., 0], lin[..., 1], lin[..., 2]
+    green = np.clip((g - np.maximum(r, b)) / np.maximum(g, 1e-4) * 1.6, 0.0, 1.0)[..., None]
+    olive = np.stack([g * 0.82, g * 0.94, b], axis=-1)
+    return lin_to_srgb(lin + (olive - lin) * green * strength)
+
+
 def write_pbr_set(name, diff, nor, rough, ao=None, disp=None, size=1024, sat=1.0, gain=1.0,
                   normalize=False):
     """Pack one material into `<name>_albedo.png` (sRGB), `<name>_normal.png` (OpenGL tangent

@@ -18,7 +18,7 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parent))
 import numpy as np  # noqa: E402
-from common import OUT, bilinear, bleed_alpha, grade, load, ph_model_tex, resize, save  # noqa: E402
+from common import OUT, bilinear, bleed_alpha, grade, load, olive_grade, ph_model_tex, resize, save  # noqa: E402
 
 rng = np.random.default_rng(7)
 
@@ -417,6 +417,10 @@ for i, (rgba, nrm, cell) in enumerate([
 
 ug[..., 3] = np.where(ug[..., 3] > 0.04, ug[..., 3], 0.0)
 ug[..., :3] = grade(bleed_alpha(ug[..., :3], ug[..., 3]), sat=1.05, gain=0.95)
+# The scanned / painted grass greens read neon or near-black against the olive meadow sward: pull
+# the green texels toward olive (flowers + straw keep their hue). Baked here rather than in a
+# custom foliage fragment stage, so the cards keep the stock PBR fragment (no per-pixel cost).
+ug[..., :3] = olive_grade(ug[..., :3], 0.6)
 save(ug, OUT / "undergrowth_albedo.png")
 save(ug_n, OUT / "undergrowth_normal.png")
 

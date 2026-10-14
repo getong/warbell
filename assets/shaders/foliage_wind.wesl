@@ -23,8 +23,8 @@ struct FoliageWind {
     // x = blade-root ground match (undergrowth only), y unused (the wind clock is `globals.time`,
     // see the header), z = amplitude (world units at weight 1), w = ripple
     wind: vec4<f32>,
-    // x = crown tint strength (0..1); y = snow amount (`alpine::snowkit` twins); z = olive meadow
-    // grade (fragment, `foliage_grade.wesl`); w = shading-normal lean toward world up
+    // x = crown tint strength (0..1); y = snow amount (`alpine::snowkit` twins); z unused;
+    // w = shading-normal lean toward world up
     tint: vec4<f32>,
 };
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> fw: FoliageWind;

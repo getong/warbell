@@ -1361,7 +1361,7 @@ fn try_build(
         // crown / undergrowth colour variety (see `foliage`).
         mats.push(match name {
             "canopy" => KitMat::Foliage(foliage_mats.add(foliage::material(m, 0.025, 1.2, 0.6))),
-            "undergrowth" => KitMat::Foliage(foliage_mats.add(foliage::ground_match(foliage::material(m, 0.035, 2.5, 0.35), 0.8, 0.6, 0.6))),
+            "undergrowth" => KitMat::Foliage(foliage_mats.add(foliage::ground_match(foliage::material(m, 0.035, 2.5, 0.35), 0.8, 0.6))),
             // Hanging moss / willow whips swing a touch more than a crown edge.
             "swamp_cards" => KitMat::Foliage(foliage_mats.add(foliage::material(m, 0.03, 1.6, 0.4))),
             _ => KitMat::Std(materials.add(m)),

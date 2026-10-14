@@ -208,7 +208,9 @@ fn main() {
             write_dds(&out, layers, srgb, map == "ormh");
         }
     }
-    if only.is_some() {
+    // `PACK_FILE=undergrowth_albedo`: re-pack just that one map (its PNG re-graded / re-baked).
+    let file = std::env::var("PACK_FILE").ok();
+    if only.is_some() && file.is_none() {
         return;
     }
     // Everything else: one file per PNG.
@@ -224,6 +226,9 @@ fn main() {
     pngs.sort();
     for png in pngs {
         let stem = png.file_stem().unwrap().to_string_lossy().to_string();
+        if file.as_deref().is_some_and(|f| f != stem) {
+            continue;
+        }
         let srgb = stem.ends_with("_albedo");
         let card = srgb && CARD_SETS.iter().any(|s| stem == format!("{s}_albedo"));
         let alpha = card || stem.ends_with("_ormh");
