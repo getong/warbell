@@ -347,6 +347,38 @@ struct Stalls {
 struct LifeTalk {
     next: f32,
     sfx_next: f32,
+    /// The last few two-handers played (index + 1; 0 = empty), so a pair doesn't replay one.
+    recent: [u8; 4],
+    recent_i: usize,
+}
+
+/// Rough spoken length (s) of a life line, from its transcript: paces a two-hander's beats.
+fn line_secs(id_beat: Option<&'static crate::audio::lines::Line>) -> f32 {
+    id_beat.map_or(2.5, |l| 0.45 + 0.068 * l.text.len() as f32) + 0.45
+}
+
+/// Pick a recorded two-hander for a chatting pair with voices (`va` lead, `vb` partner), not one
+/// played lately. Returns (dialogue, does the lead open it?).
+fn pick_dialogue(talk: &LifeTalk, rng: &mut u32, va: LifeVoice, vb: LifeVoice) -> Option<(u8, bool)> {
+    use crate::audio::lines::{life_dialogue_recorded, LIFE_DIALOGUES};
+    let fits: Vec<(u8, bool)> = LIFE_DIALOGUES
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| life_dialogue_recorded(*i as u8) && !talk.recent.contains(&(*i as u8 + 1)))
+        .filter_map(|(i, d)| {
+            if d.a == va && d.b == vb {
+                Some((i as u8, true))
+            } else if d.a == vb && d.b == va {
+                Some((i as u8, false))
+            } else {
+                None
+            }
+        })
+        .collect();
+    if fits.is_empty() {
+        return None;
+    }
+    Some(fits[(r01(rng) * fits.len() as f32) as usize % fits.len()])
 }
 
 #[derive(Resource, Default)]
@@ -468,8 +500,8 @@ pub struct LifeAgent {
     partner: Option<Entity>,
     /// Chat: does this one talk on even beats?
     lead: bool,
-    /// A queued line (a reply in an exchange): fire at `.0`.
-    vo: Option<(f32, LifeCue)>,
+    /// Queued lines (replies / later beats of an exchange): each fires at its `.0`.
+    vo: Vec<(f32, LifeCue)>,
     /// Kid at play: chasing (it) or fleeing.
     it: bool,
     /// Pending root shift for the animator's cross-fade (rig units, +Z) after a seat move.
@@ -912,7 +944,7 @@ fn spawn_resident(
         want_chat: false,
         partner: None,
         lead: false,
-        vo: None,
+        vo: Vec::new(),
         it: false,
         shift: 0.0,
         face: 0.0,
@@ -1277,8 +1309,11 @@ fn go_home(a: &mut LifeAgent, from: Vec2, now: f32) {
 }
 
 /// Speak a life line at `pos` if the knight is in earshot and the street isn't mid-line.
+/// How far (world u) the knight hears the residents talk (was 15: the town read as near-mute).
+const HEAR: f32 = 19.0;
+
 fn say(talk: &mut LifeTalk, speak: &mut MessageWriter<Speak>, now: f32, hero: Vec2, pos: Vec2, y: f32, voice: LifeVoice, cue: LifeCue, gap: f32) -> bool {
-    if now < talk.next || pos.distance(hero) > 15.0 {
+    if now < talk.next || pos.distance(hero) > HEAR {
         return false;
     }
     speak.write(Speak::at(Concept::Life(voice, cue), Vec3::new(pos.x, y + 1.5, pos.y)));
@@ -1343,14 +1378,12 @@ fn life_brain(
         let home_time = night || (phase == Phase::Dusk);
 
         // ── Queued reply line (the second half of an exchange) ──
-        if let Some((at, cue)) = a.vo {
-            if now >= at {
-                a.vo = None;
-                // Replies skip the gap the opener set, but still need the knight in earshot.
-                if pos.distance(hero) < 15.0 {
-                    speak.write(Speak::at(Concept::Life(a.body.voice(), cue), Vec3::new(pos.x, gy + 1.5, pos.y)));
-                    talk.next = talk.next.max(now + 3.0);
-                }
+        if let Some(i) = a.vo.iter().position(|(at, _)| now >= *at) {
+            let (_, cue) = a.vo.swap_remove(i);
+            // Replies skip the gap the opener set, but still need the knight in earshot.
+            if pos.distance(hero) < HEAR {
+                speak.write(Speak::at(Concept::Life(a.body.voice(), cue), Vec3::new(pos.x, gy + 1.5, pos.y)));
+                talk.next = talk.next.max(now + 3.0);
             }
         }
 
@@ -1634,7 +1667,7 @@ fn life_brain(
                             a.until = now + rr(&mut a.rng, 6.5, 8.0);
                             stalls.cue[i] = (Act::Haggle, a.until);
                             if say(&mut talk, &mut speak, now, hero, vp, gy, voice, LifeCue::Ask, 2.4) {
-                                a.vo = Some((now + 5.0, LifeCue::Haggle));
+                                a.vo.push((now + 5.0, LifeCue::Haggle));
                             }
                         }
                         1 => {
@@ -1739,9 +1772,9 @@ fn think(a: &mut LifeAgent, v: &Villager, w: &mut LifeWorld, stalls: &mut Stalls
     let x = r01(&mut a.rng);
     // A chat with a neighbour (paired up by `life_social`).
     let chatty = match phase {
-        Phase::Afternoon => 0.30,
-        Phase::Noon => 0.12,
-        _ => 0.14,
+        Phase::Afternoon => 0.40,
+        Phase::Noon => 0.20,
+        _ => 0.22,
     };
     if a.body != Body::Kid && x < chatty {
         a.want_chat = true;
@@ -2096,19 +2129,42 @@ fn life_social(
         let Ok((_, a, _)) = q.get(ea) else { continue };
         let (partner, lead, started) = (a.partner, a.lead, a.t0);
         let Some(pe) = partner else { continue };
-        let Some(&(_, _, stb, ..)) = scratch.iter().find(|s| s.0 == pe) else {
+        let Some(&(_, pb, stb, ..)) = scratch.iter().find(|s| s.0 == pe) else {
             if let Ok((_, mut a, _)) = q.get_mut(ea) {
                 a.partner = None;
             }
             continue;
         };
-        if !(lead && stb == St::Chat && now - started < 0.6 && pa.distance(hero) < 15.0 && now >= talk.next) {
+        if !(lead && stb == St::Chat && now - started < 0.6 && pa.distance(hero) < HEAR && now >= talk.next) {
             continue;
         }
-        let Ok([(_, a, _), (_, mut b, _)]) = q.get_many_mut([ea, pe]) else { continue };
+        let Ok([(_, mut a, _), (_, mut b, _)]) = q.get_many_mut([ea, pe]) else { continue };
+        // A scripted two-hander when one fits the pair's voices (a real question and its answer),
+        // else the old pair of unrelated `Chat` lines.
+        let (va, vb) = (a.body.voice(), b.body.voice());
+        if let Some((d, a_opens)) = pick_dialogue(&talk, &mut a.rng, va, vb) {
+            use crate::audio::lines::{life_dialogue_line, LIFE_DIALOGUES};
+            let opener = if a_opens { (pa, va) } else { (pb, vb) };
+            if say(&mut talk, &mut speak, now, hero, opener.0, 0.0, opener.1, LifeCue::Dlg(d, 0), 4.5) {
+                let mut t = now + line_secs(life_dialogue_line(d, 0));
+                for k in 1..LIFE_DIALOGUES[d as usize].beats {
+                    let who = if (k % 2 == 0) == a_opens { &mut a } else { &mut b };
+                    who.vo.push((t, LifeCue::Dlg(d, k)));
+                    t += line_secs(life_dialogue_line(d, k));
+                }
+                // Hold the pair (and the street's other mouths) until the exchange is done.
+                a.until = a.until.max(t + 1.0);
+                b.until = b.until.max(t + 1.0);
+                talk.next = talk.next.max(t);
+                let ri = talk.recent_i;
+                talk.recent[ri % 4] = d + 1;
+                talk.recent_i = ri + 1;
+            }
+            continue;
+        }
         if say(&mut talk, &mut speak, now, hero, pa, 0.0, a.body.voice(), LifeCue::Chat, 4.5) {
             let reply = if r01(&mut b.rng) < 0.4 { LifeCue::Laugh } else { LifeCue::Chat };
-            b.vo = Some((now + 4.6, reply));
+            b.vo.push((now + 4.6, reply));
         }
     }
     // Bench neighbours: two seated on the same bench → one talks, the other laughs / listens.
@@ -2141,7 +2197,7 @@ fn life_social(
             b.st = St::Sit(SitAct::Laugh);
         }
         if say(&mut talk, &mut speak, now, hero, pa, 0.0, a.body.voice(), LifeCue::Chat, 4.5) {
-            b.vo = Some((now + 4.6, LifeCue::Laugh));
+            b.vo.push((now + 4.6, LifeCue::Laugh));
         }
     }
 }
@@ -2299,7 +2355,10 @@ fn act_clip(act: Act) -> &'static str {
         Act::Talk | Act::Laugh | Act::Haggle | Act::Browse => "Idle_Talking_Loop",
         Act::Listen | Act::Stare | Act::Yawn => "Idle_FoldArms_Loop",
         Act::Nod => "Yes",
-        Act::Wave | Act::Call | Act::Bow => "Idle_Rail_Call",
+        // A greeting is a respectful nod. (`Idle_Rail_Call` — both arms flung up — read as a
+        // frightened hands-up, as if the hero had drawn on them.) Calling out keeps it.
+        Act::Wave | Act::Bow => "Yes",
+        Act::Call => "Idle_Rail_Call",
         Act::Sweep => "Push_Loop",
         Act::Draw | Act::Hang | Act::Pay => "Interact",
         Act::Scatter => "Farm_PlantSeed",

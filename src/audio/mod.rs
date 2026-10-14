@@ -477,20 +477,21 @@ const QUIET_CLEAR: f32 = 28.0;
 /// Delay after a run starts before the intro line plays (let the scene settle).
 const INTRO_DELAY: f32 = 1.6;
 /// Minimum seconds between two remark emissions — the global cadence throttle.
-const REMARK_GAP: f32 = 20.0;
+const REMARK_GAP: f32 = 40.0;
 /// When the cadence comes due, the hero only ACTUALLY remarks with this probability — idle
 /// musings ("old stones…", "quiet day…") are an occasional colour beat, not a metronome. A
 /// failed roll re-arms [`REMARK_RETRY`], so the average idle gap lands around
-/// `RETRY / CHANCE ≈ 35 s` (plus however long the remark itself ran). Event reactions
-/// (night warning, keep hurt, low HP…) don't pass through this system and are unaffected.
-const REMARK_CHANCE: f32 = 0.3;
+/// `GAP + RETRY / CHANCE ≈ 40 + 15/0.2 ≈ 115 s` (plus however long the remark ran). Playtest: the
+/// hero talking to himself every ~35 s was too often. Event reactions (night warning, keep hurt,
+/// low HP…) don't pass through this system and are unaffected.
+const REMARK_CHANCE: f32 = 0.2;
 /// Kill barks ("one more for the pile") roll much lower than ordinary remarks — a kill preempts
 /// the ambient pool (it's first in the priority list), so without a small chance the hero would
 /// comment on every felled ork/animal during a wave. Most kills pass in silence; combined with
 /// the per-line 5-min `floor` a bark lands only occasionally.
 const KILL_REMARK_CHANCE: f32 = 0.1;
 /// Re-check delay after a failed remark roll (seconds).
-const REMARK_RETRY: f32 = 10.0;
+const REMARK_RETRY: f32 = 15.0;
 
 /// Per-run remark trigger state. Holds the intro arm and the next-remark cadence clock.
 #[derive(Resource, Default)]

@@ -18,14 +18,14 @@ use super::frand;
 use super::lines::Concept;
 
 /// Minimum gap between ANY two ambient (proximity) villager lines, so the town isn't a babble.
-/// Lowered from 20→14 so townsfolk speak a little more often — half the catalog was going
-/// unheard, partly because guards never chattered (see [`detect_villager_ambient`]).
-const AMBIENT_GAP: f32 = 14.0;
+/// Lowered 20→14→11 so townsfolk speak more often — half the catalog was going unheard, partly
+/// because guards never chattered (see [`detect_villager_ambient`]); playtest: "people too quiet".
+const AMBIENT_GAP: f32 = 11.0;
 /// Chance a villager actually speaks once the gap clears and one's in range — high, so the town
 /// feels chatty and alive. A miss burns a full gap; the per-line floor stops repeats.
 const SPEAK_CHANCE: f32 = 0.9;
 /// Hero must be this close (world units) to a villager to trigger a proximity greeting/musing.
-const NEAR_DIST: f32 = 7.0;
+const NEAR_DIST: f32 = 10.0;
 /// For an event line, the nearest villager must be within this of the hero to voice it.
 const EVENT_NEAR: f32 = 55.0;
 /// Fraction of ambient turns where the armed-sword jab fires (when the hero has a weapon equipped).

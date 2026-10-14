@@ -93,6 +93,20 @@ const SLOPE_PROBE: f32 = 0.3;
 /// Rise (world u) a move may gain on too-steep ground: float slack only — sliding along a face
 /// never climbs it.
 const SLOPE_RISE_EPS: f32 = 1e-3;
+/// Reach (world u) of the "am I standing on a rock face?" probe ([`steep_fall_with`]): wide
+/// enough to see past a 1u cliff ledge to the next riser above and the drop below it, which the
+/// footprint-sized minmod probe reads as a flat shelf.
+const FALL_PROBE: f32 = 0.6;
+/// A face only counts if the ground also falls away below the hero by this much — so standing on
+/// flat ground at the FOOT of a cliff never slides you off it.
+const FALL_MIN_DROP: f32 = 0.2;
+/// Slide down a too-steep face: speed the slide kicks in at, its acceleration and its cap (u/s).
+const SLIDE_START: f32 = 1.6;
+const SLIDE_ACCEL: f32 = 10.0;
+const SLIDE_MAX: f32 = 5.5;
+/// Airborne, the hero may land on ground at most this far above where he took off + one terrace
+/// class (`steer::MAX_STEP`): a hop gets you onto a crate-high ledge, not up a cliff stair.
+const AIR_LEDGE: f32 = 0.45;
 
 /// Seconds the Sand-Dash slide takes to travel its whole blink (`arts::DASH_DIST`). Short + ease-out
 /// → an explosive launch that glides to a stop, so the dash *moves* the body instead of teleporting.
@@ -440,6 +454,27 @@ mod slope_tests {
         assert!(terrain_slope_with(mesa, 0.1, 0.0).unwrap() < 1e-3);
     }
 
+    #[test]
+    fn rock_faces_slide_but_cliff_feet_and_lips_hold() {
+        // A sheer 62 deg face: standing on it slides you down (-X).
+        let face = ramp(62.0);
+        let dn = steep_fall_with(face, 0.5, 0.0).expect("62 deg face must slide");
+        assert!(dn.x < -0.9, "{dn:?}");
+        // A walkable 40 deg ramp holds.
+        assert!(steep_fall_with(ramp(40.0), 0.5, 0.0).is_none());
+        // A cliff STAIR (1u ledges, 1.4u risers): the minmod footprint probe calls a ledge flat,
+        // the face probe must not.
+        let stair = |x: f32, _z: f32| Some((x.max(0.0)).floor() * 1.4);
+        assert!(steep_fall_with(stair, 2.5, 0.0).is_some(), "stair ledge read as standable");
+        // Flat ground at the foot of a wall, and the lip of a mesa: no slide.
+        let mesa = |x: f32, _z: f32| Some(if x >= 0.0 { 3.0 } else { 0.0 });
+        assert!(steep_fall_with(mesa, -0.3, 0.0).is_none(), "slid off the cliff foot");
+        assert!(steep_fall_with(mesa, 0.3, 0.0).is_none(), "slid off the mesa lip");
+        // The gully floor stays walkable (its walls rise on both sides, nothing falls away).
+        let gully = |x: f32, z: f32| Some(x.abs() * 1.5 + 0.2 * z);
+        assert!(steep_fall_with(gully, 0.1, 3.0).is_none());
+    }
+
     /// The real map: every artery road (the mountain-pass trails, castle approaches, canyon road
     /// …) and the hero's spawn must stay walkable under the slope limit.
     #[test]
@@ -454,6 +489,8 @@ mod slope_tests {
                 let steps = (w[0].distance(w[1]) / 0.25).ceil().max(1.0) as usize;
                 for k in 0..=steps {
                     let p = w[0].lerp(w[1], k as f32 / steps as f32);
+                    // No road may read as a rock face either (the slide would shove you off it).
+                    assert!(steep_fall_with(g, p.x, p.y).is_none(), "a road slides the hero off at {p:?}");
                     if let Some(s) = terrain_slope_with(g, p.x, p.y) {
                         n += 1;
                         if s > worst.0 {
@@ -635,8 +672,32 @@ pub(super) fn slope_ok(x: f32, z: f32, ref_y: f32) -> bool {
 }
 
 /// Is the ground under `(x, z)` too steep to stand on and push off (no jumping up a rock face)?
+/// Both the footprint slope AND the wider face probe: a stepped cliff's 1u ledges read flat to the
+/// footprint probe, which let the hero hop up a sheer wall one ledge at a time.
 fn too_steep(x: f32, z: f32) -> bool {
     terrain_slope_with(worldmap::ground_at_world, x, z).is_some_and(|g| g > MAX_WALK_TAN)
+        || steep_fall_with(worldmap::ground_at_world, x, z).is_some()
+}
+
+/// Standing on a rock FACE (not beside one)? Probes [`FALL_PROBE`] up and down the local fall
+/// line: the ground must rise steeper than the walk limit ahead AND drop away behind. Returns the
+/// downhill direction to slide along, `None` on walkable ground, at a cliff's foot (no drop) or on
+/// a mesa lip (no rise). Unlike the footprint's minmod probe this sees a stepped cliff's narrow
+/// ledges as the face they belong to.
+pub(super) fn steep_fall_with(ground: impl Fn(f32, f32) -> Option<f32>, x: f32, z: f32) -> Option<Vec2> {
+    let c = ground(x, z)?;
+    // Fall line over the full probe span (a narrower one reads a ledge's flat top as level).
+    let h = FALL_PROBE;
+    let g = Vec2::new(ground(x + h, z)? - ground(x - h, z)?, ground(x, z + h)? - ground(x, z - h)?);
+    let up = g.normalize_or_zero();
+    if up == Vec2::ZERO {
+        return None;
+    }
+    let p = Vec2::new(x, z);
+    let (hi, lo) = (p + up * FALL_PROBE, p - up * FALL_PROBE);
+    let rise = ground(hi.x, hi.y)? - c;
+    let drop = c - ground(lo.x, lo.y)?;
+    (rise > FALL_PROBE * MAX_WALK_TAN && drop > FALL_MIN_DROP).then_some(-up)
 }
 
 /// Velocity redirected along the CONTOUR when it would carry the body uphill onto too-steep
@@ -925,6 +986,15 @@ pub fn player_move(
     if hero.vel.length_squared() < 1e-4 {
         hero.vel = Vec2::ZERO; // settle exactly so a stopped hero doesn't creep
     }
+    // No standing on a rock face: the hero slides down its fall line (input only steers him across
+    // it, a little) until the ground is walkable again, or drops off where it turns sheer.
+    if hero.on_ground && !crate::traps::in_trap(hero.pos) && crate::bridges::deck_y_at(hero.pos.x, hero.pos.y).is_none() {
+        if let Some(dn) = steep_fall_with(worldmap::ground_at_world, hero.pos.x, hero.pos.y) {
+            let down = hero.vel.dot(dn);
+            let across = hero.vel - dn * down;
+            hero.vel = across * 0.6 + dn * (down.max(SLIDE_START) + SLIDE_ACCEL * dt).min(SLIDE_MAX);
+        }
+    }
 
     // Anim weight tracks ACTUAL speed so the legs keep striding through the stop-slide (no foot-slide
     // while static, no snap to idle). Saturates at a slow walk: the gait itself is foot-locked at
@@ -951,7 +1021,10 @@ pub fn player_move(
         // from the shell too, and still can't be abused to clip a wall in play (he never legally
         // rests overlapping one, so it stays false except when a solid materialised around him).
         let escaping = blockers::any_within(hero.pos.x, hero.pos.y, PLAYER_R);
-        let hy = hero.y;
+        // In the air, the climb reference is capped at the take-off ground (+ a hop's ledge): the
+        // body's apex used to admit ground up to ~1.7u above the feet, so jump-and-drift scaled
+        // cliff stairs ledge by ledge.
+        let hy = if hero.on_ground { hero.y } else { hero.y.min(hero.air_takeoff_y + AIR_LEDGE) };
         // Trap pockets (`traps`): ground you could drop into but never climb out of. Its rim is
         // an edge you can't step over; a hero already inside one (old save, knock-back, the mask
         // still baking) scrambles out past the slope limit and up to a hop's height of ledge.

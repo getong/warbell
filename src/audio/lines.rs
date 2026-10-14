@@ -108,6 +108,61 @@ pub enum LifeCue {
     /// The guards' mutter on the wall / at the gate.
     Patrol,
     Gate,
+    /// Beat `.1` (0-based) of scripted two-hander `.0` (index into [`LIFE_DIALOGUES`]).
+    Dlg(u8, u8),
+}
+
+/// A scripted exchange between two village-life residents (`village_life::life_social` plays one
+/// when a chatting pair's voices match, instead of two unrelated `Chat` lines): `a` opens and the
+/// beats alternate a, b, a, b... Clips are `audio/vo/life/life_dlg_NN_K.ogg` (NN = index + 1, K = beat
+/// + 1), cue `LifeCue::Dlg(index, beat)`; a dialogue only plays once ALL its beats are on disk.
+/// The ElevenLabs prompts (per voice, v3 tags) are in `docs/audio/elevenlabs-dialogi-wsi.md`.
+pub struct LifeDialogue {
+    pub a: LifeVoice,
+    pub b: LifeVoice,
+    pub beats: u8,
+}
+
+pub const LIFE_DIALOGUES: &[LifeDialogue] = &[
+    LifeDialogue { a: LifeVoice::Man, b: LifeVoice::Woman, beats: 4 },   // 01 the hammer
+    LifeDialogue { a: LifeVoice::Woman, b: LifeVoice::Man, beats: 3 },   // 02 mud in the yard
+    LifeDialogue { a: LifeVoice::Man, b: LifeVoice::Woman, beats: 4 },   // 03 the bell rang twice
+    LifeDialogue { a: LifeVoice::Woman, b: LifeVoice::Man, beats: 4 },   // 04 the shutter
+    LifeDialogue { a: LifeVoice::Woman, b: LifeVoice::Woman, beats: 3 }, // 05 Margit's bread
+    LifeDialogue { a: LifeVoice::Woman, b: LifeVoice::Woman, beats: 4 }, // 06 under the helmet
+    LifeDialogue { a: LifeVoice::Woman, b: LifeVoice::Woman, beats: 3 }, // 07 the well water
+    LifeDialogue { a: LifeVoice::Man, b: LifeVoice::Man, beats: 3 },     // 08 orks tonight?
+    LifeDialogue { a: LifeVoice::Man, b: LifeVoice::Man, beats: 4 },     // 09 borrow the cart
+    LifeDialogue { a: LifeVoice::Man, b: LifeVoice::Man, beats: 4 },     // 10 stone for the wall
+    LifeDialogue { a: LifeVoice::Elder, b: LifeVoice::Man, beats: 3 },   // 11 orks with a rake
+    LifeDialogue { a: LifeVoice::Elder, b: LifeVoice::Woman, beats: 3 }, // 12 worse winters
+];
+
+/// The catalog line for beat `beat` of dialogue `d`.
+pub fn life_dialogue_line(d: u8, beat: u8) -> Option<&'static Line> {
+    LINES.iter().find(|l| matches!(l.concept, Concept::Life(_, LifeCue::Dlg(x, k)) if x == d && k == beat))
+}
+
+/// Are all of dialogue `d`'s clips recorded and on disk? (Checked once per run.)
+pub fn life_dialogue_recorded(d: u8) -> bool {
+    static READY: std::sync::OnceLock<Vec<bool>> = std::sync::OnceLock::new();
+    READY
+        .get_or_init(|| {
+            LIFE_DIALOGUES
+                .iter()
+                .enumerate()
+                .map(|(i, dlg)| {
+                    (0..dlg.beats).all(|k| {
+                        life_dialogue_line(i as u8, k)
+                            .and_then(voice_clip_path)
+                            .is_some_and(|p| crate::realforest::load::asset_path(&p).is_file())
+                    })
+                })
+                .collect()
+        })
+        .get(d as usize)
+        .copied()
+        .unwrap_or(false)
 }
 
 /// How a speaker's voice is routed. Looked up from [`SPEAKERS`] by the director.
@@ -477,6 +532,62 @@ pub const LINES: &[Line] = &[
     life("life_g_kid", LifeVoice::Guard, LifeCue::Scold, "You. Off the rampart. Now."),
     life("life_g_yawn", LifeVoice::Guard, LifeCue::Yawn, "Hhh. Who scheduled the dawn so early."),
     life("life_g_dusk", LifeVoice::Guard, LifeCue::Dusk, "Bell's soon. Torches lit, eyes open."),
+    // -- Village-life two-handers (`LIFE_DIALOGUES`; prompts in `docs/audio/elevenlabs-dialogi-wsi.md`).
+    // Text = transcript; silent until the clip is on disk. Trigger: a chatting pair whose voices match.
+    // 01 the hammer
+    life("life_dlg_01_1", LifeVoice::Man, LifeCue::Dlg(0, 0), "Have you seen my good hammer?"),
+    life("life_dlg_01_2", LifeVoice::Woman, LifeCue::Dlg(0, 1), "The one you lent to Tam?"),
+    life("life_dlg_01_3", LifeVoice::Man, LifeCue::Dlg(0, 2), "I never lent it to Tam."),
+    life("life_dlg_01_4", LifeVoice::Woman, LifeCue::Dlg(0, 3), "Well. Tam's got a very nice hammer now."),
+    // 02 mud in the yard
+    life("life_dlg_02_1", LifeVoice::Woman, LifeCue::Dlg(1, 0), "You're tracking mud through the whole yard."),
+    life("life_dlg_02_2", LifeVoice::Man, LifeCue::Dlg(1, 1), "It's a yard. It's made of mud."),
+    life("life_dlg_02_3", LifeVoice::Woman, LifeCue::Dlg(1, 2), "Not my bit of it."),
+    // 03 the bell rang twice
+    life("life_dlg_03_1", LifeVoice::Man, LifeCue::Dlg(2, 0), "Bell rang twice last night. Twice!"),
+    life("life_dlg_03_2", LifeVoice::Woman, LifeCue::Dlg(2, 1), "Once for the orks. Once for old Bram falling off the wall."),
+    life("life_dlg_03_3", LifeVoice::Man, LifeCue::Dlg(2, 2), "Is he alright?"),
+    life("life_dlg_03_4", LifeVoice::Woman, LifeCue::Dlg(2, 3), "Landed on the pigs. The pigs are not alright."),
+    // 04 the shutter
+    life("life_dlg_04_1", LifeVoice::Woman, LifeCue::Dlg(3, 0), "Did you fix the shutter like I asked?"),
+    life("life_dlg_04_2", LifeVoice::Man, LifeCue::Dlg(3, 1), "I looked at it. Very carefully."),
+    life("life_dlg_04_3", LifeVoice::Woman, LifeCue::Dlg(3, 2), "And?"),
+    life("life_dlg_04_4", LifeVoice::Man, LifeCue::Dlg(3, 3), "It's definitely broken."),
+    // 05 Margit's bread
+    life("life_dlg_05_1", LifeVoice::Woman, LifeCue::Dlg(4, 0), "Margit's bread's gone up a penny again."),
+    life("life_dlg_05_2", LifeVoice::Woman, LifeCue::Dlg(4, 1), "And down a size. I could post it through the keyhole."),
+    life("life_dlg_05_3", LifeVoice::Woman, LifeCue::Dlg(4, 2), "Shh, here she comes. Lovely loaves, Margit!"),
+    // 06 under the helmet
+    life("life_dlg_06_1", LifeVoice::Woman, LifeCue::Dlg(5, 0), "Is that knight ever going to take his helmet off?"),
+    life("life_dlg_06_2", LifeVoice::Woman, LifeCue::Dlg(5, 1), "My sister says he's very handsome under there."),
+    life("life_dlg_06_3", LifeVoice::Woman, LifeCue::Dlg(5, 2), "Your sister's never seen under there."),
+    life("life_dlg_06_4", LifeVoice::Woman, LifeCue::Dlg(5, 3), "That's why she's so sure."),
+    // 07 the well water
+    life("life_dlg_07_1", LifeVoice::Woman, LifeCue::Dlg(6, 0), "The well water tastes of iron today."),
+    life("life_dlg_07_2", LifeVoice::Woman, LifeCue::Dlg(6, 1), "That's the new bucket. Or the sword somebody dropped down there last week."),
+    life("life_dlg_07_3", LifeVoice::Woman, LifeCue::Dlg(6, 2), "I'll boil it."),
+    // 08 orks tonight?
+    life("life_dlg_08_1", LifeVoice::Man, LifeCue::Dlg(7, 0), "Reckon we'll see orks tonight?"),
+    life("life_dlg_08_2", LifeVoice::Man, LifeCue::Dlg(7, 1), "Reckon we see orks every night."),
+    life("life_dlg_08_3", LifeVoice::Man, LifeCue::Dlg(7, 2), "Aye. Just hoping for a different answer."),
+    // 09 borrow the cart
+    life("life_dlg_09_1", LifeVoice::Man, LifeCue::Dlg(8, 0), "Can I borrow your cart tomorrow?"),
+    life("life_dlg_09_2", LifeVoice::Man, LifeCue::Dlg(8, 1), "Wheel's off."),
+    life("life_dlg_09_3", LifeVoice::Man, LifeCue::Dlg(8, 2), "Borrow your wheel, then?"),
+    life("life_dlg_09_4", LifeVoice::Man, LifeCue::Dlg(8, 3), "That's the cart, Hob. You'd just have the cart."),
+    // 10 stone for the wall
+    life("life_dlg_10_1", LifeVoice::Man, LifeCue::Dlg(9, 0), "They want more stone for the wall."),
+    life("life_dlg_10_2", LifeVoice::Man, LifeCue::Dlg(9, 1), "They always want more stone for the wall."),
+    life("life_dlg_10_3", LifeVoice::Man, LifeCue::Dlg(9, 2), "Maybe if the orks stopped taking it apart."),
+    life("life_dlg_10_4", LifeVoice::Man, LifeCue::Dlg(9, 3), "Write to them. See how that goes."),
+    // 11 orks with a rake
+    life("life_dlg_11_1", LifeVoice::Elder, LifeCue::Dlg(10, 0), "When I was your age, we fought orks with a rake."),
+    life("life_dlg_11_2", LifeVoice::Man, LifeCue::Dlg(10, 1), "And did it work?"),
+    life("life_dlg_11_3", LifeVoice::Elder, LifeCue::Dlg(10, 2), "No. That's why I'm still angry about it."),
+    // 12 worse winters
+    life("life_dlg_12_1", LifeVoice::Elder, LifeCue::Dlg(11, 0), "This fort's seen worse winters than this."),
+    life("life_dlg_12_2", LifeVoice::Woman, LifeCue::Dlg(11, 1), "It's summer, Grandad."),
+    life("life_dlg_12_3", LifeVoice::Elder, LifeCue::Dlg(11, 2), "Then it's seen worse summers too."),
 
     // ── Campaign Prologue + Act I (`docs/audio/elevenlabs-akt-1.md`; clips `audio/vo/campaign/<id>.ogg`) ──
     // Voices (DO NOT change on re-takes): harrow=Julian, wat=Sully, maud=MoanElisa, pip=Omar J, settler=Wilf,

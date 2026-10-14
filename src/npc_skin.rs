@@ -646,7 +646,7 @@ fn drive_skins(
         let rate_of = |clip: &str| sk.loco_native(clip).map_or(1.0, |n| (sk.speed / n).clamp(0.4, 2.2));
         let jog_native = sk.loco_native("Jog_Fwd_Loop").unwrap_or(stride * JOG_K);
         let elder = sk.mx && matches!(sk.look, ELDER_M | ELDER_F);
-        // the Mixamo set's idles take turns per person (~20 s each): weight shifts, a glance round,
+        // the Mixamo set's idles take turns per person (~20 s each): weight shifts, arms folded,
         // a bored sway — nobody stands frozen in one loop all day
         let idle = if !sk.mx {
             "Idle_Loop"
@@ -654,7 +654,9 @@ fn drive_skins(
             "Old_Idle_Loop"
         } else {
             let turn = (time.elapsed_secs() / 21.0) as u32 + person_hash(pe) % 7;
-            ["Idle_Loop", "Idle_Loop", "Idle_LookAround_Loop", "Idle_Loop", "Idle_Bored_Loop"][(turn % 5) as usize]
+            // (no "Nervously Look Around": its hunched, darting crouch read as a townsperson cowering
+            // or lying in wait, not standing about)
+            ["Idle_Loop", "Idle_Loop", "Idle_FoldArms_Loop", "Idle_Loop", "Idle_Bored_Loop"][(turn % 5) as usize]
         };
         let (clip, once, rate): (&'static str, bool, f32) = if dying {
             ("Death01", true, 1.0)

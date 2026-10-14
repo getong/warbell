@@ -436,6 +436,7 @@ impl Plugin for VillagersPlugin {
                     stage_archers,
                     guard_combat,
                     rearm_townsfolk,
+                    tend_guard_posts,
                     reskin_townsfolk,
                     camp_rescue,
                     walk_out_captives,
@@ -517,6 +518,68 @@ fn rearm_townsfolk(
             .try_remove::<crate::lumberjack::ChopJob>()
             .try_remove::<crate::miner::MineJob>();
         arm_as_guard(&mut commands, e, post);
+    }
+}
+
+/// Minimum spacing (world u) between two peacetime guard posts.
+const POST_GAP: f32 = 2.4;
+
+/// Peacetime care of the idle reserve's posts. A worker downing tools is armed WHERE IT STANDS
+/// ([`rearm_townsfolk`]), so knots of guards used to share one spot and stand pressed together,
+/// shoving for it all day: any post within [`POST_GAP`] of another moves to a free spot nearby.
+/// And now and then (~once a minute each) a guard strolls to a fresh post — a slow beat round the
+/// yard instead of standing frozen in one place. Off during a night wave (posts are battle stations).
+fn tend_guard_posts(
+    time: Res<Time>,
+    siege: Option<Res<crate::siege::Siege>>,
+    mut next: Local<f32>,
+    mut guards: Query<(Entity, &mut Guard), (With<Townsfolk>, Without<Rallied>, Without<crate::dying::Dying>)>,
+) {
+    const TICK: f32 = 1.5;
+    let now = time.elapsed_secs();
+    if now < *next || siege.is_some_and(|s| s.phase == crate::siege::GamePhase::Wave) {
+        return;
+    }
+    *next = now + TICK;
+    let beat = (now / TICK) as u32;
+    let mut posts: Vec<(Entity, Vec2)> = guards.iter().map(|(e, g)| (e, g.post)).collect();
+    posts.sort_by_key(|(e, _)| e.to_bits());
+    for i in 0..posts.len() {
+        let (e, post) = posts[i];
+        let mut rng = (e.to_bits() as u32 ^ beat.wrapping_mul(0x9E37_79B1)) | 1;
+        let crowded = posts.iter().take(i).any(|(_, q)| q.distance(post) < POST_GAP);
+        let stroll = next_u32(&mut rng) % 40 == 0;
+        if !crowded && !stroll {
+            continue;
+        }
+        let yard = crate::castle::in_courtyard(post.x, post.y);
+        let ok = |p: Vec2| {
+            !crate::blockers::is_blocked(p.x, p.y)
+                && crate::castle::in_courtyard(p.x, p.y) == yard
+                && (!yard || p.distance(crate::castle::KEEP_POS) >= 6.5)
+                && posts.iter().all(|(o, q)| *o == e || q.distance(p) >= POST_GAP)
+        };
+        let (lo, hi) = if stroll { (3.0, 9.0) } else { (POST_GAP, 5.0) };
+        let mut moved = None;
+        for _ in 0..16 {
+            let ang = rng01(&mut rng) * TAU;
+            let r = rng_range(&mut rng, lo, hi);
+            let p = crate::navgrid::free_point(post + Vec2::new(ang.cos(), ang.sin()) * r, 0.3);
+            if ok(p) {
+                moved = Some(p);
+                break;
+            }
+        }
+        if moved.is_none() && yard {
+            let placed: Vec<Vec2> = posts.iter().filter(|(o, _)| *o != e).map(|p| p.1).collect();
+            moved = courtyard_spot(&mut rng, crate::castle::courtyard_half(), &placed);
+        }
+        if let Some(p) = moved {
+            posts[i].1 = p;
+            if let Ok((_, mut g)) = guards.get_mut(e) {
+                g.post = p;
+            }
+        }
     }
 }
 
@@ -2245,10 +2308,12 @@ fn pick_walk(v: &mut Villager, spots: &[Vec2], is_kid: bool) {
     // Adults sometimes drift to a shared gathering spot (well / woodpile / market / keep steps)
     // and linger there, so the town clusters into little knots instead of all wandering solo.
     // Kids skip it — they just scamper around their own small play patch.
-    if !is_kid && !spots.is_empty() && rng01(&mut v.rng) < 0.42 {
+    if !is_kid && !spots.is_empty() && rng01(&mut v.rng) < 0.32 {
         let s = spots[(rng01(&mut v.rng) * spots.len() as f32) as usize % spots.len()];
         let ang = rng01(&mut v.rng) * TAU;
-        let r = rng_range(&mut v.rng, 0.9, 1.7); // ring just outside the prop's blocker
+        // A loose ring round the prop (was 0.9-1.7: everyone picking that tight band stood
+        // shoulder-to-shoulder, shoving for the same spot).
+        let r = rng_range(&mut v.rng, 1.2, 3.2);
         v.target = crate::navgrid::free_point(s + Vec2::new(ang.cos() * r, ang.sin() * r), 0.3);
         v.gathering = true;
     } else {
