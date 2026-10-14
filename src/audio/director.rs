@@ -128,6 +128,7 @@ pub fn speak_director(
     mode: Res<crate::rts::GameMode>,
     campaign: Res<crate::quest::CampaignRes>,
     siege: Res<crate::siege::Siege>,
+    mut utt: Option<ResMut<crate::lipsync::Utterances>>,
 ) {
     let now = time.elapsed_secs();
     let skirmish = *mode == crate::rts::GameMode::Skirmish;
@@ -167,7 +168,7 @@ pub fn speak_director(
     }
     // Select before spawning: deferred Commands cannot see another sink spawned this frame.
     if let Some((line, at)) = winner {
-        play_line(&mut commands, &cfg, &mut mgr, &mut cd, &sinks, &mut subs, &sources, now, &line, at, skirmish);
+        play_line(&mut commands, &cfg, &mut mgr, &mut cd, &sinks, &mut subs, &sources, now, &line, at, skirmish, utt.as_deref_mut());
     }
 }
 
@@ -185,6 +186,7 @@ fn play_line(
     line: &Line,
     pos: Option<Vec3>,
     skirmish: bool,
+    utt: Option<&mut crate::lipsync::Utterances>,
 ) {
     let voice = speaker_voice(line.speaker);
     // Look up the preloaded handle; bail if the line has no clip registered.
@@ -214,6 +216,13 @@ fn play_line(
         })
     });
     let dur = clip_secs / speed + 0.15;
+    // The townsperson saying it moves their mouth (the hero / orks / rivals have no talking face).
+    if let Some(utt) = utt {
+        utt.hush();
+        if let (Some(at), true) = (pos, matches!(line.speaker, Speaker::Villager | Speaker::Captive | Speaker::Life | Speaker::Cast(_))) {
+            utt.speak(line.id, sources.get(&clip).expect("loaded above"), at, now, speed);
+        }
+    }
     // In skirmish the listener rides the iso camera ~90u overhead, so a SPATIAL voice (villager /
     // ork / rival) attenuates to silence — only the head-locked hero was ever heard. Play those 2D
     // there (slightly quieter, since 2D doesn't fall off with distance) so the town/enemy actually
@@ -304,6 +313,7 @@ pub fn tick_chains(
     sources: Res<Assets<AudioSource>>,
     mode: Res<crate::rts::GameMode>,
     threat: Res<super::HeroThreat>,
+    mut utt: Option<ResMut<crate::lipsync::Utterances>>,
 ) {
     let now = time.elapsed_secs();
     let skirmish = *mode == crate::rts::GameMode::Skirmish;
@@ -336,7 +346,7 @@ pub fn tick_chains(
         let Some(reply) = pick else { continue };
         if threat.in_danger && super::lines::is_peaceful(reply.concept) { continue; }
         if channel_available(mgr.active.values(), now, reply.priority) {
-            play_line(&mut commands, &cfg, &mut mgr, &mut cd, &sinks, &mut subs, &sources, now, &reply, pos, skirmish);
+            play_line(&mut commands, &cfg, &mut mgr, &mut cd, &sinks, &mut subs, &sources, now, &reply, pos, skirmish, utt.as_deref_mut());
         }
     }
 }

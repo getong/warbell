@@ -76,7 +76,7 @@ impl Plugin for NpcSkinPlugin {
             return;
         }
         app.add_systems(Startup, load_cast)
-            .add_systems(Update, (finish_cast, attach_skins, hide_studio_rigs, copy_tools, drive_skins, carry_loads).chain());
+            .add_systems(Update, (finish_cast, attach_skins, reveal_skins, hide_studio_rigs, copy_tools, drive_skins, carry_loads).chain());
         if std::env::var_os("FOREST_GAITCHECK").is_some() {
             app.add_systems(PostUpdate, gait_check.after(bevy::transform::TransformSystems::Propagate));
         }
@@ -116,6 +116,8 @@ pub struct Skinned {
     pub hand_l: Option<Entity>,
     /// The skin's pelvis joint (read by the `FOREST_LIFECHECK` seat check).
     pub pelvis: Option<Entity>,
+    /// The body node carrying the `jaw_open` morph weight (driven by `lipsync`).
+    mouth: Option<Entity>,
     /// Hand-held props copied from the studio rig: (entity, right hand?, grip -> head distance).
     props: Vec<(Entity, bool, f32)>,
     /// Which grip the props are in (true = the two-handed work / fight grip).
@@ -126,6 +128,10 @@ impl Skinned {
     /// The spawned glTF instance (the visible body) under the gameplay root.
     pub fn inst(&self) -> Entity {
         self.inst
+    }
+    /// The entity whose `MorphWeights` open this person's mouth (once the skin is in).
+    pub fn mouth(&self) -> Option<Entity> {
+        self.mouth
     }
 }
 
@@ -172,6 +178,8 @@ struct NpcCast {
     /// it (A/B the two sets).
     private: Vec<Option<Handle<Gltf>>>,
     mats: Vec<HashMap<&'static str, Handle<StandardMaterial>>>,
+    /// Per look: every texture its materials read (a skin is only shown once all are in, see `Reveal`).
+    imgs: Vec<Vec<Handle<Image>>>,
     /// Per look: dyed-cloth variants, then hair-shade variants (index 0 = the look's own).
     vars: Vec<(Vec<Handle<StandardMaterial>>, Vec<Handle<StandardMaterial>>)>,
     looks: Vec<Option<LookAssets>>,
@@ -224,6 +232,7 @@ fn load_cast(mut commands: Commands, server: Res<AssetServer>, mut materials: Re
     let mut private = Vec::new();
     let mut mats = Vec::new();
     let mut vars = Vec::new();
+    let mut imgs = Vec::new();
     let ual_only = std::env::var_os("FOREST_UALANIM").is_some();
     for name in LOOKS {
         gltf.push(server.load(format!("npc/npc_{name}.glb")));
@@ -271,9 +280,12 @@ fn load_cast(mut commands: Commands, server: Res<AssetServer>, mut materials: Re
             Vec::new()
         };
         vars.push((cloth, hair));
+        let mut look_imgs: Vec<Handle<Image>> = ["albedo", "normal", "orm"].iter().map(|k| tex(k)).collect();
+        look_imgs.extend(["hair", "beard", "brow", "lash"].iter().filter(|k| m.contains_key(card_key(k))).map(|k| tex(k)));
+        imgs.push(look_imgs);
         mats.push(m);
     }
-    commands.insert_resource(NpcCast { looks: (0..LOOKS.len()).map(|_| None).collect(), gltf, private, mats, vars });
+    commands.insert_resource(NpcCast { looks: (0..LOOKS.len()).map(|_| None).collect(), gltf, private, mats, imgs, vars });
 }
 
 /// Build each look's animation graph once its GLB (and private clip set, if any) is in: clip name ->
@@ -349,7 +361,16 @@ fn attach_skins(
             ))
             .observe(skin_ready)
             .id();
-        commands.entity(e).add_child(child).try_insert(Skinned {
+        // Parent it from a world command: a root despawned this frame (a reset, a death) would make a
+        // plain `add_child` panic; then the orphaned instance goes too.
+        commands.queue(move |world: &mut World| {
+            if world.get_entity(e).is_ok() {
+                world.entity_mut(e).add_child(child);
+            } else if let Ok(c) = world.get_entity_mut(child) {
+                c.despawn();
+            }
+        });
+        commands.entity(e).try_insert(Skinned {
             look: req.0,
             inst: child,
             tools_done: false,
@@ -364,6 +385,7 @@ fn attach_skins(
             hand_r: None,
             hand_l: None,
             pelvis: None,
+            mouth: None,
             props: Vec::new(),
             work_grip: false,
         });
@@ -380,6 +402,7 @@ fn skin_ready(
     players: Query<(), With<AnimationPlayer>>,
     mat_names: Query<&GltfMaterialName>,
     names: Query<&Name>,
+    morphs: Query<(), With<bevy::mesh::morph::MorphWeights>>,
     mut roots: Query<&mut Skinned>,
 ) {
     let inst = ready.entity;
@@ -393,6 +416,9 @@ fn skin_ready(
         if players.contains(d) {
             commands.entity(d).insert((AnimationGraphHandle(look.graph.clone()), AnimationTransitions::new()));
             sk.player = Some(d);
+        }
+        if morphs.contains(d) {
+            sk.mouth = Some(d);
         }
         if let Ok(mn) = mat_names.get(d) {
             // This person's own dye and hair shade (a stable pick per root entity).
@@ -419,9 +445,36 @@ fn skin_ready(
             }
         }
     }
-    commands.entity(inst).insert(Visibility::Inherited);
+    commands.entity(inst).insert(Reveal(0));
     sk.clip = "";
     sk.tools_done = false;
+}
+
+/// A skin instance with its game materials in, kept hidden until every texture they read has loaded
+/// and had a few frames to reach the GPU. Bevy 0.20 re-queues a mesh left pending (material not yet
+/// prepared) without checking it's still visible, so a person shown while their textures stream in
+/// and then hidden for a moment (indoors, a job change) got binned twice on reappearing — the
+/// intermittent "already binned" panic. Never visible while pending = never double-binned.
+#[derive(Component)]
+struct Reveal(u8);
+
+fn reveal_skins(
+    mut commands: Commands,
+    cast: Res<NpcCast>,
+    server: Res<AssetServer>,
+    roots: Query<&Skinned>,
+    mut q: Query<(Entity, &mut Reveal, &SkinOf)>,
+) {
+    for (e, mut r, of) in &mut q {
+        let Ok(sk) = roots.get(of.0) else { continue };
+        if r.0 == 0 && !cast.imgs[sk.look as usize].iter().all(|h| server.is_loaded(h.id()) || server.load_state(h.id()).is_failed()) {
+            continue;
+        }
+        r.0 += 1;
+        if r.0 >= 8 {
+            commands.entity(e).try_remove::<Reveal>().try_insert(Visibility::Inherited);
+        }
+    }
 }
 
 /// The studio body under a skinned root stays (joint lookups, prop sockets) but is never drawn.
@@ -590,7 +643,7 @@ fn drive_skins(
         let stepping = sk.loco_native(sk.clip).is_some();
         let moving = sk.speed > if stepping { 0.12 } else { 0.3 };
         let stride = sk.stride;
-        let rate_of = |clip: &str| sk.loco_native(clip).map_or(1.0, |n| (sk.speed / n).clamp(0.4, 1.8));
+        let rate_of = |clip: &str| sk.loco_native(clip).map_or(1.0, |n| (sk.speed / n).clamp(0.4, 2.2));
         let jog_native = sk.loco_native("Jog_Fwd_Loop").unwrap_or(stride * JOG_K);
         let elder = sk.mx && matches!(sk.look, ELDER_M | ELDER_F);
         // the Mixamo set's idles take turns per person (~20 s each): weight shifts, a glance round,
@@ -618,7 +671,10 @@ fn drive_skins(
         } else if d.carrying && moving {
             let c = if d.pulling { "Push_Loop" } else { "Walk_Carry_Loop" };
             (c, false, rate_of(c))
-        } else if moving && (sk.speed > stride * 1.75 || (d.run_amt > 0.5 && sk.speed > stride * 1.3)) {
+        } else if moving && (sk.speed > stride * 2.2 || (d.run_amt > 0.5 && sk.speed > stride * 1.3)) {
+            // Grown-ups WALK — a brisk pace is a quicker walk, never a trot (a woman jogging up and
+            // stopping dead read as absurd). Only a real hurry (a muster, past ~2.2 strides) or a
+            // runner by nature (`run_amt`: kids at play, a flight) breaks into the run.
             // a run is never played much below ~half its pace (the UAL jog is a long-flight run)
             ("Jog_Fwd_Loop", false, (sk.speed / jog_native).clamp(0.5, 1.5))
         } else if moving && elder && sk.speed < stride * if sk.clip == "Sad_Walk_Loop" { 1.05 } else { 0.95 } {

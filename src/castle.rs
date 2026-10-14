@@ -894,6 +894,14 @@ pub struct BellClapper;
 #[derive(Resource, Default)]
 pub struct BellRing(pub Option<f32>);
 
+/// Elapsed-secs start of a soft STIR: a gust (or a bird leaving the belfry) rocks the bell a few
+/// degrees and the clapper, swinging wider, kisses the sound-bow once — the low hum a hung bell
+/// gives without being rung. Rides on top of the toll in [`swing_bell`]; `None` once decayed.
+#[derive(Resource, Default)]
+pub struct BellStir(pub Option<f32>);
+/// Seconds from a stir's start to the clapper touching the bronze (when the hum should sound).
+pub const STIR_KISS: f32 = 0.77;
+
 /// The moving half of the war bell: two pivot entities hinged at the crossbeam centre — the
 /// headstock + bronze bell under `BellSwing`, the clapper + hanging pull-rope under `BellClapper`.
 /// All part meshes are LOCAL to the hinge (pivot at the origin), so a single rotation swings them.
@@ -949,6 +957,7 @@ fn swing_bell(
     time: Res<Time>,
     siege: Res<crate::siege::Siege>,
     mut ring: ResMut<BellRing>,
+    mut stir: ResMut<BellStir>,
     mut cues: MessageWriter<crate::audio::AudioCue>,
     mut prev_phase: Local<Option<crate::siege::GamePhase>>,
     mut belltest: Local<Option<bool>>,
@@ -978,7 +987,20 @@ fn swing_bell(
     if ring.0.is_some_and(|t| now - t > 9.0) {
         ring.0 = None;
     }
-    let sway = 0.015 * (now * 0.8).sin();
+    if stir.0.is_some_and(|t| now - t > 12.0) {
+        stir.0 = None;
+    }
+    let mut sway = 0.015 * (now * 0.8).sin();
+    // A stir: the slow natural swing of the hung bell (~2 s period), the clapper's longer lag
+    // carrying it across the mouth until it touches the bow at `STIR_KISS`.
+    let mut kiss = 0.0;
+    if let Some(t0) = stir.0 {
+        let dt = (now - t0).max(0.0);
+        let damp = (-dt * 0.35).exp();
+        let b = 0.09 * damp * (dt * 3.2).sin();
+        sway += b;
+        kiss = (0.5 * damp * (dt * 3.2 - 0.9).sin() - b).clamp(-0.38, 0.38);
+    }
     let (bell, clapper) = match ring.0 {
         Some(t0) => {
             let dt = now - t0;
@@ -989,7 +1011,7 @@ fn swing_bell(
             let c_raw = 0.85 * damp * (dt * 7.0 - 0.6).sin();
             (b, b + (c_raw - b).clamp(-0.38, 0.38))
         }
-        None => (0.0, 0.0),
+        None => (0.0, kiss),
     };
     for (mut tf, is_clapper) in &mut q {
         let theta = sway + if is_clapper { clapper } else { bell };
@@ -2567,6 +2589,7 @@ impl Plugin for CastlePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CastleBuilt>()
             .init_resource::<BellRing>()
+            .init_resource::<BellStir>()
             .add_systems(Update, (drift_smoke, peck_hens, swing_bell, window_glow));
         add_castle_blocker_systems(app);
     }

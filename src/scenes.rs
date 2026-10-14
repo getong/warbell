@@ -182,7 +182,7 @@ impl Plugin for ScenesPlugin {
                 )
                     .chain(),
             )
-            .add_systems(Update, (drive_farm_audio, farm_hammers))
+            .add_systems(Update, (drive_farm_audio, farm_hammers, fort_mouths.after(drive_fort_scene)))
             // Pin the staged hero LAST (after locomotion/gravity have run) and just before transforms
             // propagate, so his elevated wall mark is the authoritative pose regardless of PlayMode.
             .add_systems(
@@ -1073,6 +1073,9 @@ struct FarmLookSaved {
     fov: f32,
     dof: (f32, f32, f32),
     grade: Option<crate::filmgrade::FilmGrade>,
+    /// The game ran TAA (swapped for SMAA through the film) / the SMAA preset it had, if any.
+    taa: bool,
+    smaa: Option<bevy::anti_alias::smaa::SmaaPreset>,
 }
 
 /// One camera setup: eye, look-at, vertical FOV (degrees), DOF sharp half-band (world units).
@@ -1153,10 +1156,13 @@ fn farm_shot(t: f32, gy: f32) -> Cam {
 /// grade pass. All of it is put back afterwards.
 #[allow(clippy::type_complexity)]
 fn farm_camera(
+    mut commands: Commands,
     time: Res<Time>,
     state: Res<SceneState>,
     mut cam: Query<
         (
+            Entity,
+            Option<&bevy::anti_alias::smaa::Smaa>,
             &mut Transform,
             &mut Projection,
             &mut crate::dof::Dof,
@@ -1169,7 +1175,8 @@ fn farm_camera(
     mut saved: Local<Option<FarmLookSaved>>,
     mut last_eye: Local<Option<Vec3>>,
 ) {
-    let Ok((mut c, mut proj, mut dof, mut grade, mut blur, taa)) = cam.single_mut() else { return };
+    let Ok((cam_e, smaa, mut c, mut proj, mut dof, mut grade, mut blur, taa)) = cam.single_mut() else { return };
+    let had_taa = taa.is_some();
     if !is_cutscene(state.active) {
         if last_eye.take().is_some() {
             if let Some(b) = blur.as_mut() {
@@ -1186,6 +1193,21 @@ fn farm_camera(
             if let (Some(g), Some(was)) = (grade.as_mut(), sv.grade) {
                 **g = was;
             }
+            let mut e = commands.entity(cam_e);
+            if sv.taa {
+                e.try_insert((
+                    bevy::anti_alias::taa::TemporalAntiAliasing::default(),
+                    bevy::anti_alias::contrast_adaptive_sharpening::ContrastAdaptiveSharpening {
+                        enabled: true,
+                        sharpening_strength: 0.2, // quality.rs's TAA pairing
+                        denoise: false,
+                    },
+                ));
+            }
+            match sv.smaa {
+                Some(preset) => e.try_insert(bevy::anti_alias::smaa::Smaa { preset }),
+                None => e.try_remove::<bevy::anti_alias::smaa::Smaa>(),
+            };
         }
         return;
     }
@@ -1217,7 +1239,25 @@ fn farm_camera(
 
     if saved.is_none() {
         let fov = if let Projection::Perspective(p) = &*proj { p.fov } else { 50f32.to_radians() };
-        *saved = Some(FarmLookSaved { fov, dof: (dof.range, dof.far_ramp, dof.max_radius), grade: grade.as_deref().copied() });
+        *saved = Some(FarmLookSaved {
+            fov,
+            dof: (dof.range, dof.far_ramp, dof.max_radius),
+            grade: grade.as_deref().copied(),
+            taa: had_taa,
+            smaa: smaa.map(|s| s.preset),
+        });
+        // The film is shot through SMAA, not TAA: under the capture harness's per-frame stall TAA
+        // reprojects moving people with stale motion vectors (the same fault that shuts motion blur
+        // above) and smears every walking or gesturing figure soft. SMAA keeps them crisp.
+        commands
+            .entity(cam_e)
+            .try_remove::<(
+                bevy::anti_alias::taa::TemporalAntiAliasing,
+                bevy::render::camera::TemporalJitter,
+                bevy::render::camera::MipBias,
+                bevy::anti_alias::contrast_adaptive_sharpening::ContrastAdaptiveSharpening,
+            )>()
+            .try_insert(bevy::anti_alias::smaa::Smaa { preset: bevy::anti_alias::smaa::SmaaPreset::Ultra });
     }
     if let Projection::Perspective(p) = &mut *proj {
         p.fov = fov_deg.to_radians();
@@ -1362,6 +1402,52 @@ const FORT_LINES: [(f32, f32, &str, &str); 8] = [
     (28.65, 4.91, "Maud", "God help us. A well, a bell, and a wall and a half."),
 ];
 
+/// The VO as `tools/cutscene/fort_audio.py` lays it into the soundtrack: (start s, clip, trim
+/// from..to s, speaker). Read back here only to move the speakers' mouths (`fort_mouths`) — the
+/// sound itself is mixed offline. Keep in step with that table.
+const FORT_VO: [(f32, &str, f32, f32, FortRole); 8] = [
+    (11.45, "audio/vo/campaign/a1_pip_05.ogg", 0.0, 1.1, FortRole::Pip), // "There's a well!"
+    (13.5, "audio/vo/campaign/a1_pip_05.ogg", 1.8, 5.3, FortRole::Pip), // "And that… that was a chapel!"
+    (17.15, "audio/vo/campaign/a1_pip_05.ogg", 5.65, 8.1, FortRole::Pip), // (gasp) "There's a bell! Up there!"
+    (19.72, "audio/vo/campaign/a1_pip_05.ogg", 8.7, 9.88, FortRole::Pip), // "It's whole."
+    (21.25, "audio/vo/campaign/a1_maud_14.ogg", 0.0, 2.62, FortRole::Maud), // "The well's whole too. Start with the well."
+    (24.5, "audio/vo/campaign/a1_pip_05.ogg", 11.05, 11.75, FortRole::Pip), // "Can I—"
+    (25.3, "audio/vo/campaign/a1_maud_15.ogg", 0.0, 2.54, FortRole::Maud), // "At dusk. King's orders, one of them."
+    (28.65, "audio/vo/campaign/a1_maud_16.ogg", 0.0, 4.91, FortRole::Maud), // "God help us. A well, a bell, and a wall and a half."
+];
+
+/// Pip's and Maud's mouths follow their lines' loudness (see `lipsync`).
+fn fort_mouths(
+    mut commands: Commands,
+    state: Res<SceneState>,
+    server: Res<AssetServer>,
+    sources: Res<Assets<AudioSource>>,
+    mut clips: Local<Vec<(Handle<AudioSource>, Option<Vec<f32>>)>>,
+    actors: Query<(Entity, &FortRole)>,
+) {
+    if state.active != Some(SceneId::FortArrival) {
+        return;
+    }
+    if clips.is_empty() {
+        *clips = FORT_VO.iter().map(|vo| (server.load(vo.1), None)).collect();
+    }
+    for ((h, env), vo) in clips.iter_mut().zip(&FORT_VO) {
+        if env.is_none() {
+            *env = sources.get(&*h).map(|s| crate::lipsync::envelope(s, vo.2, vo.3));
+        }
+    }
+    let t = state.clock.max(0.0);
+    for (e, role) in &actors {
+        let open = clips
+            .iter()
+            .zip(&FORT_VO)
+            .filter(|(_, vo)| vo.4 == *role)
+            .filter_map(|((_, env), vo)| env.as_deref().map(|env| crate::lipsync::sample(env, t - vo.0)))
+            .fold(0.0, f32::max);
+        commands.entity(e).try_insert(crate::lipsync::MouthOpen(open));
+    }
+}
+
 /// One step of a scripted walk: `Go(to, speed)` straight there, `Until(t)` hold the spot until `t`.
 #[derive(Clone, Copy)]
 enum Leg {
@@ -1433,7 +1519,8 @@ fn fort_pip(t: f32) -> (Vec2, Option<Vec2>) {
 
 fn fort_maud(t: f32) -> (Vec2, Option<Vec2>) {
     use Leg::*;
-    route(t, 0.0, Vec2::new(1.1, 33.0), &[Go(Vec2::new(0.9, 24.6), 1.35), Go(MAUD_MARK, 1.35)]) // → ~18.9
+    // a grown woman's steady walk (1.35 u/s pushed her skin into a trot), so she sets off nearer
+    route(t, 0.0, Vec2::new(1.0, 29.8), &[Go(Vec2::new(0.9, 24.6), 1.15), Go(MAUD_MARK, 1.15)]) // → ~19.2
 }
 
 /// The knight leads them in and stops just inside the gate by the tower foot.
@@ -1726,6 +1813,7 @@ fn drive_fort_scene(
     mut wat_yaw: Local<Option<f32>>,
     mut last_dust: Local<f32>,
     mut pip_ran: Local<bool>,
+    mut stir: ResMut<crate::castle::BellStir>,
 ) {
     if state.active != Some(SceneId::FortArrival) {
         *wat_yaw = None;
@@ -1733,6 +1821,12 @@ fn drive_fort_scene(
     }
     let t = state.clock.max(0.0);
     let (dt, now) = (time.delta_secs(), time.elapsed_secs());
+    // "It's whole." — the bell stirs in the tower and its clapper touches the bronze on the hum
+    // (`cs_bell_hum` at 19.55 in `fort_audio.py`). Pinned to the scene clock.
+    let s0 = 19.55 - crate::castle::STIR_KISS;
+    if (s0..s0 + 11.0).contains(&t) {
+        stir.0 = Some(now - (t - s0));
+    }
     let k_turn = 1.0 - (-dt * 7.0).exp();
     let k_head = 1.0 - (-dt * 4.5).exp();
     let (pip_pos, pip_dir) = fort_pip(t);

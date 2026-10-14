@@ -27,6 +27,7 @@ mod audio;
 mod banner;
 mod biped;
 mod npc_skin; // realistic skinned townsfolk (MPFB cast + UAL clips) over the studio rig
+mod lipsync; // talking mouths: a speaker's jaw_open morph follows the loudness of their line
 mod biome;
 mod bridges;
 mod biome_desert;
@@ -343,7 +344,7 @@ fn main() {
             creature::CreaturePlugin, // registers the shared creature ExtendedMaterial (hero/orks/wildlife)
             // shared studio rig+animator for non-hero bipeds (orcs/peasants) + the realistic skinned
             // townsfolk drawn over it
-            (biped::BipedPlugin, npc_skin::NpcSkinPlugin),
+            (biped::BipedPlugin, npc_skin::NpcSkinPlugin, lipsync::LipSyncPlugin),
             quadruped::QuadrupedPlugin, // shared studio quadruped rig+animator (wildlife mammals)
             chest::ChestPlugin, // scattered loot chests: Wood/Relic tiers + juicy opens + Gnashfang mimics
             boss::BossPlugin, // Biome Wardens: per-biome world bosses + boon rewards + reward dialog
