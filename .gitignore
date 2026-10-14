@@ -47,3 +47,6 @@ trace-*.json
 # examples/pack_forest_textures packs them to the shipped BC7 .dds). Not shipped, not committed.
 /assets/forest_pbr/*.png
 /assets/forest_pbr/*_report.json
+
+__pycache__/
+*.pyc
