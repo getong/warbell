@@ -19,6 +19,14 @@
 //!
 //! Scene actors carry [`SceneActor`] so the camp/wander brains leave them to this module; props carry
 //! [`SceneProp`]. Both are torn down when the scene changes or clears.
+//!
+//! **`FarmMorning` (the Ch.2 cutscene) is a TEST-ONLY experiment.** Never to be integrated into the
+//! game; reachable only via `FOREST_SCENE=farm`. Do not build campaign scenes on top of it without the
+//! author's say-so.
+//!
+//! **`FortArrival` (screenplay P.3, "the bell in the tower") is a VIDEO rig, not a game feature:** it
+//! exists only to film the cutscene as a pre-rendered clip (`FOREST_SCENE=fort` + `FOREST_CLIP`, then
+//! `tools/cutscene/fort_audio.py mix`). No in-game trigger, skip or save hook — on purpose.
 
 use bevy::prelude::*;
 
@@ -48,7 +56,16 @@ pub enum SceneId {
     BarrelPeek,
     Mason,
     /// Ch.2 cutscene (campaign screenplay): dawn after night 1, a farmer mending a burnt fence.
+    /// TEST-ONLY experiment. Never to be integrated into the game; reachable only via FOREST_SCENE=farm. Do not build campaign scenes on top of it without the author's say-so.
     FarmMorning,
+    /// Screenplay P.3 "Fort i dzwon w wieży": Pip, Maud and the knight walk into the ruined fort at
+    /// golden hour. Video rig only (`FOREST_SCENE=fort`) — never triggered by the game.
+    FortArrival,
+}
+
+/// The two scripted, letterboxed cutscenes (vs. the looped trailer tableaus).
+fn is_cutscene(id: Option<SceneId>) -> bool {
+    matches!(id, Some(SceneId::FarmMorning | SceneId::FortArrival))
 }
 
 /// What the F1 panel asks for vs. what's currently staged. `clock` is seconds since the active scene
@@ -145,6 +162,7 @@ impl Plugin for ScenesPlugin {
                 "barrelpeek" | "barrel" => Some(SceneId::BarrelPeek),
                 "mason" | "threestones" | "stones" => Some(SceneId::Mason),
                 "farm" | "farmmorning" | "ch2" | "protection" => Some(SceneId::FarmMorning),
+                "fort" | "fortarrival" | "p3" => Some(SceneId::FortArrival),
                 _ => None,
             };
         }
@@ -152,7 +170,16 @@ impl Plugin for ScenesPlugin {
             .add_systems(Startup, setup_scene_assets)
             .add_systems(
                 Update,
-                (apply_scene_change, drive_scene_orks, drive_scene_labor, drive_scene_bolts, drive_scene_mason, drive_farm_scene)
+                (
+                    apply_scene_change,
+                    drive_scene_orks,
+                    drive_scene_labor,
+                    drive_scene_bolts,
+                    drive_scene_mason,
+                    drive_farm_scene,
+                    drive_fort_scene,
+                    fort_birds,
+                )
                     .chain(),
             )
             .add_systems(Update, (drive_farm_audio, farm_hammers))
@@ -160,7 +187,15 @@ impl Plugin for ScenesPlugin {
             // propagate, so his elevated wall mark is the authoritative pose regardless of PlayMode.
             .add_systems(
                 PostUpdate,
-                (hold_scene_hero, farm_camera, farm_hide_hud, farm_clear_stage).before(bevy::transform::TransformSystems::Propagate),
+                (hold_scene_hero, farm_camera, farm_hide_hud, farm_clear_stage, fort_clear_stage)
+                    .before(bevy::transform::TransformSystems::Propagate),
+            )
+            // Scripted head turns ride on top of the freshly sampled clip pose.
+            .add_systems(
+                PostUpdate,
+                fort_head_look
+                    .after(bevy::app::AnimationSystems)
+                    .before(bevy::transform::TransformSystems::Propagate),
             );
     }
 }
@@ -201,11 +236,12 @@ fn apply_scene_change(
     old: Query<Entity, Or<(With<SceneActor>, With<SceneProp>)>>,
     prog: Option<Res<crate::capture::ClipProgress>>,
     mut subs: ResMut<crate::subtitles::Subtitles>,
+    fonts: Option<Res<crate::ui::fonts::UiFonts>>,
 ) {
     if state.want == state.active {
         // A clip's warm-up frames don't count: the scene starts when recording does.
         // `FOREST_SCENE_T` freezes the clock at that instant (a still of one moment of the cutscene).
-        let still = state.active == Some(SceneId::FarmMorning) && std::env::var_os("FOREST_SCENE_T").is_some();
+        let still = is_cutscene(state.active) && std::env::var_os("FOREST_SCENE_T").is_some();
         if !still && !prog.is_some_and(|p| !p.recording) {
             state.clock += time.delta_secs();
         }
@@ -347,6 +383,10 @@ fn apply_scene_change(
             pin_sky(&mut clock, 0.17); // low golden sun
             setup_farm_morning(&mut commands, &mut meshes, &mut creature_mats, &assets);
         }
+        SceneId::FortArrival => {
+            pin_sky(&mut clock, FORT_SKY);
+            setup_fort_arrival(&mut commands, &mut meshes, &mut creature_mats, &assets, fonts.as_deref());
+        }
         SceneId::BarrelPeek => {
             pin_sky(&mut clock, 0.82);
             // A peasant peeking out from behind a barrel in the yard.
@@ -365,7 +405,7 @@ fn apply_scene_change(
         }
     }
     // Loop scenes get a camera-setting grace; the cutscene starts at once (`FOREST_SCENE_T=<s>` skips ahead for a still).
-    state.clock = if id == SceneId::FarmMorning {
+    state.clock = if is_cutscene(Some(id)) {
         std::env::var("FOREST_SCENE_T").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0.0)
     } else {
         -crate::cinematic::PRE_ROLL
@@ -600,7 +640,8 @@ fn hold_scene_hero(
 // letterbox + fades, and the scene clears itself (`want = None`) at the end. `FOREST_SCENE=farm`
 // stages it (`FOREST_SCENE_T=<s>` freezes the clock there for a still, silent; under `FOREST_CLIP`
 // it starts with recording). Audio cues live in `assets/cutscene/farm_morning.cues`
-// (written by `tools/cutscene/gen_farm_cues.py`, which also mixes the video's soundtrack).
+// (written by `tools/cutscene/farm_audio.py`, which also mixes the video's soundtrack).
+// TEST-ONLY experiment — never integrated into the game (no in-game trigger; `FOREST_SCENE=farm` only).
 
 /// The fence line's centre (world XZ): open grass on the road out to the south-west farms.
 const FARM: Vec2 = Vec2::new(-36.0, 34.0);
@@ -945,9 +986,10 @@ fn drive_farm_audio(
     mut saved_music: Local<Option<f32>>,
     mut next: Local<usize>,
     mut cues: Local<Vec<(f32, String, f32)>>,
+    mut cue_scene: Local<Option<SceneId>>,
     prog: Option<Res<crate::capture::ClipProgress>>,
 ) {
-    let active = state.active == Some(SceneId::FarmMorning)
+    let active = is_cutscene(state.active)
         && std::env::var_os("FOREST_SCENE_T").is_none()
         && prog.is_none();
     // Hold the day music off while the scene runs; hand it back after.
@@ -965,8 +1007,13 @@ fn drive_farm_audio(
         *next = 0;
         return;
     }
-    if cues.is_empty() {
-        *cues = parse_cues(include_str!("../assets/cutscene/farm_morning.cues"));
+    if *cue_scene != state.active {
+        *cue_scene = state.active;
+        *cues = parse_cues(match state.active {
+            Some(SceneId::FortArrival) => include_str!("../assets/cutscene/fort_arrival.cues"),
+            _ => include_str!("../assets/cutscene/farm_morning.cues"),
+        });
+        *next = 0;
     }
     let t = state.clock;
     while *next < cues.len() && cues[*next].0 <= t {
@@ -1003,6 +1050,7 @@ fn parse_cues(src: &str) -> Vec<(f32, String, f32)> {
 struct FarmLookSaved {
     fov: f32,
     dof: (f32, f32, f32),
+    grade: Option<crate::filmgrade::FilmGrade>,
 }
 
 /// One camera setup: eye, look-at, vertical FOV (degrees), DOF sharp half-band (world units).
@@ -1086,52 +1134,88 @@ fn farm_camera(
     time: Res<Time>,
     state: Res<SceneState>,
     mut cam: Query<
-        (&mut Transform, &mut Projection, &mut crate::dof::Dof, Option<&mut crate::filmgrade::FilmGrade>),
+        (
+            &mut Transform,
+            &mut Projection,
+            &mut crate::dof::Dof,
+            Option<&mut crate::filmgrade::FilmGrade>,
+            Option<&mut bevy::post_process::motion_blur::MotionBlur>,
+            Option<&mut bevy::anti_alias::taa::TemporalAntiAliasing>,
+        ),
         (With<Camera3d>, Without<crate::player::Hero>),
     >,
     mut saved: Local<Option<FarmLookSaved>>,
+    mut last_eye: Local<Option<Vec3>>,
 ) {
-    let Ok((mut c, mut proj, mut dof, grade)) = cam.single_mut() else { return };
-    if state.active != Some(SceneId::FarmMorning) {
+    let Ok((mut c, mut proj, mut dof, mut grade, mut blur, taa)) = cam.single_mut() else { return };
+    if !is_cutscene(state.active) {
+        if last_eye.take().is_some() {
+            if let Some(b) = blur.as_mut() {
+                b.shutter_angle = 0.5; // quality.rs's in-game shutter
+            }
+        }
         // Hand the lens back (once) after the scene.
         if let Some(sv) = saved.take() {
             if let Projection::Perspective(p) = &mut *proj {
                 p.fov = sv.fov;
             }
             (dof.range, dof.far_ramp, dof.max_radius) = sv.dof;
-            if let Some(mut g) = grade {
-                (g.grain, g.vignette, g.aberration) = (0.0, 0.0, 0.0);
+            if let (Some(g), Some(was)) = (grade.as_mut(), sv.grade) {
+                **g = was;
             }
         }
         return;
     }
     let t = state.clock.max(0.0);
     let now = time.elapsed_secs();
-    let (eye, at, fov_deg, band) = farm_shot(t, world_y_at(FARM));
+    let fort = state.active == Some(SceneId::FortArrival);
+    let ((eye, at, fov_deg, band), focus) = if fort {
+        fort_shot(t)
+    } else {
+        (farm_shot(t, world_y_at(FARM)), None)
+    };
     // Handheld: slow, tiny, incommensurate drifts on position and aim (never a shake).
     let h = |f: f32, ph: f32| (now * f + ph).sin();
     let sway = Vec3::new(h(0.9, 0.0) + 0.5 * h(2.3, 1.0), h(1.1, 2.0) * 0.6, h(0.7, 4.0)) * 0.012;
     let aim = Vec3::new(h(1.3, 3.0), h(0.8, 5.0) * 0.7, h(1.7, 1.5)) * 0.01;
     c.translation = eye + sway;
     c.look_at(at + aim, Vec3::Y);
+    // Motion blur stays shut for the whole film: under the capture harness's per-frame encode stall
+    // its motion vectors go stale and smear random frames (not just cuts) into radial streaks. On a
+    // hard cut TAA's history is dropped too, or it ghosts the old shot in.
+    let cut = last_eye.is_some_and(|p| p.distance(eye) > 1.0);
+    *last_eye = Some(eye);
+    if let Some(b) = blur.as_mut() {
+        b.shutter_angle = 0.0;
+    }
+    if let (true, Some(mut taa)) = (cut, taa) {
+        taa.reset = true;
+    }
 
     if saved.is_none() {
         let fov = if let Projection::Perspective(p) = &*proj { p.fov } else { 50f32.to_radians() };
-        *saved = Some(FarmLookSaved { fov, dof: (dof.range, dof.far_ramp, dof.max_radius) });
+        *saved = Some(FarmLookSaved { fov, dof: (dof.range, dof.far_ramp, dof.max_radius), grade: grade.as_deref().copied() });
     }
     if let Projection::Perspective(p) = &mut *proj {
         p.fov = fov_deg.to_radians();
     }
     // Rack focus onto the subject: sharp through the subject, melting off behind it.
-    dof.focal = eye.distance(at);
+    dof.focal = focus.unwrap_or_else(|| eye.distance(at));
     dof.range = band;
     dof.far_ramp = 16.0;
     dof.max_radius = 7.0;
-    if let Some(mut g) = grade {
+    if let Some(g) = grade.as_mut() {
         g.grain = 0.045;
         g.vignette = 0.42;
         g.aberration = 0.0035;
         g.time = now.fract() * 17.0;
+        if fort {
+            // Golden hour: warmer highlights, a cooler blue in the shade, a touch more split.
+            g.highlight_tint = Vec3::new(1.13, 1.0, 0.80);
+            g.shadow_tint = Vec3::new(0.86, 0.97, 1.14);
+            g.split = 0.68;
+            g.vibrance = 0.2;
+        }
     }
 }
 
@@ -1178,7 +1262,7 @@ fn farm_hide_hud(
     >,
     mut hidden: Local<Vec<(Entity, Visibility)>>,
 ) {
-    if state.active == Some(SceneId::FarmMorning) {
+    if is_cutscene(state.active) {
         for (e, mut v) in &mut roots {
             if *v != Visibility::Hidden {
                 hidden.push((e, *v));
@@ -1189,6 +1273,664 @@ fn farm_hide_hud(
         for (e, was) in hidden.drain(..) {
             if let Ok((_, mut v)) = roots.get_mut(e) {
                 *v = was;
+            }
+        }
+    }
+}
+
+// ── P.3 video rig: "The bell in the tower" ───────────────────────────────────────────
+//
+// Screenplay P.3 (`docs/superpowers/specs/2026-10-13-kampania-scenariusz-design.md`), filmed as a
+// pre-rendered clip — NOT a game feature (no trigger, no skip, nothing saved). Golden hour; Pip runs
+// ahead into the ruined fort past Maud and the knight, finds the well, the ruined keep ("that was a
+// chapel") and — behind him, over the gate they just walked under — the bell. Maud answers without
+// turning round. One clock drives actors, birds, dust, head turns, camera, captions, fades and the
+// act card; the recorded Act I lines (`assets/audio/vo/campaign/a1_pip_05…`) are timed in
+// `tools/cutscene/fort_audio.py` against the constants below (keep the two in step).
+
+/// Low golden MORNING sun from the east-south-east (`scene.rs` sun = (cos a, sin a, 0.55)): the
+/// bell tower stands on the SOUTH wall, so an afternoon (south-west) sun put every look at it straight
+/// into the light — washed-out haze. From the ESE it rakes the tower's face and lights Maud's.
+const FORT_SKY: f32 = 0.075;
+const FORT_END: f32 = 40.6;
+/// Fade to black, then the act card on black.
+const FORT_FADE_OUT: (f32, f32) = (33.6, 35.0);
+
+const WELL: Vec2 = Vec2::new(9.6, -6.4);
+const RUIN: Vec2 = crate::castle::KEEP_POS;
+const BELL: Vec2 = crate::castle::BELL_POS;
+/// The bell's mouth, world height (hinge at `castle::BELL_PIVOT_Y` 7.1, bronze hangs ~0.6–1.2 below).
+const BELL_Y: f32 = 6.3;
+
+const PIP_GATE: Vec2 = Vec2::new(-0.4, 24.6);
+const PIP_1: Vec2 = Vec2::new(3.0, 10.0);
+const PIP_2: Vec2 = Vec2::new(4.5, 7.3);
+const PIP_3: Vec2 = Vec2::new(3.7, 5.9);
+const PIP_TOWER: Vec2 = Vec2::new(-4.0, 19.3);
+const MAUD_MARK: Vec2 = Vec2::new(0.8, 16.5);
+/// `castle_decor`'s notice board inside the south gate: no edicts posted yet on arrival, and it
+/// stands 1.3 u in front of shot 3a's lens (it read as a whole barn wall at 27° fov).
+const NOTICE_BOARD: Vec2 = Vec2::new(3.0, 19.4);
+/// The pigeons pecking in the yard that Pip's dash flushes.
+const FLOCK: Vec2 = Vec2::new(6.6, 5.0);
+
+/// Timed captions: (start s, duration s, speaker, line) — verbatim from the recorded clips
+/// (`a1_pip_05`, `a1_maud_14`, `a1_pip_06`, `a1_maud_15`, `a1_maud_16`).
+const FORT_LINES: [(f32, f32, &str, &str); 6] = [
+    (11.5, 3.95, "Pip", "There's a well! There's a \u{2014} that's a chapel, that was a chapel \u{2014}"),
+    (15.45, 3.7, "Pip", "there's a bell. Up there. It's whole."),
+    (19.9, 2.62, "Maud", "The well's whole too. Start with the well."),
+    (23.15, 0.85, "Pip", "Can I\u{2014}"),
+    (23.95, 2.54, "Maud", "At dusk. King's orders, one of them."),
+    (27.3, 4.91, "Maud", "God help us. A well, a bell, and a wall and a half."),
+];
+
+/// One step of a scripted walk: `Go(to, speed)` straight there, `Until(t)` hold the spot until `t`.
+#[derive(Clone, Copy)]
+enum Leg {
+    Go(Vec2, f32),
+    Until(f32),
+}
+
+/// Where a scripted walker is at scene time `t`: at `from` from `t0`, then each leg in turn.
+/// → (position, heading while moving).
+fn route(t: f32, t0: f32, from: Vec2, legs: &[Leg]) -> (Vec2, Option<Vec2>) {
+    let (mut at, mut p) = (t0, from);
+    if t <= t0 {
+        return (from, None);
+    }
+    for leg in legs {
+        match *leg {
+            Leg::Until(u) => {
+                if t < u {
+                    return (p, None);
+                }
+                at = at.max(u);
+            }
+            Leg::Go(to, v) => {
+                let d = to - p;
+                let len = d.length();
+                if len < 1e-4 {
+                    continue;
+                }
+                let dur = len / v;
+                if t < at + dur {
+                    return (p + d * ((t - at) / dur), Some(d / len));
+                }
+                at += dur;
+                p = to;
+            }
+        }
+    }
+    (p, None)
+}
+
+/// Pip: runs past the grown-ups, through the gate, out to the middle of the yard; dashes at the well
+/// (flushing the pigeons), drifts toward the ruin, turns round to the bell, then sprints for the tower.
+fn fort_pip(t: f32) -> (Vec2, Option<Vec2>) {
+    use Leg::*;
+    route(t, 0.6, Vec2::new(-0.8, 38.6), &[
+        Go(PIP_GATE, 3.0), // → 5.27
+        Go(PIP_1, 3.0),    // → 10.27, looks around
+        Until(11.45),
+        Go(PIP_2, 3.0), // "There's a well!" on the run → 12.48
+        Until(13.6),
+        Go(PIP_3, 1.3), // "that's a chapel…" → 14.84
+        Until(18.55),
+        Go(PIP_TOWER, 3.4), // → 23.1, "Can I—"
+    ])
+}
+
+fn fort_maud(t: f32) -> (Vec2, Option<Vec2>) {
+    use Leg::*;
+    route(t, 0.0, Vec2::new(1.1, 33.0), &[Go(Vec2::new(0.9, 24.6), 1.35), Go(MAUD_MARK, 1.35)]) // → 12.22
+}
+
+/// The knight leads them in and stops just inside the gate by the tower foot.
+fn fort_wat(t: f32) -> (Vec2, Option<Vec2>) {
+    use Leg::*;
+    let v = crate::player::SPEED;
+    route(t, 0.0, Vec2::new(-0.1, 29.5), &[Go(Vec2::new(-0.5, 24.4), v), Go(Vec2::new(-2.2, 21.2), v)])
+}
+
+/// Settlers trailing in behind (the last two carrying planks for the rebuild).
+fn fort_settler(i: u8, t: f32) -> (Vec2, Option<Vec2>) {
+    use Leg::*;
+    match i {
+        0 => route(t, 4.0, Vec2::new(-1.6, 41.5), &[Go(Vec2::new(0.3, 24.9), 1.25), Go(Vec2::new(2.9, 21.0), 1.25)]),
+        1 => route(t, 6.0, Vec2::new(1.8, 42.6), &[Go(Vec2::new(0.6, 24.9), 1.2), Go(Vec2::new(4.4, 22.0), 1.2)]),
+        2 => route(t, 10.0, Vec2::new(-0.9, 43.0), &[Go(Vec2::new(-0.2, 24.9), 1.2), Go(Vec2::new(-2.0, 14.0), 1.2)]),
+        _ => route(t, 13.0, Vec2::new(1.5, 44.0), &[Go(Vec2::new(0.8, 24.9), 1.2), Go(Vec2::new(3.6, 15.5), 1.2)]),
+    }
+}
+
+fn yaw_of(d: Vec2) -> f32 {
+    d.x.atan2(d.y)
+}
+fn wrap_pi(a: f32) -> f32 {
+    (a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
+}
+/// Ease an angle toward a target along the short way round.
+fn turn_toward(cur: f32, target: f32, k: f32) -> f32 {
+    cur + wrap_pi(target - cur) * k
+}
+
+#[derive(Component, Clone, Copy, PartialEq)]
+enum FortRole {
+    Pip,
+    Maud,
+    Settler(u8),
+}
+
+/// A scripted head turn layered on top of the clip (radians, in the body's frame): yaw left/right,
+/// pitch up, roll = a tilt of the head. Eased toward `want` each frame; `bone` is found lazily.
+#[derive(Component, Default)]
+struct HeadLook {
+    cur: Vec3,
+    want: Vec3,
+    bone: Option<Entity>,
+}
+
+#[derive(Component)]
+struct FortBird(u8);
+#[derive(Component)]
+struct FortWing {
+    bird: u8,
+    right: bool,
+}
+#[derive(Component)]
+struct FortTitle;
+
+/// Each pigeon's spot on the ground and takeoff time (scene s) — deterministic, so a
+/// `FOREST_SCENE_T` still shows the same flock as the clip.
+fn bird_home(i: u8) -> (Vec2, f32) {
+    let a = i as f32 * 2.399; // golden-angle scatter
+    let r = 0.35 + 0.17 * i as f32;
+    (FLOCK + Vec2::new(a.cos(), a.sin()) * r, 11.95 + ((i as f32 * 0.37).fract()) * 0.4)
+}
+
+/// A pigeon at scene time `t`: (position, facing yaw, wing angle, flying?).
+fn bird_pose(i: u8, t: f32) -> (Vec3, f32, f32, bool) {
+    let (home, t_off) = bird_home(i);
+    let gy = world_y_at(home);
+    let tau = t - t_off;
+    if tau <= 0.0 {
+        // pecking about: a little bob, wings folded
+        let peck = ((t * 2.1 + i as f32 * 1.3).sin() * 0.5 + 0.5).powi(6) * 0.03;
+        return (Vec3::new(home.x, gy + 0.02 - peck, home.y), i as f32 * 1.7, 0.08, false);
+    }
+    // burst up and away from the boy, then all bank toward the north-west wall and climb out
+    let away = (home - PIP_2).normalize_or(Vec2::X);
+    let common = Vec2::new(-0.55, -0.83);
+    let pos_at = |u: f32| {
+        let w = (u / 2.4).clamp(0.0, 1.0);
+        let w = w * w * (3.0 - 2.0 * w);
+        let dist = 2.4 * u + 1.1 * u * u;
+        let dir = (away * (1.0 - w) + common * w).normalize_or(away);
+        let h = 2.6 * u + 0.55 * u * u;
+        Vec3::new(home.x + dir.x * dist, gy + 0.05 + h.min(18.0), home.y + dir.y * dist)
+    };
+    let p = pos_at(tau);
+    let v = pos_at(tau + 0.03) - p;
+    let hz = if tau < 1.6 { 11.0 } else { 7.0 };
+    let wing = 0.25 + 0.85 * (tau * std::f32::consts::TAU * hz + i as f32).sin();
+    (p, v.x.atan2(v.z), wing, true)
+}
+
+fn setup_fort_arrival(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    creature_mats: &mut Assets<crate::creature::CreatureMaterial>,
+    assets: &SceneAssets,
+    fonts: Option<&crate::ui::fonts::UiFonts>,
+) {
+    use crate::npc_skin as ns;
+    // The cast — realistic skins forced over the seeded pick (Pip = the boy, Maud = the old woman).
+    let (p0, _) = fort_pip(0.0);
+    let pip = crate::villagers::spawn_scene_peasant(commands, meshes, creature_mats, p0, std::f32::consts::PI, None, 3);
+    commands.entity(pip).insert((ns::SkinRequest(ns::BOY), ns::SkinClip(""), FortRole::Pip, HeadLook::default()));
+    let (m0, _) = fort_maud(0.0);
+    let maud = crate::villagers::spawn_scene_peasant(commands, meshes, creature_mats, m0, std::f32::consts::PI, None, 9);
+    commands.entity(maud).insert((ns::SkinRequest(ns::ELDER_F), ns::SkinClip(""), FortRole::Maud, HeadLook::default()));
+    let load = meshes.add(plank_bundle_mesh());
+    for (i, seed) in [(0u8, 5u32), (1, 19), (2, 29), (3, 37)] {
+        let (s0, _) = fort_settler(i, 0.0);
+        let e = crate::villagers::spawn_scene_peasant(commands, meshes, creature_mats, s0, std::f32::consts::PI, None, seed);
+        commands.entity(e).insert((ns::SkinClip(""), FortRole::Settler(i)));
+        if i >= 2 {
+            commands.entity(e).with_children(|p| {
+                p.spawn((
+                    Mesh3d(load.clone()),
+                    MeshMaterial3d(assets.prop_mat.clone()),
+                    Transform::from_xyz(0.0, 1.0, 0.5),
+                    ns::CarriedLoad { across: false },
+                ));
+            });
+        }
+    }
+
+    // Pigeons: body + two hinged wings, all vertex-coloured on the shared prop material.
+    let body = meshes.add(merged(vec![
+        cube(0.085, 0.075, 0.19, Vec3::new(0.0, 0.06, 0.0), 0x5f636b),
+        cube(0.055, 0.055, 0.06, Vec3::new(0.0, 0.11, 0.1), 0x4a4f58),
+        cube(0.02, 0.015, 0.03, Vec3::new(0.0, 0.1, 0.14), 0x3a3530),
+        cube(0.07, 0.018, 0.08, Vec3::new(0.0, 0.07, -0.13), 0x50545c),
+    ]));
+    let wing_r = meshes.add(merged(vec![cube(0.2, 0.012, 0.09, Vec3::new(0.1, 0.0, 0.0), 0x6a6e76)]));
+    let wing_l = meshes.add(merged(vec![cube(0.2, 0.012, 0.09, Vec3::new(-0.1, 0.0, 0.0), 0x6a6e76)]));
+    for i in 0..9u8 {
+        let (p, yaw, _, _) = bird_pose(i, 0.0);
+        commands
+            .spawn((
+                Transform::from_translation(p).with_rotation(Quat::from_rotation_y(yaw)).with_scale(Vec3::splat(0.9)),
+                Visibility::default(),
+                FortBird(i),
+                SceneProp,
+            ))
+            .with_children(|b| {
+                b.spawn((Mesh3d(body.clone()), MeshMaterial3d(assets.prop_mat.clone()), Transform::default()));
+                for (right, mesh) in [(true, wing_r.clone()), (false, wing_l.clone())] {
+                    b.spawn((
+                        Mesh3d(mesh),
+                        MeshMaterial3d(assets.prop_mat.clone()),
+                        Transform::from_xyz(if right { 0.04 } else { -0.04 }, 0.085, 0.0),
+                        FortWing { bird: i, right },
+                    ));
+                }
+            });
+    }
+
+    // Letterbox (2.39:1 on a 16:9 frame) + fade-from-black, as in the farm scene.
+    for top in [true, false] {
+        commands.spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(0.0),
+                width: Val::Percent(100.0),
+                height: Val::Percent(12.8),
+                top: if top { Val::Px(0.0) } else { Val::Auto },
+                bottom: if top { Val::Auto } else { Val::Px(0.0) },
+                ..default()
+            },
+            BackgroundColor(Color::BLACK),
+            GlobalZIndex(35),
+            SceneProp,
+        ));
+    }
+    commands.spawn((
+        Node { position_type: PositionType::Absolute, left: Val::Px(0.0), top: Val::Px(0.0), width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
+        BackgroundColor(Color::BLACK),
+        GlobalZIndex(38),
+        FarmFade,
+        SceneProp,
+    ));
+    // The act card, on the black after the fade.
+    if let Some(f) = fonts {
+        commands
+            .spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(0.0),
+                    top: Val::Px(0.0),
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                GlobalZIndex(39),
+                SceneProp,
+            ))
+            .with_children(|p| {
+                p.spawn((crate::ui::fonts::label(&f.display, "ACT I \u{2014} THE TOLL", 86.0, Color::srgba(0.92, 0.87, 0.76, 0.0)), FortTitle));
+            });
+    }
+}
+
+/// Pip's beat when he isn't running: (facing target, clip, head yaw/pitch/roll).
+fn pip_beat(t: f32, pos: Vec2) -> (f32, &'static str, Vec3) {
+    let to = |q: Vec2| yaw_of(q - pos);
+    match t {
+        // in the middle of the yard, gawping round at everything
+        t if t < 11.45 => (to(RUIN) + 0.4, "Idle_Loop", Vec3::new(0.7 * ((t - 10.3) * 2.4).sin(), 0.18, 0.0)),
+        t if t < 13.6 => (to(WELL), "Interact", Vec3::new(0.0, 0.05, 0.0)),
+        t if t < 15.55 => (to(RUIN), "Idle_Talking_Loop", Vec3::new(0.0, 0.25, 0.0)),
+        // turns round: the bell, over the gate they just walked under
+        t if t < 18.55 => (to(BELL), "Idle_Loop", Vec3::new(0.0, env(t, &[(15.6, 0.1), (16.5, 0.6)]), 0.0)),
+        t if t < 24.0 => (to(MAUD_MARK), "Idle_Talking_Loop", Vec3::new(0.0, 0.1, 0.0)),
+        _ => (to(BELL), "Idle_Loop", Vec3::new(0.0, env(t, &[(24.0, 0.1), (25.2, 0.65)]), 0.0)),
+    }
+}
+
+/// Maud's beat once she's stopped: (facing target, clip, head). She watches the boy, then answers
+/// him without turning round — the review's "shade of amusement" goes in the body: a slow weary nod
+/// and a head tilt, then arms folded again for "At dusk.", then a long look round the ruin.
+fn maud_beat(t: f32, pip: Vec2) -> (f32, &'static str, Vec3) {
+    let m = MAUD_MARK;
+    let well = yaw_of(WELL - m);
+    let over_shoulder = (wrap_pi(yaw_of(pip - m) - well)).clamp(-0.8, 0.8);
+    match t {
+        t if t < 18.6 => (yaw_of(pip - m), "Idle_FoldArms_Loop", Vec3::ZERO),
+        t if t < 19.3 => (well, "Idle_FoldArms_Loop", Vec3::ZERO),
+        t if t < 20.1 => (well, "Yes", Vec3::new(0.0, 0.0, 0.16)),
+        t if t < 22.55 => (well, "Idle_Talking_Loop", Vec3::new(0.0, 0.02, 0.14)),
+        t if t < 23.95 => (well, "Idle_Loop", Vec3::new(over_shoulder, 0.0, 0.05)),
+        t if t < 26.5 => (well, "Idle_FoldArms_Loop", Vec3::new(over_shoulder * 0.45, 0.0, 0.0)),
+        t if t < 27.2 => (well, "Idle_Loop", Vec3::ZERO),
+        // "God help us." — a slow look round: the well, the ruin, the broken north-west wall
+        _ => (well + env(t, &[(27.2, 0.0), (31.6, 1.3)]), "Idle_Loop", Vec3::new(0.0, 0.08, 0.0)),
+    }
+}
+
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn drive_fort_scene(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut state: ResMut<SceneState>,
+    mut subs: ResMut<crate::subtitles::Subtitles>,
+    mut actors: Query<
+        (&mut crate::villagers::Villager, &mut Transform, &mut crate::npc_skin::SkinClip, &FortRole, Option<&mut HeadLook>),
+        Without<crate::player::Hero>,
+    >,
+    mut hero_q: Query<&mut crate::player::Hero>,
+    mut fade: Query<&mut BackgroundColor, With<FarmFade>>,
+    mut title: Query<&mut TextColor, With<FortTitle>>,
+    mut wat_yaw: Local<Option<f32>>,
+    mut last_dust: Local<f32>,
+    mut pip_ran: Local<bool>,
+) {
+    if state.active != Some(SceneId::FortArrival) {
+        *wat_yaw = None;
+        return;
+    }
+    let t = state.clock.max(0.0);
+    let (dt, now) = (time.delta_secs(), time.elapsed_secs());
+    let k_turn = 1.0 - (-dt * 7.0).exp();
+    let k_head = 1.0 - (-dt * 4.5).exp();
+    let (pip_pos, pip_dir) = fort_pip(t);
+
+    for (mut v, mut tf, mut clip, role, head) in &mut actors {
+        let ((pos, dir), beat) = match *role {
+            FortRole::Pip => (fort_pip(t), pip_beat(t, pip_pos)),
+            FortRole::Maud => (fort_maud(t), maud_beat(t, pip_pos)),
+            FortRole::Settler(i) => {
+                let (p, d) = fort_settler(i, t);
+                let look = if i == 0 { "Idle_FoldArms_Loop" } else { "Idle_Loop" };
+                ((p, d), (yaw_of(PIP_1 - p), look, Vec3::ZERO))
+            }
+        };
+        let (face, want_clip, want_head) = beat;
+        // first frame: snap to the mark instead of swinging round from the spawn facing
+        let first = v.pos.distance_squared(pos) > 4.0;
+        let target = dir.map_or(face, yaw_of);
+        v.facing = if first { target } else { turn_toward(v.facing, target, if dir.is_some() { k_turn * 1.6 } else { k_turn }) };
+        v.pos = pos;
+        v.moving = dir.is_some();
+        tf.translation = Vec3::new(pos.x, world_y_at(pos), pos.y);
+        tf.rotation = Quat::from_rotation_y(v.facing);
+        // moving: let the skin pick walk/jog from real speed ("" hint), carriers keep the carry clip
+        let c = match (*role, dir.is_some()) {
+            (FortRole::Settler(2 | 3), true) => "Walk_Carry_Loop",
+            (_, true) => "",
+            _ => want_clip,
+        };
+        if clip.0 != c {
+            clip.0 = c;
+        }
+        if let Some(mut h) = head {
+            h.want = if dir.is_some() { Vec3::ZERO } else { want_head };
+            let cur = h.cur;
+            h.cur = cur + (h.want - cur) * k_head;
+        }
+    }
+
+    // Kicked-up dust under the boy's running feet, and a skid puff where he pulls up.
+    let running = pip_dir.is_some() && t > 0.6;
+    if running && t - *last_dust > 0.24 {
+        *last_dust = t;
+        commands.spawn(crate::build_fx::DustBurst {
+            pos: Vec3::new(pip_pos.x, world_y_at(pip_pos) + 0.04, pip_pos.y),
+            n: 3,
+            spd: 0.5,
+            scale0: 0.3,
+            radius: 0.08,
+        });
+    }
+    if *pip_ran && !running && t > 1.0 {
+        commands.spawn(crate::build_fx::DustBurst {
+            pos: Vec3::new(pip_pos.x, world_y_at(pip_pos) + 0.04, pip_pos.y),
+            n: 6,
+            spd: 0.8,
+            scale0: 0.38,
+            radius: 0.15,
+        });
+    }
+    *pip_ran = running;
+
+    // The knight: pose handed to `hold_scene_hero` (PostUpdate); gait fields written here.
+    let (wp, wd) = fort_wat(t);
+    let wt = wd.map_or(yaw_of(PIP_1 - wp), yaw_of);
+    let wy = match *wat_yaw {
+        Some(y) => turn_toward(y, wt, k_turn),
+        None => wt,
+    };
+    *wat_yaw = Some(wy);
+    state.hero = Some((Vec3::new(wp.x, world_y_at(wp), wp.y), wy));
+    state.hero_moving = wd.is_some();
+    if let Ok(mut hero) = hero_q.single_mut() {
+        if wd.is_some() {
+            crate::player::anim::stage_gait(&mut hero, crate::player::SPEED, dt);
+            hero.sprint_held = false;
+        } else {
+            hero.moving_amt *= (-dt * 8.0).exp();
+        }
+    }
+
+    match FORT_LINES.iter().find(|(s, d, ..)| t >= *s && t < s + d) {
+        Some((s, d, who, text)) => subs.force(now, Some(who), text, s + d - t),
+        None => subs.force(now, None, "", 0.0),
+    }
+
+    let a = (1.0 - t / 1.2).max((t - FORT_FADE_OUT.0) / (FORT_FADE_OUT.1 - FORT_FADE_OUT.0)).clamp(0.0, 1.0);
+    for mut bg in &mut fade {
+        bg.0 = Color::srgba(0.0, 0.0, 0.0, a);
+    }
+    let ta = env(t, &[(35.4, 0.0), (36.6, 1.0), (39.0, 1.0), (40.2, 0.0)]);
+    for mut c in &mut title {
+        c.0 = c.0.with_alpha(ta);
+    }
+
+    if t >= FORT_END {
+        state.want = None;
+    }
+}
+
+/// Fly the pigeons (pose is a pure function of the scene clock — see [`bird_pose`]).
+fn fort_birds(
+    state: Res<SceneState>,
+    mut birds: Query<(&FortBird, &mut Transform, &mut Visibility), Without<FortWing>>,
+    mut wings: Query<(&FortWing, &mut Transform), Without<FortBird>>,
+) {
+    if state.active != Some(SceneId::FortArrival) {
+        return;
+    }
+    let t = state.clock.max(0.0);
+    for (b, mut tf, mut vis) in &mut birds {
+        let (p, yaw, _, flying) = bird_pose(b.0, t);
+        tf.translation = p;
+        tf.rotation = Quat::from_rotation_y(yaw);
+        let gone = flying && t - bird_home(b.0).1 > 8.0;
+        let want = if gone { Visibility::Hidden } else { Visibility::Inherited };
+        if *vis != want {
+            *vis = want;
+        }
+    }
+    for (w, mut tf) in &mut wings {
+        let (_, _, a, _) = bird_pose(w.bird, t);
+        tf.rotation = Quat::from_rotation_z(if w.right { a } else { -a });
+    }
+}
+
+/// Layer each actor's scripted head turn onto the bone the clip just posed. The offset is built in
+/// the body's frame (forward +Z: yaw about Y, pitch up about X, roll about Z) and carried into the
+/// head's parent space, so it doesn't depend on the skeleton's local bone axes.
+fn fort_head_look(
+    state: Res<SceneState>,
+    mut roots: Query<(&mut HeadLook, &crate::npc_skin::Skinned, &GlobalTransform)>,
+    children: Query<&Children>,
+    names: Query<&Name>,
+    parents: Query<&ChildOf>,
+    globals: Query<&GlobalTransform>,
+    mut tfs: Query<&mut Transform>,
+) {
+    if state.active != Some(SceneId::FortArrival) {
+        return;
+    }
+    for (mut hl, sk, root) in &mut roots {
+        if hl.bone.is_none() {
+            hl.bone = children.iter_descendants(sk.inst()).find(|&d| names.get(d).is_ok_and(|n| n.as_str() == "head"));
+        }
+        let Some(bone) = hl.bone else { continue };
+        if hl.cur.length_squared() < 1e-6 {
+            continue;
+        }
+        let Ok(parent) = parents.get(bone) else { continue };
+        let Ok(pg) = globals.get(parent.parent()) else { continue };
+        let pr = pg.to_scale_rotation_translation().1;
+        let rr = root.to_scale_rotation_translation().1;
+        let off = Quat::from_rotation_y(hl.cur.x) * Quat::from_rotation_x(-hl.cur.y) * Quat::from_rotation_z(hl.cur.z);
+        let w = rr * off * rr.inverse();
+        if let Ok(mut tf) = tfs.get_mut(bone) {
+            tf.rotation = (pr.inverse() * w * pr * tf.rotation).normalize();
+        }
+    }
+}
+
+/// The cutscene's coverage → (camera, focus distance override). Outside: low in the grass, the
+/// three walk past into the gate, the lens lifts to the tower. Inside: a static side as Pip runs in;
+/// over Maud's shoulder for his discoveries; low behind him looking up at the bell; Maud close with
+/// the boy soft behind her (rack focus for "Can I—"); a crane up and back over the whole ruin.
+fn fort_shot(t: f32) -> (Cam, Option<f32>) {
+    let ease = |u: f32| u * u * (3.0 - 2.0 * u);
+    let seg = |t0: f32, t1: f32| ease(((t - t0) / (t1 - t0)).clamp(0.0, 1.0));
+    let lin = |t0: f32, t1: f32| ((t - t0) / (t1 - t0)).clamp(0.0, 1.0);
+    let at = |x: f32, dy: f32, z: f32| Vec3::new(x, world_y_at(Vec2::new(x, z)) + dy, z);
+    let pip = |dy: f32| {
+        let p = fort_pip(t).0;
+        Vec3::new(p.x, world_y_at(p) + dy, p.y)
+    };
+    let bell = Vec3::new(BELL.x, BELL_Y, BELL.y);
+    match t {
+        // 1 · the breach: low in the grass outside the south gate, drifting in; the lens lifts and
+        //     swings left to find the tower beside the gate.
+        t if t < 7.0 => {
+            let k = seg(0.0, 7.0);
+            let eye = at(2.3, 0.45, 37.4).lerp(at(1.0, 1.5, 33.8), k);
+            let look = at(0.1, 1.3, 24.0).lerp(bell, seg(2.8, 7.0));
+            ((eye, look, 40.0 - 4.0 * k, 9.0), None)
+        }
+        // 2 · inside, side-on: Pip tears in and pulls up in the middle of the yard.
+        t if t < 11.4 => {
+            let eye = at(9.2, 1.25, 8.6).lerp(at(9.0, 1.25, 8.9), lin(7.0, 11.4));
+            let look = at(1.0, 1.0, 17.0).lerp(pip(0.8), 0.45);
+            let f = eye.distance(pip(0.8));
+            ((eye, look, 38.0, 4.5), Some(f))
+        }
+        // 3a · over Maud's shoulder, looking north: the boy, the well, the ruined keep, the pigeons.
+        t if t < 16.9 => {
+            let k = lin(11.4, 16.9);
+            let eye = at(2.7, 1.35, 20.9).lerp(at(2.4, 1.4, 20.3), k);
+            let look = at(1.8, 1.15, 4.6).lerp(at(1.7, 1.2, 4.9), k);
+            ((eye, look, 27.0, 5.0), Some(eye.distance(pip(0.8))))
+        }
+        // 3b · reverse, low behind the boy: "Up there."
+        t if t < 19.4 => {
+            let d = (BELL - PIP_3).normalize();
+            let side = Vec2::new(d.y, -d.x);
+            let k = lin(16.9, 19.4);
+            let e0 = PIP_3 - d * 2.3 + side * 0.55;
+            let e1 = PIP_3 - d * 1.9 + side * 0.5;
+            let eye = at(e0.x, 0.7, e0.y).lerp(at(e1.x, 0.78, e1.y), k);
+            let look = (bell - Vec3::Y * 1.3).lerp(bell - Vec3::Y * 0.6, k);
+            ((eye, look, 40.0, 9.0), None)
+        }
+        // 4 · Maud, close; the boy runs past behind her to the tower. Rack to him for "Can I—".
+        t if t < 26.7 => {
+            let eye = at(4.0, 1.12, 13.4).lerp(at(3.8, 1.14, 13.6), lin(19.4, 26.7));
+            let look = at(MAUD_MARK.x, 1.2, MAUD_MARK.y);
+            let (fm, fp) = (eye.distance(look), eye.distance(pip(0.85)));
+            let k = env(t, &[(22.75, 0.0), (23.1, 1.0), (23.75, 1.0), (24.05, 0.0)]);
+            ((eye, look, 27.0, 0.6), Some(fm + (fp - fm) * k))
+        }
+        // 5 · crane up and back over the wall: the whole ruin, two small figures, the light going.
+        _ => {
+            let k = seg(26.9, 34.6);
+            // ends low enough to keep the horizon: the tower and broken wall in the foreground, the
+            // yard, the keep ruin and the hills beyond (a high top-down just shows patchy mud)
+            let eye = at(2.2, 1.45, 19.2).lerp(Vec3::new(7.5, world_y_at(Vec2::new(7.5, 30.0)) + 6.5, 30.0), k);
+            let look = at(0.6, 1.1, 15.0).lerp(at(-1.0, 2.2, -8.0), k);
+            ((eye, look, 36.0 + 8.0 * k, 2.5 + 17.5 * k), None)
+        }
+    }
+}
+
+/// Clear the stage for the arrival — nobody lives here yet: the town's founding house / plots,
+/// wandering townsfolk, wildlife and butterflies near the fort are hidden (not despawned) for the
+/// clip and put back exactly as they were.
+#[allow(clippy::type_complexity)]
+fn fort_clear_stage(
+    state: Res<SceneState>,
+    mut q: Query<
+        (Entity, &mut Visibility, &GlobalTransform),
+        (
+            Or<(
+                With<crate::ambient_life::Butterfly>,
+                With<crate::town::BuildPlot>,
+                With<crate::town::BuildingMesh>,
+                With<crate::villagers::Villager>,
+                With<crate::wildlife::Animal>,
+            )>,
+            Without<SceneActor>,
+            Without<crate::castle::CastlePart>,
+        ),
+    >,
+    // The settlers' houses + their yard dressing (`CastleKind::House`) and the courtyard's town-kit
+    // buildings (`castle::town_plots`: barracks, granary, smithy… all but the well) — the colony
+    // arrives to a ruin, nobody has built them yet. `castle::sync_castle` rewrites their Visibility every frame, so they're
+    // sunk out of sight instead (translation only — collision is registered separately) and raised
+    // back on teardown.
+    mut parts: Query<(Entity, Option<&crate::castle::CastlePart>, &crate::build_fx::RevealAt, &mut Transform)>,
+    mut hidden: Local<Vec<(Entity, Visibility)>>,
+    mut sunk: Local<Option<Vec<(Entity, Vec3)>>>,
+) {
+    if state.active == Some(SceneId::FortArrival) {
+        for (e, mut v, gt) in &mut q {
+            let p = gt.translation();
+            if *v != Visibility::Hidden && Vec2::new(p.x, p.z).distance(Vec2::new(0.0, 8.0)) < 70.0 {
+                hidden.push((e, *v));
+                *v = Visibility::Hidden;
+            }
+        }
+        // Every frame (the kit may spawn after the scene starts), but each part only once.
+        let v = sunk.get_or_insert_with(Vec::new);
+        for (e, part, at, mut tf) in &mut parts {
+            let p = Vec2::new(at.0.x, at.0.z);
+            let plot = crate::castle::town_plots().iter().any(|tp| tp.name != "well" && tp.pos.distance(p) < 0.05);
+            let house = part.is_some_and(|c| matches!(c.kind, crate::castle::CastleKind::House(_)));
+            if (plot || house || p.distance(NOTICE_BOARD) < 0.3) && !v.iter().any(|(s, _)| *s == e) {
+                v.push((e, tf.translation));
+                tf.translation.y -= 500.0;
+            }
+        }
+    } else {
+        for (e, was) in hidden.drain(..) {
+            if let Ok((_, mut v, _)) = q.get_mut(e) {
+                *v = was;
+            }
+        }
+        for (e, p) in sunk.take().unwrap_or_default() {
+            if let Ok((_, _, _, mut tf)) = parts.get_mut(e) {
+                tf.translation = p;
             }
         }
     }
