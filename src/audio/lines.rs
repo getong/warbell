@@ -577,7 +577,7 @@ pub const LINES: &[Line] = &[
     script("a1_pip_02", Speaker::Cast(Cast::Pip), "He doesn't talk."), // King's Road march
     script("a1_pip_03", Speaker::Cast(Cast::Pip), "Where's the bell?"), // King's Road march
     script("a1_pip_04", Speaker::Cast(Cast::Pip), "Who's the first lot?"), // King's Road march
-    script("a1_pip_05", Speaker::Cast(Cast::Pip), "There's a well! There's a— that's a chapel, that was a chapel— there's a bell. Up there. It's whole."), // P.3 fort
+    script("a1_pip_05", Speaker::Cast(Cast::Pip), "There's a well! And that... that was a chapel! There's a bell! Up there! It's whole. Can I—"), // P.3 fort
     script("a1_pip_06", Speaker::Cast(Cast::Pip), "Can I—"), // P.3 fort
     script("a1_pip_07", Speaker::Cast(Cast::Pip), "Did you hear her? That's mine. She's the only thing on this island that does what it's told."), // Ch.1 first bell
     script("a1_pip_08", Speaker::Cast(Cast::Pip), "Don't let anyone else ring her."), // Ch.3 fever room

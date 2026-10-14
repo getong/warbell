@@ -2,9 +2,9 @@
 # VIDEO rig only — never triggered in game (FOREST_SCENE=fort). `#` lines are skipped by scenes.rs::parse_cues.
 # time  path(under assets/)  volume  [video] [loop] [pan=] [fadein=] [fadeout=t,s]   (video = offline mix only)
   0.00  audio/wind.ogg  0.34  video loop
-  0.00  audio/meadow-ambient.ogg  0.3  video loop fadeout=33.6,1.4
-  0.00  audio/forest-ambient.ogg  0.16  video loop fadeout=33.6,1.4
-  0.00  audio/castle-ambient.ogg  0.1  video loop fadeout=33.6,1.4
+  0.00  audio/meadow-ambient.ogg  0.3  video loop fadeout=35.0,1.4
+  0.00  audio/forest-ambient.ogg  0.16  video loop fadeout=35.0,1.4
+  0.00  audio/castle-ambient.ogg  0.1  video loop fadeout=35.0,1.4
   0.10  audio/footstep-stone.ogg  0.14  video
   0.20  audio/footstep-dirt-2.ogg  0.23  video
   0.35  audio/footstep-dirt-1.ogg  0.31  video
@@ -78,42 +78,42 @@
  10.61  audio/footstep-dirt-3.ogg  0.27  video
  10.74  audio/footstep-dirt-2.ogg  0.08  video
  10.90  audio/footstep-dirt-3.ogg  0.3  video
- 11.00  audio/cutscene/quiet_council.ogg  0.55  video fadein=3.5 fadeout=34.1,0.9
+ 11.00  audio/cutscene/quiet_council.ogg  0.55  video fadein=3.5 fadeout=35.5,0.9
  11.36  audio/footstep-dirt-1.ogg  0.09  video
- 11.45  audio/vo/campaign/a1_pip_05.ogg  1.0  trim=0.0,1.12
+ 11.45  audio/vo/campaign/a1_pip_05.ogg  1.0  trim=0.0,1.1
  11.98  audio/footstep-dirt-1.ogg  0.08  video
  12.15  audio/footstep-dirt-3.ogg  0.28  video
  12.46  audio/footstep-dirt-2.ogg  0.31  video
  12.60  audio/footstep-dirt-2.ogg  0.09  video
  12.78  audio/footstep-dirt-1.ogg  0.33  video
- 12.85  audio/vo/campaign/a1_pip_05.ogg  1.0  trim=1.2,4.27
  13.13  audio/footstep-dirt-2.ogg  0.26  video
  13.22  audio/footstep-dirt-3.ogg  0.09  video
  13.46  audio/footstep-dirt-3.ogg  0.25  video
+ 13.50  audio/vo/campaign/a1_pip_05.ogg  1.0  trim=1.8,5.3
  13.84  audio/footstep-dirt-2.ogg  0.08  video
  14.46  audio/footstep-dirt-3.ogg  0.08  video
  15.08  audio/footstep-dirt-3.ogg  0.08  video
  15.70  audio/footstep-dirt-3.ogg  0.09  video
- 16.32  audio/footstep-dirt-2.ogg  0.15  video
- 16.45  audio/vo/campaign/a1_pip_05.ogg  1.0  trim=4.3,6.4
- 16.94  audio/footstep-dirt-1.ogg  0.16  video
+ 16.32  audio/footstep-dirt-2.ogg  0.08  video
+ 16.94  audio/footstep-dirt-1.ogg  0.09  video
+ 17.15  audio/vo/campaign/a1_pip_05.ogg  1.0  trim=5.65,8.1
  17.56  audio/footstep-dirt-3.ogg  0.17  video
  18.18  audio/footstep-dirt-1.ogg  0.16  video
- 18.45  audio/vo/campaign/a1_pip_05.ogg  1.0  trim=6.5,7.64
- 18.80  audio/footstep-dirt-1.ogg  0.04  video
- 19.90  audio/vo/campaign/a1_maud_14.ogg  1.0
- 23.15  audio/vo/campaign/a1_pip_06.ogg  1.0
- 23.95  audio/vo/campaign/a1_maud_15.ogg  1.0
- 27.30  audio/vo/campaign/a1_maud_16.ogg  1.0
- 27.65  audio/footstep-dirt-2.ogg  0.15  video
- 28.22  audio/footstep-dirt-2.ogg  0.15  video
- 28.75  audio/footstep-dirt-2.ogg  0.11  video
- 29.25  audio/footstep-dirt-3.ogg  0.11  video
- 29.78  audio/footstep-dirt-3.ogg  0.12  video
- 30.34  audio/footstep-dirt-2.ogg  0.1  video
- 30.86  audio/footstep-dirt-2.ogg  0.11  video
- 31.38  audio/footstep-dirt-2.ogg  0.08  video
- 31.97  audio/footstep-dirt-3.ogg  0.09  video
- 32.48  audio/footstep-dirt-3.ogg  0.07  video
- 33.06  audio/footstep-dirt-1.ogg  0.06  video
- 33.63  audio/footstep-dirt-3.ogg  0.06  video
+ 18.80  audio/footstep-dirt-1.ogg  0.13  video
+ 19.72  audio/vo/campaign/a1_pip_05.ogg  1.0  trim=8.7,9.88
+ 21.25  audio/vo/campaign/a1_maud_14.ogg  1.0
+ 24.50  audio/vo/campaign/a1_pip_05.ogg  1.0  trim=11.05,11.75
+ 25.30  audio/vo/campaign/a1_maud_15.ogg  1.0
+ 28.65  audio/vo/campaign/a1_maud_16.ogg  1.0
+ 29.00  audio/footstep-dirt-2.ogg  0.15  video
+ 29.57  audio/footstep-dirt-2.ogg  0.15  video
+ 30.10  audio/footstep-dirt-2.ogg  0.11  video
+ 30.60  audio/footstep-dirt-3.ogg  0.11  video
+ 31.13  audio/footstep-dirt-3.ogg  0.12  video
+ 31.69  audio/footstep-dirt-2.ogg  0.1  video
+ 32.21  audio/footstep-dirt-2.ogg  0.11  video
+ 32.73  audio/footstep-dirt-2.ogg  0.08  video
+ 33.32  audio/footstep-dirt-3.ogg  0.09  video
+ 33.83  audio/footstep-dirt-3.ogg  0.07  video
+ 34.41  audio/footstep-dirt-1.ogg  0.06  video
+ 34.98  audio/footstep-dirt-3.ogg  0.06  video

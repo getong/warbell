@@ -19,33 +19,34 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 ASSETS = ROOT / "assets"
 CUES = ASSETS / "cutscene" / "fort_arrival.cues"
-END = 40.6
-BLACK = 35.0  # fade-to-black done; the act card sits on wind alone
+END = 41.95
+BLACK = 36.35  # fade-to-black done; the act card sits on wind alone
 
 # Recorded Act I lines (docs/audio/elevenlabs-akt-1.md) at their scene times — FORT_LINES in scenes.rs.
-# (scene time, clip, volume, (from, to) seconds of the clip). Pip's a1_pip_05 is ONE breathless take
-# ("There's a well! There's a— that's a chapel, that was a chapel— there's a bell. Up there. It's
-# whole."); played whole it ran across four cuts, one of them mid-word. It's split at its breaths
-# (word times from Whisper: well@0.38 | There's@1.30 … chapel@3.60 | There's@4.38 bell@4.72 Up@5.52
-# there@5.60 | It's@6.64 whole@6.88) so each discovery gets its phrase and every cut lands in a pause.
+# (scene time, clip, volume, (from, to) seconds of the clip). Pip's a1_pip_05 is ONE take of all his
+# lines (ElevenLabs v3, Omar J): "[excited, out of breath] There's a well! [amazed, a little
+# breathless] And that... [sad breath] that was a chapel! [gasps, excited] There's a bell! Up there!
+# [softly, in awe] It's whole. [eager, hopeful] Can I—". Split at its pauses (ffmpeg silencedetect
+# -38 dB: well 0.1–1.36 | and that 1.89–2.90, breath, that was a chapel 3.96–5.24 | gasp 5.72, there's
+# a bell 6.26–7.02, up there 7.35–8.00 | it's whole 8.82–9.78 | can I 11.13–11.61) so each discovery
+# gets its phrase and every cut lands in a pause.
 PIP05 = "audio/vo/campaign/a1_pip_05.ogg"
 VO = [
-    (11.45, PIP05, 1.0, (0.0, 1.12)),   # Pip: "There's a well!"
-    (12.85, PIP05, 1.0, (1.2, 4.27)),   # Pip: "There's a— that's a chapel, that was a chapel—"
-    (16.45, PIP05, 1.0, (4.3, 6.4)),    # Pip: "there's a bell. Up there."
-    (18.45, PIP05, 1.0, (6.5, 7.64)),   # Pip: "It's whole."
-    (19.9, "audio/vo/campaign/a1_maud_14.ogg", 1.0, (0.0, 2.62)),  # Maud: "The well's whole too. Start with the well."
-    (23.15, "audio/vo/campaign/a1_pip_06.ogg", 1.0, (0.0, 0.73)),  # Pip: "Can I—"
-    (23.95, "audio/vo/campaign/a1_maud_15.ogg", 1.0, (0.0, 2.54)), # Maud: "At dusk. King's orders, one of them."
-    (27.3, "audio/vo/campaign/a1_maud_16.ogg", 1.0, (0.0, 4.91)),  # Maud: "God help us. A well, a bell, and a wall and a half."
+    (11.45, PIP05, 1.0, (0.0, 1.1)),     # Pip: "There's a well!"
+    (13.5, PIP05, 1.0, (1.8, 5.3)),      # Pip: "And that... that was a chapel!"
+    (17.15, PIP05, 1.0, (5.65, 8.1)),    # Pip: (gasp) "There's a bell! Up there!"
+    (19.72, PIP05, 1.0, (8.7, 9.88)),    # Pip: "It's whole."
+    (21.25, "audio/vo/campaign/a1_maud_14.ogg", 1.0, (0.0, 2.62)),  # Maud: "The well's whole too. Start with the well."
+    (24.5, PIP05, 1.0, (11.05, 11.75)),  # Pip: "Can I—"
+    (25.3, "audio/vo/campaign/a1_maud_15.ogg", 1.0, (0.0, 2.54)),  # Maud: "At dusk. King's orders, one of them."
+    (28.65, "audio/vo/campaign/a1_maud_16.ogg", 1.0, (0.0, 4.91)), # Maud: "God help us. A well, a bell, and a wall and a half."
 ]
-
 # Pip's run segments (scenes.rs fort_pip): (start, end, speed)
-PIP_RUNS = [(0.3, 10.9, 3.6), (12.1, 13.6, 2.6), (27.6, 33.7, 1.0)]
+PIP_RUNS = [(0.3, 10.9, 3.6), (12.1, 13.6, 2.6), (28.95, 35.05, 1.0)]
 # Which shot is on, for distance-based loudness (scenes.rs fort_shot)
-SHOTS = [(0.0, 7.0, "outside"), (7.0, 11.1, "yard"), (11.1, 13.45, "well"), (13.45, 16.2, "chapel"),
-         (16.2, 18.25, "bell"), (18.25, 19.75, "insert"), (19.75, 23.0, "maud"), (23.0, 23.95, "ots"),
-         (23.95, 26.8, "pip"), (26.8, END, "crane")]
+SHOTS = [(0.0, 7.0, "outside"), (7.0, 11.1, "yard"), (11.1, 13.45, "well"), (13.45, 17.05, "chapel"),
+         (17.05, 19.6, "bell"), (19.6, 21.1, "insert"), (21.1, 24.35, "maud"), (24.35, 25.3, "ots"),
+         (25.3, 28.15, "pip"), (28.15, END, "crane")]
 
 
 def clip_len(path):
@@ -81,7 +82,7 @@ def gen():
             s = shot(t)
             # the yard shot: he runs from the gate straight at the lens — steps swell as he comes
             vol = {"outside": 0.32 if t < 3.0 else 0.14, "yard": 0.10 + 0.24 * min(max((t - 7.0) / 3.9, 0), 1),
-                   "well": 0.32, "chapel": 0.3, "crane": 0.16 - 0.1 * min((t - 27.6) / 6.0, 1)}.get(s, 0.2)
+                   "well": 0.32, "chapel": 0.3, "crane": 0.16 - 0.1 * min((t - 28.95) / 6.0, 1)}.get(s, 0.2)
             rows.append((round(t, 2), rnd.choice(steps), round(vol * rnd.uniform(0.8, 1.1), 2), "video"))
             t += gap * rnd.uniform(0.9, 1.1)
     t = 0.2

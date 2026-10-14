@@ -1314,9 +1314,9 @@ fn farm_hide_hud(
 /// bell tower stands on the SOUTH wall, so an afternoon (south-west) sun put every look at it straight
 /// into the light — washed-out haze. From the ESE it rakes the tower's face and lights Maud's.
 const FORT_SKY: f32 = 0.075;
-const FORT_END: f32 = 40.6;
+const FORT_END: f32 = 41.95;
 /// Fade to black, then the act card on black.
-const FORT_FADE_OUT: (f32, f32) = (33.6, 35.0);
+const FORT_FADE_OUT: (f32, f32) = (34.95, 36.35);
 
 const WELL: Vec2 = Vec2::new(9.6, -6.4);
 const RUIN: Vec2 = crate::castle::KEEP_POS;
@@ -1340,18 +1340,18 @@ const NOTICE_BOARD: Vec2 = Vec2::new(3.0, 19.4);
 const FLOCK: Vec2 = Vec2::new(2.7, 14.6);
 
 /// Timed captions: (start s, duration s, speaker, line) — verbatim from the recorded clips
-/// (`a1_pip_05`, `a1_maud_14`, `a1_pip_06`, `a1_maud_15`, `a1_maud_16`). Pip's one breathless
-/// take is split at its breaths (`fort_audio.py` VO `trim`s), one phrase per discovery, so every
+/// (`a1_pip_05`, `a1_maud_14`, `a1_maud_15`, `a1_maud_16`). Pip's one breathless take (all
+/// his lines, "Can I—" too) is split at its breaths (`fort_audio.py` VO `trim`s), one phrase per discovery, so every
 /// cut lands in a pause instead of mid-word.
 const FORT_LINES: [(f32, f32, &str, &str); 8] = [
     (11.45, 1.15, "Pip", "There's a well!"),
-    (12.85, 3.1, "Pip", "There's a \u{2014} that's a chapel, that was a chapel \u{2014}"),
-    (16.45, 1.95, "Pip", "There's a bell. Up there."),
-    (18.45, 1.2, "Pip", "It's whole."),
-    (19.9, 2.62, "Maud", "The well's whole too. Start with the well."),
-    (23.15, 0.85, "Pip", "Can I\u{2014}"),
-    (23.95, 2.54, "Maud", "At dusk. King's orders, one of them."),
-    (27.3, 4.91, "Maud", "God help us. A well, a bell, and a wall and a half."),
+    (13.5, 3.5, "Pip", "And that\u{2026} that was a chapel!"),
+    (17.15, 2.45, "Pip", "There's a bell! Up there!"),
+    (19.72, 1.2, "Pip", "It's whole."),
+    (21.25, 2.62, "Maud", "The well's whole too. Start with the well."),
+    (24.5, 0.75, "Pip", "Can I\u{2014}"),
+    (25.3, 2.54, "Maud", "At dusk. King's orders, one of them."),
+    (28.65, 4.91, "Maud", "God help us. A well, a bell, and a wall and a half."),
 ];
 
 /// One step of a scripted walk: `Go(to, speed)` straight there, `Until(t)` hold the spot until `t`.
@@ -1417,8 +1417,8 @@ fn fort_pip(t: f32) -> (Vec2, Option<Vec2>) {
         Go(PIP_GATE, 3.6),
         Go(PIP_1, 3.6), // → ~10.8, looks round
         Until(12.1),    // "There's a well!" — points
-        Go(PIP_2, 2.6), // → ~13.5, "There's a—" … stops dead: the chapel
-        Until(27.6),
+        Go(PIP_2, 2.6), // → ~13.5, "And that…" stops dead: the chapel
+        Until(28.95),
         Go(PIP_WELL, 1.0), // "Start with the well."
     ])
 }
@@ -1651,7 +1651,8 @@ fn bell_pt() -> Vec3 {
 
 /// Pip's beat when he isn't running: (facing target, clip, head yaw/pitch/roll, arm points at). Every
 /// thing he names is on screen as he names it, his arm out at it (`a1_pip_05` word times from the
-/// clip: "well" 11.9, "chapel" 14.2 / 15.1, "bell" 16.2, "Up there" 17.0, "It's whole" 18.1).
+/// clip at its scene times: "well" 11.9, "And that…" 13.6, "chapel" 16.6, "bell" 18.2, "Up there"
+/// 18.9, "It's whole" 19.85).
 fn pip_beat(t: f32, pos: Vec2) -> (f32, &'static str, Vec3, Option<Vec3>) {
     let to = |q: Vec2| yaw_of(q - pos);
     let m = fort_maud(t).0;
@@ -1660,20 +1661,19 @@ fn pip_beat(t: f32, pos: Vec2) -> (f32, &'static str, Vec3, Option<Vec3>) {
         t if t < 11.3 => (to(WELL) - 0.3, "Idle_Loop", Vec3::new(0.75 * ((t - 10.8) * 5.0).sin(), 0.15, 0.0), None),
         // "There's a well!" (11.45)
         t if t < 12.15 => (to(WELL), "Idle_Loop", Vec3::new(0.0, 0.05, 0.0), Some(well_pt())),
-        // trotting on, "There's a—" (12.95) … stopped dead at the ruin: "that's a chapel, that was
-        // a chapel" (13.55)
-        t if t < 16.0 => (to(RUIN), "Idle_Loop", Vec3::new(0.0, 0.12, 0.0), (t > 13.7).then(ruin_pt)),
-        // spins round: "There's a bell." (16.5) "Up there." (17.45) — arm up at the belfry
-        t if t < 18.25 => (to(BELL), "Idle_Loop", Vec3::new(0.0, env(t, &[(16.2, 0.15), (17.5, 0.45)]), 0.0), (t > 16.4).then(bell_pt)),
-        // "It's whole." (18.6) — just staring up at it
-        t if t < 19.75 => (to(BELL), "Idle_Loop", Vec3::new(0.0, 0.45, 0.0), None),
+        // trotting on … stopped dead at the ruin: "And that… that was a chapel!" (13.6 / 15.7)
+        t if t < 16.9 => (to(RUIN), "Idle_Loop", Vec3::new(0.0, 0.12, 0.0), (t > 13.7).then(ruin_pt)),
+        // spins round with a gasp: "There's a bell!" (17.8) "Up there!" (18.9) — arm up at the belfry
+        t if t < 19.6 => (to(BELL), "Idle_Loop", Vec3::new(0.0, env(t, &[(17.1, 0.15), (18.9, 0.45)]), 0.0), (t > 17.6).then(bell_pt)),
+        // "It's whole." (19.85) — just staring up at it
+        t if t < 21.1 => (to(BELL), "Idle_Loop", Vec3::new(0.0, 0.45, 0.0), None),
         // Maud: "The well's whole too…" — he turns to her
-        t if t < 23.0 => (to(m), "Idle_Loop", Vec3::new(0.0, 0.08, 0.0), None),
+        t if t < 24.35 => (to(m), "Idle_Loop", Vec3::new(0.0, 0.08, 0.0), None),
         // "Can I—" — to her, hands going (no point: the bell is behind the lens here, an arm thrown
         // at it read as waving at the camera)
-        t if t < 23.95 => (to(m), "Idle_Talking_Loop", Vec3::new(0.0, 0.1, 0.0), None),
+        t if t < 25.3 => (to(m), "Idle_Talking_Loop", Vec3::new(0.0, 0.1, 0.0), None),
         // "At dusk. King's orders." — and his head drops
-        _ => (to(m), "Idle_Loop", Vec3::new(0.0, env(t, &[(24.6, 0.05), (25.4, -0.42)]), 0.0), None),
+        _ => (to(m), "Idle_Loop", Vec3::new(0.0, env(t, &[(25.95, 0.05), (26.75, -0.42)]), 0.0), None),
     }
 }
 
@@ -1685,13 +1685,13 @@ fn maud_beat(t: f32, pip: Vec2) -> (f32, &'static str, Vec3) {
     let at_pip = yaw_of(pip - m);
     let to_well = (wrap_pi(yaw_of(WELL - m) - at_pip)).clamp(-0.7, 0.7);
     match t {
-        t if t < 19.5 => (at_pip, "Idle_FoldArms_Loop", Vec3::ZERO),
-        t if t < 20.3 => (at_pip, "Yes", Vec3::new(0.0, 0.0, 0.16)),
+        t if t < 20.85 => (at_pip, "Idle_FoldArms_Loop", Vec3::ZERO),
+        t if t < 21.65 => (at_pip, "Yes", Vec3::new(0.0, 0.0, 0.16)),
         // "…Start with the well." — a glance at it
-        t if t < 22.5 => (at_pip, "Idle_Talking_Loop", Vec3::new(env(t, &[(21.4, 0.0), (21.8, to_well), (22.4, to_well * 0.3)]), 0.0, 0.12)),
-        t if t < 26.6 => (at_pip, "Idle_FoldArms_Loop", Vec3::new(0.0, 0.0, 0.08)),
+        t if t < 23.85 => (at_pip, "Idle_Talking_Loop", Vec3::new(env(t, &[(22.75, 0.0), (23.15, to_well), (23.75, to_well * 0.3)]), 0.0, 0.12)),
+        t if t < 27.95 => (at_pip, "Idle_FoldArms_Loop", Vec3::new(0.0, 0.0, 0.08)),
         // "God help us." — a slow look round: the well, the ruin, the broken north-west wall
-        _ => (at_pip + env(t, &[(26.6, 0.0), (31.6, -1.3)]), "Idle_Loop", Vec3::new(0.0, 0.08, 0.0)),
+        _ => (at_pip + env(t, &[(27.95, 0.0), (32.95, -1.3)]), "Idle_Loop", Vec3::new(0.0, 0.08, 0.0)),
     }
 }
 
@@ -1824,7 +1824,7 @@ fn drive_fort_scene(
     for mut bg in &mut fade {
         bg.0 = Color::srgba(0.0, 0.0, 0.0, a);
     }
-    let ta = env(t, &[(35.4, 0.0), (36.6, 1.0), (39.0, 1.0), (40.2, 0.0)]);
+    let ta = env(t, &[(36.75, 0.0), (37.95, 1.0), (40.35, 1.0), (41.55, 0.0)]);
     for mut c in &mut title {
         c.0 = c.0.with_alpha(ta);
     }
@@ -2005,51 +2005,51 @@ fn fort_shot(t: f32) -> (Cam, Option<f32>) {
             let look = well_pt() + Vec3::Y * 0.1;
             ((eye, look, 32.0, 3.0), Some(eye.distance(well_pt()) * 0.8))
         }
-        // 4 · "There's a— that's a chapel, that was a chapel" — he stops dead, turns to the ruin and
+        // 4 · "And that… that was a chapel!" — he stops dead, turns to the ruin and
         //     points; we look past him at it (racking from the boy to the ruin).
-        t if t < 16.2 => {
+        t if t < 17.05 => {
             let d = (RUIN - PIP_2).normalize();
             let side = Vec2::new(-d.y, d.x); // his right: the pointing arm on our side
             let e = PIP_2 - d * 2.2 + side * 0.7;
-            let eye = at(e.x, 1.05, e.y).lerp(at(e.x - d.x * 0.3, 1.07, e.y - d.y * 0.3), lin(13.45, 16.2));
+            let eye = at(e.x, 1.05, e.y).lerp(at(e.x - d.x * 0.3, 1.07, e.y - d.y * 0.3), lin(13.45, 17.05));
             let look = (ruin_pt() - Vec3::Y * 0.4).lerp(pip(0.8), 0.15);
             let (fp, fr) = (eye.distance(pip(1.0)), eye.distance(ruin_pt()));
             ((eye, look, 36.0, 3.5), Some(fp + (fr - fp) * env(t, &[(14.0, 0.0), (14.6, 1.0)])))
         }
-        // 5 · "There's a bell. Up there." — he spins round; low behind him, across the yard to the
+        // 5 · "There's a bell! Up there!" — he spins round; low behind him, across the yard to the
         //     tower over the gate, his arm up at the belfry, Maud walking in.
-        t if t < 18.25 => {
+        t if t < 19.6 => {
             let d = (BELL - PIP_2).normalize();
             let side = Vec2::new(d.y, -d.x);
             let e = PIP_2 - d * 1.7 + side * 0.5;
             let eye = at(e.x, 0.75, e.y);
-            let look = (bell_pt() - Vec3::Y * 2.2).lerp(bell_pt() - Vec3::Y * 0.8, seg(16.4, 18.1));
+            let look = (bell_pt() - Vec3::Y * 2.2).lerp(bell_pt() - Vec3::Y * 0.8, seg(17.3, 19.4));
             ((eye, look, 24.0, 9.0), Some(eye.distance(bell_pt())))
         }
         // 6 · "It's whole." — the bell itself in its belfry, morning sun on the bronze.
         //    Along shot 5's own sightline (through the belfry opening — any other angle puts a pier
         //    in front of it), a slow telephoto push in.
-        t if t < 19.75 => {
+        t if t < 21.1 => {
             let d = (BELL - PIP_2).normalize();
             let e5 = PIP_2 - d * 1.7 + Vec2::new(d.y, -d.x) * 0.5;
             let dir = (at(e5.x, 0.75, e5.y) - bell_pt()).normalize();
             // slid right of the boy's sightline so the near pier clears the bell
             let right = Vec3::new(dir.z, 0.0, -dir.x).normalize();
-            let eye = bell_pt() + dir * (9.5 - 1.3 * seg(18.25, 19.75)) + right * 1.3;
+            let eye = bell_pt() + dir * (9.5 - 1.3 * seg(19.6, 21.1)) + right * 1.3;
             ((eye, bell_pt() + Vec3::Y * 0.35, 22.0, 1.5), Some(eye.distance(bell_pt())))
         }
         // 7 · Maud: "The well's whole too. Start with the well." — over the boy's shoulder, low (his
         //     eye-line), up at her.
-        t if t < 23.0 => {
+        t if t < 24.35 => {
             let d = (MAUD_MARK - PIP_2).normalize();
             let side = Vec2::new(d.y, -d.x);
             let e = PIP_2 - d * 1.25 + side * 0.34;
-            let eye = at(e.x, 1.02, e.y).lerp(at(e.x + d.x * 0.25, 1.03, e.y + d.y * 0.25), lin(19.75, 23.0));
+            let eye = at(e.x, 1.02, e.y).lerp(at(e.x + d.x * 0.25, 1.03, e.y + d.y * 0.25), lin(21.1, 24.35));
             let look = at(MAUD_MARK.x, 1.2, MAUD_MARK.y);
             ((eye, look, 25.0, 1.2), Some(eye.distance(look)))
         }
         // 8 · "Can I—" — the reverse, over her shoulder: the boy, arm up at the bell, asking.
-        t if t < 23.95 => {
+        t if t < 25.3 => {
             let d = (PIP_2 - MAUD_MARK).normalize();
             let side = Vec2::new(-d.y, d.x);
             let e = MAUD_MARK - d * 1.05 + side * 0.36;
@@ -2061,11 +2061,11 @@ fn fort_shot(t: f32) -> (Cam, Option<f32>) {
         // 9 · "At dusk. King's orders, one of them." — her voice over the boy's face, close, from
         //     her side: the head going down, the well he's been told to start with behind him. (A
         //     side-on two-shot put them at opposite frame edges, ~8.7 u apart, the village between.)
-        t if t < 26.8 => {
+        t if t < 28.15 => {
             let d = (MAUD_MARK - PIP_2).normalize();
             let side = Vec2::new(-d.y, d.x);
             let e = PIP_2 + d * 2.3 + side * 0.45;
-            let eye = at(e.x, 0.98, e.y).lerp(at(e.x - d.x * 0.35, 0.96, e.y - d.y * 0.35), lin(23.95, 26.8));
+            let eye = at(e.x, 0.98, e.y).lerp(at(e.x - d.x * 0.35, 0.96, e.y - d.y * 0.35), lin(25.3, 28.15));
             let look = pip(0.82);
             ((eye, look, 24.0, 1.4), Some(eye.distance(look)))
         }
@@ -2073,9 +2073,9 @@ fn fort_shot(t: f32) -> (Cam, Option<f32>) {
         //      and back over the gate wall: the whole ruin, two small figures, the light going. Ends
         //      low enough to keep the horizon (a high top-down just shows patchy mud).
         _ => {
-            let k = seg(26.9, 34.6);
+            let k = seg(28.25, 35.95);
             let eye = at(3.5, 1.55, 11.2).lerp(Vec3::new(9.0, world_y_at(Vec2::new(9.0, 30.5)) + 7.0, 30.5), k);
-            let look = pip(0.9).lerp(at(1.0, 2.0, -8.0), seg(26.9, 31.0));
+            let look = pip(0.9).lerp(at(1.0, 2.0, -8.0), seg(28.25, 32.35));
             ((eye, look, 34.0 + 10.0 * k, 2.5 + 17.5 * k), None)
         }
     }

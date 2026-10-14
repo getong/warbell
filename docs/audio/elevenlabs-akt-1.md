@@ -95,7 +95,7 @@ Słabsze, ale zostawione: `a1_hamid_09` (zamiast „slow, sad tune” jest krót
 | `a1_pip_02` | [sulky] He doesn't talk. |
 | `a1_pip_03` | [curious] Where's the bell? |
 | `a1_pip_04` | [curious] Who's the first lot? |
-| `a1_pip_05` | [excited, running] There's a well! There's a— that's a chapel, that was a chapel— there's a bell. Up there. It's whole. |
+| `a1_pip_05` | [excited, out of breath] There's a well! [short pause] [amazed, a little breathless] And that... [sad breath] that was a chapel! [short pause] [gasps, excited] There's a bell! Up there! [pause] [softly, in awe] It's whole. [long pause] [eager, hopeful] Can I— *(one take, Omar J; the fort cutscene cuts it at the pauses — `a1_pip_06` is no longer used there)* |
 | `a1_pip_06` | [eager] Can I— |
 | `a1_pip_07` | [breathless, proud] Did you hear her? That's mine. She's the only thing on this island that does what it's told. |
 | `a1_pip_08` | [weak, feverish] Don't let anyone else ring her. |
