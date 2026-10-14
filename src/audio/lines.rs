@@ -29,6 +29,20 @@ pub enum Speaker {
     /// optional — a line whose `.ogg` isn't on disk yet is never loaded and stays silent (no
     /// subtitle either), so the catalogue can be recorded piecemeal.
     Life,
+    /// A named campaign character other than Wat (Wat's own lines use [`Speaker::Hero`], orks use
+    /// [`Speaker::Ork`]). Spatial at the `Speak::at` position, or beside the hero if none is given.
+    Cast(Cast),
+}
+
+/// The campaign cast with recorded voices (`assets/audio/vo/campaign/VOICES.md`).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Cast {
+    Harrow,
+    Maud,
+    Pip,
+    Settler,
+    Farmer,
+    Hamid,
 }
 
 /// The recorded village voices of `docs/audio/elevenlabs-zycie-wsi.md` — each resident is mapped
@@ -123,6 +137,13 @@ pub const SPEAKERS: &[(Speaker, SpeakerVoice)] = &[
     // the cages from sounding like one recorded prisoner.
     (Speaker::Captive,  SpeakerVoice { spatial: true,  gain: 1.6,  name: Some("Captive"),   pitch: (0.95, 1.05), muffled: true  }),
     (Speaker::Life,     SpeakerVoice { spatial: true,  gain: 1.3,  name: Some("Townsfolk"), pitch: (1.0,  1.0),  muffled: false }),
+    // Campaign cast: clips mastered like the village-life VO (-16 LUFS per voice), so gain 1.3.
+    (Speaker::Cast(Cast::Harrow),  SpeakerVoice { spatial: true, gain: 1.3, name: Some("Ser Godric"), pitch: (1.0, 1.0), muffled: false }),
+    (Speaker::Cast(Cast::Maud),    SpeakerVoice { spatial: true, gain: 1.3, name: Some("Maud"),       pitch: (1.0, 1.0), muffled: false }),
+    (Speaker::Cast(Cast::Pip),     SpeakerVoice { spatial: true, gain: 1.3, name: Some("Pip"),        pitch: (1.0, 1.0), muffled: false }),
+    (Speaker::Cast(Cast::Settler), SpeakerVoice { spatial: true, gain: 1.3, name: Some("Settler"),    pitch: (1.0, 1.0), muffled: false }),
+    (Speaker::Cast(Cast::Farmer),  SpeakerVoice { spatial: true, gain: 1.3, name: Some("Farmer"),     pitch: (1.0, 1.0), muffled: false }),
+    (Speaker::Cast(Cast::Hamid),   SpeakerVoice { spatial: true, gain: 1.3, name: Some("Hamid"),      pitch: (1.0, 1.0), muffled: false }),
 ];
 
 pub fn speaker_voice(s: Speaker) -> SpeakerVoice {
@@ -134,6 +155,9 @@ pub fn speaker_voice(s: Speaker) -> SpeakerVoice {
 /// all five. The `Reply*` variants are chain targets dispatched by a finished line's `then`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Concept {
+    /// One scripted campaign line, addressed by its clip key (`a1_maud_04`…): exactly that line
+    /// plays. Clips live under `audio/vo/campaign/`. Not peaceful — a scripted line cuts through a fight.
+    Script(&'static str),
     // ── Hero event reactions (was `HeroEvent`) ──
     Campaign(super::campaign::CampaignLine),
     FirstStone,
@@ -356,6 +380,18 @@ const fn life(id: &'static str, voice: LifeVoice, cue: LifeCue, text: &'static s
     Line { priority: 5, floor: 150.0, ..line(id, Speaker::Life, Concept::Life(voice, cue), text) }
 }
 
+/// A scripted campaign line: fired by key via `Speak::new(Concept::Script(id))`, high priority and
+/// not interruptible, so a barking villager can't talk over the story. Text is the subtitle
+/// (the ElevenLabs prompt minus its v3 tags; the full prompts are in `docs/audio/elevenlabs-akt-1.md`).
+const fn script(id: &'static str, speaker: Speaker, text: &'static str) -> Line {
+    Line { priority: 20, interruptible: false, ..line(id, speaker, Concept::Script(id), text) }
+}
+
+/// A scripted line written but not recorded yet: in the catalogue, silent until `recorded` flips.
+const fn script_planned(id: &'static str, speaker: Speaker, text: &'static str) -> Line {
+    Line { recorded: false, ..script(id, speaker, text) }
+}
+
 /// THE catalog. Filled in across the migration tasks (Phase C).
 pub const LINES: &[Line] = &[
     // ── Village life (`docs/audio/elevenlabs-zycie-wsi.md`; clips `audio/vo/life/<id>.ogg`) ──
@@ -441,6 +477,150 @@ pub const LINES: &[Line] = &[
     life("life_g_kid", LifeVoice::Guard, LifeCue::Scold, "You. Off the rampart. Now."),
     life("life_g_yawn", LifeVoice::Guard, LifeCue::Yawn, "Hhh. Who scheduled the dawn so early."),
     life("life_g_dusk", LifeVoice::Guard, LifeCue::Dusk, "Bell's soon. Torches lit, eyes open."),
+
+    // ── Campaign Prologue + Act I (`docs/audio/elevenlabs-akt-1.md`; clips `audio/vo/campaign/<id>.ogg`) ──
+    // Voices (DO NOT change on re-takes): harrow=Julian, wat=Sully, maud=MoanElisa, pip=Omar J, settler=Wilf,
+    // farmer=Darby Skelm, hamid=Sal, ork/shaman=Dante. See assets/audio/vo/campaign/VOICES.md.
+    // Trigger: none wired yet. Play one by key with `Speak::new(Concept::Script("a1_maud_04"))` (or
+    // `Speak::at` to place a cast voice). The trailing comment on each line is the scene it was written for.
+    script("a1_harrow_01", Speaker::Cast(Cast::Harrow), "Tighter. You've done that strap every day for fifteen years and it's still wrong."), // P.0 cabin
+    script("a1_harrow_02", Speaker::Cast(Cast::Harrow), "Forty peasants and a Reeve. That's what the Crown sends a man after the eastern campaign."), // P.0 cabin
+    script("a1_harrow_03", Speaker::Cast(Cast::Harrow), "Do you know what they said about me in the city? Before it burned?"), // P.0 cabin
+    script("a1_harrow_04", Speaker::Cast(Cast::Harrow), "Neither do I. Nobody looks at the man behind the shield, Wat. That's the point of you."), // P.0 cabin
+    script("a1_harrow_05", Speaker::Cast(Cast::Harrow), "Left. It's always the left."), // P.0 cabin
+    script("a1_harrow_06", Speaker::Cast(Cast::Harrow), "The helmet goes on the chest, Wat. Not near it. On it."), // P.0 cabin
+    script("a1_harrow_07", Speaker::Cast(Cast::Harrow), "The letter. To the Reeve. Today, if the sea allows."), // P.0 cabin
+    script("a1_harrow_08", Speaker::Cast(Cast::Harrow), "Stop hovering."), // P.0 cabin
+    script("a1_harrow_09", Speaker::Cast(Cast::Harrow), "Sleep, Wat. I'll want you at first light, and I'll want you awake."), // P.0 cabin
+    script("a1_wat_01", Speaker::Hero, "Yes, Ser."), // P.0 cabin
+    script("a1_wat_02", Speaker::Hero, "No, Ser."), // P.0 cabin
+    script("a1_wat_03", Speaker::Hero, "His squire."), // P.0 below deck (to Maud)
+    script("a1_wat_04", Speaker::Hero, "He's resting."), // P.0 below deck (to Maud)
+    script("a1_wat_05", Speaker::Hero, "Hnn. There."), // P.0 squire tasks
+    script("a1_wat_06", Speaker::Hero, "Left. Always the left."), // P.0 squire tasks
+    script("a1_wat_07", Speaker::Hero, "Ser Godric doesn't do churches."), // Ch.1 dawn campfire
+    script("a1_wat_08", Speaker::Hero, "Ser Godric said hold the line."), // Ch.2 campfire (Farmer)
+    script("a1_wat_09", Speaker::Hero, "Ser Godric can't climb the tower."), // Ch.3 fever room
+    script("a1_wat_10", Speaker::Hero, "You're the Pasha's man."), // Ch.4 Hamid
+    script("a1_wat_11", Speaker::Hero, "What's the song?"), // Ch.4 Hamid
+    script("a1_wat_12", Speaker::Hero, "Ser Godric is not a carpenter."), // Act I bank
+    script("a1_wat_13", Speaker::Hero, "Ser Godric wants a wall. Ser Godric will settle for half."), // mission bark
+    script("a1_wat_14", Speaker::Hero, "Stones. Ser Godric carries them now. Don't tell anyone."), // mission bark
+    script("a1_wat_15", Speaker::Hero, "The wall won't build itself. Ser Godric checked."), // mission bark
+    script("a1_wat_16", Speaker::Hero, "Dusk. To the walls."), // mission bark
+    script("a1_wat_17", Speaker::Hero, "Dawn. Count the heads."), // mission bark
+    script("a1_wat_18", Speaker::Hero, "Torch-bearers. Keep them off the fields."), // mission bark
+    script("a1_wat_19", Speaker::Hero, "Barn. Ser Godric said barn."), // mission bark
+    script("a1_wat_20", Speaker::Hero, "Fields need hands. Ser Godric has two. Both busy."), // mission bark
+    script("a1_wat_21", Speaker::Hero, "Shamans in the marsh. Ser Godric goes. Alone is faster."), // mission bark
+    script("a1_wat_22", Speaker::Hero, "Camp's burning. Their problem now."), // mission bark
+    script("a1_wat_23", Speaker::Hero, "Ser Godric needs men. Brave ones. Stupid will do."), // mission bark
+    script("a1_wat_24", Speaker::Hero, "Cages. Somebody's still alive in them."), // mission bark
+    script("a1_wat_25", Speaker::Hero, "Out. Walk. Fort's that way."), // mission bark
+    script("a1_wat_26", Speaker::Hero, "Ser Godric has had worse. Ser Godric has never had worse."), // low HP
+    script("a1_wat_27", Speaker::Hero, "Fifteen years behind him. Now they're all behind me. Wrong way round."), // private musing (alone)
+    script("a1_wat_28", Speaker::Hero, "Breathe. Rasp. Short words. You're him."), // private musing (alone)
+    script("a1_wat_29", Speaker::Hero, "Don't take it off. Not out here."), // private musing (alone)
+    script("a1_wat_30", Speaker::Hero, "Nobody looks at the man behind the shield. They're all looking now."), // private musing (alone)
+    script("a1_wat_31", Speaker::Hero, "*pained grunt*"), // effort / exhausted
+    script_planned("a1_wat_32", Speaker::Hero, "*heavy breathing, exhausted*"), // effort / exhausted
+    script_planned("a1_wat_33", Speaker::Hero, "You're welcome."), // Ch.2 farm cutscene
+    script_planned("a1_wat_34", Speaker::Hero, "I know."), // Ch.2 farm cutscene
+    script("a1_maud_01", Speaker::Cast(Cast::Maud), "You're his boy."), // P.0 below deck
+    script("a1_maud_02", Speaker::Cast(Cast::Maud), "Same thing, from down here. Does he ever come out?"), // P.0 below deck
+    script("a1_maud_03", Speaker::Cast(Cast::Maud), "Resting. The knight's resting. Sleep well, everyone, we're guarded by a man who's resting."), // P.0 below deck
+    script("a1_maud_04", Speaker::Cast(Cast::Maud), "Ser Godric's up! Behind him, all of you!"), // beach fight
+    script("a1_maud_05", Speaker::Cast(Cast::Maud), "The sea took the squire. Wat. Some of you knew him."), // P.2 orders
+    script("a1_maud_06", Speaker::Cast(Cast::Maud), "Ser Godric took an axe on the beach. Throat and face. He'll speak when he's ready and not before. Nobody argues with a man who lived through that."), // P.2 orders
+    script("a1_maud_07", Speaker::Cast(Cast::Maud), "\"Make for the old fort of Saint Ottilie. Restore it. Ring the King's bell at every dusk.\" That's the whole order. The rest is who to thank."), // P.2 orders
+    script("a1_maud_08", Speaker::Cast(Cast::Maud), "Then we'll ring it from the ground."), // P.2 orders
+    script("a1_maud_09", Speaker::Cast(Cast::Maud), "This one's \"for the Lord Commissioner's eyes only.\" Ser Godric keeps it. Ser Godric's eyes, since the blow. I'll read him what he needs."), // P.2 orders
+    script("a1_maud_10", Speaker::Cast(Cast::Maud), "Ask him."), // King's Road march
+    script("a1_maud_11", Speaker::Cast(Cast::Maud), "Then that's your answer, isn't it."), // King's Road march
+    script("a1_maud_12", Speaker::Cast(Cast::Maud), "In the fort, if the first lot didn't melt it for spoons."), // King's Road march
+    script("a1_maud_13", Speaker::Cast(Cast::Maud), "People who had a roof."), // King's Road march
+    script("a1_maud_14", Speaker::Cast(Cast::Maud), "The well's whole too. Start with the well."), // P.3 fort
+    script("a1_maud_15", Speaker::Cast(Cast::Maud), "At dusk. King's orders, one of them."), // P.3 fort
+    script("a1_maud_16", Speaker::Cast(Cast::Maud), "God help us. A well, a bell, and a wall and a half."), // P.3 fort
+    script("a1_maud_17", Speaker::Cast(Cast::Maud), "Go on. They're watching Ser Godric, not me."), // Ch.1 first bell
+    script("a1_maud_18", Speaker::Cast(Cast::Maud), "Three walls, no gate, a bell. We're a church with ambitions."), // Ch.1 dawn campfire
+    script("a1_maud_19", Speaker::Cast(Cast::Maud), "Ser Godric doesn't do stairs, I've noticed. Mind the shoulder strap. It's riding up."), // Ch.1 dawn campfire
+    script("a1_maud_20", Speaker::Cast(Cast::Maud), "Write it down. Next time he'll say barn."), // Ch.2 campfire
+    script("a1_maud_21", Speaker::Cast(Cast::Maud), "Swamp fever. It's one night. Someone else can pull a rope."), // Ch.3 fever room
+    script("a1_maud_22", Speaker::Cast(Cast::Maud), "Ser Godric can't climb the tower in front of forty people. Different thing."), // Ch.3 fever room
+    script("a1_maud_23", Speaker::Cast(Cast::Maud), "...Fine. One night. The King can write me a letter."), // Ch.3 fever room
+    script("a1_maud_24", Speaker::Cast(Cast::Maud), "...Could be. Dig."), // Ch.3 quiet-night morning
+    script("a1_maud_25", Speaker::Cast(Cast::Maud), "Ser Godric inspected the wall. The wall is inspected. The wall is also still a hole."), // Act I bank
+    script("a1_maud_26", Speaker::Cast(Cast::Maud), "Would you take it off, with what's out there?"), // Act I bank
+    script("a1_maud_27", Speaker::Cast(Cast::Maud), "Ser Godric isn't a lot of things. Hold the plank."), // Act I bank
+    script("a1_maud_28", Speaker::Cast(Cast::Maud), "Stones to the north wall! Ser Godric's watching. Look busy."), // mission bark
+    script("a1_maud_29", Speaker::Cast(Cast::Maud), "Wood, stone, hands. We've got hands."), // mission bark
+    script("a1_maud_30", Speaker::Cast(Cast::Maud), "The keep's still mostly sky. Stone, Ser Godric. Stone."), // mission bark
+    script("a1_maud_31", Speaker::Cast(Cast::Maud), "Food's low. Nobody fights well hungry. Or at all."), // mission bark
+    script("a1_maud_32", Speaker::Cast(Cast::Maud), "Dusk! Shutters, fires down, everyone on the wall!"), // mission bark
+    script("a1_maud_33", Speaker::Cast(Cast::Maud), "Dawn. Count yourselves. Good. Same number."), // mission bark
+    script("a1_maud_34", Speaker::Cast(Cast::Maud), "Dawn. Fewer than last night. Bury them before noon."), // mission bark
+    script("a1_maud_35", Speaker::Cast(Cast::Maud), "Torches in the fields! Ser Godric, the barley!"), // mission bark
+    script("a1_maud_36", Speaker::Cast(Cast::Maud), "Barley's ash. We'll eat the lecture instead."), // mission bark
+    script("a1_maud_37", Speaker::Cast(Cast::Maud), "Fields need a fence. Or a knight. Fence is cheaper."), // mission bark
+    script("a1_maud_38", Speaker::Cast(Cast::Maud), "Ser Godric's off to the marsh. Nobody follow him. He likes it quiet."), // mission bark
+    script("a1_maud_39", Speaker::Cast(Cast::Maud), "Anyone who can hold a spear, the yard! Anyone who can't, hold one anyway."), // mission bark
+    script("a1_maud_40", Speaker::Cast(Cast::Maud), "Twelve farmers and a grudge. Ser Godric, your army."), // mission bark
+    script("a1_maud_41", Speaker::Cast(Cast::Maud), "You brought them back. Ser Godric brought them back!"), // mission bark
+    script("a1_maud_42", Speaker::Cast(Cast::Maud), "A southerner. Put him by the fire. Not near the grain."), // mission bark
+    script("a1_maud_43", Speaker::Cast(Cast::Maud), "Wall's breached! Hold the gap!"), // mission bark
+    script("a1_maud_44", Speaker::Cast(Cast::Maud), "Ser Godric's down! Get him behind the line! Nobody touch the helmet!"), // mission bark
+    script("a1_maud_45", Speaker::Cast(Cast::Maud), "Up. They're watching you."), // mission bark
+    script("a1_maud_46", Speaker::Cast(Cast::Maud), "You're bleeding through the plate. Inside. Now."), // mission bark
+    script_planned("a1_maud_47", Speaker::Cast(Cast::Maud), "He laid three stones. Then he supervised."), // mason gag
+    script("a1_pip_01", Speaker::Cast(Cast::Pip), "Is it true? About the axe?"), // King's Road march
+    script("a1_pip_02", Speaker::Cast(Cast::Pip), "He doesn't talk."), // King's Road march
+    script("a1_pip_03", Speaker::Cast(Cast::Pip), "Where's the bell?"), // King's Road march
+    script("a1_pip_04", Speaker::Cast(Cast::Pip), "Who's the first lot?"), // King's Road march
+    script("a1_pip_05", Speaker::Cast(Cast::Pip), "There's a well! There's a— that's a chapel, that was a chapel— there's a bell. Up there. It's whole."), // P.3 fort
+    script("a1_pip_06", Speaker::Cast(Cast::Pip), "Can I—"), // P.3 fort
+    script("a1_pip_07", Speaker::Cast(Cast::Pip), "Did you hear her? That's mine. She's the only thing on this island that does what it's told."), // Ch.1 first bell
+    script("a1_pip_08", Speaker::Cast(Cast::Pip), "Don't let anyone else ring her."), // Ch.3 fever room
+    script("a1_pip_09", Speaker::Cast(Cast::Pip), "The well's clean. I did the well. Nobody says anything about the well."), // Act I bank
+    script("a1_pip_10", Speaker::Cast(Cast::Pip), "It's getting dark. Can I go up?"), // bark
+    script("a1_pip_11", Speaker::Cast(Cast::Pip), "I counted the arrows. There aren't enough. I counted twice."), // bark
+    script("a1_pip_12", Speaker::Cast(Cast::Pip), "Your sword's dirty, Ser Godric. I can clean it. I won't touch the helmet."), // bark
+    script("a1_pip_13", Speaker::Cast(Cast::Pip), "I don't like the drums. Do you like the drums?"), // bark
+    script("a1_pip_14", Speaker::Cast(Cast::Pip), "I'm better. Did anyone ring her? Good."), // bark
+    script_planned("a1_pip_15", Speaker::Cast(Cast::Pip), "*coughing weakly*"), // bark
+    script("a1_settler_01", Speaker::Cast(Cast::Settler), "A bell? We haven't got a roof."), // P.2 orders
+    script("a1_settler_02", Speaker::Cast(Cast::Settler), "Not a one! Not a single one! You broke their ritual, Ser Godric. That's what it was. That's what brought them. Burn the shamans, the rest go home."), // Ch.3 quiet-night morning
+    script("a1_settler_03", Speaker::Cast(Cast::Settler), "Does he sleep in it?"), // Act I bank
+    script("a1_settler_04", Speaker::Cast(Cast::Settler), "Another camp burned, another quiet night coming. You'll see."), // bark
+    script("a1_settler_05", Speaker::Cast(Cast::Settler), "Burn the shamans, sleep like a baby. That's my religion now."), // bark
+    script("a1_settler_06", Speaker::Cast(Cast::Settler), "Quiet night, he says. Tell that to my roof."), // bark
+    script("a1_settler_07", Speaker::Cast(Cast::Settler), "Took an axe to the face and still walks. I'd still be lying down."), // bark
+    script("a1_settler_08", Speaker::Cast(Cast::Settler), "Drums again. Means they're close. Or bored. Either's bad."), // bark
+    script("a1_farmer_01", Speaker::Cast(Cast::Farmer), "You said hold the line. Line's fine. Barn's gone."), // Ch.2 campfire
+    script("a1_farmer_02", Speaker::Cast(Cast::Farmer), "Ser Godric should've said hold the barn."), // Ch.2 campfire
+    script("a1_farmer_03", Speaker::Cast(Cast::Farmer), "They're at the barley! Somebody! Anybody in armour!"), // bark
+    script("a1_farmer_04", Speaker::Cast(Cast::Farmer), "Third field this week. I'm farming ash now."), // bark
+    script("a1_farmer_05", Speaker::Cast(Cast::Farmer), "Fields held. Don't let it go to your helmet."), // bark
+    script_planned("a1_farmer_06", Speaker::Cast(Cast::Farmer), "Wasn't thanking you."), // Ch.2 farm cutscene
+    script("a1_hamid_01", Speaker::Cast(Cast::Hamid), "You. In the tin. Yes, you. Open this and I'll owe you, which I hate."), // Ch.4 cage
+    script("a1_hamid_02", Speaker::Cast(Cast::Hamid), "Three weeks. They fed me. Badly, but they fed me. You don't feed what you mean to eat."), // Ch.4 freed
+    script("a1_hamid_03", Speaker::Cast(Cast::Hamid), "I'm the Pasha's caravan. The man is in the desert, and he's going to ask me what I was worth. ...Ser Godric Harrow. He'll want to hear that too."), // Ch.4 freed
+    script("a1_hamid_04", Speaker::Cast(Cast::Hamid), "Head. Three weeks of their drums, knight, you'd have a head too."), // Ch.4 dusk, indoors
+    script("a1_hamid_05", Speaker::Cast(Cast::Hamid), "Theirs. They sing in the evenings. Not what you'd expect. Sad. Like somebody's leaving for work."), // Ch.4 dusk, indoors
+    script("a1_hamid_06", Speaker::Cast(Cast::Hamid), "Not the yard, not at sundown. My head. I'll sit inside."), // bark
+    script("a1_hamid_07", Speaker::Cast(Cast::Hamid), "I'll pay for the bed. Eventually. With interest. Somebody's interest."), // bark
+    script("a1_hamid_08", Speaker::Cast(Cast::Hamid), "A well, three walls and a knight who doesn't talk. In the desert we call that a bargain."), // bark
+    script("a1_hamid_09", Speaker::Cast(Cast::Hamid), "*humming a slow, sad tune*"), // bark
+    script("a1_hamid_10", Speaker::Cast(Cast::Hamid), "*humming softly, sighs*"), // bark
+    script("a1_ork_01", Speaker::Ork, "*guttural roar*"), // bark
+    script("a1_ork_02", Speaker::Ork, "Iron voice calls!"), // bark
+    script("a1_ork_03", Speaker::Ork, "Answer! Answer!"), // bark
+    script("a1_ork_04", Speaker::Ork, "Hrah. Hrah. Hrah."), // bark
+    script("a1_ork_05", Speaker::Ork, "Tin man!"), // bark
+    script("a1_ork_06", Speaker::Ork, "*dying groan*"), // bark
+    script_planned("a1_shaman_01", Speaker::Ork, "*low guttural ritual chanting*"), // bark
+    script_planned("a1_shaman_02", Speaker::Ork, "*rasping incantation, rising*"), // bark
+    script("a1_shaman_03", Speaker::Ork, "*furious shriek*"), // bark
 
     // Opening campaign: all clips are from the supplied Sully recording.
     Line { once: true, priority: 14, floor: 90.0, ..line("campaign_rescue_plan", Speaker::Hero, Concept::Campaign(super::campaign::CampaignLine::RescuePlan), "They've taken our people. Gather the militia. We're getting them back.") },
@@ -822,10 +1002,11 @@ pub fn candidates(concept: Concept) -> impl Iterator<Item = &'static Line> {
 
 pub fn voice_clip_path(line: &Line) -> Option<String> {
     if !line.recorded { return None; }
-    let dir = match line.speaker {
-        Speaker::Hero => "hero", Speaker::Villager => "npc",
-        Speaker::Ork => "ork", Speaker::Rival => "rival", Speaker::Captive => "npc/captive",
-        Speaker::Life => "life",
+    let dir = match (line.concept, line.speaker) {
+        (Concept::Script(_), _) | (_, Speaker::Cast(_)) => "campaign",
+        (_, Speaker::Hero) => "hero", (_, Speaker::Villager) => "npc",
+        (_, Speaker::Ork) => "ork", (_, Speaker::Rival) => "rival", (_, Speaker::Captive) => "npc/captive",
+        (_, Speaker::Life) => "life",
     };
     Some(format!("audio/vo/{dir}/{}.ogg", line.id))
 }
@@ -1068,6 +1249,22 @@ mod tests {
     fn every_speaker_is_registered() {
         for s in [Speaker::Hero, Speaker::Villager, Speaker::Ork, Speaker::Rival, Speaker::Captive, Speaker::Life] {
             let _ = speaker_voice(s);
+        }
+        for c in [Cast::Harrow, Cast::Maud, Cast::Pip, Cast::Settler, Cast::Farmer, Cast::Hamid] {
+            let _ = speaker_voice(Speaker::Cast(c));
+        }
+    }
+
+    #[test]
+    fn script_lines_resolve_to_exactly_their_own_campaign_clip() {
+        let scripted: Vec<_> = LINES.iter().filter(|l| matches!(l.concept, Concept::Script(_))).collect();
+        assert!(scripted.len() >= 130);
+        for l in scripted {
+            assert_eq!(l.concept, Concept::Script(l.id), "{} must be keyed by its own id", l.id);
+            assert_eq!(candidates(Concept::Script(l.id)).count(), 1, "duplicate key {}", l.id);
+            if l.recorded {
+                assert_eq!(voice_clip_path(l).unwrap(), format!("audio/vo/campaign/{}.ogg", l.id));
+            }
         }
     }
 

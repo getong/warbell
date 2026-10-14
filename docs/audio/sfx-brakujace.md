@@ -33,6 +33,8 @@ Dopisuj tu każdy nowy brakujący odgłos; po dostarczeniu zmień status na ✅.
 | ⬜ | `life_sfx_chatter` | small group of medieval villagers chatting and laughing quietly outdoors, no clear words | 8.0 s, loop |
 | ⬜ | `life_sfx_market` | busy small medieval village market, distant haggling, livestock, no clear words | 10.0 s, loop |
 | ⬜ | `life_sfx_hen` | single hen clucking nearby | 1.5 s |
+| ⬜ | `cs_ship_cabin` | inside a wooden sailing ship's cabin at night in a storm, constant timber creaking and groaning, heavy rain drumming on canvas overhead, muffled waves slapping the hull, an oil lantern squeaking as it swings on its hook, no music, no voices | 20 s, loop |
+| ⬜ | `cs_wreck_strike` | wooden sailing ship hits a reef in a violent night storm: sharp close thunder crack, hull timbers splintering and groaning, a ship's bell clanging wildly, distant panicked shouting with no clear words, a heavy wave crashing over the deck | 8 s |
 
 ## Uwagi
 - `life_sfx_hammer` — Firefly, „hammering a nail into timber, four strikes, variation 2” (1.0 s).
