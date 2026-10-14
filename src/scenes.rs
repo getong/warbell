@@ -1226,7 +1226,7 @@ fn farm_camera(
     dof.focal = focus.unwrap_or_else(|| eye.distance(at));
     dof.range = band;
     dof.far_ramp = 16.0;
-    dof.max_radius = 7.0;
+    dof.max_radius = if fort { 4.5 } else { 7.0 };
     dof.lens = if fort { band } else { 0.0 };
     if let Some(g) = grade.as_mut() {
         g.grain = 0.045;

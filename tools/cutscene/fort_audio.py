@@ -70,7 +70,7 @@ def gen():
         rows.append((t, p, v, f"trim={a},{b}" if a > 0 or b < clip_len(p) - 0.05 else ""))
 
     # Air: wind over the ruin the whole way (alone on the black), meadow + distant birds under it.
-    rows.append((0.0, "audio/wind.ogg", 0.34, "video loop"))
+    rows.append((0.0, "audio/wind.ogg", 0.13, "video loop"))
     rows.append((0.0, "audio/meadow-ambient.ogg", 0.30, f"video loop fadeout={BLACK - 1.4:.1f},1.4"))
     rows.append((0.0, "audio/forest-ambient.ogg", 0.16, f"video loop fadeout={BLACK - 1.4:.1f},1.4"))
     rows.append((0.0, "audio/castle-ambient.ogg", 0.10, f"video loop fadeout={BLACK - 1.4:.1f},1.4"))
