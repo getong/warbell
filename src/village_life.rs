@@ -350,11 +350,26 @@ struct LifeTalk {
     /// The last few two-handers played (index + 1; 0 = empty), so a pair doesn't replay one.
     recent: [u8; 4],
     recent_i: usize,
+    /// The two-hander being played, beat by beat (see [`DlgRun`]).
+    run: Option<DlgRun>,
+    /// Last moment the voice channel was busy — each beat waits a breath after the last one ends.
+    busy_at: f32,
 }
 
-/// Rough spoken length (s) of a life line, from its transcript: paces a two-hander's beats.
-fn line_secs(id_beat: Option<&'static crate::audio::lines::Line>) -> f32 {
-    id_beat.map_or(2.5, |l| 0.45 + 0.068 * l.text.len() as f32) + 0.45
+/// A scripted conversation in progress. Beats are NOT timed from the transcript: each waits for the
+/// voice channel to fall silent (the real clip length), so a slow read never gets talked over or
+/// dropped — which matters now that a scene runs 7-11 lines.
+#[derive(Clone, Copy)]
+struct DlgRun {
+    d: u8,
+    /// Next beat to speak.
+    k: u8,
+    /// The chat's lead and partner; `a_opens`: the lead reads role A.
+    lead: Entity,
+    partner: Entity,
+    a_opens: bool,
+    /// Earliest time for beat `k` (lets the director start the previous clip first).
+    at: f32,
 }
 
 /// Pick a recorded two-hander for a chatting pair with voices (`va` lead, `vb` partner), not one
@@ -2002,11 +2017,13 @@ fn life_social(
     w: Res<LifeWorld>,
     mut talk: ResMut<LifeTalk>,
     mut speak: MessageWriter<Speak>,
+    voices: Res<crate::audio::director::VoiceManager>,
     mut q: Query<(Entity, &mut LifeAgent, &Villager), Without<crate::dying::Dying>>,
     mut scratch: Local<Vec<(Entity, Vec2, St, bool, Zone, bool, Option<usize>, Body)>>,
 ) {
     let now = time.elapsed_secs();
     let hero = hero_q.single().map(|h| h.pos).unwrap_or(Vec2::splat(1e6));
+    run_dialogue(&mut talk, &mut speak, &voices, &mut q, now, hero);
     // Kids chase every frame-ish (cheap: a handful); the pairing pass every 0.5 s.
     scratch.clear();
     for (e, a, v) in &q {
@@ -2135,7 +2152,7 @@ fn life_social(
             }
             continue;
         };
-        if !(lead && stb == St::Chat && now - started < 0.6 && pa.distance(hero) < HEAR && now >= talk.next) {
+        if !(lead && stb == St::Chat && now - started < 0.6 && pa.distance(hero) < HEAR && now >= talk.next && talk.run.is_none()) {
             continue;
         }
         let Ok([(_, mut a, _), (_, mut b, _)]) = q.get_many_mut([ea, pe]) else { continue };
@@ -2143,19 +2160,12 @@ fn life_social(
         // else the old pair of unrelated `Chat` lines.
         let (va, vb) = (a.body.voice(), b.body.voice());
         if let Some((d, a_opens)) = pick_dialogue(&talk, &mut a.rng, va, vb) {
-            use crate::audio::lines::{life_dialogue_line, LIFE_DIALOGUES};
             let opener = if a_opens { (pa, va) } else { (pb, vb) };
             if say(&mut talk, &mut speak, now, hero, opener.0, 0.0, opener.1, LifeCue::Dlg(d, 0), 4.5) {
-                let mut t = now + line_secs(life_dialogue_line(d, 0));
-                for k in 1..LIFE_DIALOGUES[d as usize].beats {
-                    let who = if (k % 2 == 0) == a_opens { &mut a } else { &mut b };
-                    who.vo.push((t, LifeCue::Dlg(d, k)));
-                    t += line_secs(life_dialogue_line(d, k));
-                }
-                // Hold the pair (and the street's other mouths) until the exchange is done.
-                a.until = a.until.max(t + 1.0);
-                b.until = b.until.max(t + 1.0);
-                talk.next = talk.next.max(t);
+                // `run_dialogue` takes it from beat 1 and holds the pair until the last line.
+                talk.run = Some(DlgRun { d, k: 1, lead: ea, partner: pe, a_opens, at: now + 0.8 });
+                a.until = a.until.max(now + 12.0);
+                b.until = b.until.max(now + 12.0);
                 let ri = talk.recent_i;
                 talk.recent[ri % 4] = d + 1;
                 talk.recent_i = ri + 1;
@@ -2200,6 +2210,59 @@ fn life_social(
             b.vo.push((now + 4.6, LifeCue::Laugh));
         }
     }
+}
+
+/// Play the two-hander in [`LifeTalk::run`] one beat at a time: a beat waits until the voice channel
+/// has been quiet for a breath, is spoken from its speaker's spot, and keeps the pair chatting and
+/// the street's other mouths shut. The scene breaks off if the pair stops chatting (bedtime, a
+/// siege, a despawn) or the knight wanders out of earshot.
+fn run_dialogue(
+    talk: &mut LifeTalk,
+    speak: &mut MessageWriter<Speak>,
+    voices: &crate::audio::director::VoiceManager,
+    q: &mut Query<(Entity, &mut LifeAgent, &Villager), Without<crate::dying::Dying>>,
+    now: f32,
+    hero: Vec2,
+) {
+    use crate::audio::lines::{BACKGROUND_PRIORITY, LIFE_DIALOGUES};
+    /// Pause between one line ending and the reply (s).
+    const BREATH: f32 = 0.35;
+    let Some(mut run) = talk.run else { return };
+    let busy = voices.active.values().any(|x| now < x.ends_at && x.priority > BACKGROUND_PRIORITY);
+    if busy {
+        talk.busy_at = now;
+    }
+    let Ok([(_, mut a, va), (_, mut b, vb)]) = q.get_many_mut([run.lead, run.partner]) else {
+        talk.run = None;
+        talk.next = now + 3.0;
+        return;
+    };
+    let beats = LIFE_DIALOGUES.get(run.d as usize).map_or(0, |d| d.beats);
+    let together = a.st == St::Chat && b.st == St::Chat && a.partner == Some(run.partner);
+    if !together || run.k >= beats || va.pos.distance(hero) > HEAR + 8.0 {
+        talk.run = None;
+        talk.next = now + 3.0;
+        if together {
+            a.until = a.until.min(now + 2.5);
+            b.until = b.until.min(now + 2.5);
+        }
+        return;
+    }
+    // Hold the pair (and every other village voice) while the scene plays.
+    a.until = a.until.max(now + 6.0);
+    b.until = b.until.max(now + 6.0);
+    talk.next = talk.next.max(now + 2.0);
+    if busy || now < run.at || now - talk.busy_at < BREATH {
+        return;
+    }
+    let lead_speaks = (run.k % 2 == 0) == run.a_opens;
+    let (pos, voice) = if lead_speaks { (va.pos, a.body.voice()) } else { (vb.pos, b.body.voice()) };
+    if pos.distance(hero) < HEAR + 8.0 {
+        speak.write(Speak::at(Concept::Life(voice, LifeCue::Dlg(run.d, run.k)), Vec3::new(pos.x, crate::steer::footing(pos.x, pos.y).unwrap_or(0.0) + 1.5, pos.y)));
+    }
+    run.k += 1;
+    run.at = now + 0.6;
+    talk.run = Some(run);
 }
 
 // ── Vendors ───────────────────────────────────────────────────────────────────────────

@@ -124,18 +124,24 @@ pub struct LifeDialogue {
 }
 
 pub const LIFE_DIALOGUES: &[LifeDialogue] = &[
-    LifeDialogue { a: LifeVoice::Man, b: LifeVoice::Woman, beats: 4 },   // 01 the hammer
-    LifeDialogue { a: LifeVoice::Woman, b: LifeVoice::Man, beats: 3 },   // 02 mud in the yard
-    LifeDialogue { a: LifeVoice::Man, b: LifeVoice::Woman, beats: 4 },   // 03 the bell rang twice
-    LifeDialogue { a: LifeVoice::Woman, b: LifeVoice::Man, beats: 4 },   // 04 the shutter
-    LifeDialogue { a: LifeVoice::Woman, b: LifeVoice::Woman, beats: 3 }, // 05 Margit's bread
-    LifeDialogue { a: LifeVoice::Woman, b: LifeVoice::Woman, beats: 4 }, // 06 under the helmet
-    LifeDialogue { a: LifeVoice::Woman, b: LifeVoice::Woman, beats: 3 }, // 07 the well water
-    LifeDialogue { a: LifeVoice::Man, b: LifeVoice::Man, beats: 3 },     // 08 orks tonight?
-    LifeDialogue { a: LifeVoice::Man, b: LifeVoice::Man, beats: 4 },     // 09 borrow the cart
-    LifeDialogue { a: LifeVoice::Man, b: LifeVoice::Man, beats: 4 },     // 10 stone for the wall
-    LifeDialogue { a: LifeVoice::Elder, b: LifeVoice::Man, beats: 3 },   // 11 orks with a rake
-    LifeDialogue { a: LifeVoice::Elder, b: LifeVoice::Woman, beats: 3 }, // 12 worse winters
+    LifeDialogue { a: LifeVoice::Man, b: LifeVoice::Woman, beats: 8 }, // 01 the knight's letters
+    LifeDialogue { a: LifeVoice::Woman, b: LifeVoice::Man, beats: 9 }, // 02 the squire's grave
+    LifeDialogue { a: LifeVoice::Man, b: LifeVoice::Woman, beats: 9 }, // 03 orks are onions
+    LifeDialogue { a: LifeVoice::Woman, b: LifeVoice::Man, beats: 9 }, // 04 the swamp witch
+    LifeDialogue { a: LifeVoice::Man, b: LifeVoice::Man, beats: 7 }, // 05 the brewer's schnapps
+    LifeDialogue { a: LifeVoice::Man, b: LifeVoice::Man, beats: 9 }, // 06 the old wound
+    LifeDialogue { a: LifeVoice::Man, b: LifeVoice::Man, beats: 7 }, // 07 a laden goose
+    LifeDialogue { a: LifeVoice::Man, b: LifeVoice::Man, beats: 9 }, // 08 the betting pool
+    LifeDialogue { a: LifeVoice::Woman, b: LifeVoice::Woman, beats: 10 }, // 09 under the helmet
+    LifeDialogue { a: LifeVoice::Woman, b: LifeVoice::Woman, beats: 10 }, // 10 Margit's bread
+    LifeDialogue { a: LifeVoice::Woman, b: LifeVoice::Woman, beats: 7 }, // 11 Hamid hums
+    LifeDialogue { a: LifeVoice::Woman, b: LifeVoice::Man, beats: 8 }, // 12 the same day
+    LifeDialogue { a: LifeVoice::Elder, b: LifeVoice::Man, beats: 9 }, // 13 the monster hunter
+    LifeDialogue { a: LifeVoice::Elder, b: LifeVoice::Woman, beats: 11 }, // 14 the monk's diary
+    LifeDialogue { a: LifeVoice::Elder, b: LifeVoice::Woman, beats: 7 }, // 15 the dancer
+    LifeDialogue { a: LifeVoice::Woman, b: LifeVoice::Man, beats: 9 }, // 16 the shutter
+    LifeDialogue { a: LifeVoice::Man, b: LifeVoice::Woman, beats: 7 }, // 17 the outlaw
+    LifeDialogue { a: LifeVoice::Man, b: LifeVoice::Man, beats: 8 }, // 18 the stairs
 ];
 
 /// The catalog line for beat `beat` of dialogue `d`.
@@ -534,60 +540,177 @@ pub const LINES: &[Line] = &[
     life("life_g_dusk", LifeVoice::Guard, LifeCue::Dusk, "Bell's soon. Torches lit, eyes open."),
     // -- Village-life two-handers (`LIFE_DIALOGUES`; prompts in `docs/audio/elevenlabs-dialogi-wsi.md`).
     // Text = transcript; silent until the clip is on disk. Trigger: a chatting pair whose voices match.
-    // 01 the hammer
-    life("life_dlg_01_1", LifeVoice::Man, LifeCue::Dlg(0, 0), "Have you seen my good hammer?"),
-    life("life_dlg_01_2", LifeVoice::Woman, LifeCue::Dlg(0, 1), "The one you lent to Tam?"),
-    life("life_dlg_01_3", LifeVoice::Man, LifeCue::Dlg(0, 2), "I never lent it to Tam."),
-    life("life_dlg_01_4", LifeVoice::Woman, LifeCue::Dlg(0, 3), "Well. Tam's got a very nice hammer now."),
-    // 02 mud in the yard
-    life("life_dlg_02_1", LifeVoice::Woman, LifeCue::Dlg(1, 0), "You're tracking mud through the whole yard."),
-    life("life_dlg_02_2", LifeVoice::Man, LifeCue::Dlg(1, 1), "It's a yard. It's made of mud."),
-    life("life_dlg_02_3", LifeVoice::Woman, LifeCue::Dlg(1, 2), "Not my bit of it."),
-    // 03 the bell rang twice
-    life("life_dlg_03_1", LifeVoice::Man, LifeCue::Dlg(2, 0), "Bell rang twice last night. Twice!"),
-    life("life_dlg_03_2", LifeVoice::Woman, LifeCue::Dlg(2, 1), "Once for the orks. Once for old Bram falling off the wall."),
-    life("life_dlg_03_3", LifeVoice::Man, LifeCue::Dlg(2, 2), "Is he alright?"),
-    life("life_dlg_03_4", LifeVoice::Woman, LifeCue::Dlg(2, 3), "Landed on the pigs. The pigs are not alright."),
-    // 04 the shutter
-    life("life_dlg_04_1", LifeVoice::Woman, LifeCue::Dlg(3, 0), "Did you fix the shutter like I asked?"),
-    life("life_dlg_04_2", LifeVoice::Man, LifeCue::Dlg(3, 1), "I looked at it. Very carefully."),
-    life("life_dlg_04_3", LifeVoice::Woman, LifeCue::Dlg(3, 2), "And?"),
-    life("life_dlg_04_4", LifeVoice::Man, LifeCue::Dlg(3, 3), "It's definitely broken."),
-    // 05 Margit's bread
-    life("life_dlg_05_1", LifeVoice::Woman, LifeCue::Dlg(4, 0), "Margit's bread's gone up a penny again."),
-    life("life_dlg_05_2", LifeVoice::Woman, LifeCue::Dlg(4, 1), "And down a size. I could post it through the keyhole."),
-    life("life_dlg_05_3", LifeVoice::Woman, LifeCue::Dlg(4, 2), "Shh, here she comes. Lovely loaves, Margit!"),
-    // 06 under the helmet
-    life("life_dlg_06_1", LifeVoice::Woman, LifeCue::Dlg(5, 0), "Is that knight ever going to take his helmet off?"),
-    life("life_dlg_06_2", LifeVoice::Woman, LifeCue::Dlg(5, 1), "My sister says he's very handsome under there."),
-    life("life_dlg_06_3", LifeVoice::Woman, LifeCue::Dlg(5, 2), "Your sister's never seen under there."),
-    life("life_dlg_06_4", LifeVoice::Woman, LifeCue::Dlg(5, 3), "That's why she's so sure."),
-    // 07 the well water
-    life("life_dlg_07_1", LifeVoice::Woman, LifeCue::Dlg(6, 0), "The well water tastes of iron today."),
-    life("life_dlg_07_2", LifeVoice::Woman, LifeCue::Dlg(6, 1), "That's the new bucket. Or the sword somebody dropped down there last week."),
-    life("life_dlg_07_3", LifeVoice::Woman, LifeCue::Dlg(6, 2), "I'll boil it."),
-    // 08 orks tonight?
-    life("life_dlg_08_1", LifeVoice::Man, LifeCue::Dlg(7, 0), "Reckon we'll see orks tonight?"),
-    life("life_dlg_08_2", LifeVoice::Man, LifeCue::Dlg(7, 1), "Reckon we see orks every night."),
-    life("life_dlg_08_3", LifeVoice::Man, LifeCue::Dlg(7, 2), "Aye. Just hoping for a different answer."),
-    // 09 borrow the cart
-    life("life_dlg_09_1", LifeVoice::Man, LifeCue::Dlg(8, 0), "Can I borrow your cart tomorrow?"),
-    life("life_dlg_09_2", LifeVoice::Man, LifeCue::Dlg(8, 1), "Wheel's off."),
-    life("life_dlg_09_3", LifeVoice::Man, LifeCue::Dlg(8, 2), "Borrow your wheel, then?"),
-    life("life_dlg_09_4", LifeVoice::Man, LifeCue::Dlg(8, 3), "That's the cart, Hob. You'd just have the cart."),
-    // 10 stone for the wall
-    life("life_dlg_10_1", LifeVoice::Man, LifeCue::Dlg(9, 0), "They want more stone for the wall."),
-    life("life_dlg_10_2", LifeVoice::Man, LifeCue::Dlg(9, 1), "They always want more stone for the wall."),
-    life("life_dlg_10_3", LifeVoice::Man, LifeCue::Dlg(9, 2), "Maybe if the orks stopped taking it apart."),
-    life("life_dlg_10_4", LifeVoice::Man, LifeCue::Dlg(9, 3), "Write to them. See how that goes."),
-    // 11 orks with a rake
-    life("life_dlg_11_1", LifeVoice::Elder, LifeCue::Dlg(10, 0), "When I was your age, we fought orks with a rake."),
-    life("life_dlg_11_2", LifeVoice::Man, LifeCue::Dlg(10, 1), "And did it work?"),
-    life("life_dlg_11_3", LifeVoice::Elder, LifeCue::Dlg(10, 2), "No. That's why I'm still angry about it."),
-    // 12 worse winters
-    life("life_dlg_12_1", LifeVoice::Elder, LifeCue::Dlg(11, 0), "This fort's seen worse winters than this."),
-    life("life_dlg_12_2", LifeVoice::Woman, LifeCue::Dlg(11, 1), "It's summer, Grandad."),
-    life("life_dlg_12_3", LifeVoice::Elder, LifeCue::Dlg(11, 2), "Then it's seen worse summers too."),
+    // 01 the knight's letters
+    life("life_dlg_01_1", LifeVoice::Man, LifeCue::Dlg(0, 0), "The Reeve was reading the knight his letters again. Out loud. In the square."),
+    life("life_dlg_01_2", LifeVoice::Woman, LifeCue::Dlg(0, 1), "It's his eyes. Since the axe."),
+    life("life_dlg_01_3", LifeVoice::Man, LifeCue::Dlg(0, 2), "His eyes are fine. He spotted a ham on my windowsill from the gate."),
+    life("life_dlg_01_4", LifeVoice::Woman, LifeCue::Dlg(0, 3), "Ham's different. Ham is a calling."),
+    life("life_dlg_01_5", LifeVoice::Man, LifeCue::Dlg(0, 4), "My brother served in the eastern campaign. Says Ser Godric used to write poems. In the margins of the casualty lists."),
+    life("life_dlg_01_6", LifeVoice::Woman, LifeCue::Dlg(0, 5), "Lovely."),
+    life("life_dlg_01_7", LifeVoice::Man, LifeCue::Dlg(0, 6), "Bit grim, Edda."),
+    life("life_dlg_01_8", LifeVoice::Woman, LifeCue::Dlg(0, 7), "Well, he doesn't write anything now. So that's an improvement for everyone."),
+    // 02 the squire's grave
+    life("life_dlg_02_1", LifeVoice::Woman, LifeCue::Dlg(1, 0), "Somebody leaves flowers on the squire's grave. Every morning. Fresh ones."),
+    life("life_dlg_02_2", LifeVoice::Man, LifeCue::Dlg(1, 1), "The empty one? There's nobody under it."),
+    life("life_dlg_02_3", LifeVoice::Woman, LifeCue::Dlg(1, 2), "Doesn't stop the flowers."),
+    life("life_dlg_02_4", LifeVoice::Man, LifeCue::Dlg(1, 3), "The baker's girl, maybe. She was sweet on him on the boat."),
+    life("life_dlg_02_5", LifeVoice::Woman, LifeCue::Dlg(1, 4), "She was sweet on everyone on that boat. And she's never up before noon."),
+    life("life_dlg_02_6", LifeVoice::Man, LifeCue::Dlg(1, 5), "Then who?"),
+    life("life_dlg_02_7", LifeVoice::Woman, LifeCue::Dlg(1, 6), "I couldn't sleep last night. Saw a big shape by the gate. In armour. Just standing there."),
+    life("life_dlg_02_8", LifeVoice::Man, LifeCue::Dlg(1, 7), "So the knight was mourning his squire. That's nice. That's a nice thing."),
+    life("life_dlg_02_9", LifeVoice::Woman, LifeCue::Dlg(1, 8), "He kept saying sorry. Over and over. In a different voice."),
+    // 03 orks are onions
+    life("life_dlg_03_1", LifeVoice::Man, LifeCue::Dlg(2, 0), "You know what orks are like? Onions."),
+    life("life_dlg_03_2", LifeVoice::Woman, LifeCue::Dlg(2, 1), "They make you cry?"),
+    life("life_dlg_03_3", LifeVoice::Man, LifeCue::Dlg(2, 2), "Layers. Hide, then mail, then more hide. Then a sort of second hide."),
+    life("life_dlg_03_4", LifeVoice::Woman, LifeCue::Dlg(2, 3), "You've been peeling orks, Jory?"),
+    life("life_dlg_03_5", LifeVoice::Man, LifeCue::Dlg(2, 4), "Only the one. For learning."),
+    life("life_dlg_03_6", LifeVoice::Woman, LifeCue::Dlg(2, 5), "And what's in the middle?"),
+    life("life_dlg_03_7", LifeVoice::Man, LifeCue::Dlg(2, 6), "Teeth. It's teeth all the way down."),
+    life("life_dlg_03_8", LifeVoice::Woman, LifeCue::Dlg(2, 7), "I'm not eating your stew tonight."),
+    life("life_dlg_03_9", LifeVoice::Man, LifeCue::Dlg(2, 8), "It's turnip! ...It's mostly turnip."),
+    // 04 the swamp witch
+    life("life_dlg_04_1", LifeVoice::Woman, LifeCue::Dlg(3, 0), "Marek walked out to the swamp witch. For a wish."),
+    life("life_dlg_04_2", LifeVoice::Man, LifeCue::Dlg(3, 1), "And?"),
+    life("life_dlg_04_3", LifeVoice::Woman, LifeCue::Dlg(3, 2), "Came back with nine fingers and a goat."),
+    life("life_dlg_04_4", LifeVoice::Man, LifeCue::Dlg(3, 3), "He wished for a goat?"),
+    life("life_dlg_04_5", LifeVoice::Woman, LifeCue::Dlg(3, 4), "He wished for a wife."),
+    life("life_dlg_04_6", LifeVoice::Man, LifeCue::Dlg(3, 5), "...And the goat?"),
+    life("life_dlg_04_7", LifeVoice::Woman, LifeCue::Dlg(3, 6), "We don't ask about the goat, Will."),
+    life("life_dlg_04_8", LifeVoice::Man, LifeCue::Dlg(3, 7), "Did it work, at least? The wish?"),
+    life("life_dlg_04_9", LifeVoice::Woman, LifeCue::Dlg(3, 8), "He's very happy. That's the worrying part."),
+    // 05 the brewer's schnapps
+    life("life_dlg_05_1", LifeVoice::Man, LifeCue::Dlg(4, 0), "Brewer's got a new schnapps. Drink it before bed, and if you die, you wake up right where you drank it."),
+    life("life_dlg_05_2", LifeVoice::Man, LifeCue::Dlg(4, 1), "And has anyone tested that?"),
+    life("life_dlg_05_3", LifeVoice::Man, LifeCue::Dlg(4, 2), "Hob did. Twice."),
+    life("life_dlg_05_4", LifeVoice::Man, LifeCue::Dlg(4, 3), "Did it work?"),
+    life("life_dlg_05_5", LifeVoice::Man, LifeCue::Dlg(4, 4), "Well. The first time he woke up."),
+    life("life_dlg_05_6", LifeVoice::Man, LifeCue::Dlg(4, 5), "And the second?"),
+    life("life_dlg_05_7", LifeVoice::Man, LifeCue::Dlg(4, 6), "We're giving it a few more days."),
+    // 06 the old wound
+    life("life_dlg_06_1", LifeVoice::Man, LifeCue::Dlg(5, 0), "I was a soldier once, you know. Like him. Proper adventurer."),
+    life("life_dlg_06_2", LifeVoice::Man, LifeCue::Dlg(5, 1), "What happened?"),
+    life("life_dlg_06_3", LifeVoice::Man, LifeCue::Dlg(5, 2), "Took an ork spear in the..."),
+    life("life_dlg_06_4", LifeVoice::Man, LifeCue::Dlg(5, 3), "Don't you dare say knee."),
+    life("life_dlg_06_5", LifeVoice::Man, LifeCue::Dlg(5, 4), "Arse, Wendel. Took it in the arse."),
+    life("life_dlg_06_6", LifeVoice::Man, LifeCue::Dlg(5, 5), "...Oh."),
+    life("life_dlg_06_7", LifeVoice::Man, LifeCue::Dlg(5, 6), "Can't sit a horse. Can't sit a bench. Can barely sit in judgement."),
+    life("life_dlg_06_8", LifeVoice::Man, LifeCue::Dlg(5, 7), "Bet you'll be first up on the wall tonight, then."),
+    life("life_dlg_06_9", LifeVoice::Man, LifeCue::Dlg(5, 8), "Well, I'm not sitting down, am I."),
+    // 07 a laden goose
+    life("life_dlg_07_1", LifeVoice::Man, LifeCue::Dlg(6, 0), "How much do you reckon a goose can carry?"),
+    life("life_dlg_07_2", LifeVoice::Man, LifeCue::Dlg(6, 1), "A goose?"),
+    life("life_dlg_07_3", LifeVoice::Man, LifeCue::Dlg(6, 2), "In flight. Fully laden."),
+    life("life_dlg_07_4", LifeVoice::Man, LifeCue::Dlg(6, 3), "Is this a riddle, or are you trying to send letters home again?"),
+    life("life_dlg_07_5", LifeVoice::Man, LifeCue::Dlg(6, 4), "My mother's not heard from me since the wreck. She thinks I drowned with the squire."),
+    life("life_dlg_07_6", LifeVoice::Man, LifeCue::Dlg(6, 5), "Then let her. You owe her money."),
+    life("life_dlg_07_7", LifeVoice::Man, LifeCue::Dlg(6, 6), "...A goose could carry a small apology."),
+    // 08 the betting pool
+    life("life_dlg_08_1", LifeVoice::Man, LifeCue::Dlg(7, 0), "Pool's open for tonight. Two pennies says the cooper's boy doesn't see harvest."),
+    life("life_dlg_08_2", LifeVoice::Man, LifeCue::Dlg(7, 1), "That's monstrous. He's nine."),
+    life("life_dlg_08_3", LifeVoice::Man, LifeCue::Dlg(7, 2), "Odds are good, though."),
+    life("life_dlg_08_4", LifeVoice::Man, LifeCue::Dlg(7, 3), "...What odds?"),
+    life("life_dlg_08_5", LifeVoice::Man, LifeCue::Dlg(7, 4), "Four to one."),
+    life("life_dlg_08_6", LifeVoice::Man, LifeCue::Dlg(7, 5), "Three pennies, then. On him living. Little bugger's quick."),
+    life("life_dlg_08_7", LifeVoice::Man, LifeCue::Dlg(7, 6), "That's the spirit. Nobody's betting on you, by the way."),
+    life("life_dlg_08_8", LifeVoice::Man, LifeCue::Dlg(7, 7), "Nobody?"),
+    life("life_dlg_08_9", LifeVoice::Man, LifeCue::Dlg(7, 8), "Couldn't find takers. Either way."),
+    // 09 under the helmet
+    life("life_dlg_09_1", LifeVoice::Woman, LifeCue::Dlg(8, 0), "Is that knight ever going to take his helmet off?"),
+    life("life_dlg_09_2", LifeVoice::Woman, LifeCue::Dlg(8, 1), "My sister says he's very handsome under there."),
+    life("life_dlg_09_3", LifeVoice::Woman, LifeCue::Dlg(8, 2), "Your sister's never seen under there."),
+    life("life_dlg_09_4", LifeVoice::Woman, LifeCue::Dlg(8, 3), "That's why she's so sure."),
+    life("life_dlg_09_5", LifeVoice::Woman, LifeCue::Dlg(8, 4), "Old Bram says the axe took half his face. Says he eats through the visor. Soup only."),
+    life("life_dlg_09_6", LifeVoice::Woman, LifeCue::Dlg(8, 5), "Bram also says he once fought a bear for a wife. And lost."),
+    life("life_dlg_09_7", LifeVoice::Woman, LifeCue::Dlg(8, 6), "He did lose. You've met her."),
+    life("life_dlg_09_8", LifeVoice::Woman, LifeCue::Dlg(8, 7), "...Fair."),
+    life("life_dlg_09_9", LifeVoice::Woman, LifeCue::Dlg(8, 8), "Still. Soup only. Poor lamb."),
+    life("life_dlg_09_10", LifeVoice::Woman, LifeCue::Dlg(8, 9), "My sister says she'd make him soup."),
+    // 10 Margit's bread
+    life("life_dlg_10_1", LifeVoice::Woman, LifeCue::Dlg(9, 0), "Margit's bread's gone up a penny again."),
+    life("life_dlg_10_2", LifeVoice::Woman, LifeCue::Dlg(9, 1), "And down a size. I could post it through the keyhole."),
+    life("life_dlg_10_3", LifeVoice::Woman, LifeCue::Dlg(9, 2), "Found a tooth in mine yesterday."),
+    life("life_dlg_10_4", LifeVoice::Woman, LifeCue::Dlg(9, 3), "Margit's?"),
+    life("life_dlg_10_5", LifeVoice::Woman, LifeCue::Dlg(9, 4), "Not Margit's. Not anybody's I know. Long. Pointy."),
+    life("life_dlg_10_6", LifeVoice::Woman, LifeCue::Dlg(9, 5), "Well, the orks did get into her mill last month..."),
+    life("life_dlg_10_7", LifeVoice::Woman, LifeCue::Dlg(9, 6), "Don't."),
+    life("life_dlg_10_8", LifeVoice::Woman, LifeCue::Dlg(9, 7), "Grinds very fine, that mill."),
+    life("life_dlg_10_9", LifeVoice::Woman, LifeCue::Dlg(9, 8), "I said don't!"),
+    life("life_dlg_10_10", LifeVoice::Woman, LifeCue::Dlg(9, 9), "Shh, here she comes. Lovely loaves, Margit!"),
+    // 11 Hamid hums
+    life("life_dlg_11_1", LifeVoice::Woman, LifeCue::Dlg(10, 0), "That southerner they pulled out of the cage. Hamid. He hums at sundown."),
+    life("life_dlg_11_2", LifeVoice::Woman, LifeCue::Dlg(10, 1), "Everybody hums."),
+    life("life_dlg_11_3", LifeVoice::Woman, LifeCue::Dlg(10, 2), "Not their songs. The orks'. The drum one."),
+    life("life_dlg_11_4", LifeVoice::Woman, LifeCue::Dlg(10, 3), "Four months in a cage, I'd hum anything too."),
+    life("life_dlg_11_5", LifeVoice::Woman, LifeCue::Dlg(10, 4), "He stops when you look at him. Then he smiles and tries to sell you a carpet."),
+    life("life_dlg_11_6", LifeVoice::Woman, LifeCue::Dlg(10, 5), "Did you buy one?"),
+    life("life_dlg_11_7", LifeVoice::Woman, LifeCue::Dlg(10, 6), "Half price. It's lovely."),
+    // 12 the same day
+    life("life_dlg_12_1", LifeVoice::Woman, LifeCue::Dlg(11, 0), "Do you ever feel like we live the same day, over and over?"),
+    life("life_dlg_12_2", LifeVoice::Man, LifeCue::Dlg(11, 1), "Bell. Orks. Bury someone. Bell."),
+    life("life_dlg_12_3", LifeVoice::Woman, LifeCue::Dlg(11, 2), "Bury someone, bell, orks..."),
+    life("life_dlg_12_4", LifeVoice::Man, LifeCue::Dlg(11, 3), "It's a circle, Agnes. That's a circle."),
+    life("life_dlg_12_5", LifeVoice::Woman, LifeCue::Dlg(11, 4), "Pip's found scratches up the tower. Little tally marks. Hundreds of them."),
+    life("life_dlg_12_6", LifeVoice::Man, LifeCue::Dlg(11, 5), "Not his. Pip's been here a month."),
+    life("life_dlg_12_7", LifeVoice::Woman, LifeCue::Dlg(11, 6), "Then whose?"),
+    life("life_dlg_12_8", LifeVoice::Man, LifeCue::Dlg(11, 7), "...Someone with a lot of free time and no window."),
+    // 13 the monster hunter
+    life("life_dlg_13_1", LifeVoice::Elder, LifeCue::Dlg(12, 0), "When I was your age, we fought orks with a rake."),
+    life("life_dlg_13_2", LifeVoice::Man, LifeCue::Dlg(12, 1), "And did it work?"),
+    life("life_dlg_13_3", LifeVoice::Elder, LifeCue::Dlg(12, 2), "No. That's why I'm still angry about it."),
+    life("life_dlg_13_4", LifeVoice::Man, LifeCue::Dlg(12, 3), "Should've hired a monster hunter."),
+    life("life_dlg_13_5", LifeVoice::Elder, LifeCue::Dlg(12, 4), "Had one once. Cat's eyes, white hair, two swords."),
+    life("life_dlg_13_6", LifeVoice::Man, LifeCue::Dlg(12, 5), "Any good?"),
+    life("life_dlg_13_7", LifeVoice::Elder, LifeCue::Dlg(12, 6), "Charged forty crowns for a drowner and moaned about the weather the whole time."),
+    life("life_dlg_13_8", LifeVoice::Man, LifeCue::Dlg(12, 7), "Sounds like you."),
+    life("life_dlg_13_9", LifeVoice::Elder, LifeCue::Dlg(12, 8), "His horse was nicer than me. Smarter, too. Kept changing its name."),
+    // 14 the monk's diary
+    life("life_dlg_14_1", LifeVoice::Elder, LifeCue::Dlg(13, 0), "This fort's seen worse winters than this."),
+    life("life_dlg_14_2", LifeVoice::Woman, LifeCue::Dlg(13, 1), "It's summer, Grandad."),
+    life("life_dlg_14_3", LifeVoice::Elder, LifeCue::Dlg(13, 2), "Then it's seen worse summers. There was a colony here before us, you know. Hundred years back."),
+    life("life_dlg_14_4", LifeVoice::Woman, LifeCue::Dlg(13, 3), "What happened to them?"),
+    life("life_dlg_14_5", LifeVoice::Elder, LifeCue::Dlg(13, 4), "Same as us. Bell, orks, bury someone."),
+    life("life_dlg_14_6", LifeVoice::Woman, LifeCue::Dlg(13, 5), "And then?"),
+    life("life_dlg_14_7", LifeVoice::Elder, LifeCue::Dlg(13, 6), "Then there was nobody left to ring it. Found a page of their monk's diary in the old chapel."),
+    life("life_dlg_14_8", LifeVoice::Woman, LifeCue::Dlg(13, 7), "What did it say?"),
+    life("life_dlg_14_9", LifeVoice::Elder, LifeCue::Dlg(13, 8), "Can't read, can I? Used it to light the stove."),
+    life("life_dlg_14_10", LifeVoice::Woman, LifeCue::Dlg(13, 9), "Grandad!"),
+    life("life_dlg_14_11", LifeVoice::Elder, LifeCue::Dlg(13, 10), "Lovely flame. Very holy."),
+    // 15 the dancer
+    life("life_dlg_15_1", LifeVoice::Elder, LifeCue::Dlg(14, 0), "Your mother was the finest dancer on the whole east coast."),
+    life("life_dlg_15_2", LifeVoice::Woman, LifeCue::Dlg(14, 1), "You never met my mother."),
+    life("life_dlg_15_3", LifeVoice::Elder, LifeCue::Dlg(14, 2), "I'm being polite. Was she a good dancer?"),
+    life("life_dlg_15_4", LifeVoice::Woman, LifeCue::Dlg(14, 3), "She had one leg."),
+    life("life_dlg_15_5", LifeVoice::Elder, LifeCue::Dlg(14, 4), "...Then she must've been tremendous at it."),
+    life("life_dlg_15_6", LifeVoice::Woman, LifeCue::Dlg(14, 5), "She was, actually. Hopped the whole harvest reel. Won a pig."),
+    life("life_dlg_15_7", LifeVoice::Elder, LifeCue::Dlg(14, 6), "There you are. Finest dancer on the east coast."),
+    // 16 the shutter
+    life("life_dlg_16_1", LifeVoice::Woman, LifeCue::Dlg(15, 0), "Did you fix the shutter like I asked?"),
+    life("life_dlg_16_2", LifeVoice::Man, LifeCue::Dlg(15, 1), "I looked at it. Very carefully."),
+    life("life_dlg_16_3", LifeVoice::Woman, LifeCue::Dlg(15, 2), "And?"),
+    life("life_dlg_16_4", LifeVoice::Man, LifeCue::Dlg(15, 3), "It's definitely broken."),
+    life("life_dlg_16_5", LifeVoice::Woman, LifeCue::Dlg(15, 4), "The orks will come right through it, Piet."),
+    life("life_dlg_16_6", LifeVoice::Man, LifeCue::Dlg(15, 5), "Then they'll be in the larder. And they'll see what you cook. And they'll leave."),
+    life("life_dlg_16_7", LifeVoice::Woman, LifeCue::Dlg(15, 6), "...Sleep in the barn tonight."),
+    life("life_dlg_16_8", LifeVoice::Man, LifeCue::Dlg(15, 7), "Barn's gone, love."),
+    life("life_dlg_16_9", LifeVoice::Woman, LifeCue::Dlg(15, 8), "Then sleep where the barn was."),
+    // 17 the outlaw
+    life("life_dlg_17_1", LifeVoice::Man, LifeCue::Dlg(16, 0), "Heard there's a fellow in the western woods robbing the Crown's men and giving it all to the poor."),
+    life("life_dlg_17_2", LifeVoice::Woman, LifeCue::Dlg(16, 1), "Giving it to who?"),
+    life("life_dlg_17_3", LifeVoice::Man, LifeCue::Dlg(16, 2), "The poor."),
+    life("life_dlg_17_4", LifeVoice::Woman, LifeCue::Dlg(16, 3), "We're the poor. Nobody's given us anything."),
+    life("life_dlg_17_5", LifeVoice::Man, LifeCue::Dlg(16, 4), "Well, he's mostly giving it to himself. He's very poor too."),
+    life("life_dlg_17_6", LifeVoice::Woman, LifeCue::Dlg(16, 5), "Then he's just a robber."),
+    life("life_dlg_17_7", LifeVoice::Man, LifeCue::Dlg(16, 6), "He's a robber with a lovely hat."),
+    // 18 the stairs
+    life("life_dlg_18_1", LifeVoice::Man, LifeCue::Dlg(17, 0), "Why doesn't the knight ever go up the tower?"),
+    life("life_dlg_18_2", LifeVoice::Man, LifeCue::Dlg(17, 1), "Bad knee. From the campaign."),
+    life("life_dlg_18_3", LifeVoice::Man, LifeCue::Dlg(17, 2), "He ran up the wall steps last night. Three at a time. With an ork on his back."),
+    life("life_dlg_18_4", LifeVoice::Man, LifeCue::Dlg(17, 3), "Wall steps aren't stairs. They're more of a slope with ambitions."),
+    life("life_dlg_18_5", LifeVoice::Man, LifeCue::Dlg(17, 4), "And he talks about himself like he's somebody else. 'Ser Godric will see to it.'"),
+    life("life_dlg_18_6", LifeVoice::Man, LifeCue::Dlg(17, 5), "Lords do that. My old lord called himself 'we'. Even on the privy."),
+    life("life_dlg_18_7", LifeVoice::Man, LifeCue::Dlg(17, 6), "Both of them?"),
+    life("life_dlg_18_8", LifeVoice::Man, LifeCue::Dlg(17, 7), "There was only him, Osric. That's the point."),
 
     // ── Campaign Prologue + Act I (`docs/audio/elevenlabs-akt-1.md`; clips `audio/vo/campaign/<id>.ogg`) ──
     // Voices (DO NOT change on re-takes): harrow=Julian, wat=Sully, maud=MoanElisa, pip=Omar J, settler=Wilf,

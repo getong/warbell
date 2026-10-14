@@ -118,8 +118,8 @@ pub struct Skinned {
     pub pelvis: Option<Entity>,
     /// The body node carrying the `jaw_open` morph weight (driven by `lipsync`).
     mouth: Option<Entity>,
-    /// Hand-held props copied from the studio rig: (entity, right hand?, grip -> head distance).
-    props: Vec<(Entity, bool, f32)>,
+    /// Hand-held props copied from the studio rig: (entity, how it's held, grip -> head distance).
+    props: Vec<(Entity, Held, f32)>,
     /// Which grip the props are in (true = the two-handed work / fight grip).
     work_grip: bool,
 }
@@ -543,12 +543,48 @@ fn fist(right: bool) -> (Vec3, Vec3, Vec3) {
     (across, palm, Vec3::new(0.0, 0.085, 0.0) + palm * 0.03)
 }
 
-/// Where a studio tool (`peasant_model::kit_tools`: grip at the origin, haft along +Y, edge toward
-/// +X, 1 unit ~ 1 m) sits in the fist. `work`: the haft runs through the fist pinky -> index
-/// (chopping, hoeing, fighting); otherwise it is carried hanging, the fist round the haft just
-/// under the head (`head` = grip -> head distance) and the haft down along the leg.
-fn grip(right: bool, work: bool, head: f32) -> Transform {
+/// How a hand-held prop sits in the fist — each kind has its own hold (one generic "tool" grip
+/// held swords by the blade tip with the hilt dangling, longbows by a limb tip, and swung the
+/// buckler through the fist like an axe haft in the fight clip).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Held {
+    /// Axe / pick / hoe (right hand): carried by the neck, head up, haft along the leg.
+    Tool,
+    /// Sword / scimitar / the archer's nocked arrow (right hand): held by the hilt (the origin),
+    /// point DOWN along the leg at ease.
+    Blade,
+    /// The guard's round shield (left hand): face out from the body, upright, in every clip.
+    Shield,
+    /// The longbow (left hand): held at its grip (the origin), stave upright beside the leg.
+    Bow,
+}
+
+/// Which hold a copied studio-rig prop takes, from the look (right hand = the `Sword` pivot).
+fn held_for(look: u8, right: bool) -> Held {
+    match (look, right) {
+        (GUARD | ARCHER, true) => Held::Blade,
+        (GUARD, false) => Held::Shield,
+        (ARCHER, false) => Held::Bow,
+        _ => Held::Tool,
+    }
+}
+
+/// Where a studio prop (`peasant_model::kit_tools`: grip at the origin, haft / blade / stave along
+/// +Y, edge toward +X, 1 unit ~ 1 m; the shield a disc facing +Z yawed 1.15 rad) sits in the fist.
+/// `work`: a tool / blade / bow runs through the fist pinky -> index (chopping, hoeing, fighting,
+/// drawing); otherwise each is carried its own way (see [`Held`]; `head` = grip -> head distance).
+fn grip(held: Held, right: bool, work: bool, head: f32) -> Transform {
     let (across, palm, centre) = fist(right);
+    if held == Held::Shield {
+        // Strapped on: face out from the body (the back of the hand), rim up the forearm, the boss
+        // just outside the knuckles — never swung through the fist.
+        let n0 = Quat::from_rotation_y(1.15) * Vec3::Z; // the mesh's face normal
+        let from = Mat3::from_cols(Vec3::Y.cross(n0).normalize(), Vec3::Y, n0);
+        let (up, out) = (Vec3::NEG_Y, -palm);
+        let to = Mat3::from_cols(up.cross(out).normalize(), up, out);
+        let rot = Quat::from_mat3(&(to * from.transpose()));
+        return Transform { translation: centre - palm * 0.07, rotation: rot, scale: Vec3::ONE };
+    }
     if work {
         // a real hammer grip: the haft runs diagonally from the heel of the hand out past the
         // index knuckle, so the head leans toward the fingers; the edge leads along the knuckles
@@ -557,11 +593,16 @@ fn grip(right: bool, work: bool, head: f32) -> Transform {
         let rot = Quat::from_mat3(&Mat3::from_cols(edge, haft, edge.cross(haft)));
         return Transform { translation: centre, rotation: rot, scale: Vec3::ONE };
     }
-    // haft (+Y tool) toward the wrist (-Y hand, i.e. head up when the arm hangs); edge forward
-    let haft = Vec3::NEG_Y;
+    // Tool: haft (+Y tool) toward the wrist (-Y hand, i.e. head up when the arm hangs), the fist
+    // just under the head. Blade: held by the hilt, point toward the fingers (down the leg). Bow:
+    // held at its grip, stave along the forearm line.
+    let (haft, hold) = match held {
+        Held::Blade => (Vec3::Y, 0.0),
+        Held::Bow => (Vec3::NEG_Y, 0.0),
+        _ => (Vec3::NEG_Y, (head - 0.12).max(0.0)),
+    };
     let edge = -palm.cross(haft).normalize() * if right { 1.0 } else { -1.0 };
     let rot = Quat::from_mat3(&Mat3::from_cols(edge, haft, edge.cross(haft)));
-    let hold = (head - 0.12).max(0.0);
     Transform { translation: centre - haft * hold, rotation: rot, scale: Vec3::ONE }
 }
 
@@ -604,9 +645,10 @@ fn copy_tools(
             for c in children.iter() {
                 if let Ok((mesh, mat)) = leaves.get(c) {
                     let head = meshes.get(&mesh.0).map_or(0.0, top_y);
-                    let prop = commands.spawn((mesh.clone(), mat.clone(), grip(right, false, head))).id();
+                    let held = held_for(sk.look, right);
+                    let prop = commands.spawn((mesh.clone(), mat.clone(), grip(held, right, false, head))).id();
                     commands.entity(if right { hr } else { hl }).add_child(prop);
-                    sk.props.push((prop, right, head));
+                    sk.props.push((prop, held, head));
                 }
             }
         }
@@ -721,9 +763,13 @@ fn drive_skins(
             let work = matches!(clip, "TreeChopping_Loop" | "Farm_Harvest" | "Sword_Regular_A" | "Spell_Simple_Shoot");
             if work != sk.work_grip || first {
                 sk.work_grip = work;
-                for &(pe, right, head) in &sk.props {
+                for &(pe, held, head) in &sk.props {
                     if let Ok(mut t) = props.get_mut(pe) {
-                        *t = grip(right, work, head);
+                        let right = !matches!(held, Held::Shield | Held::Bow);
+                        // only the bow draw puts the stave through the fist; a sword swing keeps the
+                        // bow / shield hand as it is
+                        let w = work && (held != Held::Bow || clip == "Spell_Simple_Shoot");
+                        *t = grip(held, right, w, head);
                     }
                 }
             }
