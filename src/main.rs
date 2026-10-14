@@ -129,6 +129,7 @@ mod snowman;
 mod oddities;
 mod stashes;
 mod castaway;
+mod wreck_cove;
 mod steer;
 mod subtitles;
 mod succession;

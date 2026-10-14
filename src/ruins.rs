@@ -518,6 +518,13 @@ pub struct LandmarkSite {
 /// [`populate_landmarks`] — same scale per biome (that table carries the model + blockers).
 /// Each landmark is its biome's skyline FLAG — it has to break the treeline from the road, or
 /// the spur leading to it pulls nobody.
+/// `(biome, x, z, yaw)` landmarks held at a fixed world spot instead of searched (see `landmark_sites`).
+const PINNED_SITES: [(crate::biome::Biome, f32, f32, f32); 3] = [
+    (crate::biome::Biome::Snow, -137.60056, -96.46046, 6.1674943),
+    (crate::biome::Biome::Forest, -92.89177, 66.46597, 5.913733),
+    (crate::biome::Biome::Swamp, -14.323242, 178.35394, 1.9473338),
+];
+
 const SITE_PARAMS: [(crate::biome::Biome, f32, f32); 5] = [
     // Snow / Desert: the Blender ice-sheathed pinnacle in its snowfield and the monumental pyramid
     // in its dunes (landmarks.glb) need far more room than the old low-poly pieces did.
@@ -567,6 +574,26 @@ pub fn landmark_sites() -> &'static [LandmarkSite] {
         let mut out = Vec::new();
         for (biome, scale, foot_r) in SITE_PARAMS {
             let probe_r = foot_r * scale;
+            // The spire, the mill and the witch hut are pinned where the search left them before the
+            // Wreck Cove pass: every search samples the whole island and only draws a yaw for the
+            // samples it accepts, so ANY terrain edit (the cove's bay, the smoothed sea cut on the
+            // snow coast) re-deals the draws and sends the landmark across the map — off the roads,
+            // the river bridge and the wild sites that are laid round it. The spire still replays
+            // its legacy draws so the rocks after it keep their stream; swamp is the last search.
+            if let Some(&(_, x, z, yaw)) = PINNED_SITES.iter().find(|p| p.0 == biome) {
+                if let Some(spread) = footprint_spread(x, z, probe_r) {
+                    let ground = crate::worldmap::ground_at_world(x, z).unwrap_or(0.0);
+                    let y = if biome == crate::biome::Biome::Snow {
+                        rng = legacy_snow_rng_end(rng, probe_r);
+                        footprint_low(x, z, probe_r * 0.55).unwrap_or(ground)
+                    } else {
+                        ground
+                    };
+                    out.push(LandmarkSite { biome, pos: Vec2::new(x, z), y, yaw, spread });
+                    continue;
+                }
+                warn!("landmark: pinned {:?} spot is no longer clear — searching", biome);
+            }
             // The spire's search changed (real snow), but the four landmarks after it share this rng:
             // replay the OLD spire search's draws so they keep their spots (roads / sites are laid
             // round them), then restore that stream once the new search is done.

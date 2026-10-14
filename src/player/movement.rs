@@ -565,7 +565,7 @@ fn write_state(state: &mut HeroState, hero: &Hero) {
 /// `worldmap::ground_at_world` is terrain-only (reads `None` over water), so — unlike the orks,
 /// who cross on nav-grid waypoints — the hero ORs the deck in here to walk the planks.
 fn footing(x: f32, z: f32) -> Option<f32> {
-    worldmap::ground_at_world(x, z).or_else(|| crate::bridges::deck_y_at(x, z))
+    crate::wreck_cove::footing_over(x, z, worldmap::ground_at_world(x, z).or_else(|| crate::bridges::deck_y_at(x, z)))
 }
 
 /// Bridge-aware twin of `steer::can_stand`: the body centre + four footprint edges must all be

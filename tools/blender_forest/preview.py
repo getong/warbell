@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parent))
 import bpy  # noqa: E402
-from mathutils import Vector  # noqa: E402
+from mathutils import Matrix, Vector  # noqa: E402
 from common import OUT, REPO, clear_scene  # noqa: E402
 
 argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
@@ -92,6 +92,13 @@ for mat in bpy.data.materials:
 
 # Lay out lod0 objects in a row (lod1 behind them).
 objs = sorted([o for o in scene.objects if o.type == "MESH"], key=lambda o: o.name)
+# PREVIEW_ONLY=name[,name] keeps just those objects (one big model out of a multi-model kit).
+if os.environ.get("PREVIEW_ONLY"):
+    keep = set(os.environ["PREVIEW_ONLY"].split(","))
+    for o in objs:
+        if o.name not in keep:
+            bpy.data.objects.remove(o)
+    objs = sorted([o for o in scene.objects if o.type == "MESH"], key=lambda o: o.name)
 x = 0.0
 for o in objs:
     lod1 = o.name.endswith("lod1")
@@ -143,7 +150,10 @@ cam.lens = 35
 co = bpy.data.objects.new("cam", cam)
 scene.collection.objects.link(co)
 target = Vector((x / 2 - SPACING / 2, 3 if DIST > 15 else 0, TARGET_Z))
-co.location = target + Vector((0, -DIST, 4 if DIST > 15 else TARGET_Z * 0.5))
+off = Vector((0, -DIST, float(os.environ.get("PREVIEW_HEIGHT", 4 if DIST > 15 else TARGET_Z * 0.5))))
+# PREVIEW_AZ=<deg> orbits the camera about the target (0 = from game +Z, 90 = from game +X).
+off.rotate(Matrix.Rotation(math.radians(float(os.environ.get("PREVIEW_AZ", 0))), 3, "Z"))
+co.location = target + off
 co.rotation_euler = (target - co.location).to_track_quat("-Z", "Y").to_euler()
 scene.camera = co
 scene.render.filepath = str(out_png)

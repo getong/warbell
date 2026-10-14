@@ -615,7 +615,7 @@ fn spawn_hero(
     });
     let (home, home_facing) = spawn_point();
     let pos = staged.unwrap_or(home);
-    let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(0.0);
+    let y = crate::steer::footing(pos.x, pos.y).unwrap_or(0.0); // a staged hero may stand on a deck (bridge, the wreck)
     let facing = if staged.is_some() { 0.0 } else { home_facing };
 
     let root = commands

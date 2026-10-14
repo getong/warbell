@@ -571,12 +571,84 @@ fn nw_headland(x: f32, z: f32) -> f32 {
     corner.powf(1.2) * (0.30 + 1.0 * wave) * edge
 }
 
+/// **Wreck Cove** (campaign master spec §6.1): the sheltered horseshoe bay cut into the forest's
+/// west coast where the hero's ship came to grief — the island's landing beach, ~260u west of the
+/// fort, a whole island away from the rival in the NE. Seated on the forest's SW-facing coast
+/// south of the Snowmelt mouth (the W coast further north runs into the snow massif), where the
+/// forest uplands come down to the sea, so the bay is a bite out of wooded hills. Base-space basin
+/// centre / radius: the basin sits mostly INLAND of the ellipse coast, so the sea gets in through a
+/// ~30u mouth between two wooded horns and opens into a ~50u-wide bay; its sand head lies along
+/// [`COVE_IN`], the inland axis (toward the fort).
+const COVE_C: (f32, f32) = (26.6, 93.6);
+/// Basin radii: (inland axis, along-coast axis) — a bay wider than it is deep.
+const COVE_R: (f32, f32) = (6.0, 8.2);
+const COVE_IN: (f32, f32) = (0.75, -0.66);
+
+/// World XZ of the cove basin centre (open water in the middle of the bay) and the bay's inland
+/// axis (unit, toward its sand head and the fort) — `wreck_cove.rs` sites the wreck from these.
+pub fn wreck_cove_axis() -> (Vec2, Vec2) {
+    (Vec2::new(COVE_C.0 * MAP_SCALE - GX, COVE_C.1 * MAP_SCALE - GZ), Vec2::new(COVE_IN.0, COVE_IN.1).normalize())
+}
+
+/// Signed distance (≈ base tiles) to the Wreck Cove basin rim: `<0` inside the bay (sea), `>0`
+/// outside. The rim wobbles on a low-frequency noise so the bay reads as a natural bite out of the
+/// coast, not a compass circle. Subtracted from the land in `is_land_shape` and min-ed into
+/// `sea_field`, so the shoreline cut, beach band and coastal easing all follow the bay.
+fn cove_sd(x: f32, z: f32) -> f32 {
+    if is_arena() {
+        return 99.0;
+    }
+    let (px, pz) = (x - COVE_C.0, z - COVE_C.1);
+    let du = (px * COVE_IN.0 + pz * COVE_IN.1) / COVE_R.0;
+    let dv = (-px * COVE_IN.1 + pz * COVE_IN.0) / COVE_R.1;
+    let q = du * du + dv * dv;
+    if q > 4.0 {
+        return 99.0;
+    }
+    let wob = 0.16 * (vnoise(x * 0.33 + 11.0, z * 0.33 - 7.0) - 0.5) + 0.08 * (vnoise(x * 0.8 - 3.0, z * 0.8 + 5.0) - 0.5);
+    (q.sqrt() + wob - 1.0) * COVE_R.0.min(COVE_R.1)
+}
+
+/// Is base `(x, z)` on the bay's landing beach — the broad sand head on the cove's inland side?
+/// Wider than the island's normal foreshore so a ship's worth of wreckage and a later quay fit on
+/// it.
+fn cove_beach(x: f32, z: f32) -> bool {
+    let sd = cove_sd(x, z);
+    if !(0.0..6.0).contains(&sd) {
+        return false;
+    }
+    // −1 at the mouth … +1 at the head.
+    let east = ((x - COVE_C.0) * COVE_IN.0 + (z - COVE_C.1) * COVE_IN.1) / COVE_R.0;
+    let w = 0.4 + 3.6 * smoothstep(0.05, 0.85, east) + 0.7 * (vnoise(x * 0.5 + 2.0, z * 0.5 - 9.0) - 0.5);
+    sd < w
+}
+
+/// Does a coast cell of this biome/class get the smooth marching-squares SEA cut (the `sea_field`
+/// contour) instead of the per-tile beach skirt? Every LOW (h≤1) coast does: the skirt stepped the
+/// waterline into tile "kwadraty" — first fixed for the swamp/Blight mud flats, the NW headland and
+/// the arena one player report at a time, then (Wreck Cove pass) the plain beaches all round the
+/// island, which read as a sawtooth of sand blocks. Tall seaward cliffs (coast ridges / mesas,
+/// h≥2) keep their faceted per-tile face.
+fn low_smooth_coast(coast_biome: Option<(TB, i32)>) -> bool {
+    matches!(coast_biome, Some((_, h)) if h <= 1)
+}
+
+/// Does tile `(ix, iz)` touch the open SEA (any corner offshore of the `sea_field` contour)? The
+/// smooth sea cut must only replace the corner field where the wet corners ARE sea — a low cell on
+/// a lake / pool / inland-water shore keeps its own field (cutting it by the sea SDF, which reads
+/// "inland" there, paved the water over: no bridges, no bog pools).
+fn touches_sea(ix: i32, iz: i32) -> bool {
+    [(ix, iz), (ix + 1, iz), (ix + 1, iz + 1), (ix, iz + 1)]
+        .iter()
+        .any(|&(cx, cz)| sea_field(cx as f32 / MAP_SCALE, cz as f32 / MAP_SCALE) < 0.0)
+}
+
 fn is_land_shape(x: f32, z: f32) -> bool {
     let dx = (x - CX).abs() / ISLAND_RX;
     let dz = (z - CZ).abs() / ISLAND_RZ;
     let r = dx.powf(ISLAND_EXP) + dz.powf(ISLAND_EXP);
     let coast = noise_a(x, z) * 0.08;
-    r + coast - nw_headland(x, z) < 1.0
+    r + coast - nw_headland(x, z) < 1.0 && cove_sd(x, z) > 0.0
 }
 
 /// Smooth signed distance-ish to the SEA (the real land/water shoreline) at a base-space corner,
@@ -596,7 +668,7 @@ fn sea_field(x: f32, z: f32) -> f32 {
     let r = dx.powf(ISLAND_EXP) + dz.powf(ISLAND_EXP);
     let coast = noise_a(x, z) * 0.08;
     let ellipse = (1.0 - (r + coast - nw_headland(x, z))) * ISLAND_RZ;
-    ellipse.max(crate::ork_fortress::blight_edge_base(x, z))
+    ellipse.min(cove_sd(x, z)).max(crate::ork_fortress::blight_edge_base(x, z))
 }
 
 fn dist_from_coast(x: f32, z: f32) -> i32 {
@@ -2169,7 +2241,7 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
     let d = dist_from_coast(x, z) as f32;
     let beach_w =
         1.0 + (1.0 + (x * 0.6 + z * 0.42 + 2.1).sin() * 0.8 + (x * 1.25 - z * 0.95 + 0.4).sin() * 0.6).max(0.0);
-    if d <= beach_w {
+    if d <= beach_w || cove_beach(x, z) {
         return Some((TB::Sand, 1));
     }
     // Coastal mountain ridges around the island rim (skip inside the peak regions — the snow
@@ -3456,11 +3528,8 @@ fn bake_water_field(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
             let has_river = cwat.iter().any(|c| c.1);
             let here = tile_at(ix, iz);
             let coast_biome = here.or_else(|| NB.iter().find_map(|&(dx, dz)| tile_at(ix + dx, iz + dz)));
-            let low_coast = matches!(coast_biome, Some((TB::Swamp | TB::Blight, h)) if h <= 1)
-                || matches!(coast_biome, Some((_, h)) if h <= 1
-                    && (is_arena()
-                        || nw_headland((ix as f32 + 0.5) / MAP_SCALE, (iz as f32 + 0.5) / MAP_SCALE) > 0.0));
-            let low_wet_coast = !has_river && low_coast && cwat.iter().any(|c| c.0 < 0.0);
+            let low_coast = low_smooth_coast(coast_biome);
+            let low_wet_coast = !has_river && low_coast && cwat.iter().any(|c| c.0 < 0.0) && touches_sea(ix, iz);
             let rs = if low_wet_coast {
                 let sf = |cx: i32, cz: i32| sea_field(cx as f32 / MAP_SCALE, cz as f32 / MAP_SCALE);
                 [sf(ix, iz), sf(ix + 1, iz), sf(ix + 1, iz + 1), sf(ix, iz + 1)]
@@ -3798,6 +3867,7 @@ pub fn build_step(
             crate::wild_sites::populate(commands);
             crate::stashes::populate(commands);
             crate::castaway::populate(commands, meshes, std_mats);
+            crate::wreck_cove::populate(commands);
             crate::ork_graveyard::populate(commands); // the Field of the Answered (WP2)
             crate::castle_kit::populate(commands);
         }
@@ -4014,6 +4084,8 @@ fn bs_sea_and_boats(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: 
     let isle_r = Vec2::new(ISLAND_RX * MAP_SCALE, ISLAND_RZ * MAP_SCALE);
     crate::boats::spawn_boats_island(commands, meshes, std_mats, isle_c, isle_r, SEA_Y);
 
+    // Wreck Cove first: the landing beach is fixed geography every later piece keeps clear of.
+    crate::wreck_cove::plan();
     crate::camps::plan();
     crate::poi::plan_clearings();
     crate::stories_warm::plan();
@@ -4725,11 +4797,8 @@ fn build_terrain_chunk(keep: impl Fn(TB) -> bool, ix0: i32, ix1: i32, iz0: i32, 
             //     (player report: the arena coast read as blocky teeth). It has no tall seaward
             //     cliffs anywhere (`arena_shore_damp` fades every massif flat before the sand), so
             //     the whole coast qualifies and there's nothing here for the h≤1 gate to protect.
-            let low_coast = matches!(coast_biome, Some((TB::Swamp | TB::Blight, h)) if h <= 1)
-                || matches!(coast_biome, Some((_, h)) if h <= 1
-                    && (is_arena()
-                        || nw_headland((ix as f32 + 0.5) / MAP_SCALE, (iz as f32 + 0.5) / MAP_SCALE) > 0.0));
-            let low_wet_coast = !has_river && low_coast && cwat.iter().any(|c| c.0 < 0.0); // touches sea
+            let low_coast = low_smooth_coast(coast_biome);
+            let low_wet_coast = !has_river && low_coast && cwat.iter().any(|c| c.0 < 0.0) && touches_sea(ix, iz); // touches sea
             // Corner water field: the real river/lake SDF, OR — on a low wetland coast — a smooth SEA
             // SDF so the contour follows the true shoreline instead of snapping to the tile grid
             // (`corner_water` hands the open sea a flat constant, which is what staircased it).

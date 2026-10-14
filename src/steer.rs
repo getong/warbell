@@ -26,7 +26,7 @@ pub const MAX_STEP: f32 = 0.6;
 /// copy mirrors it; wildlife / villagers / lumberjack / miner / camp orks / siege invaders all use
 /// it directly.
 pub fn footing(x: f32, z: f32) -> Option<f32> {
-    crate::worldmap::ground_at_world(x, z).or_else(|| crate::bridges::deck_y_at(x, z))
+    crate::wreck_cove::footing_over(x, z, crate::worldmap::ground_at_world(x, z).or_else(|| crate::bridges::deck_y_at(x, z)))
 }
 
 /// True if a mover with footprint radius `r` can stand at `(x, z)`: its centre and the four

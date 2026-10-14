@@ -565,6 +565,16 @@ fn build_curves() -> Vec<(Vec<Vec2>, f32)> {
         curves.push(route(near, camp, spur, 0x0077_0000 + k as u32));
     }
 
+    // ...and on from the street's fork to Wreck Cove, the island's landing beach (campaign §6.1:
+    // the prologue's march to the fort). Routed like a trunk; ends on the sand above the wreck.
+    // Added LAST among the arteries: the spurs above pick their nearest network point, and the
+    // capillaries below share one rng walked artery by artery — an earlier insert re-dealt every
+    // spur and capillary on the island.
+    if let Some(cove) = crate::wreck_cove::site() {
+        note_junction(cove.landing);
+        curves.push(route(street_end, cove.landing, through, 0x0C0F_0001));
+    }
+
     // Everything built so far is an ARTERY (wide). Now sprout the thin capillary layer off them,
     // then tag widths and return the combined typed list. Capillaries that blunder into a camp
     // clearing are dropped outright (they're space-fillers; no detour is worth it).
@@ -652,8 +662,32 @@ fn cap_branch(rng: &mut Rng, pt: Vec2, dir: Vec2, grid: &crate::road_route::Grid
     if poly.iter().any(|p| is_river_world(p.x, p.y) || crate::worldmap::is_pool_world(p.x, p.y)) {
         return None;
     }
+    // The router's slope cap is per grid cell; a short trail can still thread a terrace riser or a
+    // dune lip between cells. A space-filler isn't worth a scramble: drop any that climbs steeper
+    // than a footpath over 2u of path (the same measure `roads_follow_the_terrain` holds).
+    if too_steep(&poly) {
+        return None;
+    }
     Some((poly, end))
 }
+
+/// Does the polyline climb steeper than [`CAP_MAX_GRADE`] anywhere, measured over 2u of path?
+fn too_steep(poly: &[Vec2]) -> bool {
+    let mut pts = Vec::new();
+    for w in poly.windows(2) {
+        let steps = (w[0].distance(w[1]) / 0.5).ceil().max(1.0) as usize;
+        pts.extend((0..steps).map(|k| w[0].lerp(w[1], k as f32 / steps as f32)));
+    }
+    let g = crate::worldmap::ground_at_world;
+    pts.windows(5).any(|w| {
+        let (Some(a), Some(b)) = (g(w[0].x, w[0].y), g(w[4].x, w[4].y)) else { return false };
+        let run = w[0].distance(w[4]);
+        run >= 1.0 && (b - a).abs() / run > CAP_MAX_GRADE
+    })
+}
+
+/// Steepest grade a capillary may hold over 2u of path (arteries are trusted to the router).
+const CAP_MAX_GRADE: f32 = 0.45;
 
 /// How close (world units) a through-road may come to an ork-camp CENTRE. Much wider than the
 /// clearing itself (half-extent 3.6): the v1 detour only dodged the clearing box, which left
