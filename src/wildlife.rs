@@ -1216,13 +1216,14 @@ pub fn populate(
                 Species::Camel,
                 Species::Boar, // the brown bear (boar plan on the bear rig)
                 Species::Rabbit, // the downloaded rabbit (`creatures_dl.py`)
+                Species::Goat,
             ];
             for (i, sp) in line.iter().enumerate() {
                 if let (Some(plan), Some((_, tmpl))) = (
                     PLANS.iter().find(|pl| pl.species == *sp),
                     templates.iter().find(|(t, _)| t == sp),
                 ) {
-                    let x = p[0] + i as f32 * 2.6 - 5.2;
+                    let x = p[0] + i as f32 * 2.6 - 7.8;
                     let z = p[1];
                     // Display only: the prey here (rabbit) holds still instead of bolting.
                     let plan = Plan { flee_r: 0.0, wander_r: 0.5, ..*plan };

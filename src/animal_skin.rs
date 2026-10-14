@@ -11,6 +11,8 @@
 //! - `bear.glb` — Andrey's CC-BY "Brown Bear (animated)"; source Amble, Walk / Run / Attack / Idle
 //!   authored on its rebuilt leg IK (`tools/animals/export_bear.py`).
 //! - `polar_bear.glb` — the same bear, re-dyed creamy white and stood taller (`export_bear.py … polar`).
+//! - `goat.glb` / `dog.glb` / `camel.glb` — CC-BY downloads (GerardoA400 / MAXDESIGN-3D / E.A.Cornell),
+//!   gaits + Graze authored on rebuilt leg IK (`tools/animals/export_quad.py`).
 //!
 //! Runtime contract: the wildlife brain is untouched; it keeps writing [`Animal`] + [`QuadDrive`] and
 //! the studio rig still exists under the root (hidden once the skin shows). [`drive_skins`] picks the
@@ -46,7 +48,7 @@ struct Kind {
     die: Option<&'static str>,
 }
 
-const KINDS: [Kind; 5] = [
+const KINDS: [Kind; 8] = [
     // Deer walk: the planted hoof covers `duty` (0.64) of the authored stride, so its native speed is
     // the stride speed over that duty. The source gallop covers ~4x the walk's stride a second.
     Kind {
@@ -89,12 +91,39 @@ const KINDS: [Kind; 5] = [
         attack: Some(("Attack", 20.0 / 24.0)),
         die: None,
     },
+    Kind {
+        file: "animals/goat.glb",
+        gaits: &[("Walk", 1.140), ("Run", 4.911)],
+        idles: &["Idle"],
+        grazes: &["Graze", "Graze", "Idle"],
+        attack: None,
+        die: None,
+    },
+    Kind {
+        file: "animals/dog.glb",
+        gaits: &[("Walk", 0.766), ("Trot", 1.806), ("Run", 2.956)],
+        idles: &["Idle"],
+        grazes: &["Graze", "Idle"],
+        attack: None,
+        die: None,
+    },
+    Kind {
+        file: "animals/camel.glb",
+        gaits: &[("Walk", 0.992), ("Run", 4.333)],
+        idles: &["Idle", "Idle2"],
+        grazes: &["Graze", "Graze", "Idle2"],
+        attack: None,
+        die: None,
+    },
 ];
 const DOE: usize = 0;
 const STAG: usize = 1;
 const WOLF: usize = 2;
 const BEAR: usize = 3;
 const POLAR: usize = 4;
+const GOAT: usize = 5;
+const DOG: usize = 6;
+const CAMEL: usize = 7;
 /// An elk is a big stag.
 const ELK_SIZE: f32 = 1.18;
 /// The brain's strike window (`wildlife::quad_drive`).
@@ -193,6 +222,9 @@ fn attach_skins(
             Species::Wolf => (WOLF, 1.0),
             Species::Boar => (BEAR, 1.0),
             Species::PolarBear => (POLAR, 1.0),
+            Species::Goat => (GOAT, 1.0),
+            Species::Dog => (DOG, 1.0),
+            Species::Camel => (CAMEL, 1.0),
             _ => continue,
         };
         let Some(m) = models.ready[kind].as_ref() else { continue };
