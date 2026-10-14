@@ -6,7 +6,7 @@ VIDEO rig only: the scene exists to be filmed (FOREST_SCENE=fort + FOREST_CLIP),
     python tools/cutscene/fort_audio.py gen                 # write assets/cutscene/fort_arrival.cues
     python tools/cutscene/fort_audio.py mix in.mp4 out.mp4  # mux the soundtrack onto a captured clip
 
-Cue line: `time  path-under-assets  volume  [video] [loop] [pan=x] [fadein=s] [fadeout=t,s]`.
+Cue line: `time  path-under-assets  volume  [video] [loop] [pan=x] [fadein=s] [fadeout=t,s] [trim=a,b]`.
 Only EXISTING repo audio is used (recorded Act I VO, the supplied music, repo SFX). Timings mirror
 `scenes.rs` (fort_pip / fort_maud routes, FORT_LINES, the shot list) — keep them in step.
 """
@@ -23,20 +23,35 @@ END = 40.6
 BLACK = 35.0  # fade-to-black done; the act card sits on wind alone
 
 # Recorded Act I lines (docs/audio/elevenlabs-akt-1.md) at their scene times — FORT_LINES in scenes.rs.
+# (scene time, clip, volume, (from, to) seconds of the clip). Pip's a1_pip_05 is ONE breathless take
+# ("There's a well! There's a— that's a chapel, that was a chapel— there's a bell. Up there. It's
+# whole."); played whole it ran across four cuts, one of them mid-word. It's split at its breaths
+# (word times from Whisper: well@0.38 | There's@1.30 … chapel@3.60 | There's@4.38 bell@4.72 Up@5.52
+# there@5.60 | It's@6.64 whole@6.88) so each discovery gets its phrase and every cut lands in a pause.
+PIP05 = "audio/vo/campaign/a1_pip_05.ogg"
 VO = [
-    (11.5, "audio/vo/campaign/a1_pip_05.ogg", 1.0, 7.64),   # Pip: "There's a well! There's a— that's a chapel, that was a chapel— there's a bell. Up there. It's whole."
-    (19.9, "audio/vo/campaign/a1_maud_14.ogg", 1.0, 2.62),  # Maud: "The well's whole too. Start with the well."
-    (23.15, "audio/vo/campaign/a1_pip_06.ogg", 1.0, 0.73),  # Pip: "Can I—"
-    (23.95, "audio/vo/campaign/a1_maud_15.ogg", 1.0, 2.54), # Maud: "At dusk. King's orders, one of them."
-    (27.3, "audio/vo/campaign/a1_maud_16.ogg", 1.0, 4.91),  # Maud: "God help us. A well, a bell, and a wall and a half."
+    (11.45, PIP05, 1.0, (0.0, 1.12)),   # Pip: "There's a well!"
+    (12.85, PIP05, 1.0, (1.2, 4.27)),   # Pip: "There's a— that's a chapel, that was a chapel—"
+    (16.45, PIP05, 1.0, (4.3, 6.4)),    # Pip: "there's a bell. Up there."
+    (18.45, PIP05, 1.0, (6.5, 7.64)),   # Pip: "It's whole."
+    (19.9, "audio/vo/campaign/a1_maud_14.ogg", 1.0, (0.0, 2.62)),  # Maud: "The well's whole too. Start with the well."
+    (23.15, "audio/vo/campaign/a1_pip_06.ogg", 1.0, (0.0, 0.73)),  # Pip: "Can I—"
+    (23.95, "audio/vo/campaign/a1_maud_15.ogg", 1.0, (0.0, 2.54)), # Maud: "At dusk. King's orders, one of them."
+    (27.3, "audio/vo/campaign/a1_maud_16.ogg", 1.0, (0.0, 4.91)),  # Maud: "God help us. A well, a bell, and a wall and a half."
 ]
 
 # Pip's run segments (scenes.rs fort_pip): (start, end, speed)
 PIP_RUNS = [(0.3, 10.9, 3.6), (12.1, 13.6, 2.6), (27.6, 33.7, 1.0)]
 # Which shot is on, for distance-based loudness (scenes.rs fort_shot)
-SHOTS = [(0.0, 7.0, "outside"), (7.0, 11.1, "yard"), (11.1, 13.4, "well"), (13.4, 15.75, "chapel"),
-         (15.75, 17.75, "bell"), (17.75, 19.6, "insert"), (19.6, 23.0, "maud"), (23.0, 23.95, "ots"),
-         (23.95, 26.8, "two"), (26.8, END, "crane")]
+SHOTS = [(0.0, 7.0, "outside"), (7.0, 11.1, "yard"), (11.1, 13.45, "well"), (13.45, 16.2, "chapel"),
+         (16.2, 18.25, "bell"), (18.25, 19.75, "insert"), (19.75, 23.0, "maud"), (23.0, 23.95, "ots"),
+         (23.95, 26.8, "pip"), (26.8, END, "crane")]
+
+
+def clip_len(path):
+    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
+                          str(ASSETS / path)], capture_output=True, text=True, check=True).stdout
+    return float(out.strip())
 
 
 def shot(t):
@@ -48,8 +63,8 @@ def gen():
     rows = []  # (t, path, vol, flags)
     # Music: enters under Pip's first discovery, swells as the camera rises, cut dead on the black.
     rows.append((11.0, "audio/cutscene/quiet_council.ogg", 0.55, f"video fadein=3.5 fadeout={BLACK - 0.9:.1f},0.9"))
-    for t, p, v, _ in VO:
-        rows.append((t, p, v, ""))
+    for t, p, v, (a, b) in VO:
+        rows.append((t, p, v, f"trim={a},{b}" if a > 0 or b < clip_len(p) - 0.05 else ""))
 
     # Air: wind over the ruin the whole way (alone on the black), meadow + distant birds under it.
     rows.append((0.0, "audio/wind.ogg", 0.34, "video loop"))
@@ -114,7 +129,7 @@ def mix(video, out):
     for m in sorted({r[1] for r in read_cues() if not (ASSETS / r[1]).exists()}):
         print("skip (missing):", m)
     inputs, filters, labels = [], [], []
-    vo_spans = [(t, t + d) for t, p, _, d in VO if (ASSETS / p).exists()]
+    vo_spans = [(t, t + b - a) for t, p, _, (a, b) in VO if (ASSETS / p).exists()]
     for i, (t, path, vol, flags) in enumerate(rows):
         loop = "loop" in flags
         if loop:
@@ -123,6 +138,10 @@ def mix(video, out):
         f = f"[{i + 1}:a]"
         if loop:
             f += f"atrim=0:{END},"
+        trim = flag(flags, "trim")
+        if trim:  # one phrase of a longer take, 15 ms edge fades so the cut never clicks
+            a, b = (float(x) for x in trim.split(","))
+            f += f"atrim={a}:{b},asetpts=PTS-STARTPTS,afade=t=in:d=0.015,afade=t=out:st={b - a - 0.015:.3f}:d=0.015,"
         pan = flag(flags, "pan")
         if pan is None:
             f += "aformat=sample_rates=48000:channel_layouts=stereo"

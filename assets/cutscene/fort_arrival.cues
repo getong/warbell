@@ -80,12 +80,13 @@
  10.90  audio/footstep-dirt-3.ogg  0.3  video
  11.00  audio/cutscene/quiet_council.ogg  0.55  video fadein=3.5 fadeout=34.1,0.9
  11.36  audio/footstep-dirt-1.ogg  0.09  video
- 11.50  audio/vo/campaign/a1_pip_05.ogg  1.0
+ 11.45  audio/vo/campaign/a1_pip_05.ogg  1.0  trim=0.0,1.12
  11.98  audio/footstep-dirt-1.ogg  0.08  video
  12.15  audio/footstep-dirt-3.ogg  0.28  video
  12.46  audio/footstep-dirt-2.ogg  0.31  video
  12.60  audio/footstep-dirt-2.ogg  0.09  video
  12.78  audio/footstep-dirt-1.ogg  0.33  video
+ 12.85  audio/vo/campaign/a1_pip_05.ogg  1.0  trim=1.2,4.27
  13.13  audio/footstep-dirt-2.ogg  0.26  video
  13.22  audio/footstep-dirt-3.ogg  0.09  video
  13.46  audio/footstep-dirt-3.ogg  0.25  video
@@ -94,9 +95,11 @@
  15.08  audio/footstep-dirt-3.ogg  0.08  video
  15.70  audio/footstep-dirt-3.ogg  0.09  video
  16.32  audio/footstep-dirt-2.ogg  0.15  video
+ 16.45  audio/vo/campaign/a1_pip_05.ogg  1.0  trim=4.3,6.4
  16.94  audio/footstep-dirt-1.ogg  0.16  video
  17.56  audio/footstep-dirt-3.ogg  0.17  video
- 18.18  audio/footstep-dirt-1.ogg  0.05  video
+ 18.18  audio/footstep-dirt-1.ogg  0.16  video
+ 18.45  audio/vo/campaign/a1_pip_05.ogg  1.0  trim=6.5,7.64
  18.80  audio/footstep-dirt-1.ogg  0.04  video
  19.90  audio/vo/campaign/a1_maud_14.ogg  1.0
  23.15  audio/vo/campaign/a1_pip_06.ogg  1.0

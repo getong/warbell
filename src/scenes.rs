@@ -991,7 +991,7 @@ fn drive_farm_audio(
     cfg: Option<ResMut<crate::audio::AudioConfig>>,
     mut saved_music: Local<Option<f32>>,
     mut next: Local<usize>,
-    mut cues: Local<Vec<(f32, String, f32)>>,
+    mut cues: Local<Vec<Cue>>,
     mut cue_scene: Local<Option<SceneId>>,
     prog: Option<Res<crate::capture::ClipProgress>>,
 ) {
@@ -1023,34 +1023,47 @@ fn drive_farm_audio(
     }
     let t = state.clock;
     while *next < cues.len() && cues[*next].0 <= t {
-        let (_, path, vol) = &cues[*next];
+        let (_, path, vol, trim) = &cues[*next];
         *next += 1;
         if !std::path::Path::new("assets").join(path).exists() {
             continue;
         }
         commands.spawn((
             AudioPlayer::new(server.load(path.clone())),
-            PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(*vol)),
+            PlaybackSettings {
+                start_position: trim.map(|(a, _)| std::time::Duration::from_secs_f32(a)),
+                duration: trim.map(|(a, b)| std::time::Duration::from_secs_f32(b - a)),
+                ..PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(*vol))
+            },
         ));
     }
 }
 
 /// `time  path  volume  [flags…]` per line (`#` comments, blank lines ignored); `video`-flagged
 /// lines are only for the offline soundtrack mix (in-game footsteps/ambience come from the game).
-fn parse_cues(src: &str) -> Vec<(f32, String, f32)> {
-    let mut v: Vec<(f32, String, f32)> = src
+/// 	rim=a,b plays only seconds a..b of the file (one phrase cut out of a longer take).
+fn parse_cues(src: &str) -> Vec<Cue> {
+    let mut v: Vec<Cue> = src
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .filter_map(|l| {
             let mut it = l.split_whitespace();
             let (t, path, vol) = (it.next()?.parse().ok()?, it.next()?.to_string(), it.next()?.parse().ok()?);
-            (!it.any(|f| f == "video")).then_some((t, path, vol))
+            let flags: Vec<&str> = it.collect();
+            let trim = flags.iter().find_map(|f| {
+                let (a, b) = f.strip_prefix("trim=")?.split_once(',')?;
+                Some((a.parse().ok()?, b.parse().ok()?))
+            });
+            (!flags.contains(&"video")).then_some((t, path, vol, trim))
         })
         .collect();
     v.sort_by(|a, b| a.0.total_cmp(&b.0));
     v
 }
+
+/// (time, path under assets/, volume, optional (from, to) seconds of the file).
+type Cue = (f32, String, f32, Option<(f32, f32)>);
 
 /// What the cutscene borrows from the camera and restores on teardown.
 struct FarmLookSaved {
@@ -1327,10 +1340,14 @@ const NOTICE_BOARD: Vec2 = Vec2::new(3.0, 19.4);
 const FLOCK: Vec2 = Vec2::new(2.7, 14.6);
 
 /// Timed captions: (start s, duration s, speaker, line) — verbatim from the recorded clips
-/// (`a1_pip_05`, `a1_maud_14`, `a1_pip_06`, `a1_maud_15`, `a1_maud_16`).
-const FORT_LINES: [(f32, f32, &str, &str); 6] = [
-    (11.5, 3.95, "Pip", "There's a well! There's a \u{2014} that's a chapel, that was a chapel \u{2014}"),
-    (15.45, 3.7, "Pip", "there's a bell. Up there. It's whole."),
+/// (`a1_pip_05`, `a1_maud_14`, `a1_pip_06`, `a1_maud_15`, `a1_maud_16`). Pip's one breathless
+/// take is split at its breaths (`fort_audio.py` VO `trim`s), one phrase per discovery, so every
+/// cut lands in a pause instead of mid-word.
+const FORT_LINES: [(f32, f32, &str, &str); 8] = [
+    (11.45, 1.15, "Pip", "There's a well!"),
+    (12.85, 3.1, "Pip", "There's a \u{2014} that's a chapel, that was a chapel \u{2014}"),
+    (16.45, 1.95, "Pip", "There's a bell. Up there."),
+    (18.45, 1.2, "Pip", "It's whole."),
     (19.9, 2.62, "Maud", "The well's whole too. Start with the well."),
     (23.15, 0.85, "Pip", "Can I\u{2014}"),
     (23.95, 2.54, "Maud", "At dusk. King's orders, one of them."),
@@ -1641,14 +1658,15 @@ fn pip_beat(t: f32, pos: Vec2) -> (f32, &'static str, Vec3, Option<Vec3>) {
     match t {
         // pulled up in the yard, gawping round: left, right…
         t if t < 11.3 => (to(WELL) - 0.3, "Idle_Loop", Vec3::new(0.75 * ((t - 10.8) * 5.0).sin(), 0.15, 0.0), None),
-        // "There's a well!"
+        // "There's a well!" (11.45)
         t if t < 12.15 => (to(WELL), "Idle_Loop", Vec3::new(0.0, 0.05, 0.0), Some(well_pt())),
-        // "There's a— that's a chapel, that was a chapel" — stopped dead, turned to the ruin
-        t if t < 15.75 => (to(RUIN), "Idle_Loop", Vec3::new(0.0, 0.12, 0.0), (t > 13.75).then(ruin_pt)),
-        // spins round: "There's a bell. Up there." — arm up at the belfry over the gate
-        t if t < 17.9 => (to(BELL), "Idle_Loop", Vec3::new(0.0, env(t, &[(15.9, 0.15), (16.9, 0.45)]), 0.0), (t > 16.1).then(bell_pt)),
-        // "It's whole." — just staring up at it
-        t if t < 19.6 => (to(BELL), "Idle_Loop", Vec3::new(0.0, 0.45, 0.0), None),
+        // trotting on, "There's a—" (12.95) … stopped dead at the ruin: "that's a chapel, that was
+        // a chapel" (13.55)
+        t if t < 16.0 => (to(RUIN), "Idle_Loop", Vec3::new(0.0, 0.12, 0.0), (t > 13.7).then(ruin_pt)),
+        // spins round: "There's a bell." (16.5) "Up there." (17.45) — arm up at the belfry
+        t if t < 18.25 => (to(BELL), "Idle_Loop", Vec3::new(0.0, env(t, &[(16.2, 0.15), (17.5, 0.45)]), 0.0), (t > 16.4).then(bell_pt)),
+        // "It's whole." (18.6) — just staring up at it
+        t if t < 19.75 => (to(BELL), "Idle_Loop", Vec3::new(0.0, 0.45, 0.0), None),
         // Maud: "The well's whole too…" — he turns to her
         t if t < 23.0 => (to(m), "Idle_Loop", Vec3::new(0.0, 0.08, 0.0), None),
         // "Can I—" — to her, hands going (no point: the bell is behind the lens here, an arm thrown
@@ -1977,47 +1995,47 @@ fn fort_shot(t: f32) -> (Cam, Option<f32>) {
             ((eye, look, 34.0, 4.0), Some(eye.distance(pip(0.9))))
         }
         // 3 · "There's a well!" — behind his shoulder, his arm out at it; he trots toward it.
-        t if t < 13.4 => {
+        t if t < 13.45 => {
             let d = (WELL - PIP_1).normalize();
             let side = Vec2::new(-d.y, d.x);
             // at the boy's own eye-height (he's a head shorter than the grown-ups: any higher and
             // the lens looks over him, cropping him to a crown in the corner)
             let e = PIP_1 - d * 1.8 + side * 0.6;
-            let eye = at(e.x, 1.0, e.y).lerp(at(e.x + d.x * 0.6, 1.0, e.y + d.y * 0.6), lin(11.1, 13.4));
+            let eye = at(e.x, 1.0, e.y).lerp(at(e.x + d.x * 0.6, 1.0, e.y + d.y * 0.6), lin(11.1, 13.45));
             let look = well_pt() + Vec3::Y * 0.1;
             ((eye, look, 32.0, 3.0), Some(eye.distance(well_pt()) * 0.8))
         }
         // 4 · "There's a— that's a chapel, that was a chapel" — he stops dead, turns to the ruin and
         //     points; we look past him at it (racking from the boy to the ruin).
-        t if t < 15.75 => {
+        t if t < 16.2 => {
             let d = (RUIN - PIP_2).normalize();
             let side = Vec2::new(-d.y, d.x); // his right: the pointing arm on our side
             let e = PIP_2 - d * 2.2 + side * 0.7;
-            let eye = at(e.x, 1.05, e.y).lerp(at(e.x - d.x * 0.3, 1.07, e.y - d.y * 0.3), lin(13.4, 15.75));
+            let eye = at(e.x, 1.05, e.y).lerp(at(e.x - d.x * 0.3, 1.07, e.y - d.y * 0.3), lin(13.45, 16.2));
             let look = (ruin_pt() - Vec3::Y * 0.4).lerp(pip(0.8), 0.15);
             let (fp, fr) = (eye.distance(pip(1.0)), eye.distance(ruin_pt()));
-            ((eye, look, 36.0, 3.5), Some(fp + (fr - fp) * env(t, &[(13.9, 0.0), (14.5, 1.0)])))
+            ((eye, look, 36.0, 3.5), Some(fp + (fr - fp) * env(t, &[(14.0, 0.0), (14.6, 1.0)])))
         }
         // 5 · "There's a bell. Up there." — he spins round; low behind him, across the yard to the
         //     tower over the gate, his arm up at the belfry, Maud walking in.
-        t if t < 17.75 => {
+        t if t < 18.25 => {
             let d = (BELL - PIP_2).normalize();
             let side = Vec2::new(d.y, -d.x);
             let e = PIP_2 - d * 1.7 + side * 0.5;
             let eye = at(e.x, 0.75, e.y);
-            let look = (bell_pt() - Vec3::Y * 2.2).lerp(bell_pt() - Vec3::Y * 0.8, seg(15.9, 17.6));
+            let look = (bell_pt() - Vec3::Y * 2.2).lerp(bell_pt() - Vec3::Y * 0.8, seg(16.4, 18.1));
             ((eye, look, 24.0, 9.0), Some(eye.distance(bell_pt())))
         }
         // 6 · "It's whole." — the bell itself in its belfry, morning sun on the bronze.
         //    Along shot 5's own sightline (through the belfry opening — any other angle puts a pier
         //    in front of it), a slow telephoto push in.
-        t if t < 19.6 => {
+        t if t < 19.75 => {
             let d = (BELL - PIP_2).normalize();
             let e5 = PIP_2 - d * 1.7 + Vec2::new(d.y, -d.x) * 0.5;
             let dir = (at(e5.x, 0.75, e5.y) - bell_pt()).normalize();
             // slid right of the boy's sightline so the near pier clears the bell
             let right = Vec3::new(dir.z, 0.0, -dir.x).normalize();
-            let eye = bell_pt() + dir * (9.5 - 1.3 * seg(17.75, 19.6)) + right * 1.3;
+            let eye = bell_pt() + dir * (9.5 - 1.3 * seg(18.25, 19.75)) + right * 1.3;
             ((eye, bell_pt() + Vec3::Y * 0.35, 22.0, 1.5), Some(eye.distance(bell_pt())))
         }
         // 7 · Maud: "The well's whole too. Start with the well." — over the boy's shoulder, low (his
@@ -2026,7 +2044,7 @@ fn fort_shot(t: f32) -> (Cam, Option<f32>) {
             let d = (MAUD_MARK - PIP_2).normalize();
             let side = Vec2::new(d.y, -d.x);
             let e = PIP_2 - d * 1.25 + side * 0.34;
-            let eye = at(e.x, 1.02, e.y).lerp(at(e.x + d.x * 0.25, 1.03, e.y + d.y * 0.25), lin(19.6, 23.0));
+            let eye = at(e.x, 1.02, e.y).lerp(at(e.x + d.x * 0.25, 1.03, e.y + d.y * 0.25), lin(19.75, 23.0));
             let look = at(MAUD_MARK.x, 1.2, MAUD_MARK.y);
             ((eye, look, 25.0, 1.2), Some(eye.distance(look)))
         }
