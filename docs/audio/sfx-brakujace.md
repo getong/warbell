@@ -30,12 +30,14 @@ Dopisuj tu każdy nowy brakujący odgłos; po dostarczeniu zmień status na ✅.
 | ⬜ | `life_sfx_shutters` | wooden window shutters swung closed and barred | 1.5 s |
 | ⬜ | `life_sfx_cart` | wooden hand cart rolling slowly on a dirt track, wheel creak | 4.0 s, loop |
 | ⬜ | `life_sfx_dice` | bone dice rolled on a wooden table, men murmur | 2.0 s |
-| ⬜ | `life_sfx_chatter` | small group of medieval villagers chatting and laughing quietly outdoors, no clear words | 8.0 s, loop |
+| ✅ | `life_sfx_chatter` | small group of medieval villagers chatting and laughing quietly outdoors, no clear words | 8.0 s, loop |
 | ⬜ | `life_sfx_market` | busy small medieval village market, distant haggling, livestock, no clear words | 10.0 s, loop |
 | ⬜ | `life_sfx_hen` | single hen clucking nearby | 1.5 s |
-| ⬜ | `cs_ship_cabin` | inside a wooden sailing ship's cabin at night in a storm, constant timber creaking and groaning, heavy rain drumming on canvas overhead, muffled waves slapping the hull, an oil lantern squeaking as it swings on its hook, no music, no voices | 20 s, loop |
+| ✅ | `cs_ship_cabin` | inside a wooden sailing ship's cabin at night in a storm, constant timber creaking and groaning, heavy rain drumming on canvas overhead, muffled waves slapping the hull, an oil lantern squeaking as it swings on its hook, no music, no voices | 20 s, loop |
 | ⬜ | `cs_wreck_strike` | wooden sailing ship hits a reef in a violent night storm: sharp close thunder crack, hull timbers splintering and groaning, a ship's bell clanging wildly, distant panicked shouting with no clear words, a heavy wave crashing over the deck | 8 s |
 
 ## Uwagi
 - `life_sfx_hammer` — Firefly, „hammering a nail into timber, four strikes, variation 2” (1.0 s).
 - Pętle (loop) muszą się bezszwowo zapętlać — poproś generator o „seamless loop” albo daj 2× dłuższy plik, przytnę sam.
+- `life_sfx_chatter`: ElevenLabs, 14.9 s → pętla 13.9 s (crossfade 1 s), mono, -18.8 LUFS. Jeszcze nie w `SFX_KEYS` (`village_life.rs`).
+- `cs_ship_cabin`: ElevenLabs, 8 s zamiast 20 s → pętla 6.5 s (crossfade 1.5 s), **stereo** (do filmu), -18 LUFS, w `assets/audio/sfx/cutscene/`. Krótka pętla: przy 90-sekundowej scenie warto kiedyś dograć dłuższą.
