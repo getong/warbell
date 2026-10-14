@@ -7,7 +7,8 @@ VIDEO rig only: the scene exists to be filmed (FOREST_SCENE=fort + FOREST_CLIP),
     python tools/cutscene/fort_audio.py mix in.mp4 out.mp4  # mux the soundtrack onto a captured clip
 
 Cue line: `time  path-under-assets  volume  [video] [loop] [pan=x] [fadein=s] [fadeout=t,s] [trim=a,b]`.
-Only EXISTING repo audio is used (recorded Act I VO, the supplied music, repo SFX). Timings mirror
+Only repo audio is used (recorded Act I VO, the supplied music, repo SFX + the softened cutscene
+cuts of it in audio/sfx/cutscene/, and the owner-supplied crow flush). Timings mirror
 `scenes.rs` (fort_pip / fort_maud routes, FORT_LINES, the shot list) — keep them in step.
 """
 import math
@@ -62,8 +63,9 @@ def shot(t):
 def gen():
     rnd = random.Random(3)
     rows = []  # (t, path, vol, flags)
-    # Music: enters under Pip's first discovery, swells as the camera rises, cut dead on the black.
-    rows.append((11.0, "audio/cutscene/quiet_council.ogg", 0.55, f"video fadein=3.5 fadeout={BLACK - 0.9:.1f},0.9"))
+    # Music: steals in under the run through the gate (a long fade, no step up), sits well under the
+    # voices (ducked smoothly in `mix`), swells a little with the crane, gone on the black.
+    rows.append((6.5, "audio/cutscene/quiet_council.ogg", 0.3, f"video fadein=7.0 fadeout={BLACK - 1.6:.1f},1.6"))
     for t, p, v, (a, b) in VO:
         rows.append((t, p, v, f"trim={a},{b}" if a > 0 or b < clip_len(p) - 0.05 else ""))
 
@@ -73,31 +75,37 @@ def gen():
     rows.append((0.0, "audio/forest-ambient.ogg", 0.16, f"video loop fadeout={BLACK - 1.4:.1f},1.4"))
     rows.append((0.0, "audio/castle-ambient.ogg", 0.10, f"video loop fadeout={BLACK - 1.4:.1f},1.4"))
 
-    # Footsteps: Pip's light running steps (loud when he's near the lens), Maud's walk, the knight.
-    steps = [f"audio/footstep-dirt-{i}.ogg" for i in (1, 2, 3)]
+    # Footsteps: soft cuts of the dirt step (sfx/cutscene/cs_step_*: compressed, high-passed, the
+    # boy's pitched up) — the raw game steps peak at 0 dBFS and read as a marching ork. Pip's light
+    # run (nearer the lens, a little louder), Maud's walk, the knight.
+    steps = [f"audio/sfx/cutscene/cs_step_child_{i}.ogg" for i in (1, 2, 3)]
+    adult = [f"audio/sfx/cutscene/cs_step_adult_{i}.ogg" for i in (1, 2, 3)]
     for a, b, v in PIP_RUNS:
         gap = 0.26 if v > 3 else (0.32 if v > 2 else 0.55)
         t = a + 0.05
         while t < b:
             s = shot(t)
             # the yard shot: he runs from the gate straight at the lens — steps swell as he comes
-            vol = {"outside": 0.32 if t < 3.0 else 0.14, "yard": 0.10 + 0.24 * min(max((t - 7.0) / 3.9, 0), 1),
-                   "well": 0.32, "chapel": 0.3, "crane": 0.16 - 0.1 * min((t - 28.95) / 6.0, 1)}.get(s, 0.2)
+            vol = {"outside": 0.3 if t < 3.0 else 0.14, "yard": 0.08 + 0.3 * min(max((t - 7.0) / 3.9, 0), 1),
+                   "well": 0.3, "chapel": 0.28, "crane": 0.16 - 0.1 * min((t - 28.95) / 6.0, 1)}.get(s, 0.18)
             rows.append((round(t, 2), rnd.choice(steps), round(vol * rnd.uniform(0.8, 1.1), 2), "video"))
             t += gap * rnd.uniform(0.9, 1.1)
     t = 0.2
     while t < 18.8:  # Maud walks in to her mark
         vol = {"outside": 0.22, "bell": 0.16, "insert": 0.05}.get(shot(t), 0.09)
-        rows.append((round(t, 2), rnd.choice(steps), round(vol * rnd.uniform(0.8, 1.05), 2), "video"))
+        rows.append((round(t, 2), rnd.choice(adult), round(vol * rnd.uniform(0.8, 1.05), 2), "video"))
         t += 0.62
     t = 0.1
     while t < 6.2:  # the knight, heavier
-        rows.append((round(t, 2), "audio/footstep-stone.ogg", round(0.13 * rnd.uniform(0.85, 1.1), 2), "video"))
+        rows.append((round(t, 2), rnd.choice(adult), round(0.2 * rnd.uniform(0.85, 1.1), 2), "video"))
         t += 0.55
 
-    # The pigeons flushed by the boy (no wing-flap SFX in the repo — a burst of grass/forage rustle).
-    rows.append((7.0, "audio/forage.ogg", 0.36, "video pan=-0.1"))
-    rows.append((7.25, "audio/forage.ogg", 0.22, "video pan=0.15"))
+    # The flock flushed by the boy at the gate: wings + caws (two takes, spread), a scuff of grass.
+    rows.append((6.95, "audio/sfx/cutscene/cs_crows_flush_1.ogg", 0.8, "video"))
+    rows.append((7.2, "audio/sfx/cutscene/cs_crows_flush_2.ogg", 0.5, "video pan=0.35"))
+    rows.append((7.0, "audio/forage.ogg", 0.16, "video pan=-0.1"))
+    # "It's whole." — the bronze just singing in the wind as the lens pushes in on it.
+    rows.append((19.55, "audio/sfx/cutscene/cs_bell_hum.ogg", 0.5, "video"))
 
     rows.sort(key=lambda r: r[0])
     out = [
@@ -158,9 +166,13 @@ def mix(video, out):
             st, d = (float(x) for x in fo.split(","))
             gain += f",afade=t=out:st={max(st - t, 0):.2f}:d={d}"
         if path.endswith("quiet_council.ogg"):
-            # duck the music under each spoken line (clip-relative times), soft edges
+            # duck the music under the spoken lines on ONE smooth envelope (clip-relative times):
+            # 0.5 s down, 1.2 s back up, and gaps between lines shorter than the ramps never pop up
+            env = "0"
             for a, b in vo_spans:
-                gain += f",volume=enable='between(t,{a - 0.3 - t:.2f},{b + 0.5 - t:.2f})':volume=0.55"
+                g = f"clip((t-{a - 0.5 - t:.2f})/0.5,0,1)*clip(({b + 1.2 - t:.2f}-t)/1.2,0,1)"
+                env = f"max({env},{g})"
+            gain += f",volume='1-0.45*{env}':eval=frame"
         delay = int(t * 1000)
         filters.append(f"{f},{gain},adelay={delay}|{delay}[a{i}]")
         labels.append(f"[a{i}]")

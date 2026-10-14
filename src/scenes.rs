@@ -1179,6 +1179,7 @@ fn farm_camera(
                 p.fov = sv.fov;
             }
             (dof.range, dof.far_ramp, dof.max_radius) = sv.dof;
+            dof.lens = 0.0;
             if let (Some(g), Some(was)) = (grade.as_mut(), sv.grade) {
                 **g = was;
             }
@@ -1218,15 +1219,19 @@ fn farm_camera(
     if let Projection::Perspective(p) = &mut *proj {
         p.fov = fov_deg.to_radians();
     }
-    // Rack focus onto the subject: sharp through the subject, melting off behind it.
+    // Rack focus onto the subject: sharp through the subject, melting off behind it. The fort film
+    // shoots through a thin lens (`band` is its aperture): a wide shot stays sharp to the horizon and
+    // only a close subject throws the background — the banded model blurred the ground in front of
+    // and behind every wide into a tilt-shift miniature.
     dof.focal = focus.unwrap_or_else(|| eye.distance(at));
     dof.range = band;
     dof.far_ramp = 16.0;
     dof.max_radius = 7.0;
+    dof.lens = if fort { band } else { 0.0 };
     if let Some(g) = grade.as_mut() {
         g.grain = 0.045;
         g.vignette = 0.42;
-        g.aberration = 0.0035;
+        g.aberration = if fort { 0.0012 } else { 0.0035 };
         g.time = now.fract() * 17.0;
         if fort {
             // Golden hour: warmer highlights, a cooler blue in the shade, a touch more split.
@@ -1985,14 +1990,14 @@ fn fort_shot(t: f32) -> (Cam, Option<f32>) {
             let k = seg(0.0, 7.0);
             let eye = at(2.3, 0.45, 37.4).lerp(at(1.0, 1.5, 33.8), k);
             let look = at(0.1, 1.3, 24.0).lerp(bell, seg(2.8, 7.0));
-            ((eye, look, 40.0 - 4.0 * k, 9.0), None)
+            ((eye, look, 40.0 - 4.0 * k, 0.35), None)
         }
         // 2 · inside, looking back at the gate (the tower over it): Pip tears in through the
         //     pigeons straight at the lens and skids up in the yard, looking round.
         t if t < 11.1 => {
             let eye = at(8.4, 1.15, -0.9).lerp(at(8.3, 1.18, -0.6), lin(7.0, 11.1));
             let look = at(0.5, 1.4, 20.0).lerp(pip(0.95), seg(7.0, 10.6) * 0.8);
-            ((eye, look, 34.0, 4.0), Some(eye.distance(pip(0.9))))
+            ((eye, look, 34.0, 0.5), Some(eye.distance(pip(0.9))))
         }
         // 3 · "There's a well!" — behind his shoulder, his arm out at it; he trots toward it.
         t if t < 13.45 => {
@@ -2003,7 +2008,7 @@ fn fort_shot(t: f32) -> (Cam, Option<f32>) {
             let e = PIP_1 - d * 1.8 + side * 0.6;
             let eye = at(e.x, 1.0, e.y).lerp(at(e.x + d.x * 0.6, 1.0, e.y + d.y * 0.6), lin(11.1, 13.45));
             let look = well_pt() + Vec3::Y * 0.1;
-            ((eye, look, 32.0, 3.0), Some(eye.distance(well_pt()) * 0.8))
+            ((eye, look, 32.0, 0.55), Some(eye.distance(well_pt()) * 0.8))
         }
         // 4 · "And that… that was a chapel!" — he stops dead, turns to the ruin and
         //     points; we look past him at it (racking from the boy to the ruin).
@@ -2014,7 +2019,7 @@ fn fort_shot(t: f32) -> (Cam, Option<f32>) {
             let eye = at(e.x, 1.05, e.y).lerp(at(e.x - d.x * 0.3, 1.07, e.y - d.y * 0.3), lin(13.45, 17.05));
             let look = (ruin_pt() - Vec3::Y * 0.4).lerp(pip(0.8), 0.15);
             let (fp, fr) = (eye.distance(pip(1.0)), eye.distance(ruin_pt()));
-            ((eye, look, 36.0, 3.5), Some(fp + (fr - fp) * env(t, &[(14.0, 0.0), (14.6, 1.0)])))
+            ((eye, look, 36.0, 0.55), Some(fp + (fr - fp) * env(t, &[(14.0, 0.0), (14.6, 1.0)])))
         }
         // 5 · "There's a bell! Up there!" — he spins round; low behind him, across the yard to the
         //     tower over the gate, his arm up at the belfry, Maud walking in.
@@ -2024,7 +2029,7 @@ fn fort_shot(t: f32) -> (Cam, Option<f32>) {
             let e = PIP_2 - d * 1.7 + side * 0.5;
             let eye = at(e.x, 0.75, e.y);
             let look = (bell_pt() - Vec3::Y * 2.2).lerp(bell_pt() - Vec3::Y * 0.8, seg(17.3, 19.4));
-            ((eye, look, 24.0, 9.0), Some(eye.distance(bell_pt())))
+            ((eye, look, 24.0, 0.45), Some(eye.distance(bell_pt())))
         }
         // 6 · "It's whole." — the bell itself in its belfry, morning sun on the bronze.
         //    Along shot 5's own sightline (through the belfry opening — any other angle puts a pier
@@ -2036,17 +2041,18 @@ fn fort_shot(t: f32) -> (Cam, Option<f32>) {
             // slid right of the boy's sightline so the near pier clears the bell
             let right = Vec3::new(dir.z, 0.0, -dir.x).normalize();
             let eye = bell_pt() + dir * (9.5 - 1.3 * seg(19.6, 21.1)) + right * 1.3;
-            ((eye, bell_pt() + Vec3::Y * 0.35, 22.0, 1.5), Some(eye.distance(bell_pt())))
+            ((eye, bell_pt() + Vec3::Y * 0.35, 22.0, 0.5), Some(eye.distance(bell_pt())))
         }
         // 7 · Maud: "The well's whole too. Start with the well." — over the boy's shoulder, low (his
         //     eye-line), up at her.
         t if t < 24.35 => {
             let d = (MAUD_MARK - PIP_2).normalize();
             let side = Vec2::new(d.y, -d.x);
-            let e = PIP_2 - d * 1.25 + side * 0.34;
-            let eye = at(e.x, 1.02, e.y).lerp(at(e.x + d.x * 0.25, 1.03, e.y + d.y * 0.25), lin(21.1, 24.35));
-            let look = at(MAUD_MARK.x, 1.2, MAUD_MARK.y);
-            ((eye, look, 25.0, 1.2), Some(eye.distance(look)))
+            // tighter, the lens just off his ear: she fills the frame, his head a soft dark shape
+            let e = PIP_2 - d * 0.85 + side * 0.36;
+            let eye = at(e.x, 1.1, e.y).lerp(at(e.x + d.x * 0.2, 1.1, e.y + d.y * 0.2), lin(21.1, 24.35));
+            let look = at(MAUD_MARK.x, 1.42, MAUD_MARK.y);
+            ((eye, look, 17.0, 0.9), Some(eye.distance(look)))
         }
         // 8 · "Can I—" — the reverse, over her shoulder: the boy, arm up at the bell, asking.
         t if t < 25.3 => {
@@ -2056,7 +2062,7 @@ fn fort_shot(t: f32) -> (Cam, Option<f32>) {
             let e = e - d * 0.5;
             let eye = at(e.x, 1.5, e.y);
             let look = pip(0.8);
-            ((eye, look, 19.0, 1.5), Some(eye.distance(look)))
+            ((eye, look, 19.0, 0.9), Some(eye.distance(look)))
         }
         // 9 · "At dusk. King's orders, one of them." — her voice over the boy's face, close, from
         //     her side: the head going down, the well he's been told to start with behind him. (A
@@ -2067,7 +2073,7 @@ fn fort_shot(t: f32) -> (Cam, Option<f32>) {
             let e = PIP_2 + d * 2.3 + side * 0.45;
             let eye = at(e.x, 0.98, e.y).lerp(at(e.x - d.x * 0.35, 0.96, e.y - d.y * 0.35), lin(25.3, 28.15));
             let look = pip(0.82);
-            ((eye, look, 24.0, 1.4), Some(eye.distance(look)))
+            ((eye, look, 24.0, 1.0), Some(eye.distance(look)))
         }
         // 10 · "God help us…" — from behind Maud, the boy walking off to the well; the crane rises up
         //      and back over the gate wall: the whole ruin, two small figures, the light going. Ends
@@ -2076,7 +2082,7 @@ fn fort_shot(t: f32) -> (Cam, Option<f32>) {
             let k = seg(28.25, 35.95);
             let eye = at(3.5, 1.55, 11.2).lerp(Vec3::new(9.0, world_y_at(Vec2::new(9.0, 30.5)) + 7.0, 30.5), k);
             let look = pip(0.9).lerp(at(1.0, 2.0, -8.0), seg(28.25, 32.35));
-            ((eye, look, 34.0 + 10.0 * k, 2.5 + 17.5 * k), None)
+            ((eye, look, 34.0 + 10.0 * k, 0.5 - 0.44 * k), None)
         }
     }
 }

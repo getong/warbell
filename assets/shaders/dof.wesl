@@ -18,6 +18,7 @@ struct Settings {
     max_radius: f32,  // maximum blur radius (px)
     near: f32,        // camera near plane (reverse-z depth → distance)
     debug_view: f32,  // >0.5 → output raw CoC as grayscale (debug), don't blur
+    lens: f32,        // >0 → thin-lens CoC (cutscene camera): lens·|1 − focal/dist|, range/far_ramp unused
 }
 @group(0) @binding(3) var<uniform> settings: Settings;
 
@@ -52,6 +53,11 @@ fn dist_at(coord: vec2<i32>) -> f32 {
 // ramps GRADUALLY over `far_ramp` tiles (so distance keeps getting blurrier instead of
 // clamping to a flat max); the NEAR/foreground side ramps quicker (less depth to work with).
 fn coc_of(dist: f32) -> f32 {
+    if settings.lens > 0.0 {
+        // Thin lens: blur ∝ |1/focal − 1/dist|, so a wide shot focused far stays sharp all the way out
+        // and only a close subject throws the background (no tilt-shift band on the ground).
+        return clamp(settings.lens * abs(1.0 - settings.focal / max(dist, 0.001)), 0.0, 1.0);
+    }
     let d = abs(dist - settings.focal) - settings.range;
     if d <= 0.0 {
         return 0.0;

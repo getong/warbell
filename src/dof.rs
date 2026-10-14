@@ -61,6 +61,9 @@ pub struct Dof {
     /// Debug: >0.5 paints the raw CoC (blur factor) as grayscale instead of blurring — white
     /// = "DoF thinks this is fully out of focus". Lets you see if a washed-out region is DoF.
     pub debug_view: f32,
+    /// >0 switches to a thin-lens CoC, `lens · |1 − focal/dist|` (`range`/`far_ramp` unused): the
+    /// cutscene camera's physical aperture. 0 = the game's banded model.
+    pub lens: f32,
 }
 
 /// A tasteful default; tunable live in the Debug panel.
@@ -100,7 +103,7 @@ pub fn default_dof() -> Dof {
     // hand-off ring (150→176u, `worldmap.rs:3145`) sits at ~1.4-2px — soft enough to hide the
     // swap, sharp enough that the coast no longer reads as unloaded geometry.
     let mut d =
-        Dof { focal: 28.0, range: 44.0, far_ramp: 200.0, max_radius: 3.5, near: NEAR, debug_view: 0.0 };
+        Dof { focal: 28.0, range: 44.0, far_ramp: 200.0, max_radius: 3.5, near: NEAR, debug_view: 0.0, lens: 0.0 };
     // `FOREST_DOF="range,far_ramp,max_radius"` — startup override, mirroring `FOREST_ATMO` /
     // `FOREST_GODRAYS`. Added 2026-07-27: the far-field look is a JOINT tune of bokeh against
     // haze, and haze was already env-tunable while DoF needed a 6-minute rebuild per guess — so
