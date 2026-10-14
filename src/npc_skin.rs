@@ -64,8 +64,17 @@ const JOG_K: f32 = 4.9;
 /// Mixamo set, against its own walk (every look: slow run 2.8–2.9×, sad walk 0.75×).
 const JOG_KX: f32 = 2.85;
 const SAD_KX: f32 = 0.75;
-/// Past this camera distance a skin's player is paused (fog + distance hide the joints anyway).
+/// Past this camera distance a skin's pose freezes and its animation graph is detached — a paused
+/// clip still costs `animate_targets` a full per-bone evaluation every frame, a graph-less player one
+/// lookup. Re-attached inside `ANIM_WAKE2` (hysteresis, so it can't flicker).
 const ANIM_CULL2: f32 = 90.0 * 90.0;
+const ANIM_WAKE2: f32 = 82.0 * 82.0;
+/// Skinned townsfolk stop drawing past 160 u (they skip frustum culling, see `skin_ready`).
+const SKIN_RANGE: bevy::camera::visibility::VisibilityRange = bevy::camera::visibility::VisibilityRange {
+    start_margin: 0.0..0.0,
+    end_margin: 160.0..160.0,
+    use_aabb: false,
+};
 const FADE: Duration = Duration::from_millis(280);
 
 pub struct NpcSkinPlugin;
@@ -122,6 +131,8 @@ pub struct Skinned {
     props: Vec<(Entity, Held, f32)>,
     /// Which grip the props are in (true = the two-handed work / fight grip).
     work_grip: bool,
+    /// Far from the camera: the player's graph is detached (see `ANIM_CULL2`).
+    parked: bool,
 }
 
 impl Skinned {
@@ -388,6 +399,7 @@ fn attach_skins(
             mouth: None,
             props: Vec::new(),
             work_grip: false,
+            parked: false,
         });
     }
 }
@@ -416,6 +428,7 @@ fn skin_ready(
         if players.contains(d) {
             commands.entity(d).insert((AnimationGraphHandle(look.graph.clone()), AnimationTransitions::new()));
             sk.player = Some(d);
+            sk.parked = false; // a fresh player starts with its graph attached
         }
         if morphs.contains(d) {
             sk.mouth = Some(d);
@@ -431,7 +444,8 @@ fn skin_ready(
             };
             if let Some(m) = var.or_else(|| look.mats.get(mn.0.as_str())) {
                 // Skinned bounds follow the rest pose only; a crouch / sit / swing would cull wrongly.
-                commands.entity(d).insert((MeshMaterial3d(m.clone()), NoFrustumCulling));
+                // Past the haze a townsperson is a few pixels: stop drawing them (and their shadow).
+                commands.entity(d).insert((MeshMaterial3d(m.clone()), NoFrustumCulling, SKIN_RANGE));
             }
         }
         if let Ok(n) = names.get(d) {
@@ -659,6 +673,7 @@ fn copy_tools(
 
 /// Pick + cross-fade each skin's clip from its drive and real ground speed.
 fn drive_skins(
+    mut commands: Commands,
     time: Res<Time>,
     cam: Query<&GlobalTransform, With<Camera3d>>,
     cast: Res<NpcCast>,
@@ -679,7 +694,16 @@ fn drive_skins(
         let v = Vec2::new(p.x - sk.last.x, p.z - sk.last.z).length() / dt;
         sk.last = p;
         sk.speed += (v.min(8.0) - sk.speed) * (dt * 8.0).min(1.0);
-        let far = cam_p.is_some_and(|c| c.distance_squared(p) > ANIM_CULL2);
+        let d2 = cam_p.map_or(0.0, |c| c.distance_squared(p));
+        let far = d2 > if sk.parked { ANIM_WAKE2 } else { ANIM_CULL2 };
+        if far != sk.parked {
+            sk.parked = far;
+            if far {
+                commands.entity(pe).try_remove::<AnimationGraphHandle>();
+            } else if let Some(look) = cast.looks[sk.look as usize].as_ref() {
+                commands.entity(pe).try_insert(AnimationGraphHandle(look.graph.clone()));
+            }
+        }
         // Legs follow the body's REAL ground speed (not the AI's intent), with hysteresis so a
         // shuffle to a stop doesn't flicker walk/idle: no stepping on the spot, no gliding off.
         let stepping = sk.loco_native(sk.clip).is_some();

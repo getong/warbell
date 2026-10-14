@@ -843,7 +843,9 @@ fn apply_quality(
                 num_cascades: auth.bounds.len(),
                 minimum_distance: auth.minimum_distance,
                 // Render distance stretches only the far bound (same cascade count — see above).
-                maximum_distance: far * settings.view_distance.shadow_scale(),
+                // `FOREST_SHADOWFAR=<u>` pins the horizon for perf A/Bs (the far cascade holds most casters).
+                maximum_distance: std::env::var("FOREST_SHADOWFAR").ok().and_then(|v| v.parse().ok())
+                    .unwrap_or(far * settings.view_distance.shadow_scale()),
                 first_cascade_far_bound: auth.bounds.first().copied().unwrap_or(12.0),
                 overlap_proportion: auth.overlap_proportion,
             }

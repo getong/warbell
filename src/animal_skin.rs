@@ -128,7 +128,17 @@ const CAMEL: usize = 7;
 const ELK_SIZE: f32 = 1.18;
 /// The brain's strike window (`wildlife::quad_drive`).
 const STRIKE_S: f32 = 0.45;
+/// Past this the skin's pose freezes and its animation graph is detached (`drive_skins`) — a paused
+/// clip still costs `animate_targets` a full per-bone evaluation every frame, a graph-less player
+/// costs one lookup. Re-attached inside [`ANIM_WAKE2`] (hysteresis, so it can't flicker).
 const ANIM_CULL2: f32 = 90.0 * 90.0;
+const ANIM_WAKE2: f32 = 82.0 * 82.0;
+/// Skinned animal meshes stop drawing past 140 u (they skip frustum culling, see `skin_ready`).
+const SKIN_RANGE: bevy::camera::visibility::VisibilityRange = bevy::camera::visibility::VisibilityRange {
+    start_margin: 0.0..0.0,
+    end_margin: 140.0..140.0,
+    use_aabb: false,
+};
 const FADE: Duration = Duration::from_millis(300);
 
 pub struct AnimalSkinPlugin;
@@ -166,6 +176,8 @@ pub struct AnimalSkin {
     speed: f32,
     /// World units per real metre of this body (the per-animal size jitter included).
     k: f32,
+    /// Far from the camera: the player's graph is detached so `animate_targets` skips its bones.
+    parked: bool,
 }
 
 /// On the skin instance: the gameplay root it dresses.
@@ -252,6 +264,7 @@ fn attach_skins(
             last: tf.translation,
             speed: 0.0,
             k: WORLD_PER_M * size,
+            parked: false,
         });
     }
 }
@@ -277,10 +290,12 @@ fn skin_ready(
         if players.contains(d) {
             commands.entity(d).insert((AnimationGraphHandle(m.graph.clone()), AnimationTransitions::new()));
             sk.player = Some(d);
+            sk.parked = false; // a fresh player starts with its graph attached
         }
         if meshes.contains(d) {
-            // skinned bounds follow the rest pose only; a lunge or a fall would cull wrongly
-            commands.entity(d).insert(NoFrustumCulling);
+            // skinned bounds follow the rest pose only; a lunge or a fall would cull wrongly — but past
+            // the haze a distant animal is a few pixels: stop drawing it (and its shadow) there
+            commands.entity(d).insert((NoFrustumCulling, SKIN_RANGE));
         }
     }
     sk.clip = "";
@@ -312,6 +327,7 @@ fn reveal_skins(
 
 /// Pick + cross-fade each animal's clip from its brain state and real ground speed.
 fn drive_skins(
+    mut commands: Commands,
     time: Res<Time>,
     cam: Query<&GlobalTransform, With<Camera3d>>,
     mut roots: Query<(Entity, &mut AnimalSkin, &Animal, &QuadDrive, &GlobalTransform, Has<crate::dying::Dying>)>,
@@ -332,7 +348,16 @@ fn drive_skins(
         let v = Vec2::new(p.x - sk.last.x, p.z - sk.last.z).length() / dt;
         sk.last = p;
         sk.speed += (v.min(14.0) - sk.speed) * (dt * 6.0).min(1.0);
-        let far = cam_p.is_some_and(|c| c.distance_squared(p) > ANIM_CULL2);
+        let d2 = cam_p.map_or(0.0, |c| c.distance_squared(p));
+        let far = d2 > if sk.parked { ANIM_WAKE2 } else { ANIM_CULL2 };
+        if far != sk.parked {
+            sk.parked = far;
+            if far {
+                commands.entity(pe).try_remove::<AnimationGraphHandle>();
+            } else if let Some(m) = models.ready[sk.kind].as_ref() {
+                commands.entity(pe).try_insert(AnimationGraphHandle(m.graph.clone()));
+            }
+        }
         let native = |clip: &str| kind.gaits.iter().find(|g| g.0 == clip).map(|g| g.1 * sk.k);
         let stepping = native(sk.clip).is_some();
         let moving = sk.speed > if stepping { 0.12 } else { 0.3 };
