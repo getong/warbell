@@ -20,3 +20,39 @@ Subtle dialogue underscore only; action/battle cues are a separate pass.
 | 11 | Bar It | Rozdz. 11c Śmierć Wata (pod slow-mo, kamera Maud) | medieval elegy underscore, low strings swell then fall away to a single held viola note, muffled war drums fading out, 45 bpm, grief without triumph, cinematic, instrumental, no vocals |
 | 12 | The Reeve | Akt IV gameplay Maud (zbieranie sojuszników) | sparse medieval underscore, bowed nyckelharpa and quiet frame drum, resolute and tired, no ornament, 62 bpm, grey morning, instrumental, no vocals |
 Tips: append `intro is just the drone` to keep the first 30 s melody-free; 2–3 min renders, cut with crossfade (cutscenes ≤ 45 s).
+
+## Akt I — rozpiska muzyki per scena (2026-10-14, nadpisuje tabelę wyżej dla Aktu I)
+
+Zasada filmowa: muzyka wchodzi **po** pointach i przechodzi pod dialog, a nie stoi na żartach. Żart ląduje w ciszy.
+**Muzyka nigdy nie akcentuje dzwonu** (§1.5 scenariusza): żadnego bell-drona, żadnego „hitu” na ujęciu wieży, a bębny
+po dzwonie są diegetyczne (z lasu), nie w partyturze. Dlatego #3 „Dusk Bell” nie idzie do Rozdz. 1. Zamiast niego jest A1-4.
+
+| Scena | Muzyka | Poziom / wejście |
+|---|---|---|
+| P.0 Kajuta (Harrow) | **A1-1 Below Deck** | wchodzi na „Do you know what they said about me in the city?”, ~-28 dB pod głosem; w części grywalnej (zadania giermka) brak muzyki, tylko statek i deszcz; wraca 4 s na „Sleep, Wat…” → czerń |
+| P.1 Piorun | **cisza** | zero partytury: deszcz, kadłub, dzwon okrętowy jako jeden z pięciu dźwięków; każdy błysk ma twarde cięcie dźwięku |
+| Plaża (walka) | muzyka bojowa z gry | — |
+| P.2 Rozkazy Maud | **A1-2 Wreck Cove** | wchodzi po „Nobody argues with a man who lived through that.” pod czytanie listu, ~-26 dB; **urywa się** przed „A bell? We haven't got a roof.” (żart w ciszy), wraca na drugą kopertę |
+| Marsz King's Road (T1) | **cisza** | wiatr, kroki, ptaki; żarty Maud/Pip na sucho |
+| P.3 Fort | **cisza** do „…a wall and a half.” | po linii Maud wchodzi **A1-3 The Toll (karta aktu)** pod tytuł „ACT I — THE TOLL” |
+| Rozdz. 1 Pierwszy dzwon | **A1-4 Walls at Dusk** | partytura idzie za **wsią** (ludzie zajmują mury), ~-24 dB; dzwon jest tylko diegetyczny; muzyka wycisza się pod koniec, zanim wejdą bębny z lasu (bębny bez muzyki) |
+| Rozdz. 1 ognisko o świcie | **cisza** | ogień; pierwsza linia Wata w grze w ciszy |
+| Rozdz. 2 farma (cutscenka) | `farm_dawn_music.ogg` | jest |
+| Rozdz. 2 ognisko z Farmerem | **cisza** | |
+| Rozdz. 3 izba z gorączką Pipa | **cisza** | deszcz o okiennice |
+| Rozdz. 3 cicha noc | **cisza** | zwykły nocny ambient, świerszcze; **nie** robić z niej „niesamowitej” ciszy (to ziarno) |
+| Rozdz. 3 poranek „Not a one!” | **A1-5 Three Stalls and a Goat** | wchodzi po „You broke their ritual, Ser Godric.”, ~-24 dB, gra ciągle także przez spojrzenie Maud na wieżę, gaśnie na „Dig.” |
+| Rozdz. 4 klatka / Hamid | **A1-5b (wariant z oudem)** | po uwolnieniu, ~-26 dB pod „Three weeks…” |
+| Rozdz. 4 Hamid o zmierzchu | **bez partytury** | jego nucenie (`a1_hamid_09`) jest muzyką |
+| Karta „ACT II — THE WILDS” | **A1-3** (ten sam sting) | |
+
+Lyrics we wszystkich: `[instrumental]`. Exclude styles: `vocals, choir, epic, trailer, bells, drums` (A1-5: bez `drums`).
+
+| # | Nazwa | Suno style |
+|---|---|---|
+| A1-1 | Below Deck | intimate medieval underscore, solo low cello, long held notes with space between, faint creaking wood texture, distant rain, no percussion, 50 bpm, weary and private, minimal, film score, instrumental |
+| A1-2 | Wreck Cove | sparse medieval ambient underscore, solo bowed nyckelharpa over low cello drone, soft sea wash, no percussion, 60 bpm, grey dawn, numb rather than sad, lots of silence between phrases, cinematic, instrumental |
+| A1-3 | The Toll (act card) | short medieval title sting, one low string chord swelling and fading, a single held viola note above, no melody, no percussion, dark and quiet, 15 seconds, cinematic, instrumental |
+| A1-4 | Walls at Dusk | quiet communal medieval underscore, low strings and hurdy-gurdy drone, slow rising line, people getting ready at dusk, steady not heroic, no percussion, 62 bpm, fades to nothing at the end, instrumental |
+| A1-5 | Three Stalls and a Goat | gentle rustic medieval folk, soft hurdy-gurdy, wooden flute, light frame drum, relieved tired morning, quietly hopeful, 80 bpm, understated, not cheerful, instrumental |
+| A1-5b | Three Stalls (oud) | gentle rustic medieval folk, faint oud and soft desert hand drum over hurdy-gurdy drone, tired and warm, 78 bpm, understated, instrumental |
