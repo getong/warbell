@@ -28,6 +28,7 @@ mod banner;
 mod biped;
 mod npc_skin; // realistic skinned townsfolk (MPFB cast + UAL clips) over the studio rig
 mod lipsync; // talking mouths: a speaker's jaw_open morph follows the loudness of their line
+mod animal_skin; // realistic skinned red deer (CC0 CDmir) over the studio quad rig for the Deer / Elk herds
 mod biome;
 mod bridges;
 mod biome_desert;
@@ -344,7 +345,7 @@ fn main() {
             creature::CreaturePlugin, // registers the shared creature ExtendedMaterial (hero/orks/wildlife)
             // shared studio rig+animator for non-hero bipeds (orcs/peasants) + the realistic skinned
             // townsfolk drawn over it
-            (biped::BipedPlugin, npc_skin::NpcSkinPlugin, lipsync::LipSyncPlugin),
+            (biped::BipedPlugin, npc_skin::NpcSkinPlugin, lipsync::LipSyncPlugin, animal_skin::AnimalSkinPlugin),
             quadruped::QuadrupedPlugin, // shared studio quadruped rig+animator (wildlife mammals)
             chest::ChestPlugin, // scattered loot chests: Wood/Relic tiers + juicy opens + Gnashfang mimics
             boss::BossPlugin, // Biome Wardens: per-biome world bosses + boon rewards + reward dialog

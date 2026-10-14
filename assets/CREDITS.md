@@ -8,6 +8,8 @@ bundled with a download is executed.
 |---|---|---|---|---|---|
 | Raven (raven_0.blend) | carrion vulture (`oddities.rs`, recoloured to a griffon), crows over the Hold (`poi.rs`) | tehbucket (OpenGameArt) | CC0 1.0 | https://opengameart.org/content/raven-0 | `tools/blender_forest/creatures_dl.py` |
 | Rabbit (rabbit.blend) | wild rabbit (`critters.rs`) | CDmir (OpenGameArt) | CC0 1.0 | https://opengameart.org/content/rabbit-0 | `tools/blender_forest/creatures_dl.py` |
+| Old Deer Male (deer1.blend) | red deer stag + elk (`assets/animals/deer_stag.glb`, `animal_skin.rs`; walk authored on export) | CDmir (OpenGameArt) | CC0 1.0 | https://opengameart.org/content/old-deer-male | `tools/animals/export_deer.py` |
+| Deer Female (doe.blend) | red deer hind (`assets/animals/deer_doe.glb`, `animal_skin.rs`) | CDmir (OpenGameArt) | CC0 1.0 | https://opengameart.org/content/deer-female | `tools/animals/export_deer.py` |
 | Esox - Animated Fish | pond / river fish (`fish.rs`) | CDmir (OpenGameArt) | CC0 1.0 | https://opengameart.org/content/esox-animated-fish | `tools/blender_forest/creatures_dl.py` |
 | Shrub 02 (shrub_02) | the bushes (`bush_a` / `bush_b`: meadow bushes, forest class-2 slot) | Poly Haven | CC0 1.0 | https://polyhaven.com/a/shrub_02 | `tools/blender_forest/scanned_props.py` |
 | Wine Barrel 01 (wine_barrel_01) | market barrels, meadow crate pile (look baked onto a low-poly lathe) | Poly Haven | CC0 1.0 | https://polyhaven.com/a/wine_barrel_01 | `tools/blender_forest/scanned_props.py` |

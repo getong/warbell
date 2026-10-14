@@ -149,6 +149,21 @@ pub struct Animal {
     pub(crate) rng: u32,
 }
 
+impl Animal {
+    /// Standing grazing (not just paused mid-wander) — a realistic skin plays its eating clip.
+    pub(crate) fn grazing(&self) -> bool {
+        matches!(self.mode, Mode::Graze) && !self.moving
+    }
+    /// Bolting from a threat or charging one (the gallop, whatever the current speed).
+    pub(crate) fn hurrying(&self) -> bool {
+        matches!(self.mode, Mode::Flee | Mode::Hunt)
+    }
+    /// A skinned body's own gait clip carries the body's rise and fall: drop the root bob.
+    pub(crate) fn clear_bob(&mut self) {
+        self.bob = 0.0;
+    }
+}
+
 /// Inserted by combat on a surviving animal it struck — a predator latches onto its attacker
 /// (struck-enrage). `animal_brain` reads it once, then removes it.
 #[derive(Component)]
