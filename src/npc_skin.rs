@@ -47,9 +47,23 @@ pub const MAUD: u8 = 14;
 pub const WORLD_PER_M: f32 = 0.834;
 /// Alpha-test cutoff of the hair / brow / lash cards (the packer keeps mip coverage for this).
 pub const CARD_CUTOFF: f32 = 0.5;
-/// Ground speed (world u/s) the walk / jog clips cover at 1x playback.
-const WALK_NATIVE: f32 = 1.2;
-const JOG_NATIVE: f32 = 2.9;
+/// Ground speed (real m/s) each look's `Walk_Loop` covers at 1x: its stance foot's backward slide,
+/// measured by forward kinematics over the exported GLB (the clip is baked onto every rig, so a
+/// child's short legs cover far less ground per cycle). Cast order, like [`LOOKS`].
+const WALK_M: [f32; 15] = [1.34, 1.43, 1.31, 1.52, 1.41, 1.32, 1.19, 1.17, 1.28, 1.11, 0.90, 0.90, 1.35, 1.35, 1.14];
+/// The same for the Mixamo `Walk_Loop` (a shorter, more natural stride) when the look's private clip
+/// set is installed (see [`NpcCast::private`]).
+const WALK_MX: [f32; 15] = [1.03, 1.10, 1.01, 1.16, 1.09, 1.03, 0.88, 0.87, 0.95, 0.86, 0.67, 0.67, 1.02, 1.02, 0.87];
+/// The other locomotion clips' ground speed as a fraction of the same rig's walk (measured on the
+/// adult villager: carry 0.83, push 0.33, jog ~6.5 m/s against a 1.32 m/s walk — the UAL jog is a
+/// long-flight run). Carry / push stay UAL clips under the Mixamo set, so they are always paced off
+/// the UAL walk (`Skinned::ual`).
+const CARRY_K: f32 = 0.63;
+const PUSH_K: f32 = 0.25;
+const JOG_K: f32 = 4.9;
+/// Mixamo set, against its own walk (every look: slow run 2.8–2.9×, sad walk 0.75×).
+const JOG_KX: f32 = 2.85;
+const SAD_KX: f32 = 0.75;
 /// Past this camera distance a skin's player is paused (fog + distance hide the joints anyway).
 const ANIM_CULL2: f32 = 90.0 * 90.0;
 const FADE: Duration = Duration::from_millis(280);
@@ -58,11 +72,14 @@ pub struct NpcSkinPlugin;
 
 impl Plugin for NpcSkinPlugin {
     fn build(&self, app: &mut App) {
-        if std::env::var("FOREST_NOSKIN").is_ok() {
+        if !enabled() {
             return;
         }
         app.add_systems(Startup, load_cast)
             .add_systems(Update, (finish_cast, attach_skins, hide_studio_rigs, copy_tools, drive_skins, carry_loads).chain());
+        if std::env::var_os("FOREST_GAITCHECK").is_some() {
+            app.add_systems(PostUpdate, gait_check.after(bevy::transform::TransformSystems::Propagate));
+        }
     }
 }
 
@@ -86,6 +103,15 @@ pub struct Skinned {
     clip: &'static str,
     last: Vec3,
     speed: f32,
+    /// World u/s this person's `Walk_Loop` covers at 1x (look's stride × their height): the
+    /// locomotion clips play at ground speed / this, so the planted foot stays planted.
+    stride: f32,
+    /// The same for the UAL `Walk_Loop` (carry / push are UAL clips in either set).
+    ual: f32,
+    /// The look plays the private Mixamo clip set.
+    mx: bool,
+    /// The `foot_l` / `foot_r` joints (read by the `FOREST_GAITCHECK` skate meter).
+    feet: [Option<Entity>; 2],
     pub hand_r: Option<Entity>,
     pub hand_l: Option<Entity>,
     /// The skin's pelvis joint (read by the `FOREST_LIFECHECK` seat check).
@@ -103,6 +129,26 @@ impl Skinned {
     }
 }
 
+impl Skinned {
+    /// World ground speed a locomotion clip covers at 1x on this skin (`None`: not a locomotion clip).
+    fn loco_native(&self, clip: &str) -> Option<f32> {
+        match clip {
+            "Walk_Loop" => Some(self.stride),
+            "Walk_Carry_Loop" => Some(self.ual * CARRY_K),
+            "Push_Loop" => Some(self.ual * PUSH_K),
+            "Jog_Fwd_Loop" if self.mx => Some(self.stride * JOG_KX),
+            "Jog_Fwd_Loop" => Some(self.ual * JOG_K),
+            "Sad_Walk_Loop" if self.mx => Some(self.stride * SAD_KX),
+            _ => None,
+        }
+    }
+}
+
+/// Whether the realistic skins are on (`FOREST_NOSKIN` keeps the studio bodies everywhere).
+pub fn enabled() -> bool {
+    std::env::var_os("FOREST_NOSKIN").is_none()
+}
+
 /// Points the glTF instance back at its gameplay root (read by the ready observer).
 #[derive(Component)]
 struct SkinOf(Entity);
@@ -112,11 +158,19 @@ struct LookAssets {
     graph: Handle<AnimationGraph>,
     nodes: HashMap<String, AnimationNodeIndex>,
     mats: HashMap<&'static str, Handle<StandardMaterial>>,
+    /// The private Mixamo clips replaced the committed UAL clips of the same names.
+    mixamo: bool,
 }
 
 #[derive(Resource)]
 struct NpcCast {
     gltf: Vec<Handle<Gltf>>,
+    /// Per look: `assets/npc_private/npc_<look>_anims.glb`, the Mixamo clip set baked onto that look's
+    /// rig (`tools/npc_mpfb/bake_mixamo.py` + `export_anims.py`). Mixamo's licence allows the clips
+    /// inside the game but not as files in the public repo, so the folder is gitignored and filled by
+    /// the build machine; a checkout without it simply keeps the UAL clips. `FOREST_UALANIM=1` ignores
+    /// it (A/B the two sets).
+    private: Vec<Option<Handle<Gltf>>>,
     mats: Vec<HashMap<&'static str, Handle<StandardMaterial>>>,
     /// Per look: dyed-cloth variants, then hair-shade variants (index 0 = the look's own).
     vars: Vec<(Vec<Handle<StandardMaterial>>, Vec<Handle<StandardMaterial>>)>,
@@ -167,10 +221,14 @@ fn card_key(k: &str) -> &'static str {
 
 fn load_cast(mut commands: Commands, server: Res<AssetServer>, mut materials: ResMut<Assets<StandardMaterial>>) {
     let mut gltf = Vec::new();
+    let mut private = Vec::new();
     let mut mats = Vec::new();
     let mut vars = Vec::new();
+    let ual_only = std::env::var_os("FOREST_UALANIM").is_some();
     for name in LOOKS {
         gltf.push(server.load(format!("npc/npc_{name}.glb")));
+        let anims = format!("npc_private/npc_{name}_anims.glb");
+        private.push((!ual_only && std::path::Path::new("assets").join(&anims).exists()).then(|| server.load(anims)));
         let tex = |m: &str| -> Handle<Image> { server.load(format!("npc/npc_{name}_{m}.dds")) };
         // Maud's layered outfit (blouse under apron, pushed off the body) bakes a blotchy AO into
         // the cloth islands that renders as black patches: her cloth skips the occlusion read.
@@ -215,11 +273,17 @@ fn load_cast(mut commands: Commands, server: Res<AssetServer>, mut materials: Re
         vars.push((cloth, hair));
         mats.push(m);
     }
-    commands.insert_resource(NpcCast { looks: (0..LOOKS.len()).map(|_| None).collect(), gltf, mats, vars });
+    commands.insert_resource(NpcCast { looks: (0..LOOKS.len()).map(|_| None).collect(), gltf, private, mats, vars });
 }
 
-/// Build each look's animation graph once its GLB is in (clip name -> graph node).
-fn finish_cast(mut cast: ResMut<NpcCast>, gltfs: Res<Assets<Gltf>>, mut graphs: ResMut<Assets<AnimationGraph>>) {
+/// Build each look's animation graph once its GLB (and private clip set, if any) is in: clip name ->
+/// graph node, a private clip replacing the committed one of the same name.
+fn finish_cast(
+    mut cast: ResMut<NpcCast>,
+    server: Res<AssetServer>,
+    gltfs: Res<Assets<Gltf>>,
+    mut graphs: ResMut<Assets<AnimationGraph>>,
+) {
     if cast.looks.iter().all(Option::is_some) {
         return;
     }
@@ -229,12 +293,26 @@ fn finish_cast(mut cast: ResMut<NpcCast>, gltfs: Res<Assets<Gltf>>, mut graphs: 
         }
         let Some(g) = gltfs.get(&cast.gltf[i]) else { continue };
         let Some(scene) = g.scenes.first().cloned() else { continue };
-        let mut names: Vec<_> = g.named_animations.iter().map(|(n, h)| (n.to_string(), h.clone())).collect();
+        let mut clips: HashMap<String, Handle<AnimationClip>> =
+            g.named_animations.iter().map(|(n, h)| (n.to_string(), h.clone())).collect();
+        let mut mixamo = false;
+        if let Some(p) = &cast.private[i] {
+            match gltfs.get(p) {
+                Some(pg) => {
+                    clips.extend(pg.named_animations.iter().map(|(n, h)| (n.to_string(), h.clone())));
+                    mixamo = true;
+                }
+                // a broken private file falls back to the committed clips instead of stalling the cast
+                None if server.load_state(p).is_failed() => {}
+                None => continue,
+            }
+        }
+        let mut names: Vec<_> = clips.into_iter().collect();
         names.sort_by(|a, b| a.0.cmp(&b.0));
         let (graph, idx) = AnimationGraph::from_clips(names.iter().map(|(_, h)| h.clone()));
         let nodes = names.into_iter().map(|(n, _)| n).zip(idx).collect();
         let mats = cast.mats[i].clone();
-        cast.looks[i] = Some(LookAssets { scene, graph: graphs.add(graph), nodes, mats });
+        cast.looks[i] = Some(LookAssets { scene, graph: graphs.add(graph), nodes, mats, mixamo });
     }
 }
 
@@ -260,7 +338,15 @@ fn attach_skins(
         let tall = 0.95 + 0.1 * ((h >> 4) & 255) as f32 / 255.0;
         let broad = 0.94 + 0.12 * ((h >> 12) & 255) as f32 / 255.0;
         let child = commands
-            .spawn((WorldAssetRoot(look.scene.clone()), Transform::from_scale(Vec3::new(s * broad, s * tall, s * broad)), SkinOf(e)))
+            // Hidden until `skin_ready` has swapped in the game materials: re-materialing a mesh the
+            // renderer has already binned (an opaque placeholder becoming an alpha-masked hair card)
+            // trips Bevy's "already binned" panic.
+            .spawn((
+                WorldAssetRoot(look.scene.clone()),
+                Transform::from_scale(Vec3::new(s * broad, s * tall, s * broad)),
+                Visibility::Hidden,
+                SkinOf(e),
+            ))
             .observe(skin_ready)
             .id();
         commands.entity(e).add_child(child).try_insert(Skinned {
@@ -271,6 +357,10 @@ fn attach_skins(
             clip: "",
             last: tf.translation,
             speed: 0.0,
+            feet: [None; 2],
+            stride: if look.mixamo { WALK_MX } else { WALK_M }[req.0 as usize] * WORLD_PER_M * tall,
+            ual: WALK_M[req.0 as usize] * WORLD_PER_M * tall,
+            mx: look.mixamo,
             hand_r: None,
             hand_l: None,
             pelvis: None,
@@ -323,10 +413,13 @@ fn skin_ready(
                 "hand_r" => sk.hand_r = Some(d),
                 "hand_l" => sk.hand_l = Some(d),
                 "pelvis" => sk.pelvis = Some(d),
+                "foot_l" => sk.feet[0] = Some(d),
+                "foot_r" => sk.feet[1] = Some(d),
                 _ => {}
             }
         }
     }
+    commands.entity(inst).insert(Visibility::Inherited);
     sk.clip = "";
     sk.tools_done = false;
 }
@@ -492,11 +585,30 @@ fn drive_skins(
         sk.last = p;
         sk.speed += (v.min(8.0) - sk.speed) * (dt * 8.0).min(1.0);
         let far = cam_p.is_some_and(|c| c.distance_squared(p) > ANIM_CULL2);
-        let moving = sk.speed > 0.3 || d.moving_amt > 0.6;
+        // Legs follow the body's REAL ground speed (not the AI's intent), with hysteresis so a
+        // shuffle to a stop doesn't flicker walk/idle: no stepping on the spot, no gliding off.
+        let stepping = sk.loco_native(sk.clip).is_some();
+        let moving = sk.speed > if stepping { 0.12 } else { 0.3 };
+        let stride = sk.stride;
+        let rate_of = |clip: &str| sk.loco_native(clip).map_or(1.0, |n| (sk.speed / n).clamp(0.4, 1.8));
+        let jog_native = sk.loco_native("Jog_Fwd_Loop").unwrap_or(stride * JOG_K);
+        let elder = sk.mx && matches!(sk.look, ELDER_M | ELDER_F);
+        // the Mixamo set's idles take turns per person (~20 s each): weight shifts, a glance round,
+        // a bored sway — nobody stands frozen in one loop all day
+        let idle = if !sk.mx {
+            "Idle_Loop"
+        } else if elder {
+            "Old_Idle_Loop"
+        } else {
+            let turn = (time.elapsed_secs() / 21.0) as u32 + person_hash(pe) % 7;
+            ["Idle_Loop", "Idle_Loop", "Idle_LookAround_Loop", "Idle_Loop", "Idle_Bored_Loop"][(turn % 5) as usize]
+        };
         let (clip, once, rate): (&'static str, bool, f32) = if dying {
             ("Death01", true, 1.0)
         } else if let Some(h) = hint.filter(|h| !h.0.is_empty() && !d.attacking) {
-            (h.0, h.0.ends_with("_Enter") || h.0.ends_with("_Exit"), 1.0)
+            // a scripted walk / haul clip is paced to the actor's real speed like any other
+            let rate = if moving { rate_of(h.0) } else { 1.0 };
+            (h.0, h.0.ends_with("_Enter") || h.0.ends_with("_Exit"), rate)
         } else if d.sitting {
             ("Sitting_Idle_Loop", false, 1.0)
         } else if d.attacking {
@@ -504,17 +616,22 @@ fn drive_skins(
         } else if d.bow {
             ("Spell_Simple_Shoot", false, 1.0)
         } else if d.carrying && moving {
-            (if d.pulling { "Push_Loop" } else { "Walk_Carry_Loop" }, false, (sk.speed / WALK_NATIVE).clamp(0.6, 1.5))
-        } else if moving && (sk.speed > 2.3 || d.run_amt > 0.5) {
-            ("Jog_Fwd_Loop", false, (sk.speed / JOG_NATIVE).clamp(0.7, 1.5))
+            let c = if d.pulling { "Push_Loop" } else { "Walk_Carry_Loop" };
+            (c, false, rate_of(c))
+        } else if moving && (sk.speed > stride * 1.75 || (d.run_amt > 0.5 && sk.speed > stride * 1.3)) {
+            // a run is never played much below ~half its pace (the UAL jog is a long-flight run)
+            ("Jog_Fwd_Loop", false, (sk.speed / jog_native).clamp(0.5, 1.5))
+        } else if moving && elder && sk.speed < stride * if sk.clip == "Sad_Walk_Loop" { 1.05 } else { 0.95 } {
+            // the old folk's stooped, shorter-stepped walk while they amble
+            ("Sad_Walk_Loop", false, rate_of("Sad_Walk_Loop"))
         } else if moving {
-            ("Walk_Loop", false, (sk.speed.max(0.6) / WALK_NATIVE).clamp(0.55, 1.6))
+            ("Walk_Loop", false, rate_of("Walk_Loop"))
         } else if d.work == 2 {
             ("TreeChopping_Loop", false, 1.0)
         } else if d.work == 1 {
             ("Farm_Harvest", false, 1.0)
         } else {
-            ("Idle_Loop", false, 1.0)
+            (idle, false, 1.0)
         };
         let Some(look) = cast.looks[sk.look as usize].as_ref() else { continue };
         // A scripted / life-act clip (`SkinClip`) puts its own prop in the hands (a hammer, a plank
@@ -556,5 +673,69 @@ fn drive_skins(
         for (_, a) in player.playing_animations_mut() {
             a.set_speed(if far { 0.0 } else { rate });
         }
+    }
+}
+
+/// `FOREST_GAITCHECK=1` (+`_SECS`, default 40): the foot-skate meter. For every skin playing a
+/// locomotion clip near the camera, the planted (lower) foot's world ground speed over the body's
+/// own — 0 = the foot is glued to the ground, 1 = it glides along with the body. Logs the median
+/// per clip, then exits.
+fn gait_check(
+    time: Res<Time>,
+    cam: Query<&GlobalTransform, With<Camera3d>>,
+    q: Query<(Entity, &Skinned)>,
+    joints: Query<&GlobalTransform>,
+    mut last: Local<std::collections::HashMap<Entity, [Vec3; 2]>>,
+    mut acc: Local<std::collections::HashMap<&'static str, Vec<f32>>>,
+    mut t0: Local<Option<f32>>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    let dt = time.delta_secs();
+    let now = time.elapsed_secs();
+    let secs = std::env::var("FOREST_GAITCHECK_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(40.0);
+    let Some(c) = cam.iter().next().map(|g| g.translation()) else { return };
+    if dt <= 0.0 {
+        return;
+    }
+    // the clock starts at the first frame with skins loaded and walking (boot / loading excluded)
+    if t0.is_none() && q.iter().any(|(_, sk)| sk.feet[0].is_some() && sk.speed > 0.3) {
+        *t0 = Some(now + 5.0);
+    }
+    let Some(start) = *t0 else {
+        if now > 240.0 {
+            info!("GAITCHECK: no walking skin in 240 s");
+            exit.write(AppExit::Success);
+        }
+        return;
+    };
+    if now < start {
+        return;
+    }
+    for (e, sk) in &q {
+        let ([Some(a), Some(b)], Some(_)) = (sk.feet, sk.loco_native(sk.clip)) else {
+            last.remove(&e);
+            continue;
+        };
+        let (Ok(fa), Ok(fb)) = (joints.get(a), joints.get(b)) else { continue };
+        let p = [fa.translation(), fb.translation()];
+        if p[0].distance_squared(c) > ANIM_CULL2 * 0.8 {
+            last.remove(&e);
+            continue;
+        }
+        if let Some(prev) = last.insert(e, p) {
+            if sk.speed > 0.3 {
+                let lo = if p[0].y < p[1].y { 0 } else { 1 };
+                let v = Vec2::new(p[lo].x - prev[lo].x, p[lo].z - prev[lo].z).length() / dt;
+                acc.entry(sk.clip).or_default().push(v / sk.speed);
+            }
+        }
+    }
+    if now > start + secs {
+        for (clip, v) in acc.iter_mut() {
+            v.sort_by(|a, b| a.total_cmp(b));
+            let q = |f: f32| v[((v.len() - 1) as f32 * f) as usize];
+            info!("GAITCHECK {clip}: n {} planted-foot slip median {:.2} (p25 {:.2}, p75 {:.2})", v.len(), q(0.5), q(0.25), q(0.75));
+        }
+        exit.write(AppExit::Success);
     }
 }

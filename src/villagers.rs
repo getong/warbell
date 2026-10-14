@@ -2928,6 +2928,9 @@ fn spawn(
     } else {
         (8.0, 0.045)
     };
+    // A realistic skin's own walk / run clip carries the body's rise and fall: a root bob on top
+    // lifts the planted foot off the ground every step (the "floating" stride).
+    let bob = if crate::npc_skin::enabled() { 0.0 } else { bob };
 
     let vil = Villager {
         home,

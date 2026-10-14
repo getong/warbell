@@ -18,7 +18,7 @@ bundled with a download is executed.
 
 Photographic textures from Poly Haven (CC0) are listed in `assets/forest_pbr/ATTRIBUTION.txt`.
 
-## Realistic NPC pipeline (experimental, `tools/npc_mpfb/`, not shipped in the game yet)
+## Realistic townsfolk (`tools/npc_mpfb/` → `assets/npc/`, `src/npc_skin.rs`)
 
 | Asset | Author | Licence | Source |
 |---|---|---|---|
@@ -30,6 +30,7 @@ Photographic textures from Poly Haven (CC0) are listed in `assets/forest_pbr/ATT
 | Garments: elvs_male_boho_top1, punkduck_lace_up_blouse, elvs_ruffle_sleeve_peasant_blouse_1, mindfront_male_trousers_2, maciekg_leather_boots, punkduck_medieval_boots, punkduck_female_half-boots, punkduck_riding_boots, maciekg_wizard_robe, grinsegold_full_beard | elvs, punkduck, mindfront, maciekg, grinsegold | CC-BY (credit required) | MakeHuman asset packs shirts02 / shirts03 / pants02 / shoes03 / suits03 / bodyparts06 |
 | Maud (campaign cast): hair elvs_braid_bun, garment elvs_ladies_apron | Elvaerwyn | CC-BY (credit required) | MakeHuman community asset library (installed via MPFB) |
 | Fabric / leather textures (linen, wool, hessian, leather) | Poly Haven | CC0 | https://polyhaven.com |
+| Townsfolk mocap clips (walk, run, idles, sitting, work, death — list in `tools/npc_mpfb/mixamo_private.ps1`) | Adobe Mixamo | Mixamo terms: royalty-free in games, **no redistribution as files** — kept out of this repo (gitignored `assets/npc_private/`, rebuilt per machine) | https://www.mixamo.com |
 
 ## Cutscene audio
 

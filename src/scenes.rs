@@ -463,6 +463,9 @@ fn drive_scene_orks(
                 s.origin
             }
         };
+        // `OrkMotion::track` paces the legs from `o.pos`: left at the spawn mark it read a
+        // standstill, so a charging horde shuffled its feet while gliding across the field.
+        o.pos = pos;
         let gy = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(tf.translation.y);
         tf.translation = Vec3::new(pos.x, gy, pos.y);
         tf.rotation = Quat::from_rotation_y(o.facing);
@@ -659,7 +662,7 @@ const WAT_FROM: Vec2 = Vec2::new(FARM.x + 11.5, FARM.y + 1.2);
 const WAT_TO: Vec2 = Vec2::new(FARM.x + 2.0, FARM.y + 0.95);
 /// The plank-hauler: along a lane behind the fence, then in to the fence beside the gap.
 const HAUL_Z: f32 = FARM.y + 3.3;
-const HAUL_SPEED: f32 = 1.2; // = npc_skin::WALK_NATIVE, so the carry-walk's feet don't skate
+const HAUL_SPEED: f32 = 1.2; // the carry-walk clip is paced to it (npc_skin::Skinned::loco_native), feet planted
 const HAUL_X0: f32 = FARM.x + 8.0;
 const HAUL_TURN_X: f32 = FARM.x - 2.6;
 const HAUL_SPOT: Vec2 = Vec2::new(HAUL_TURN_X, FARM.y + 1.1);

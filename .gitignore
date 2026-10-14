@@ -50,3 +50,6 @@ trace-*.json
 
 __pycache__/
 *.pyc
+
+# Mixamo clips baked per look (tools/npc_mpfb/export_anims.py): shipped in builds, never published
+assets/npc_private/

@@ -2,9 +2,8 @@
 
 Blender 4.5 + the MPFB 2 extension build photoreal-ish medieval townsfolk, and every Quaternius
 Universal Animation Library clip (UAL1 + UAL2, CC0) is retargeted onto their shared `game_engine` rig.
-Nothing here is wired into the game yet (the game skins people from its own 14-joint rig, see
-`tools/blender_forest/people.py`); this is the content + proof-of-quality pipeline for replacing the
-procedural townsfolk.
+The exported looks (`assets/npc/npc_<look>.glb`) are the game's townsfolk (`src/npc_skin.rs`), replacing
+the procedural 14-joint bodies (`FOREST_NOSKIN=1` brings those back).
 
 Downloads (each in its own folder under `C:/Users/skibi/Documents/Codex/downloads/`, never executed):
 `oga_bartender` (CC0 hand-made woman), `ual1` / `ual2` (CC0 clips), `mpfb` (extension zip),
@@ -18,6 +17,7 @@ Downloads (each in its own folder under `C:/Users/skibi/Documents/Codex/download
 | `bake_anims.py` | UAL clips -> Blender Actions on the MPFB rig (bone-direction swing retarget; any cast member can play them) |
 | `town_film.py` | town set from the game's own kits (`town_kit.glb`, `market.glb`, ...) + Poly Haven props + animated cast; renders frames |
 | `build_cast_blend.py` / `export_game.py` | `blender -b --python build_cast_blend.py -- <out.blend> [name,...]` builds (part of) the cast; `blender -b <blend> --python export_game.py -- <npc> <out_dir>` bakes + exports one look (per-look `export` options in the cast spec: layer pass / hidden-skin cull / weight inheritance, see its docstring) |
+| `bake_mixamo.py` / `export_anims.py` / `mixamo_private.ps1` | Mixamo mocap clips (walk / run / idles / sitting / work…) retargeted onto the rig and exported as one animation-only GLB per look into the **gitignored** `assets/npc_private/` (Mixamo allows the clips in the game, not as public files). The game prefers them by clip name over the UAL clips; `FOREST_UALANIM=1` forces UAL. See the `.ps1` header for the clip list + Mixamo export settings |
 | `dds2png.py` | decodes the game's BC7 DDS textures to PNG so Blender can bind them |
 | `retarget_render.py` | single-character version (Bartender) used for the first showcase |
 

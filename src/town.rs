@@ -271,7 +271,7 @@ impl Plugin for TownPlugin {
             // `Modal::None` run-condition would just stop running and strand them over those screens).
             .add_systems(Update, (sync_build_strip, sync_build_rings, stage_build_for_shot))
             // The timber pad marks where the NEXT house will rise (visible even outside build mode).
-            .add_systems(Update, sync_house_site_pad)
+            .add_systems(Update, (sync_house_site_pad, sync_house_site_blockers))
             // Trailer Director (F1 → "Build stronghold"): live, real-time construction timelapse.
             .add_sim_systems(director_build_timelapse)
             .add_sim_systems(
@@ -1648,6 +1648,37 @@ fn sync_house_site_pad(
     } else if let (Some(p), Some(mats)) = (site, mats) {
         spawn_kit_or_parts(&mut commands, &mut meshes, &mats.0, HouseSitePad, "town_house_site", crate::town_meshes::house_site_parts, p, Vec3::ONE);
     }
+}
+
+/// The construction-site pad's solids, axis-aligned like the pad (centre offset from the site, half
+/// extents), from `town_finish.py::town_house_site`: the frame on its footing + the lumber stack and
+/// sawhorse in front (+Z) as one box, and the ladder leaning on the +X side. Centres are off the
+/// site point so dropping them never takes the finished house's own box (`castle::register_house_blocker`).
+const HOUSE_SITE_SOLIDS: [(Vec2, Vec2); 2] = [
+    (Vec2::new(0.0, 0.35), Vec2::new(1.4, 1.5)),
+    (Vec2::new(1.5, -0.3), Vec2::new(0.32, 0.28)),
+];
+
+/// Keep the [`HouseSitePad`]'s solids registered where it stands, so townsfolk path round the frame,
+/// lumber and sawhorse instead of walking through them; they move with the pad when a house is built
+/// and re-register after a world rebuild resets the blocker store.
+fn sync_house_site_blockers(town: Res<TownRes>, mut at: Local<Option<Vec2>>) {
+    let site = crate::castle::next_house_site(town.0.houses);
+    let probe = |p: Vec2| crate::blockers::is_blocked(p.x - 0.6, p.y + 1.45);
+    if *at == site && site.is_none_or(probe) {
+        return;
+    }
+    if let Some(old) = at.take() {
+        for (c, _) in HOUSE_SITE_SOLIDS {
+            crate::blockers::remove_box_near(old.x + c.x, old.y + c.y, 0.02);
+        }
+    }
+    if let Some(p) = site {
+        for (c, h) in HOUSE_SITE_SOLIDS {
+            crate::blockers::add_box(p.x + c.x, p.y + c.y, h.x, h.y);
+        }
+    }
+    *at = site;
 }
 
 fn spawn_building(
