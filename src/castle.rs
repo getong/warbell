@@ -56,8 +56,9 @@ const IRON: u32 = 0x6a6e72; // arms & armour (racks, blades, helms)
 const PARCHMENT: u32 = 0xe6d9b5; // notice/bounty-board paper
 const H_STONE: u32 = 0x86868e;
 const WINDOW_GLOW: u32 = 0xffd58c;
-const BRONZE: u32 = 0xb9892f;
-const BRONZE_DARK: u32 = 0x7c5a1e;
+// Weathered bell-metal, not brass: a bright gold read as mustard plastic in close-up.
+const BRONZE: u32 = 0x8a6228;
+const BRONZE_DARK: u32 = 0x4d3817;
 const TORCH_FLAME: u32 = 0xff7a2a;
 const BRAZIER_FLAME: u32 = 0xff5a1e; // deeper orange for the big brazier flame shell (`M::Ember`)
 const SLIT: u32 = 0x23242a; // arrow-slit / shadow inset
@@ -900,12 +901,12 @@ fn spawn_bell_swing(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &M
     let base = Transform::from_translation(Vec3::new(BELL_POS.x, BELL_PIVOT_Y, BELL_POS.y))
         .with_rotation(Quat::from_rotation_y(BELL_YAW));
     // (mesh, material) parts of the bell proper: wooden headstock, bronze profile with a proper
-    // shoulder-waist-flare curve, dark crown + sound-bow lip, one gold accent band.
+    // shoulder-waist-flare curve, dark crown + sound-bow lip, a raised cast ring at the waist.
     let bell_parts: Vec<(Mesh, M)> = vec![
         (bx(0.55, 0.22, 0.22, 0.0, -0.09, 0.0), M::Beam), // headstock the bell hangs off
         (cyl(0.08, 0.14, 0.0, -0.27, 0.0), M::BronzeDark), // crown knob
         (taper(0.17, 0.31, 0.30, -0.49), M::Bronze), // shoulder
-        (cyl(0.32, 0.05, 0.0, -0.62, 0.0), M::Gold), // accent band
+        (cyl(0.32, 0.05, 0.0, -0.62, 0.0), M::BronzeDark), // cast ring (gold read as a painted stripe)
         (taper(0.31, 0.37, 0.34, -0.81), M::Bronze), // waist
         (taper(0.37, 0.50, 0.22, -1.09), M::Bronze), // sound-bow flare
         (cyl(0.52, 0.08, 0.0, -1.22, 0.0), M::BronzeDark), // lip

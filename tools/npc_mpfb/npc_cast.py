@@ -18,7 +18,37 @@ def img(path, nc=False):
     if nc: i.colorspace_settings.name = 'Non-Color'
     return i
 
+# '<kind>_n' = the same fabric with its albedo NEUTRALISED (luminance only, re-brightened), so the tint is
+# the real dye colour: Poly Haven's rough_linen diffuse is distinctly blue (mean sRGB 145/171/206), which
+# turns a 'cream' linen tint into pale blue.
+NEUTRAL_GAIN = 2.0
+
+
+def neutral_lum(nt, color_socket, gain=NEUTRAL_GAIN):
+    """texture colour -> grey luminance * gain (output socket)"""
+    bw = nt.nodes.new('ShaderNodeRGBToBW'); nt.links.new(color_socket, bw.inputs[0])
+    g = nt.nodes.new('ShaderNodeMath'); g.operation = 'MULTIPLY'; g.inputs[1].default_value = gain
+    nt.links.new(bw.outputs[0], g.inputs[0])
+    return g.outputs[0]
+
+
+def tint_hair(o, tint, gain):
+    """Re-dye a MakeHuman hair material: its diffuse texture's luminance * gain * tint (keeps the strand
+    detail + alpha, drops the stock colour) -- e.g. a blonde bun -> a matron's grey."""
+    for m in o.data.materials:
+        nt = m.node_tree
+        for t in [n for n in nt.nodes if n.type == 'TEX_IMAGE' and n.name == 'diffuseTexture']:
+            dests = [l.to_socket for l in t.outputs['Color'].links]
+            mix = nt.nodes.new('ShaderNodeMix'); mix.data_type = 'RGBA'; mix.blend_type = 'MULTIPLY'
+            mix.inputs[0].default_value = 1.0; mix.inputs[7].default_value = tint
+            nt.links.new(neutral_lum(nt, t.outputs['Color'], gain), mix.inputs[6])
+            for d in dests:
+                nt.links.new(mix.outputs[2], d)
+
+
 def fabric_mat(name, kind, tint, dirt=0.0):
+    neutral = kind.endswith('_n')
+    kind = kind[:-2] if neutral else kind
     folder, d, n, r, sc = FABRIC[kind]
     m = bpy.data.materials.new(name); m.use_nodes = True
     nt = m.node_tree; nt.nodes.clear()
@@ -34,7 +64,11 @@ def fabric_mat(name, kind, tint, dirt=0.0):
     mix = nt.nodes.new('ShaderNodeMix'); mix.data_type = 'RGBA'; mix.blend_type = 'MULTIPLY'
     mix.inputs[0].default_value = 1.0; mix.inputs[7].default_value = tint
     # fabric albedo is bright/neutral: boost low-saturation textures toward the tint
-    nt.links.new(a.outputs[0], mix.inputs[6]); nt.links.new(mix.outputs[2], b.inputs['Base Color'])
+    if neutral:
+        nt.links.new(neutral_lum(nt, a.outputs[0]), mix.inputs[6])
+    else:
+        nt.links.new(a.outputs[0], mix.inputs[6])
+    nt.links.new(mix.outputs[2], b.inputs['Base Color'])
     nm = nt.nodes.new('ShaderNodeNormalMap'); nm.inputs['Strength'].default_value = 0.9
     nt.links.new(nrm.outputs[0], nm.inputs['Color']); nt.links.new(nm.outputs[0], b.inputs['Normal'])
     mr = nt.nodes.new('ShaderNodeMapRange'); mr.inputs[3].default_value = 0.85; mr.inputs[4].default_value = 1.0
@@ -54,7 +88,7 @@ def make(spec):
         if o.name.startswith('Cube'): bpy.data.objects.remove(o)
     hm, rig, parts = build(spec)
     hm.name = rig.name = spec['name']
-    for g in spec.get('garments', []):
+    for layer, g in enumerate(spec.get('garments', [])):
         asset, kind, tint = g[:3]
         sub = 'hair' if asset in spec.get('_hairs', ()) else 'clothes'
         o = HumanService.add_mhclo_asset(mh(f"clothes/{asset}/{asset}.mhclo"), hm, asset_type='Clothes', material_type='MAKESKIN')
@@ -62,7 +96,13 @@ def make(spec):
             o.data.materials.clear()
             o.data.materials.append(fabric_mat(f"{spec['name']}_{asset}", kind, hexc(tint) if isinstance(tint, str) else tint))
         for p in o.data.polygons: p.use_smooth = True
+        # garment stacking order = list order (inner first); export_game.py's layer pass uses it
+        o['layer'] = layer
         parts.append(o)
+    if spec.get('hair_tint') and spec.get('hair'):
+        for o in parts:
+            if spec['hair'] in o.name:
+                tint_hair(o, hexc(spec['hair_tint']), spec.get('hair_gain', 2.0))
     return hm, rig, parts
 
 # ---- the cast ---------------------------------------------------------------------------------
@@ -94,6 +134,14 @@ def cast():
              garments=[('elvs_male_boho_top1', 'wool', WOOL['grey']), ('toigo_wool_pants', 'wool', WOOL['dkbrown']), boots_m2, ('grinsegold_full_beard', 'hair', '#cfcfcf')]),
         dict(name='elder_f', gender=0, age=.92, muscle=.2, weight=.45, height=.38, skin='old_caucasian_female', hair='bob01', eyebrows='eyebrow008', eyelashes='eyelashes01',
              garments=[('elvs_ruffle_sleeve_peasant_blouse_1', 'linen', LIN['grey']), ('toigo_long_full_skirt', 'wool', WOOL['black']), boots_f]),
+        # Maud, the campaign's matron (60s): modest long-sleeved lace-up chemise worn over a long wool
+        # kirtle skirt, a linen bib apron on top, hair up in a braided bun. Garments are listed INNER
+        # FIRST (boots < skirt < blouse < apron); `export` turns on export_game.py's hidden-skin cull +
+        # garment layer pass and a higher cloth budget (see export_game.py, "layer pass").
+        dict(name='maud', gender=0, age=.8, muscle=.3, weight=.55, height=.4, skin='old_caucasian_female', hair='elvs_braid_bun', hair_tint='#b8b3aa', eyebrows='eyebrow008', eyelashes='eyelashes01',
+             garments=[boots_f, ('toigo_long_full_skirt', 'wool', WOOL['blue']), ('punkduck_lace_up_blouse', 'linen_n', LIN['cream']), ('elvs_ladies_apron', 'linen_n', '#b9ab8c')],
+             export=dict(budget={'body': 12000, 'cloth': 7000, 'boots': 1400, 'hair': 9000}, cloth_subsurf=1, cull_hidden=True, layer_gap=0.004, garment_gap=0.01,
+                         inherit_weights=['punkduck_lace_up_blouse', 'elvs_ladies_apron'], drop_cornea=True)),
         dict(name='boy', gender=.5, age=.17, muscle=.3, weight=.4, height=.4, skin='young_caucasian_male', hair='short03', eyebrows='eyebrow002', eyelashes='eyelashes02',
              garments=[('elvs_male_boho_top1', 'linen', LIN['ochre']), ('toigo_wool_pants', 'wool', WOOL['brown'])]),
         dict(name='girl', gender=.4, age=.17, muscle=.3, weight=.4, height=.4, skin='young_caucasian_female', hair='braid01', eyebrows='eyebrow001', eyelashes='eyelashes01',

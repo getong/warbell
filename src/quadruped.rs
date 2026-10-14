@@ -910,7 +910,9 @@ pub fn spawn_quad(commands: &mut Commands, root: Entity, mat: &Handle<CreatureMa
     // Spawn a joint: transform-only + QuadPart tag, with the mesh placed directly on it.
     let joint = |commands: &mut Commands, parent: Entity, j: QuadJoint, pos: Vec3, mesh: Option<Handle<Mesh>>| -> Entity {
         let (rot, _) = idle.get(j);
-        let mut ec = commands.spawn((Transform { translation: pos, rotation: rot, ..default() }, Visibility::Visible, QuadPart { joint: j, root }));
+        // Inherited, not Visible: a Visible child ignores a Hidden parent, so hiding the critter's
+        // root never hid its body.
+        let mut ec = commands.spawn((Transform { translation: pos, rotation: rot, ..default() }, Visibility::Inherited, QuadPart { joint: j, root }));
         if let Some(m) = mesh {
             ec.insert((Mesh3d(m), MeshMaterial3d(mat.clone())));
         }

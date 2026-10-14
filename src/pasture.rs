@@ -149,12 +149,12 @@ struct SheepLeg {
 }
 
 #[derive(Component)]
-struct Shepherd {
+pub(crate) struct Shepherd {
     target: Vec2,
     timer: f32,
 }
 #[derive(Component)]
-struct SheepDog {
+pub(crate) struct SheepDog {
     pos: Vec2,
     facing: f32,
     ang: f32,

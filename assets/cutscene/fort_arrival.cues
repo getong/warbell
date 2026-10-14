@@ -5,101 +5,112 @@
   0.00  audio/meadow-ambient.ogg  0.3  video loop fadeout=33.6,1.4
   0.00  audio/forest-ambient.ogg  0.16  video loop fadeout=33.6,1.4
   0.00  audio/castle-ambient.ogg  0.1  video loop fadeout=33.6,1.4
-  0.10  audio/footstep-stone.ogg  0.13  video
+  0.10  audio/footstep-stone.ogg  0.14  video
   0.20  audio/footstep-dirt-2.ogg  0.23  video
-  0.65  audio/footstep-dirt-1.ogg  0.31  video
-  0.65  audio/footstep-stone.ogg  0.14  video
+  0.35  audio/footstep-dirt-1.ogg  0.31  video
+  0.59  audio/footstep-dirt-3.ogg  0.3  video
+  0.65  audio/footstep-stone.ogg  0.13  video
   0.82  audio/footstep-dirt-3.ogg  0.22  video
-  0.91  audio/footstep-dirt-3.ogg  0.3  video
-  1.19  audio/footstep-dirt-3.ogg  0.26  video
-  1.20  audio/footstep-stone.ogg  0.13  video
+  0.85  audio/footstep-dirt-3.ogg  0.26  video
+  1.13  audio/footstep-dirt-2.ogg  0.31  video
+  1.20  audio/footstep-stone.ogg  0.12  video
+  1.38  audio/footstep-dirt-3.ogg  0.3  video
   1.44  audio/footstep-dirt-2.ogg  0.22  video
-  1.49  audio/footstep-dirt-2.ogg  0.31  video
-  1.75  audio/footstep-stone.ogg  0.13  video
-  1.76  audio/footstep-dirt-3.ogg  0.3  video
-  2.05  audio/footstep-dirt-2.ogg  0.29  video
+  1.65  audio/footstep-dirt-2.ogg  0.29  video
+  1.75  audio/footstep-stone.ogg  0.14  video
+  1.93  audio/footstep-dirt-1.ogg  0.32  video
   2.06  audio/footstep-dirt-1.ogg  0.18  video
-  2.30  audio/footstep-stone.ogg  0.13  video
-  2.35  audio/footstep-dirt-1.ogg  0.32  video
-  2.66  audio/footstep-dirt-3.ogg  0.29  video
+  2.21  audio/footstep-dirt-3.ogg  0.29  video
+  2.30  audio/footstep-stone.ogg  0.12  video
+  2.45  audio/footstep-dirt-1.ogg  0.27  video
   2.68  audio/footstep-dirt-3.ogg  0.21  video
-  2.85  audio/footstep-stone.ogg  0.14  video
-  2.91  audio/footstep-dirt-1.ogg  0.27  video
-  3.21  audio/footstep-dirt-1.ogg  0.12  video
+  2.73  audio/footstep-dirt-1.ogg  0.28  video
+  2.85  audio/footstep-stone.ogg  0.11  video
+  2.97  audio/footstep-dirt-2.ogg  0.3  video
+  3.24  audio/footstep-dirt-2.ogg  0.14  video
   3.30  audio/footstep-dirt-3.ogg  0.2  video
   3.40  audio/footstep-stone.ogg  0.13  video
-  3.47  audio/footstep-dirt-2.ogg  0.13  video
-  3.76  audio/footstep-dirt-2.ogg  0.14  video
+  3.52  audio/footstep-dirt-2.ogg  0.14  video
+  3.78  audio/footstep-dirt-1.ogg  0.15  video
   3.92  audio/footstep-dirt-1.ogg  0.22  video
   3.95  audio/footstep-stone.ogg  0.11  video
-  4.06  audio/footstep-dirt-2.ogg  0.14  video
-  4.35  audio/footstep-dirt-1.ogg  0.15  video
+  4.02  audio/footstep-dirt-1.ogg  0.13  video
+  4.27  audio/footstep-dirt-3.ogg  0.13  video
   4.50  audio/footstep-stone.ogg  0.13  video
+  4.54  audio/footstep-dirt-2.ogg  0.13  video
   4.54  audio/footstep-dirt-1.ogg  0.21  video
-  4.60  audio/footstep-dirt-1.ogg  0.13  video
-  4.87  audio/footstep-dirt-3.ogg  0.13  video
-  5.05  audio/footstep-stone.ogg  0.13  video
-  5.16  audio/footstep-dirt-2.ogg  0.13  video
+  4.81  audio/footstep-dirt-3.ogg  0.13  video
+  5.05  audio/footstep-stone.ogg  0.12  video
+  5.08  audio/footstep-dirt-3.ogg  0.12  video
   5.16  audio/footstep-dirt-1.ogg  0.19  video
-  5.46  audio/footstep-dirt-3.ogg  0.13  video
-  5.60  audio/footstep-stone.ogg  0.13  video
-  5.74  audio/footstep-dirt-3.ogg  0.12  video
+  5.33  audio/footstep-dirt-1.ogg  0.15  video
+  5.60  audio/footstep-stone.ogg  0.11  video
+  5.62  audio/footstep-dirt-3.ogg  0.14  video
   5.78  audio/footstep-dirt-3.ogg  0.19  video
-  6.01  audio/footstep-dirt-1.ogg  0.15  video
-  6.15  audio/footstep-stone.ogg  0.14  video
-  6.32  audio/footstep-dirt-3.ogg  0.14  video
+  5.89  audio/footstep-dirt-2.ogg  0.15  video
+  6.15  audio/footstep-stone.ogg  0.13  video
+  6.17  audio/footstep-dirt-3.ogg  0.12  video
   6.40  audio/footstep-dirt-2.ogg  0.19  video
-  6.61  audio/footstep-dirt-2.ogg  0.15  video
-  6.91  audio/footstep-dirt-3.ogg  0.12  video
-  7.02  audio/footstep-dirt-3.ogg  0.1  video
-  7.20  audio/footstep-dirt-3.ogg  0.31  video
-  7.49  audio/footstep-dirt-2.ogg  0.25  video
-  7.64  audio/footstep-dirt-3.ogg  0.11  video
-  7.77  audio/footstep-dirt-3.ogg  0.33  video
-  8.02  audio/footstep-dirt-1.ogg  0.28  video
-  8.26  audio/footstep-dirt-1.ogg  0.11  video
-  8.28  audio/footstep-dirt-2.ogg  0.28  video
-  8.56  audio/footstep-dirt-1.ogg  0.24  video
-  8.84  audio/footstep-dirt-1.ogg  0.27  video
-  8.88  audio/footstep-dirt-3.ogg  0.12  video
-  9.13  audio/footstep-dirt-3.ogg  0.32  video
-  9.44  audio/footstep-dirt-3.ogg  0.26  video
-  9.50  audio/footstep-dirt-2.ogg  0.11  video
-  9.69  audio/footstep-dirt-1.ogg  0.25  video
-  9.98  audio/footstep-dirt-1.ogg  0.33  video
- 10.12  audio/footstep-dirt-3.ogg  0.11  video
- 10.74  audio/footstep-dirt-2.ogg  0.11  video
+  6.43  audio/footstep-dirt-3.ogg  0.15  video
+  6.70  audio/footstep-dirt-2.ogg  0.12  video
+  6.96  audio/footstep-dirt-3.ogg  0.15  video
+  7.00  audio/forage.ogg  0.36  video pan=-0.1
+  7.02  audio/footstep-dirt-3.ogg  0.07  video
+  7.20  audio/footstep-dirt-1.ogg  0.1  video
+  7.25  audio/forage.ogg  0.22  video pan=0.15
+  7.44  audio/footstep-dirt-2.ogg  0.12  video
+  7.64  audio/footstep-dirt-3.ogg  0.08  video
+  7.69  audio/footstep-dirt-1.ogg  0.12  video
+  7.96  audio/footstep-dirt-1.ogg  0.15  video
+  8.22  audio/footstep-dirt-3.ogg  0.19  video
+  8.26  audio/footstep-dirt-1.ogg  0.08  video
+  8.51  audio/footstep-dirt-3.ogg  0.17  video
+  8.74  audio/footstep-dirt-1.ogg  0.17  video
+  8.88  audio/footstep-dirt-3.ogg  0.09  video
+  9.01  audio/footstep-dirt-1.ogg  0.24  video
+  9.29  audio/footstep-dirt-2.ogg  0.24  video
+  9.50  audio/footstep-dirt-2.ogg  0.08  video
+  9.54  audio/footstep-dirt-1.ogg  0.28  video
+  9.79  audio/footstep-dirt-2.ogg  0.3  video
+ 10.07  audio/footstep-dirt-2.ogg  0.26  video
+ 10.12  audio/footstep-dirt-3.ogg  0.08  video
+ 10.35  audio/footstep-dirt-2.ogg  0.3  video
+ 10.61  audio/footstep-dirt-3.ogg  0.27  video
+ 10.74  audio/footstep-dirt-2.ogg  0.08  video
+ 10.90  audio/footstep-dirt-3.ogg  0.3  video
  11.00  audio/cutscene/quiet_council.ogg  0.55  video fadein=3.5 fadeout=34.1,0.9
- 11.36  audio/footstep-dirt-1.ogg  0.12  video
+ 11.36  audio/footstep-dirt-1.ogg  0.09  video
  11.50  audio/vo/campaign/a1_pip_05.ogg  1.0
- 11.50  audio/footstep-dirt-2.ogg  0.16  video
- 11.76  audio/footstep-dirt-1.ogg  0.18  video
- 11.98  audio/footstep-dirt-1.ogg  0.17  video
- 12.00  audio/forage.ogg  0.38  video pan=0.35
- 12.03  audio/footstep-dirt-2.ogg  0.17  video
- 12.25  audio/forage.ogg  0.22  video pan=0.5
- 12.33  audio/footstep-dirt-2.ogg  0.15  video
- 13.65  audio/footstep-dirt-2.ogg  0.16  video
- 14.11  audio/footstep-dirt-3.ogg  0.13  video
- 14.60  audio/footstep-dirt-3.ogg  0.14  video
- 18.60  audio/footstep-dirt-3.ogg  0.3  video
- 18.87  audio/footstep-dirt-2.ogg  0.33  video
- 19.15  audio/footstep-dirt-1.ogg  0.35  video
- 19.46  audio/footstep-dirt-2.ogg  0.18  video
- 19.75  audio/footstep-dirt-3.ogg  0.18  video
+ 11.98  audio/footstep-dirt-1.ogg  0.08  video
+ 12.15  audio/footstep-dirt-3.ogg  0.28  video
+ 12.46  audio/footstep-dirt-2.ogg  0.31  video
+ 12.60  audio/footstep-dirt-2.ogg  0.09  video
+ 12.78  audio/footstep-dirt-1.ogg  0.33  video
+ 13.13  audio/footstep-dirt-2.ogg  0.26  video
+ 13.22  audio/footstep-dirt-3.ogg  0.09  video
+ 13.46  audio/footstep-dirt-3.ogg  0.25  video
+ 13.84  audio/footstep-dirt-2.ogg  0.08  video
+ 14.46  audio/footstep-dirt-3.ogg  0.08  video
+ 15.08  audio/footstep-dirt-3.ogg  0.08  video
+ 15.70  audio/footstep-dirt-3.ogg  0.09  video
+ 16.32  audio/footstep-dirt-2.ogg  0.15  video
+ 16.94  audio/footstep-dirt-1.ogg  0.16  video
+ 17.56  audio/footstep-dirt-3.ogg  0.17  video
+ 18.18  audio/footstep-dirt-1.ogg  0.05  video
+ 18.80  audio/footstep-dirt-1.ogg  0.04  video
  19.90  audio/vo/campaign/a1_maud_14.ogg  1.0
- 20.03  audio/footstep-dirt-2.ogg  0.21  video
- 20.32  audio/footstep-dirt-2.ogg  0.22  video
- 20.59  audio/footstep-dirt-2.ogg  0.18  video
- 20.85  audio/footstep-dirt-3.ogg  0.18  video
- 21.12  audio/footstep-dirt-3.ogg  0.21  video
- 21.40  audio/footstep-dirt-2.ogg  0.19  video
- 21.67  audio/footstep-dirt-2.ogg  0.23  video
- 21.93  audio/footstep-dirt-2.ogg  0.18  video
- 22.23  audio/footstep-dirt-3.ogg  0.22  video
- 22.49  audio/footstep-dirt-3.ogg  0.19  video
- 22.79  audio/footstep-dirt-1.ogg  0.2  video
- 23.08  audio/footstep-dirt-3.ogg  0.22  video
  23.15  audio/vo/campaign/a1_pip_06.ogg  1.0
  23.95  audio/vo/campaign/a1_maud_15.ogg  1.0
  27.30  audio/vo/campaign/a1_maud_16.ogg  1.0
+ 27.65  audio/footstep-dirt-2.ogg  0.15  video
+ 28.22  audio/footstep-dirt-2.ogg  0.15  video
+ 28.75  audio/footstep-dirt-2.ogg  0.11  video
+ 29.25  audio/footstep-dirt-3.ogg  0.11  video
+ 29.78  audio/footstep-dirt-3.ogg  0.12  video
+ 30.34  audio/footstep-dirt-2.ogg  0.1  video
+ 30.86  audio/footstep-dirt-2.ogg  0.11  video
+ 31.38  audio/footstep-dirt-2.ogg  0.08  video
+ 31.97  audio/footstep-dirt-3.ogg  0.09  video
+ 32.48  audio/footstep-dirt-3.ogg  0.07  video
+ 33.06  audio/footstep-dirt-1.ogg  0.06  video
+ 33.63  audio/footstep-dirt-3.ogg  0.06  video

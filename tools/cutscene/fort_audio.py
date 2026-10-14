@@ -32,10 +32,11 @@ VO = [
 ]
 
 # Pip's run segments (scenes.rs fort_pip): (start, end, speed)
-PIP_RUNS = [(0.6, 10.27, 3.0), (11.45, 12.48, 3.0), (13.6, 14.84, 1.3), (18.55, 23.1, 3.4)]
+PIP_RUNS = [(0.3, 10.9, 3.6), (12.1, 13.6, 2.6), (27.6, 33.7, 1.0)]
 # Which shot is on, for distance-based loudness (scenes.rs fort_shot)
-SHOTS = [(0.0, 7.0, "outside"), (7.0, 11.4, "side"), (11.4, 16.9, "ots"), (16.9, 19.4, "low"),
-         (19.4, 26.7, "maud"), (26.7, END, "crane")]
+SHOTS = [(0.0, 7.0, "outside"), (7.0, 11.1, "yard"), (11.1, 13.4, "well"), (13.4, 15.75, "chapel"),
+         (15.75, 17.75, "bell"), (17.75, 19.6, "insert"), (19.6, 23.0, "maud"), (23.0, 23.95, "ots"),
+         (23.95, 26.8, "two"), (26.8, END, "crane")]
 
 
 def shot(t):
@@ -59,17 +60,18 @@ def gen():
     # Footsteps: Pip's light running steps (loud when he's near the lens), Maud's walk, the knight.
     steps = [f"audio/footstep-dirt-{i}.ogg" for i in (1, 2, 3)]
     for a, b, v in PIP_RUNS:
-        gap = 0.28 if v > 2 else 0.45
+        gap = 0.26 if v > 3 else (0.32 if v > 2 else 0.55)
         t = a + 0.05
         while t < b:
             s = shot(t)
-            vol = {"outside": 0.32 if t < 3.0 else 0.14, "side": 0.30, "ots": 0.16, "low": 0.34,
-                   "maud": 0.22, "crane": 0.08}[s]
+            # the yard shot: he runs from the gate straight at the lens — steps swell as he comes
+            vol = {"outside": 0.32 if t < 3.0 else 0.14, "yard": 0.10 + 0.24 * min(max((t - 7.0) / 3.9, 0), 1),
+                   "well": 0.32, "chapel": 0.3, "crane": 0.16 - 0.1 * min((t - 27.6) / 6.0, 1)}.get(s, 0.2)
             rows.append((round(t, 2), rnd.choice(steps), round(vol * rnd.uniform(0.8, 1.1), 2), "video"))
             t += gap * rnd.uniform(0.9, 1.1)
     t = 0.2
-    while t < 12.2:  # Maud walks in
-        vol = 0.22 if t < 7.0 else (0.12 if t < 11.4 else 0.2)
+    while t < 18.8:  # Maud walks in to her mark
+        vol = {"outside": 0.22, "bell": 0.16, "insert": 0.05}.get(shot(t), 0.09)
         rows.append((round(t, 2), rnd.choice(steps), round(vol * rnd.uniform(0.8, 1.05), 2), "video"))
         t += 0.62
     t = 0.1
@@ -78,8 +80,8 @@ def gen():
         t += 0.55
 
     # The pigeons flushed by the boy (no wing-flap SFX in the repo — a burst of grass/forage rustle).
-    rows.append((12.0, "audio/forage.ogg", 0.38, "video pan=0.35"))
-    rows.append((12.25, "audio/forage.ogg", 0.22, "video pan=0.5"))
+    rows.append((7.0, "audio/forage.ogg", 0.36, "video pan=-0.1"))
+    rows.append((7.25, "audio/forage.ogg", 0.22, "video pan=0.15"))
 
     rows.sort(key=lambda r: r[0])
     out = [

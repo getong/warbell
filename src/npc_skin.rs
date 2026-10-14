@@ -22,9 +22,9 @@ use bevy::world_serialization::{WorldAsset, WorldAssetRoot, WorldInstanceReady};
 use crate::biped::{BipedDrive, BipedRig};
 
 /// Cast order = the look index a [`SkinRequest`] carries.
-pub const LOOKS: [&str; 14] = [
+pub const LOOKS: [&str; 15] = [
     "farmer", "woodcutter", "miner", "guard", "archer", "villager_m", "villager_f1", "villager_f2",
-    "elder_m", "elder_f", "boy", "girl", "priest", "merchant",
+    "elder_m", "elder_f", "boy", "girl", "priest", "merchant", "maud",
 ];
 pub const FARMER: u8 = 0;
 pub const WOODCUTTER: u8 = 1;
@@ -40,6 +40,8 @@ pub const BOY: u8 = 10;
 pub const GIRL: u8 = 11;
 pub const PRIEST: u8 = 12;
 pub const MERCHANT: u8 = 13;
+/// Maud, the colony's matron (campaign cast): her own authored outfit + grey braid bun, never re-dyed.
+pub const MAUD: u8 = 14;
 
 /// World units per real metre: a 1.75 m adult stands the studio villager's 1.46 u.
 pub const WORLD_PER_M: f32 = 0.834;
@@ -151,7 +153,7 @@ fn person_hash(e: Entity) -> u32 {
 
 /// Livery looks keep their colours (a guard's tabard, the archer's kit, the priest's habit).
 fn uniform_look(look: u8) -> bool {
-    matches!(look, GUARD | ARCHER | PRIEST)
+    matches!(look, GUARD | ARCHER | PRIEST | MAUD)
 }
 
 fn card_key(k: &str) -> &'static str {
@@ -170,11 +172,14 @@ fn load_cast(mut commands: Commands, server: Res<AssetServer>, mut materials: Re
     for name in LOOKS {
         gltf.push(server.load(format!("npc/npc_{name}.glb")));
         let tex = |m: &str| -> Handle<Image> { server.load(format!("npc/npc_{name}_{m}.dds")) };
+        // Maud's layered outfit (blouse under apron, pushed off the body) bakes a blotchy AO into
+        // the cloth islands that renders as black patches: her cloth skips the occlusion read.
+        let layered = name == "maud";
         let atlas = |double: bool| StandardMaterial {
             base_color_texture: Some(tex("albedo")),
             normal_map_texture: Some(tex("normal")),
             metallic_roughness_texture: Some(tex("orm")),
-            occlusion_texture: Some(tex("orm")),
+            occlusion_texture: if double && layered { None } else { Some(tex("orm")) },
             perceptual_roughness: 1.0,
             metallic: 1.0, // x the ORM blue channel (0): the factor only enables the texture read
             reflectance: 0.35,
@@ -305,7 +310,7 @@ fn skin_ready(
             let (cloth, hair) = &cast.vars[sk.look as usize];
             let var = match mn.0.as_str() {
                 "npc_cloth" if !uniform_look(sk.look) => cloth.get((h % cloth.len() as u32) as usize),
-                "npc_hair" if !matches!(sk.look, ELDER_M | ELDER_F | MERCHANT | WOODCUTTER) => hair.get(((h >> 8) % hair.len().max(1) as u32) as usize),
+                "npc_hair" if !matches!(sk.look, ELDER_M | ELDER_F | MERCHANT | WOODCUTTER | MAUD) => hair.get(((h >> 8) % hair.len().max(1) as u32) as usize),
                 _ => None,
             };
             if let Some(m) = var.or_else(|| look.mats.get(mn.0.as_str())) {

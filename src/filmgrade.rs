@@ -67,6 +67,13 @@ pub struct FilmGrade {
     pub vignette: f32,
     pub aberration: f32,
     pub time: f32,
+    /// More cutscene-only film extras (0 = off): halation (warm red bleed around bright edges), an
+    /// anamorphic horizontal streak off the hottest points, and gate weave (sub-pixel frame jitter,
+    /// in pixels).
+    pub halation: f32,
+    pub streak: f32,
+    pub weave: f32,
+    pub _pad: f32,
 }
 
 impl Default for FilmGrade {
@@ -86,6 +93,10 @@ impl Default for FilmGrade {
             vignette: 0.0,
             aberration: 0.0,
             time: 0.0,
+            halation: 0.0,
+            streak: 0.0,
+            weave: 0.0,
+            _pad: 0.0,
         }
     }
 }

@@ -28,4 +28,5 @@ Photographic textures from Poly Haven (CC0) are listed in `assets/forest_pbr/ATT
 | MPFB 2 (Blender add-on, tool only) | MakeHuman Community | GPL-3.0+ (tool; output is CC0) | https://extensions.blender.org/add-ons/mpfb/ |
 | Garments: toigo_wool_pants, toigo_long_full_skirt, culturalibre_male_boots, rehmanpolanski_beard_viking, wdg_scruffy_beard | toigo, culturalibre, rehmanpolanski, wdg | CC0 | MakeHuman asset packs pants01 / skirts01 / shoes01 / bodyparts05 |
 | Garments: elvs_male_boho_top1, punkduck_lace_up_blouse, elvs_ruffle_sleeve_peasant_blouse_1, mindfront_male_trousers_2, maciekg_leather_boots, punkduck_medieval_boots, punkduck_female_half-boots, punkduck_riding_boots, maciekg_wizard_robe, grinsegold_full_beard | elvs, punkduck, mindfront, maciekg, grinsegold | CC-BY (credit required) | MakeHuman asset packs shirts02 / shirts03 / pants02 / shoes03 / suits03 / bodyparts06 |
+| Maud (campaign cast): hair elvs_braid_bun, garment elvs_ladies_apron | Elvaerwyn | CC-BY (credit required) | MakeHuman community asset library (installed via MPFB) |
 | Fabric / leather textures (linen, wool, hessian, leather) | Poly Haven | CC0 | https://polyhaven.com |

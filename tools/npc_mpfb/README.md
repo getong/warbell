@@ -17,6 +17,7 @@ Downloads (each in its own folder under `C:/Users/skibi/Documents/Codex/download
 | `build_cast_blend.py` | builds the whole cast into one .blend |
 | `bake_anims.py` | UAL clips -> Blender Actions on the MPFB rig (bone-direction swing retarget; any cast member can play them) |
 | `town_film.py` | town set from the game's own kits (`town_kit.glb`, `market.glb`, ...) + Poly Haven props + animated cast; renders frames |
+| `build_cast_blend.py` / `export_game.py` | `blender -b --python build_cast_blend.py -- <out.blend> [name,...]` builds (part of) the cast; `blender -b <blend> --python export_game.py -- <npc> <out_dir>` bakes + exports one look (per-look `export` options in the cast spec: layer pass / hidden-skin cull / weight inheritance, see its docstring) |
 | `dds2png.py` | decodes the game's BC7 DDS textures to PNG so Blender can bind them |
 | `retarget_render.py` | single-character version (Bartender) used for the first showcase |
 

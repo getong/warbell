@@ -188,12 +188,18 @@ impl Plugin for ScenesPlugin {
             .add_systems(
                 PostUpdate,
                 (hold_scene_hero, farm_camera, farm_hide_hud, farm_clear_stage, fort_clear_stage)
-                    .before(bevy::transform::TransformSystems::Propagate),
+                    .before(bevy::transform::TransformSystems::Propagate)
+                    .before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate),
             )
+            // The lens FOV must land before Bevy builds the projection matrix: unordered, the
+            // executor sometimes ran `camera_system` first and that frame rendered with the
+            // gameplay follow-cam's FOV — a zoom-pop every few frames in the captured film.
+            .configure_sets(PostUpdate, bevy::camera::CameraUpdateSystems.after(farm_camera))
             // Scripted head turns ride on top of the freshly sampled clip pose.
             .add_systems(
                 PostUpdate,
-                fort_head_look
+                (fort_head_look, fort_arm_point)
+                    .chain()
                     .after(bevy::app::AnimationSystems)
                     .before(bevy::transform::TransformSystems::Propagate),
             );
@@ -1215,6 +1221,9 @@ fn farm_camera(
             g.shadow_tint = Vec3::new(0.86, 0.97, 1.14);
             g.split = 0.68;
             g.vibrance = 0.2;
+            g.halation = 0.5;
+            g.streak = 0.7;
+            g.weave = 0.45;
         }
     }
 }
@@ -1303,16 +1312,19 @@ const BELL: Vec2 = crate::castle::BELL_POS;
 const BELL_Y: f32 = 6.3;
 
 const PIP_GATE: Vec2 = Vec2::new(-0.4, 24.6);
-const PIP_1: Vec2 = Vec2::new(3.0, 10.0);
-const PIP_2: Vec2 = Vec2::new(4.5, 7.3);
-const PIP_3: Vec2 = Vec2::new(3.7, 5.9);
-const PIP_TOWER: Vec2 = Vec2::new(-4.0, 19.3);
-const MAUD_MARK: Vec2 = Vec2::new(0.8, 16.5);
+/// Where Pip pulls up in the yard ("There's a well!") — the well 10 u ahead of him, the tower behind.
+const PIP_1: Vec2 = Vec2::new(6.2, 3.0);
+/// A few steps on toward the well, where the ruin catches his eye ("There's a— that's a chapel").
+const PIP_2: Vec2 = Vec2::new(7.1, 0.4);
+/// At the well's rim, at the very end ("Start with the well").
+const PIP_WELL: Vec2 = Vec2::new(8.9, -5.0);
+/// Maud stops a few paces behind the boy, between him and the gate.
+const MAUD_MARK: Vec2 = Vec2::new(4.0, 8.5);
 /// `castle_decor`'s notice board inside the south gate: no edicts posted yet on arrival, and it
 /// stands 1.3 u in front of shot 3a's lens (it read as a whole barn wall at 27° fov).
 const NOTICE_BOARD: Vec2 = Vec2::new(3.0, 19.4);
-/// The pigeons pecking in the yard that Pip's dash flushes.
-const FLOCK: Vec2 = Vec2::new(6.6, 5.0);
+/// The pigeons pecking on Pip's line in from the gate — he runs straight through them (~7 s).
+const FLOCK: Vec2 = Vec2::new(2.7, 14.6);
 
 /// Timed captions: (start s, duration s, speaker, line) — verbatim from the recorded clips
 /// (`a1_pip_05`, `a1_maud_14`, `a1_pip_06`, `a1_maud_15`, `a1_maud_16`).
@@ -1339,7 +1351,8 @@ fn route(t: f32, t0: f32, from: Vec2, legs: &[Leg]) -> (Vec2, Option<Vec2>) {
     if t <= t0 {
         return (from, None);
     }
-    for leg in legs {
+    let is_go = |i: usize| matches!(legs.get(i), Some(Leg::Go(..)));
+    for (i, leg) in legs.iter().enumerate() {
         match *leg {
             Leg::Until(u) => {
                 if t < u {
@@ -1353,9 +1366,22 @@ fn route(t: f32, t0: f32, from: Vec2, legs: &[Leg]) -> (Vec2, Option<Vec2>) {
                 if len < 1e-4 {
                     continue;
                 }
-                let dur = len / v;
+                // Trapezoid speed: ramp up from a standstill / down into one over `r` s (never
+                // between two straight legs), so nobody starts or stops dead — a skin's clip can't
+                // snap from a full jog to idle without the feet skating.
+                let r = (len / v).min(0.45);
+                let (r_in, r_out) = (if i > 0 && is_go(i - 1) { 0.0 } else { r }, if is_go(i + 1) { 0.0 } else { r });
+                let dur = len / v + (r_in + r_out) * 0.5;
                 if t < at + dur {
-                    return (p + d * ((t - at) / dur), Some(d / len));
+                    let u = t - at;
+                    let s = if u < r_in {
+                        v * u * u / (2.0 * r_in)
+                    } else if u < dur - r_out {
+                        v * (u - r_in * 0.5)
+                    } else {
+                        len - v * (dur - u) * (dur - u) / (2.0 * r_out)
+                    };
+                    return (p + d * (s / len).clamp(0.0, 1.0), Some(d / len));
                 }
                 at += dur;
                 p = to;
@@ -1365,25 +1391,24 @@ fn route(t: f32, t0: f32, from: Vec2, legs: &[Leg]) -> (Vec2, Option<Vec2>) {
     (p, None)
 }
 
-/// Pip: runs past the grown-ups, through the gate, out to the middle of the yard; dashes at the well
-/// (flushing the pigeons), drifts toward the ruin, turns round to the bell, then sprints for the tower.
+/// Pip: runs past the grown-ups, through the gate (flushing the pigeons) and pulls up in the yard;
+/// trots on toward the well until the ruin stops him dead; turns round to the bell; is told to wait;
+/// and in the end trudges off to the well as he was told.
 fn fort_pip(t: f32) -> (Vec2, Option<Vec2>) {
     use Leg::*;
-    route(t, 0.6, Vec2::new(-0.8, 38.6), &[
-        Go(PIP_GATE, 3.0), // → 5.27
-        Go(PIP_1, 3.0),    // → 10.27, looks around
-        Until(11.45),
-        Go(PIP_2, 3.0), // "There's a well!" on the run → 12.48
-        Until(13.6),
-        Go(PIP_3, 1.3), // "that's a chapel…" → 14.84
-        Until(18.55),
-        Go(PIP_TOWER, 3.4), // → 23.1, "Can I—"
+    route(t, 0.3, Vec2::new(-0.8, 38.6), &[
+        Go(PIP_GATE, 3.6),
+        Go(PIP_1, 3.6), // → ~10.8, looks round
+        Until(12.1),    // "There's a well!" — points
+        Go(PIP_2, 2.6), // → ~13.5, "There's a—" … stops dead: the chapel
+        Until(27.6),
+        Go(PIP_WELL, 1.0), // "Start with the well."
     ])
 }
 
 fn fort_maud(t: f32) -> (Vec2, Option<Vec2>) {
     use Leg::*;
-    route(t, 0.0, Vec2::new(1.1, 33.0), &[Go(Vec2::new(0.9, 24.6), 1.35), Go(MAUD_MARK, 1.35)]) // → 12.22
+    route(t, 0.0, Vec2::new(1.1, 33.0), &[Go(Vec2::new(0.9, 24.6), 1.35), Go(MAUD_MARK, 1.35)]) // → ~18.9
 }
 
 /// The knight leads them in and stops just inside the gate by the tower foot.
@@ -1431,6 +1456,15 @@ struct HeadLook {
     bone: Option<Entity>,
 }
 
+/// A scripted point: the right arm swung straight out at `at` (world), blended in by `w` over the
+/// clip's own arm. Bones found lazily (`upperarm_r` / `lowerarm_r`).
+#[derive(Component, Default)]
+struct ArmPoint {
+    at: Option<Vec3>,
+    w: f32,
+    bones: Option<(Entity, Entity)>,
+}
+
 #[derive(Component)]
 struct FortBird(u8);
 #[derive(Component)]
@@ -1446,7 +1480,7 @@ struct FortTitle;
 fn bird_home(i: u8) -> (Vec2, f32) {
     let a = i as f32 * 2.399; // golden-angle scatter
     let r = 0.35 + 0.17 * i as f32;
-    (FLOCK + Vec2::new(a.cos(), a.sin()) * r, 11.95 + ((i as f32 * 0.37).fract()) * 0.4)
+    (FLOCK + Vec2::new(a.cos(), a.sin()) * r, 6.9 + ((i as f32 * 0.37).fract()) * 0.4)
 }
 
 /// A pigeon at scene time `t`: (position, facing yaw, wing angle, flying?).
@@ -1460,7 +1494,7 @@ fn bird_pose(i: u8, t: f32) -> (Vec3, f32, f32, bool) {
         return (Vec3::new(home.x, gy + 0.02 - peck, home.y), i as f32 * 1.7, 0.08, false);
     }
     // burst up and away from the boy, then all bank toward the north-west wall and climb out
-    let away = (home - PIP_2).normalize_or(Vec2::X);
+    let away = (home - fort_pip(t_off).0).normalize_or(Vec2::X);
     let common = Vec2::new(-0.55, -0.83);
     let pos_at = |u: f32| {
         let w = (u / 2.4).clamp(0.0, 1.0);
@@ -1488,10 +1522,10 @@ fn setup_fort_arrival(
     // The cast — realistic skins forced over the seeded pick (Pip = the boy, Maud = the old woman).
     let (p0, _) = fort_pip(0.0);
     let pip = crate::villagers::spawn_scene_peasant(commands, meshes, creature_mats, p0, std::f32::consts::PI, None, 3);
-    commands.entity(pip).insert((ns::SkinRequest(ns::BOY), ns::SkinClip(""), FortRole::Pip, HeadLook::default()));
+    commands.entity(pip).insert((ns::SkinRequest(ns::BOY), ns::SkinClip(""), FortRole::Pip, HeadLook::default(), ArmPoint::default()));
     let (m0, _) = fort_maud(0.0);
     let maud = crate::villagers::spawn_scene_peasant(commands, meshes, creature_mats, m0, std::f32::consts::PI, None, 9);
-    commands.entity(maud).insert((ns::SkinRequest(ns::ELDER_F), ns::SkinClip(""), FortRole::Maud, HeadLook::default()));
+    commands.entity(maud).insert((ns::SkinRequest(ns::MAUD), ns::SkinClip(""), FortRole::Maud, HeadLook::default()));
     let load = meshes.add(plank_bundle_mesh());
     for (i, seed) in [(0u8, 5u32), (1, 19), (2, 29), (3, 37)] {
         let (s0, _) = fort_settler(i, 0.0);
@@ -1587,38 +1621,59 @@ fn setup_fort_arrival(
     }
 }
 
-/// Pip's beat when he isn't running: (facing target, clip, head yaw/pitch/roll).
-fn pip_beat(t: f32, pos: Vec2) -> (f32, &'static str, Vec3) {
+/// The well's mouth / the ruin's broken gable / the bell — what Pip points at as he names it.
+fn well_pt() -> Vec3 {
+    Vec3::new(WELL.x, world_y_at(WELL) + 0.7, WELL.y)
+}
+fn ruin_pt() -> Vec3 {
+    Vec3::new(RUIN.x, world_y_at(RUIN) + 3.2, RUIN.y)
+}
+fn bell_pt() -> Vec3 {
+    Vec3::new(BELL.x, BELL_Y, BELL.y)
+}
+
+/// Pip's beat when he isn't running: (facing target, clip, head yaw/pitch/roll, arm points at). Every
+/// thing he names is on screen as he names it, his arm out at it (`a1_pip_05` word times from the
+/// clip: "well" 11.9, "chapel" 14.2 / 15.1, "bell" 16.2, "Up there" 17.0, "It's whole" 18.1).
+fn pip_beat(t: f32, pos: Vec2) -> (f32, &'static str, Vec3, Option<Vec3>) {
     let to = |q: Vec2| yaw_of(q - pos);
+    let m = fort_maud(t).0;
     match t {
-        // in the middle of the yard, gawping round at everything
-        t if t < 11.45 => (to(RUIN) + 0.4, "Idle_Loop", Vec3::new(0.7 * ((t - 10.3) * 2.4).sin(), 0.18, 0.0)),
-        t if t < 13.6 => (to(WELL), "Interact", Vec3::new(0.0, 0.05, 0.0)),
-        t if t < 15.55 => (to(RUIN), "Idle_Talking_Loop", Vec3::new(0.0, 0.25, 0.0)),
-        // turns round: the bell, over the gate they just walked under
-        t if t < 18.55 => (to(BELL), "Idle_Loop", Vec3::new(0.0, env(t, &[(15.6, 0.1), (16.5, 0.6)]), 0.0)),
-        t if t < 24.0 => (to(MAUD_MARK), "Idle_Talking_Loop", Vec3::new(0.0, 0.1, 0.0)),
-        _ => (to(BELL), "Idle_Loop", Vec3::new(0.0, env(t, &[(24.0, 0.1), (25.2, 0.65)]), 0.0)),
+        // pulled up in the yard, gawping round: left, right…
+        t if t < 11.3 => (to(WELL) - 0.3, "Idle_Loop", Vec3::new(0.75 * ((t - 10.8) * 5.0).sin(), 0.15, 0.0), None),
+        // "There's a well!"
+        t if t < 12.15 => (to(WELL), "Idle_Loop", Vec3::new(0.0, 0.05, 0.0), Some(well_pt())),
+        // "There's a— that's a chapel, that was a chapel" — stopped dead, turned to the ruin
+        t if t < 15.75 => (to(RUIN), "Idle_Loop", Vec3::new(0.0, 0.12, 0.0), (t > 13.75).then(ruin_pt)),
+        // spins round: "There's a bell. Up there." — arm up at the belfry over the gate
+        t if t < 17.9 => (to(BELL), "Idle_Loop", Vec3::new(0.0, env(t, &[(15.9, 0.15), (16.9, 0.45)]), 0.0), (t > 16.1).then(bell_pt)),
+        // "It's whole." — just staring up at it
+        t if t < 19.6 => (to(BELL), "Idle_Loop", Vec3::new(0.0, 0.45, 0.0), None),
+        // Maud: "The well's whole too…" — he turns to her
+        t if t < 23.0 => (to(m), "Idle_Loop", Vec3::new(0.0, 0.08, 0.0), None),
+        // "Can I—" — to her, hands going (no point: the bell is behind the lens here, an arm thrown
+        // at it read as waving at the camera)
+        t if t < 23.95 => (to(m), "Idle_Talking_Loop", Vec3::new(0.0, 0.1, 0.0), None),
+        // "At dusk. King's orders." — and his head drops
+        _ => (to(m), "Idle_Loop", Vec3::new(0.0, env(t, &[(24.6, 0.05), (25.4, -0.42)]), 0.0), None),
     }
 }
 
-/// Maud's beat once she's stopped: (facing target, clip, head). She watches the boy, then answers
-/// him without turning round — the review's "shade of amusement" goes in the body: a slow weary nod
-/// and a head tilt, then arms folded again for "At dusk.", then a long look round the ruin.
+/// Maud's beat once she's stopped: (facing target, clip, head). She stops behind the boy and answers
+/// him straight — the review's "shade of amusement" goes in the body: a slow weary nod and a head
+/// tilt, a glance at the well, arms folded again for "At dusk.", then a long look round the ruin.
 fn maud_beat(t: f32, pip: Vec2) -> (f32, &'static str, Vec3) {
     let m = MAUD_MARK;
-    let well = yaw_of(WELL - m);
-    let over_shoulder = (wrap_pi(yaw_of(pip - m) - well)).clamp(-0.8, 0.8);
+    let at_pip = yaw_of(pip - m);
+    let to_well = (wrap_pi(yaw_of(WELL - m) - at_pip)).clamp(-0.7, 0.7);
     match t {
-        t if t < 18.6 => (yaw_of(pip - m), "Idle_FoldArms_Loop", Vec3::ZERO),
-        t if t < 19.3 => (well, "Idle_FoldArms_Loop", Vec3::ZERO),
-        t if t < 20.1 => (well, "Yes", Vec3::new(0.0, 0.0, 0.16)),
-        t if t < 22.55 => (well, "Idle_Talking_Loop", Vec3::new(0.0, 0.02, 0.14)),
-        t if t < 23.95 => (well, "Idle_Loop", Vec3::new(over_shoulder, 0.0, 0.05)),
-        t if t < 26.5 => (well, "Idle_FoldArms_Loop", Vec3::new(over_shoulder * 0.45, 0.0, 0.0)),
-        t if t < 27.2 => (well, "Idle_Loop", Vec3::ZERO),
+        t if t < 19.5 => (at_pip, "Idle_FoldArms_Loop", Vec3::ZERO),
+        t if t < 20.3 => (at_pip, "Yes", Vec3::new(0.0, 0.0, 0.16)),
+        // "…Start with the well." — a glance at it
+        t if t < 22.5 => (at_pip, "Idle_Talking_Loop", Vec3::new(env(t, &[(21.4, 0.0), (21.8, to_well), (22.4, to_well * 0.3)]), 0.0, 0.12)),
+        t if t < 26.6 => (at_pip, "Idle_FoldArms_Loop", Vec3::new(0.0, 0.0, 0.08)),
         // "God help us." — a slow look round: the well, the ruin, the broken north-west wall
-        _ => (well + env(t, &[(27.2, 0.0), (31.6, 1.3)]), "Idle_Loop", Vec3::new(0.0, 0.08, 0.0)),
+        _ => (at_pip + env(t, &[(26.6, 0.0), (31.6, -1.3)]), "Idle_Loop", Vec3::new(0.0, 0.08, 0.0)),
     }
 }
 
@@ -1629,7 +1684,14 @@ fn drive_fort_scene(
     mut state: ResMut<SceneState>,
     mut subs: ResMut<crate::subtitles::Subtitles>,
     mut actors: Query<
-        (&mut crate::villagers::Villager, &mut Transform, &mut crate::npc_skin::SkinClip, &FortRole, Option<&mut HeadLook>),
+        (
+            &mut crate::villagers::Villager,
+            &mut Transform,
+            &mut crate::npc_skin::SkinClip,
+            &FortRole,
+            Option<&mut HeadLook>,
+            Option<&mut ArmPoint>,
+        ),
         Without<crate::player::Hero>,
     >,
     mut hero_q: Query<&mut crate::player::Hero>,
@@ -1649,17 +1711,26 @@ fn drive_fort_scene(
     let k_head = 1.0 - (-dt * 4.5).exp();
     let (pip_pos, pip_dir) = fort_pip(t);
 
-    for (mut v, mut tf, mut clip, role, head) in &mut actors {
+    for (mut v, mut tf, mut clip, role, head, arm) in &mut actors {
+        let with_arm = |(f, c, h): (f32, &'static str, Vec3)| (f, c, h, None);
         let ((pos, dir), beat) = match *role {
             FortRole::Pip => (fort_pip(t), pip_beat(t, pip_pos)),
-            FortRole::Maud => (fort_maud(t), maud_beat(t, pip_pos)),
+            FortRole::Maud => (fort_maud(t), with_arm(maud_beat(t, pip_pos))),
             FortRole::Settler(i) => {
                 let (p, d) = fort_settler(i, t);
                 let look = if i == 0 { "Idle_FoldArms_Loop" } else { "Idle_Loop" };
-                ((p, d), (yaw_of(PIP_1 - p), look, Vec3::ZERO))
+                ((p, d), (yaw_of(pip_pos - p), look, Vec3::ZERO, None))
             }
         };
-        let (face, want_clip, want_head) = beat;
+        let (face, want_clip, want_head, point) = beat;
+        if let Some(mut a) = arm {
+            let point = point.filter(|_| dir.is_none());
+            if point.is_some() {
+                a.at = point;
+            }
+            let goal = if point.is_some() { 1.0 } else { 0.0 };
+            a.w += (goal - a.w) * (1.0 - (-dt * 9.0).exp());
+        }
         // first frame: snap to the mark instead of swinging round from the spawn facing
         let first = v.pos.distance_squared(pos) > 4.0;
         let target = dir.map_or(face, yaw_of);
@@ -1709,7 +1780,7 @@ fn drive_fort_scene(
 
     // The knight: pose handed to `hold_scene_hero` (PostUpdate); gait fields written here.
     let (wp, wd) = fort_wat(t);
-    let wt = wd.map_or(yaw_of(PIP_1 - wp), yaw_of);
+    let wt = wd.map_or(yaw_of(pip_pos - wp), yaw_of);
     let wy = match *wat_yaw {
         Some(y) => turn_toward(y, wt, k_turn),
         None => wt,
@@ -1806,10 +1877,79 @@ fn fort_head_look(
     }
 }
 
+/// World affine of `e` from THIS frame's local transforms (the clip just posed the bones, so the
+/// propagated `GlobalTransform`s are still last frame's).
+fn live_global(e: Entity, parents: &Query<&ChildOf>, tfs: &Query<&mut Transform>) -> bevy::math::Affine3A {
+    let mut m = tfs.get(e).map_or(bevy::math::Affine3A::IDENTITY, |t| t.compute_affine());
+    let mut cur = e;
+    while let Ok(p) = parents.get(cur) {
+        cur = p.parent();
+        if let Ok(t) = tfs.get(cur) {
+            m = t.compute_affine() * m;
+        }
+    }
+    m
+}
+
+fn rot_of(m: bevy::math::Affine3A) -> Quat {
+    m.to_scale_rotation_translation().1
+}
+
+/// Swing Pip's right arm out straight at what he's naming, on top of the clip. Works from the real
+/// joint positions (shoulder → elbow → wrist), not from assumed bone axes: the upper arm turns onto
+/// the aim line, then the forearm straightens along it.
+fn fort_arm_point(
+    state: Res<SceneState>,
+    mut roots: Query<(&mut ArmPoint, &crate::npc_skin::Skinned)>,
+    children: Query<&Children>,
+    names: Query<&Name>,
+    parents: Query<&ChildOf>,
+    mut tfs: Query<&mut Transform>,
+) {
+    if state.active != Some(SceneId::FortArrival) {
+        return;
+    }
+    for (mut ap, sk) in &mut roots {
+        if ap.bones.is_none() {
+            let find = |n: &str| children.iter_descendants(sk.inst()).find(|&d| names.get(d).is_ok_and(|x| x.as_str() == n));
+            ap.bones = find("upperarm_r").zip(find("lowerarm_r"));
+        }
+        let (Some((upper, lower)), Some(at)) = (ap.bones, ap.at) else { continue };
+        if ap.w < 0.01 {
+            continue;
+        }
+        let Ok(hand) = children.get(lower).map(|c| c.iter().find(|&d| names.get(d).is_ok_and(|x| x.as_str() == "hand_r"))) else { continue };
+        let Some(hand) = hand else { continue };
+        let Ok(up_parent) = parents.get(upper).map(|p| p.parent()) else { continue };
+        let gp = live_global(up_parent, &parents, &tfs);
+        let gu = live_global(upper, &parents, &tfs);
+        let gl = live_global(lower, &parents, &tfs);
+        let gh = live_global(hand, &parents, &tfs);
+        let (shoulder, elbow, wrist) = (Vec3::from(gu.translation), Vec3::from(gl.translation), Vec3::from(gh.translation));
+        let aim = (at - shoulder).normalize_or_zero();
+        if aim == Vec3::ZERO {
+            continue;
+        }
+        let w = ap.w.clamp(0.0, 1.0);
+        let q1 = Quat::IDENTITY.slerp(Quat::from_rotation_arc((elbow - shoulder).normalize(), aim), w);
+        let gu_rot = q1 * rot_of(gu);
+        let fore = q1 * (wrist - elbow).normalize();
+        let q2 = Quat::IDENTITY.slerp(Quat::from_rotation_arc(fore, aim), w * 0.9);
+        let gl_rot = q2 * q1 * rot_of(gl);
+        if let Ok(mut t) = tfs.get_mut(upper) {
+            t.rotation = (rot_of(gp).inverse() * gu_rot).normalize();
+        }
+        if let Ok(mut t) = tfs.get_mut(lower) {
+            t.rotation = (gu_rot.inverse() * gl_rot).normalize();
+        }
+    }
+}
+
 /// The cutscene's coverage → (camera, focus distance override). Outside: low in the grass, the
-/// three walk past into the gate, the lens lifts to the tower. Inside: a static side as Pip runs in;
-/// over Maud's shoulder for his discoveries; low behind him looking up at the bell; Maud close with
-/// the boy soft behind her (rack focus for "Can I—"); a crane up and back over the whole ruin.
+/// three walk past into the gate, the lens lifts to the tower. Inside, each thing Pip names is shown
+/// as he names it, over his shoulder with his arm out at it (well → chapel ruin → bell, then the bell
+/// itself); Maud and the boy in over-the-shoulders and a side-on two-shot; a crane up and back over
+/// the whole ruin as he walks off to the well.
 fn fort_shot(t: f32) -> (Cam, Option<f32>) {
     let ease = |u: f32| u * u * (3.0 - 2.0 * u);
     let seg = |t0: f32, t1: f32| ease(((t - t0) / (t1 - t0)).clamp(0.0, 1.0));
@@ -1829,47 +1969,96 @@ fn fort_shot(t: f32) -> (Cam, Option<f32>) {
             let look = at(0.1, 1.3, 24.0).lerp(bell, seg(2.8, 7.0));
             ((eye, look, 40.0 - 4.0 * k, 9.0), None)
         }
-        // 2 · inside, side-on: Pip tears in and pulls up in the middle of the yard.
-        t if t < 11.4 => {
-            let eye = at(9.2, 1.25, 8.6).lerp(at(9.0, 1.25, 8.9), lin(7.0, 11.4));
-            let look = at(1.0, 1.0, 17.0).lerp(pip(0.8), 0.45);
-            let f = eye.distance(pip(0.8));
-            ((eye, look, 38.0, 4.5), Some(f))
+        // 2 · inside, looking back at the gate (the tower over it): Pip tears in through the
+        //     pigeons straight at the lens and skids up in the yard, looking round.
+        t if t < 11.1 => {
+            let eye = at(8.4, 1.15, -0.9).lerp(at(8.3, 1.18, -0.6), lin(7.0, 11.1));
+            let look = at(0.5, 1.4, 20.0).lerp(pip(0.95), seg(7.0, 10.6) * 0.8);
+            ((eye, look, 34.0, 4.0), Some(eye.distance(pip(0.9))))
         }
-        // 3a · over Maud's shoulder, looking north: the boy, the well, the ruined keep, the pigeons.
-        t if t < 16.9 => {
-            let k = lin(11.4, 16.9);
-            let eye = at(2.7, 1.35, 20.9).lerp(at(2.4, 1.4, 20.3), k);
-            let look = at(1.8, 1.15, 4.6).lerp(at(1.7, 1.2, 4.9), k);
-            ((eye, look, 27.0, 5.0), Some(eye.distance(pip(0.8))))
+        // 3 · "There's a well!" — behind his shoulder, his arm out at it; he trots toward it.
+        t if t < 13.4 => {
+            let d = (WELL - PIP_1).normalize();
+            let side = Vec2::new(-d.y, d.x);
+            // at the boy's own eye-height (he's a head shorter than the grown-ups: any higher and
+            // the lens looks over him, cropping him to a crown in the corner)
+            let e = PIP_1 - d * 1.8 + side * 0.6;
+            let eye = at(e.x, 1.0, e.y).lerp(at(e.x + d.x * 0.6, 1.0, e.y + d.y * 0.6), lin(11.1, 13.4));
+            let look = well_pt() + Vec3::Y * 0.1;
+            ((eye, look, 32.0, 3.0), Some(eye.distance(well_pt()) * 0.8))
         }
-        // 3b · reverse, low behind the boy: "Up there."
-        t if t < 19.4 => {
-            let d = (BELL - PIP_3).normalize();
+        // 4 · "There's a— that's a chapel, that was a chapel" — he stops dead, turns to the ruin and
+        //     points; we look past him at it (racking from the boy to the ruin).
+        t if t < 15.75 => {
+            let d = (RUIN - PIP_2).normalize();
+            let side = Vec2::new(-d.y, d.x); // his right: the pointing arm on our side
+            let e = PIP_2 - d * 2.2 + side * 0.7;
+            let eye = at(e.x, 1.05, e.y).lerp(at(e.x - d.x * 0.3, 1.07, e.y - d.y * 0.3), lin(13.4, 15.75));
+            let look = (ruin_pt() - Vec3::Y * 0.4).lerp(pip(0.8), 0.15);
+            let (fp, fr) = (eye.distance(pip(1.0)), eye.distance(ruin_pt()));
+            ((eye, look, 36.0, 3.5), Some(fp + (fr - fp) * env(t, &[(13.9, 0.0), (14.5, 1.0)])))
+        }
+        // 5 · "There's a bell. Up there." — he spins round; low behind him, across the yard to the
+        //     tower over the gate, his arm up at the belfry, Maud walking in.
+        t if t < 17.75 => {
+            let d = (BELL - PIP_2).normalize();
             let side = Vec2::new(d.y, -d.x);
-            let k = lin(16.9, 19.4);
-            let e0 = PIP_3 - d * 2.3 + side * 0.55;
-            let e1 = PIP_3 - d * 1.9 + side * 0.5;
-            let eye = at(e0.x, 0.7, e0.y).lerp(at(e1.x, 0.78, e1.y), k);
-            let look = (bell - Vec3::Y * 1.3).lerp(bell - Vec3::Y * 0.6, k);
-            ((eye, look, 40.0, 9.0), None)
+            let e = PIP_2 - d * 1.7 + side * 0.5;
+            let eye = at(e.x, 0.75, e.y);
+            let look = (bell_pt() - Vec3::Y * 2.2).lerp(bell_pt() - Vec3::Y * 0.8, seg(15.9, 17.6));
+            ((eye, look, 24.0, 9.0), Some(eye.distance(bell_pt())))
         }
-        // 4 · Maud, close; the boy runs past behind her to the tower. Rack to him for "Can I—".
-        t if t < 26.7 => {
-            let eye = at(4.0, 1.12, 13.4).lerp(at(3.8, 1.14, 13.6), lin(19.4, 26.7));
+        // 6 · "It's whole." — the bell itself in its belfry, morning sun on the bronze.
+        //    Along shot 5's own sightline (through the belfry opening — any other angle puts a pier
+        //    in front of it), a slow telephoto push in.
+        t if t < 19.6 => {
+            let d = (BELL - PIP_2).normalize();
+            let e5 = PIP_2 - d * 1.7 + Vec2::new(d.y, -d.x) * 0.5;
+            let dir = (at(e5.x, 0.75, e5.y) - bell_pt()).normalize();
+            // slid right of the boy's sightline so the near pier clears the bell
+            let right = Vec3::new(dir.z, 0.0, -dir.x).normalize();
+            let eye = bell_pt() + dir * (9.5 - 1.3 * seg(17.75, 19.6)) + right * 1.3;
+            ((eye, bell_pt() + Vec3::Y * 0.35, 22.0, 1.5), Some(eye.distance(bell_pt())))
+        }
+        // 7 · Maud: "The well's whole too. Start with the well." — over the boy's shoulder, low (his
+        //     eye-line), up at her.
+        t if t < 23.0 => {
+            let d = (MAUD_MARK - PIP_2).normalize();
+            let side = Vec2::new(d.y, -d.x);
+            let e = PIP_2 - d * 1.25 + side * 0.34;
+            let eye = at(e.x, 1.02, e.y).lerp(at(e.x + d.x * 0.25, 1.03, e.y + d.y * 0.25), lin(19.6, 23.0));
             let look = at(MAUD_MARK.x, 1.2, MAUD_MARK.y);
-            let (fm, fp) = (eye.distance(look), eye.distance(pip(0.85)));
-            let k = env(t, &[(22.75, 0.0), (23.1, 1.0), (23.75, 1.0), (24.05, 0.0)]);
-            ((eye, look, 27.0, 0.6), Some(fm + (fp - fm) * k))
+            ((eye, look, 25.0, 1.2), Some(eye.distance(look)))
         }
-        // 5 · crane up and back over the wall: the whole ruin, two small figures, the light going.
+        // 8 · "Can I—" — the reverse, over her shoulder: the boy, arm up at the bell, asking.
+        t if t < 23.95 => {
+            let d = (PIP_2 - MAUD_MARK).normalize();
+            let side = Vec2::new(-d.y, d.x);
+            let e = MAUD_MARK - d * 1.05 + side * 0.36;
+            let e = e - d * 0.5;
+            let eye = at(e.x, 1.5, e.y);
+            let look = pip(0.8);
+            ((eye, look, 19.0, 1.5), Some(eye.distance(look)))
+        }
+        // 9 · "At dusk. King's orders, one of them." — her voice over the boy's face, close, from
+        //     her side: the head going down, the well he's been told to start with behind him. (A
+        //     side-on two-shot put them at opposite frame edges, ~8.7 u apart, the village between.)
+        t if t < 26.8 => {
+            let d = (MAUD_MARK - PIP_2).normalize();
+            let side = Vec2::new(-d.y, d.x);
+            let e = PIP_2 + d * 2.3 + side * 0.45;
+            let eye = at(e.x, 0.98, e.y).lerp(at(e.x - d.x * 0.35, 0.96, e.y - d.y * 0.35), lin(23.95, 26.8));
+            let look = pip(0.82);
+            ((eye, look, 24.0, 1.4), Some(eye.distance(look)))
+        }
+        // 10 · "God help us…" — from behind Maud, the boy walking off to the well; the crane rises up
+        //      and back over the gate wall: the whole ruin, two small figures, the light going. Ends
+        //      low enough to keep the horizon (a high top-down just shows patchy mud).
         _ => {
             let k = seg(26.9, 34.6);
-            // ends low enough to keep the horizon: the tower and broken wall in the foreground, the
-            // yard, the keep ruin and the hills beyond (a high top-down just shows patchy mud)
-            let eye = at(2.2, 1.45, 19.2).lerp(Vec3::new(7.5, world_y_at(Vec2::new(7.5, 30.0)) + 6.5, 30.0), k);
-            let look = at(0.6, 1.1, 15.0).lerp(at(-1.0, 2.2, -8.0), k);
-            ((eye, look, 36.0 + 8.0 * k, 2.5 + 17.5 * k), None)
+            let eye = at(3.5, 1.55, 11.2).lerp(Vec3::new(9.0, world_y_at(Vec2::new(9.0, 30.5)) + 7.0, 30.5), k);
+            let look = pip(0.9).lerp(at(1.0, 2.0, -8.0), seg(26.9, 31.0));
+            ((eye, look, 34.0 + 10.0 * k, 2.5 + 17.5 * k), None)
         }
     }
 }
@@ -1889,6 +2078,9 @@ fn fort_clear_stage(
                 With<crate::town::BuildingMesh>,
                 With<crate::villagers::Villager>,
                 With<crate::wildlife::Animal>,
+                With<crate::pasture::Sheep>,
+                With<crate::pasture::SheepDog>,
+                With<crate::pasture::Shepherd>,
             )>,
             Without<SceneActor>,
             Without<crate::castle::CastlePart>,
@@ -1906,8 +2098,12 @@ fn fort_clear_stage(
     if state.active == Some(SceneId::FortArrival) {
         for (e, mut v, gt) in &mut q {
             let p = gt.translation();
+            // (the pasture's dog + shepherd re-show themselves every frame: re-hidden each frame,
+            // recorded once)
             if *v != Visibility::Hidden && Vec2::new(p.x, p.z).distance(Vec2::new(0.0, 8.0)) < 70.0 {
-                hidden.push((e, *v));
+                if !hidden.iter().any(|(h, _)| *h == e) {
+                    hidden.push((e, *v));
+                }
                 *v = Visibility::Hidden;
             }
         }

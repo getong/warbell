@@ -23,6 +23,10 @@ struct FilmGrade {
     vignette: f32,
     aberration: f32,
     time: f32,
+    halation: f32,
+    streak: f32,
+    weave: f32,
+    _pad: f32,
 }
 @group(0) @binding(2) var<uniform> grade: FilmGrade;
 
@@ -38,9 +42,25 @@ fn tint_keep_luma(c: vec3<f32>, tint: vec3<f32>) -> vec3<f32> {
     return t * (luma(c) / max(luma(t), 1e-4));
 }
 
+fn hash1(x: f32) -> f32 {
+    return fract(sin(x * 91.3458) * 47453.5453);
+}
+
+// The part of a sample above `knee` (how much "light" spills into a glow).
+fn hot(c: vec3<f32>, knee: f32) -> vec3<f32> {
+    return c * (max(luma(c) - knee, 0.0) / max(luma(c), 1e-4));
+}
+
 @fragment
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
-    let src = textureSample(screen_texture, texture_sampler, in.uv);
+    let px = 1.0 / vec2<f32>(textureDimensions(screen_texture));
+    // ── Gate weave ── the film frame settles a fraction of a pixel differently every frame (a
+    // projector's gate never registers twice the same). Cutscenes only (0 in play).
+    var uv = in.uv;
+    if grade.weave > 0.0001 {
+        uv = uv + (vec2<f32>(hash1(grade.time), hash1(grade.time + 3.7)) - 0.5) * px * grade.weave;
+    }
+    let src = textureSample(screen_texture, texture_sampler, uv);
     if grade.strength <= 0.001 {
         return src;
     }
@@ -48,20 +68,46 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
 
     // ── Chromatic aberration ── red/blue split radially (zero at the centre, strongest at the
     // corners) — the cheap-lens fringe that sells "shot on glass". Off (0) in normal play.
-    let to_c = in.uv - vec2<f32>(0.5);
+    let to_c = uv - vec2<f32>(0.5);
     if grade.aberration > 0.00001 {
         let off = to_c * (dot(to_c, to_c) * 4.0) * grade.aberration;
-        lin.r = textureSample(screen_texture, texture_sampler, in.uv + off).r;
-        lin.b = textureSample(screen_texture, texture_sampler, in.uv - off).b;
+        lin.r = textureSample(screen_texture, texture_sampler, uv + off).r;
+        lin.b = textureSample(screen_texture, texture_sampler, uv - off).b;
+    }
+
+    // ── Halation ── light scattering back off the film base: a warm red-orange fringe that bleeds
+    // around bright edges (sky behind a wall, a lit sleeve). Two rings of taps over the hot part.
+    if grade.halation > 0.001 {
+        var glow = vec3<f32>(0.0);
+        for (var i = 0; i < 12; i++) {
+            let a = f32(i) * 0.5236;
+            let d = vec2<f32>(cos(a), sin(a));
+            glow += hot(textureSample(screen_texture, texture_sampler, uv + d * px * 5.0).rgb, 0.55);
+            glow += hot(textureSample(screen_texture, texture_sampler, uv + d * px * 12.0).rgb, 0.55) * 0.6;
+        }
+        glow = glow / 19.2;
+        lin += luma(glow) * vec3<f32>(1.0, 0.36, 0.14) * grade.halation;
+    }
+
+    // ── Anamorphic streak ── a thin horizontal flare drawn out of the very brightest points (a
+    // sun glint, a lantern), cool-tinted like a cylindrical lens.
+    if grade.streak > 0.001 {
+        var st = vec3<f32>(0.0);
+        for (var i = 1; i <= 10; i++) {
+            let o = f32(i) * f32(i) * 0.6 * px.x;
+            let w = 1.0 - f32(i) / 11.0;
+            st += (hot(textureSample(screen_texture, texture_sampler, uv + vec2<f32>(o, 0.0)).rgb, 0.85)
+                + hot(textureSample(screen_texture, texture_sampler, uv - vec2<f32>(o, 0.0)).rgb, 0.85)) * w;
+        }
+        lin += luma(st) * 0.12 * vec3<f32>(0.55, 0.75, 1.0) * grade.streak;
     }
 
     // ── Unsharp mask (linear, 4-tap cross) — luma-only so it never adds colour fringing. ──
     if grade.sharpen > 0.001 {
-        let px = 1.0 / vec2<f32>(textureDimensions(screen_texture));
-        let n = textureSample(screen_texture, texture_sampler, in.uv + vec2<f32>(0.0, -px.y)).rgb;
-        let s = textureSample(screen_texture, texture_sampler, in.uv + vec2<f32>(0.0, px.y)).rgb;
-        let e = textureSample(screen_texture, texture_sampler, in.uv + vec2<f32>(px.x, 0.0)).rgb;
-        let w = textureSample(screen_texture, texture_sampler, in.uv + vec2<f32>(-px.x, 0.0)).rgb;
+        let n = textureSample(screen_texture, texture_sampler, uv + vec2<f32>(0.0, -px.y)).rgb;
+        let s = textureSample(screen_texture, texture_sampler, uv + vec2<f32>(0.0, px.y)).rgb;
+        let e = textureSample(screen_texture, texture_sampler, uv + vec2<f32>(px.x, 0.0)).rgb;
+        let w = textureSample(screen_texture, texture_sampler, uv + vec2<f32>(-px.x, 0.0)).rgb;
         let blur = luma(n + s + e + w) * 0.25;
         let l0 = luma(lin);
         // Clamp the detail term so high-contrast silhouettes (sky vs. trunk) don't ring.
