@@ -182,6 +182,9 @@ pub struct AnimalSkin {
     /// One of the skin's mesh entities (on-screen test) and how long it has been off screen.
     body: Option<Entity>,
     unseen: f32,
+    /// Every mesh entity of the skin (shadow LOD) and whether they currently cast.
+    meshes: Vec<Entity>,
+    casting: bool,
 }
 
 /// On the skin instance: the gameplay root it dresses.
@@ -271,6 +274,8 @@ fn attach_skins(
             parked: false,
             body: None,
             unseen: 0.0,
+            meshes: Vec::new(),
+            casting: true,
         });
     }
 }
@@ -303,6 +308,7 @@ fn skin_ready(
             // past the haze a distant animal is a few pixels: stop drawing it (and its shadow) there
             commands.entity(d).insert((DynamicSkinnedMeshBounds, SKIN_RANGE, crate::quality::SmallDetail));
             sk.body.get_or_insert(d);
+            sk.meshes.push(d);
         }
     }
     sk.clip = "";
@@ -363,6 +369,10 @@ fn drive_skins(
         let (body, mut unseen) = (sk.body, sk.unseen);
         let far = crate::anim_lod::park(far, d2, body, on_screen, &mut unseen, dt);
         sk.unseen = unseen;
+        if let Some(cast) = crate::anim_lod::shadow_flip(sk.casting, d2) {
+            sk.casting = cast;
+            crate::anim_lod::set_casting(&mut commands, &sk.meshes, cast);
+        }
         if far != sk.parked {
             sk.parked = far;
             if far {

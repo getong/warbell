@@ -5,6 +5,7 @@
 //! it for [`UNSEEN_PARK`] seconds — off-screen people freeze mid-pose and resume the moment
 //! they're back in view. Everyone within [`ALWAYS_ANIM`] keeps animating regardless, so a quick
 //! turn of the camera never catches a frozen neighbour (the visible set is one frame old).
+//! Also the skins' shadow LOD ([`shadow_flip`]; `FOREST_SKINSHADOW=all` keeps every skin casting).
 //! `FOREST_ANIMLOD=0` disables the on-screen test (distance parking only); so does `FOREST_LIFECHECK`.
 
 use bevy::camera::visibility::VisibleEntities;
@@ -35,4 +36,35 @@ pub fn park(far: bool, d2: f32, body: Option<Entity>, on_screen: Option<&[Entity
     };
     *unseen = if seen { 0.0 } else { *unseen + dt };
     far || *unseen > UNSEEN_PARK
+}
+
+/// Shadow LOD: past [`SHADOW_FAR`] a skinned person / animal stops casting (its shadow is a few
+/// pixels, but each caster is a full skinned draw in every cascade); back inside [`SHADOW_NEAR`]
+/// it casts again. Returns the new `casting` state when it flips.
+pub const SHADOW_FAR: f32 = 38.0;
+pub const SHADOW_NEAR: f32 = 33.0;
+
+pub fn shadow_flip(casting: bool, d2: f32) -> Option<bool> {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var("FOREST_SKINSHADOW").map(|v| v != "all").unwrap_or(true)) {
+        return None;
+    }
+    if casting && d2 > SHADOW_FAR * SHADOW_FAR {
+        Some(false)
+    } else if !casting && d2 < SHADOW_NEAR * SHADOW_NEAR {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+/// Apply a [`shadow_flip`] to a skin's mesh entities.
+pub fn set_casting(commands: &mut Commands, meshes: &[Entity], cast: bool) {
+    for &m in meshes {
+        if cast {
+            commands.entity(m).try_remove::<bevy::light::NotShadowCaster>();
+        } else {
+            commands.entity(m).try_insert(bevy::light::NotShadowCaster);
+        }
+    }
 }

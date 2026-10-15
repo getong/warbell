@@ -138,6 +138,9 @@ pub struct Skinned {
     body: Option<Entity>,
     /// Seconds the body has been off screen.
     unseen: f32,
+    /// Every mesh entity of the skin (shadow LOD) and whether they currently cast.
+    meshes: Vec<Entity>,
+    casting: bool,
 }
 
 impl Skinned {
@@ -407,6 +410,8 @@ fn attach_skins(
             parked: false,
             body: None,
             unseen: 0.0,
+            meshes: Vec::new(),
+            casting: true,
         });
     }
 }
@@ -457,6 +462,7 @@ fn skin_ready(
                 // Past the haze a townsperson is a few pixels: stop drawing them (and their shadow).
                 commands.entity(d).insert((MeshMaterial3d(m.clone()), DynamicSkinnedMeshBounds, SKIN_RANGE, crate::quality::SmallDetail));
                 sk.body.get_or_insert(d);
+                sk.meshes.push(d);
             }
         }
         if let Ok(n) = names.get(d) {
@@ -711,6 +717,10 @@ fn drive_skins(
         let (body, mut unseen) = (sk.body, sk.unseen);
         let far = crate::anim_lod::park(far, d2, body, on_screen, &mut unseen, dt);
         sk.unseen = unseen;
+        if let Some(cast) = crate::anim_lod::shadow_flip(sk.casting, d2) {
+            sk.casting = cast;
+            crate::anim_lod::set_casting(&mut commands, &sk.meshes, cast);
+        }
         if far != sk.parked {
             sk.parked = far;
             if far {
