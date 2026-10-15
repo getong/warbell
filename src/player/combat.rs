@@ -185,7 +185,7 @@ pub struct HitStop {
 // real hit-site juice exactly — FOREST_HITTEST capture footage must not under-sell the game feel.
 pub(crate) const HITSTOP_KILL: f32 = 0.10;
 pub(crate) const HITSTOP_CRIT: f32 = 0.07;
-pub(crate) const HITSTOP_HIT: f32 = 0.04;
+pub(crate) const HITSTOP_HIT: f32 = 0.055; // was 0.04: a light cut slid through without a bite
 /// During hit-stop the sim runs at this fraction of real time rather than a dead freeze — a brief
 /// slow-mo dip that still sells the "punch" without the full-stop stutter that read as micro-lag.
 const HITSTOP_SLOWMO: f32 = 0.15;
@@ -260,6 +260,8 @@ pub struct Juice<'w, 's> {
     /// The impact flashes currently alive — counted so a cleave can't blow past
     /// [`MAX_IMPACT_LIGHTS`]. Also folded in here to stay under the param ceiling.
     lights: Query<'w, 's, (), With<LightFade>>,
+    /// The blade tip's motion (written by [`hero_blade_trail`]): blood leaves with the edge.
+    blade: Res<'w, BladeMotion>,
 }
 
 /// Townsfolk the hero can harmlessly bonk with a swing: the [`crate::villagers::Villager`] bodies
@@ -306,11 +308,14 @@ pub(crate) struct Spark {
     stretch: bool,
     /// Gravity (units/s²) — 9 for the standard arc; low (~2.5) for hanging embers.
     grav: f32,
+    /// A blood drop: the ground height it lands on. It keeps its size in flight and, landing,
+    /// leaves a fleck there instead of shrinking away in mid-air.
+    drip: Option<f32>,
 }
 
 impl Spark {
     fn new(vel: Vec3, life: f32, scale0: f32) -> Self {
-        Spark { vel, life, life0: life, scale0, stretch: false, grav: 9.0 }
+        Spark { vel, life, life0: life, scale0, stretch: false, grav: 9.0, drip: None }
     }
     fn streak(vel: Vec3, life: f32, scale0: f32) -> Self {
         Spark { stretch: true, ..Spark::new(vel, life, scale0) }
@@ -393,21 +398,23 @@ pub(crate) struct CombatFx {
     dust: Handle<StandardMaterial>,
     /// Green — Bramble-Sweep leaf/thorn motes flung outward.
     leaf: Handle<StandardMaterial>,
-    /// A unit quad (slash streak / blade-trail segment).
+    /// A unit quad (the blood-mist puffs' card).
     quad: Handle<Mesh>,
-    /// Base materials cloned per planar-flash instance (see `spawn_fade`).
-    slash_mat: Handle<StandardMaterial>,
     /// The shared feathered ground-decal quad + materials (`combat_marks`) the kill / slam
     /// shockwave and the blood splats are drawn with — no per-mark material clones.
     marks: crate::combat_marks::MarkAssets,
     /// Non-emissive pale gold for the blade-trail ribbon (bloom must never catch the trail).
+    /// Base materials like this and [`Self::mist_mat`] are cloned per planar fade (`spawn_fade`).
     trail_mat: Handle<StandardMaterial>,
+    /// Soft round dark-red puff (a radial-falloff sprite): the fine blood mist of a cut.
+    mist_mat: Handle<StandardMaterial>,
 }
 
 pub fn setup_combat_fx(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
     marks: Res<crate::combat_marks::MarkAssets>,
 ) {
     let mesh = meshes.add(Sphere::new(0.07).mesh().ico(1).unwrap());
@@ -441,14 +448,17 @@ pub fn setup_combat_fx(
         cull_mode: None,
         ..default()
     };
-    // Warm, dim glint — NOT hot white: the old (4.0, 3.6, 2.8) emissive at 0.9 alpha bloomed
-    // into a big white flare on every contact. Kept just bright enough for bloom to kiss it.
-    let slash_mat = materials.add(flash(Color::srgba(1.0, 0.92, 0.74, 0.5), LinearRgba::rgb(1.2, 0.95, 0.55)));
     // The blade-trail ribbon: pale gold with ZERO emissive, so bloom can never whiten it — the
     // trail should read as a translucent smear of motion, not a light source.
-    let trail_mat = materials.add(flash(Color::srgba(0.95, 0.87, 0.62, 0.28), LinearRgba::BLACK));
+    // Opaque base: the ribbon's opacity rides its vertex alpha (age + inner-edge falloff).
+    let trail_mat = materials.add(flash(Color::srgb(0.93, 0.9, 0.84), LinearRgba::BLACK));
+    // Blood mist: a dark, NON-emissive puff with a soft radial edge (a hard quad read as a card).
+    let mist_mat = materials.add(StandardMaterial {
+        base_color_texture: Some(images.add(soft_disc())),
+        ..flash(Color::srgba(0.30, 0.02, 0.02, 0.5), LinearRgba::BLACK)
+    });
     commands.insert_resource(CombatFx {
-        mesh, hit, kill, heal, blood, chip, dust, leaf, quad, slash_mat, trail_mat,
+        mesh, hit, kill, heal, blood, chip, dust, leaf, quad, trail_mat, mist_mat,
         marks: marks.clone(),
     });
 }
@@ -514,12 +524,8 @@ const FADE_ALPHA_STEP: f32 = 0.02;
 /// How a fading quad orients each frame.
 #[derive(Clone, Copy)]
 pub(crate) enum FadeFace {
-    /// Re-face the camera flat-on each frame (the contact slash flash).
+    /// Re-face the camera flat-on each frame (the blood mist puffs).
     Camera,
-    /// Cylindrical billboard: the quad's local X stays pinned along this world axis while it
-    /// rolls about it to face the camera — a ribbon segment (the blade trail), so the streak
-    /// follows the blade's real sweep instead of flashing a fixed-size card at the camera.
-    Axis(Vec3),
 }
 
 /// Drain a planar flash over its life: scale `s0→s1` (ease-out), fade alpha `a0→0`, orient per
@@ -546,15 +552,6 @@ pub fn update_fx_fades(
         tf.scale = f.s0.lerp(f.s1, ease);
         match (f.face, cam_pos) {
             (FadeFace::Camera, Some(cp)) => tf.look_at(cp, Vec3::Y),
-            (FadeFace::Axis(a), Some(cp)) => {
-                // Quad normal = the camera direction with its along-axis component removed, so
-                // the ribbon stays edge-true to the sweep while showing the camera its face.
-                let to_cam = cp - tf.translation;
-                let n = (to_cam - a * a.dot(to_cam)).normalize_or_zero();
-                if n != Vec3::ZERO {
-                    tf.rotation = Quat::from_mat3(&Mat3::from_cols(a, n.cross(a), n));
-                }
-            }
             _ => {}
         }
         // Only touch the material when the alpha has moved a visible step (see `FADE_ALPHA_STEP`):
@@ -867,24 +864,26 @@ pub fn player_attack(
         hit_ents.push(e);
         hp.hp -= dmg;
         let dead = hp.hp <= 0.0;
-        // Blood spray driven along the blow + a slash-flash at contact; a kill adds a ground
-        // shockwave ring + a lingering splat under the corpse.
+        // A cut reads through BLOOD, not light (The Witcher 3 / KCD2): mist + drops along the
+        // edge, a pool under the foe; a crit / Heavy / kill opens up more. (The old hit sparks —
+        // an ember starburst on every crit and Heavy — a hard-edged glint card and a bright
+        // impact light read as a cartoon flower of light on a body.) A stone golem chips instead.
         let now_s = time.elapsed_secs();
         let mid = Vec3::new(p.x, p.y + 0.9, p.z);
-        spawn_blood(&mut commands, &fx, mid, dir, dead);
-        spawn_slash(&mut commands, &fx, &mut juice.materials, mid, now_s);
-        // Heavy flourish: an extra ground shockwave ring + a bright spark gout on every heavy
-        // contact (cosmetic only — the heavy is a single-target hit, no splash damage).
-        if hero.heavy {
-            spawn_shockwave(&mut commands, &fx, Vec3::new(p.x, p.y + 0.05, p.z), now_s);
-            spawn_burst(&mut commands, &fx, mid, true);
-            spawn_impact_light(&mut commands, &mut live_lights, mid, Color::srgb(1.0, 0.85, 0.5), 26_000.0, 0.18, now_s);
+        let stone = animal.as_deref().is_some_and(|a| a.species == crate::critters::Species::Golem);
+        let hard = dead || crit || hero.heavy;
+        if stone {
+            spawn_chips(&mut commands, &fx, mid, hard);
+        } else {
+            spawn_blood(&mut commands, &fx, &mut juice.materials, mid, dir, juice.blade.tip_vel, p.y, hard, now_s);
+            // A pool under the target on every hit (small), big + lingering on a kill.
+            spawn_splat(&mut commands, &fx, Vec3::new(p.x, p.y, p.z), dead, now_s);
         }
-        // A blood splat under the target on EVERY hit (small + brief), big + lingering on a kill.
-        spawn_splat(&mut commands, &fx, Vec3::new(p.x, p.y, p.z), dead, now_s);
+        // (No ground shockwave on a sword hit any more: sunlit, the dust ring read as a glowing
+        // disc under the foe. The Warden slam arts keep theirs.)
         if dead {
-            spawn_shockwave(&mut commands, &fx, Vec3::new(p.x, p.y + 0.05, p.z), now_s);
-            spawn_impact_light(&mut commands, &mut live_lights, mid, Color::srgb(1.0, 0.9, 0.6), 18_000.0, 0.15, now_s);
+            // Only a faint warm kiss of light on the kill — a full flash bloomed into a white blot.
+            spawn_impact_light(&mut commands, &mut live_lights, mid, Color::srgb(1.0, 0.9, 0.6), 6_000.0, 0.12, now_s);
         }
         hit_any = true;
         // Floating number above the target + a white hurt-flash on a survivor.
@@ -940,12 +939,6 @@ pub fn player_attack(
                     o.atk_anim = 0.0;
                     o.atk_cd = o.atk_cd.max(STAGGER_CD);
                 }
-            }
-            // A contact spark gout on a crit — metal-on-ork crunch at the hit point, on TOP of the
-            // per-hit blood + slash-flash. (A heavy already fired its bigger gout above; light
-            // pokes stay clean.)
-            if crit && !hero.heavy {
-                spawn_burst(&mut commands, &fx, mid, false);
             }
             // A heavy reads as "{dmg}!!" big in gold; a lucky crit "{dmg}!"; a normal hit the plain
             // number.
@@ -1009,9 +1002,8 @@ pub fn player_attack(
                 let now_s = time.elapsed_secs();
                 let mid = Vec3::new(p.x, p.y + 0.9, p.z);
                 // Cleave splash has no single blow direction → radial blood puff.
-                spawn_blood(&mut commands, &fx, mid, Vec2::ZERO, hp.hp <= 0.0);
+                spawn_blood(&mut commands, &fx, &mut juice.materials, mid, Vec2::ZERO, Vec3::ZERO, p.y, hp.hp <= 0.0, now_s);
                 if hp.hp <= 0.0 {
-                    spawn_shockwave(&mut commands, &fx, Vec3::new(p.x, p.y + 0.05, p.z), now_s);
                     spawn_splat(&mut commands, &fx, Vec3::new(p.x, p.y, p.z), true, now_s);
                     floats.0.push(crate::combat_fx::FloatReq {
                         world: head,
@@ -1239,27 +1231,89 @@ pub(crate) fn spawn_clash(commands: &mut Commands, fx: &CombatFx, at: Vec3, dir:
     }
 }
 
-/// Dark blood spray on a creature hit — motes flung mostly ALONG the blow `dir` (world XZ) +
-/// spread + up, so the spray reads as driven by the strike. A kill gushes more, harder.
-pub(crate) fn spawn_blood(commands: &mut Commands, fx: &CombatFx, at: Vec3, dir: Vec2, kill: bool) {
+/// A 64² white disc with a smooth radial alpha falloff — the sprite of every soft puff.
+fn soft_disc() -> Image {
+    const N: usize = 64;
+    let mut px = Vec::with_capacity(N * N * 4);
+    for y in 0..N {
+        for x in 0..N {
+            let d = Vec2::new(x as f32 + 0.5, y as f32 + 0.5) / N as f32 * 2.0 - Vec2::ONE;
+            let a = (1.0 - d.length()).clamp(0.0, 1.0);
+            px.extend_from_slice(&[255, 255, 255, (a * a * (3.0 - 2.0 * a) * 255.0) as u8]);
+        }
+    }
+    Image::new(
+        bevy::render::render_resource::Extent3d { width: N as u32, height: N as u32, depth_or_array_layers: 1 },
+        bevy::render::render_resource::TextureDimension::D2,
+        px,
+        bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+        bevy::asset::RenderAssetUsages::RENDER_WORLD,
+    )
+}
+
+/// Blood off a cut, after how it reads in The Witcher 3 / KCD2: subtle, but weighty. A short dark
+/// MIST puff at the wound, a fan of DROPS flung along the blade's sweep (`sweep`, the tip's
+/// velocity at contact — blood leaves with the edge, not straight out of the foe's back) and out
+/// of the far side of the blow (`dir`, world XZ), arcing down under gravity; each drop that lands
+/// leaves a small fleck where it fell ([`spawn_fleck`]), so a fight paints the ground around it.
+/// A kill opens up more. `ground` = the struck foe's foot height.
+pub(crate) fn spawn_blood(
+    commands: &mut Commands,
+    fx: &CombatFx,
+    mats: &mut Assets<StandardMaterial>,
+    at: Vec3,
+    dir: Vec2,
+    sweep: Vec3,
+    ground: f32,
+    kill: bool,
+    now: f32,
+) {
     let dir3 = Vec3::new(dir.x, 0.0, dir.y);
-    let (n, spd, scale0) = if kill { (16u32, 3.4, 0.55) } else { (9, 2.4, 0.45) };
+    // The edge's travel, flattened a little toward the ground plane and capped: drops ride it.
+    let edge = (sweep * Vec3::new(1.0, 0.6, 1.0)).clamp_length_max(9.0) * 0.32;
+    let (n, spd) = if kill { (26u32, 1.25) } else { (15, 1.0) };
+    let seed = mark_seed(at, now);
     for i in 0..n {
+        let h = seed.wrapping_add(i.wrapping_mul(0x9e37_79b9)).wrapping_mul(0x85eb_ca6b);
+        let r = |k: u32| ((h >> (k * 5)) & 31) as f32 / 31.0;
         let a = i as f32 * 2.399_963_2; // golden angle → even spread
-        let spread = Vec3::new(a.cos(), 0.0, a.sin()) * 0.55;
-        let up = 0.6 + (i % 3) as f32 * 0.45;
-        let mag = 0.6 + (i * 37 % 10) as f32 * 0.06;
-        let vel = (dir3 * 1.2 + spread + Vec3::Y * up) * spd * mag;
-        // Mixed droplet sizes (fine spray + a few fat drops), streaked along their flight.
-        let sc = scale0 * (0.7 + (i * 13 % 7) as f32 * 0.09);
+        let spread = Vec3::new(a.cos(), 0.0, a.sin()) * (0.35 + 0.5 * r(0));
+        let vel = (edge * (0.55 + 0.6 * r(1)) + dir3 * (0.9 + 0.8 * r(2)) + spread + Vec3::Y * (0.4 + 1.3 * r(3))) * spd;
+        // Fine spray and a few fat drops (the sphere mote is 0.07 u across ×scale).
+        let sc = if i % 5 == 0 { 0.75 + 0.35 * r(4) } else { 0.32 + 0.3 * r(4) };
         commands.spawn((
             Mesh3d(fx.mesh.clone()),
             MeshMaterial3d(fx.blood.clone()),
-            Transform::from_translation(at).with_scale(Vec3::splat(sc)),
-            Spark::streak(vel, 0.55, sc),
+            Transform::from_translation(at + spread * 0.12).with_scale(Vec3::splat(sc)),
+            Spark { drip: Some(ground), ..Spark::streak(vel, 1.6, sc) },
             bevy::light::NotShadowCaster,
         ));
     }
+    // The mist: a few soft dark puffs at the wound, drifting with the cut and swelling as they thin.
+    let puffs = if kill { 4 } else { 3 };
+    for i in 0..puffs {
+        let o = (edge * 0.025 + dir3 * 0.05) * i as f32 + Vec3::Y * 0.04 * i as f32;
+        let s0 = 0.18 + 0.05 * i as f32;
+        spawn_fade(
+            commands, mats, &fx.mist_mat, &fx.quad,
+            Transform::from_translation(at + o),
+            Vec3::splat(s0), Vec3::splat(s0 * if kill { 3.6 } else { 3.0 }),
+            if kill { 0.55 } else { 0.42 }, 0.24 + 0.05 * i as f32, FadeFace::Camera, now,
+        );
+    }
+}
+
+/// The fleck a landed blood drop leaves: a small dark stain that soaks in over ~20 s.
+fn spawn_fleck(commands: &mut Commands, fx: &CombatFx, at: Vec3, size: f32, now: f32) {
+    use crate::combat_marks::{spawn_mark, MarkFade, MarkKind};
+    let seed = mark_seed(at, now);
+    let d = 0.07 + 0.15 * size;
+    let squash = 0.55 + (seed % 17) as f32 / 17.0 * 0.4;
+    let e = spawn_mark(commands, &fx.marks, MarkKind::Blood, at + Vec3::Y * 0.02, d, seed as f32 * 0.37, squash, 0.8, seed);
+    commands.entity(e).insert((
+        MarkFade { kind: MarkKind::Blood, seed, born: now, hold: 14.0, life: 6.0, a0: 0.8, s0: d * 0.7, s1: d },
+        crate::biome::BiomeEntity,
+    ));
 }
 
 /// Grey rock-chip burst off a mined ore boulder — small radial spray per swing, a bigger debris
@@ -1309,16 +1363,6 @@ fn spawn_fade(
     ));
 }
 
-/// A subtle slash glint at the contact point — a thin, camera-facing streak that widens slightly
-/// and fades fast, marking where the blade connected without flaring the screen.
-pub(crate) fn spawn_slash(commands: &mut Commands, fx: &CombatFx, mats: &mut Assets<StandardMaterial>, at: Vec3, now: f32) {
-    spawn_fade(
-        commands, mats, &fx.slash_mat, &fx.quad,
-        Transform::from_translation(at),
-        Vec3::new(0.35, 0.09, 1.0), Vec3::new(1.05, 0.13, 1.0), 0.5, 0.11, FadeFace::Camera, now,
-    );
-}
-
 /// A kill / slam / heavy-blow shockwave: a soft ring of thrown dust that rushes out across the
 /// ground and frays as it fades (`combat_marks`, PBR-lit so it sits in the scene's light). It used
 /// to be a glowing amber `Annulus` — an arcade "energy ring" that read low-poly.
@@ -1338,7 +1382,8 @@ pub(crate) fn spawn_shockwave(commands: &mut Commands, fx: &CombatFx, at: Vec3, 
 pub(crate) fn spawn_splat(commands: &mut Commands, fx: &CombatFx, at: Vec3, kill: bool, now: f32) {
     use crate::combat_marks::{spawn_mark, MarkFade, MarkKind};
     let seed = mark_seed(at, now);
-    let (size, hold, life, a0) = if kill { (1.5, 1.5, 2.0, 0.85) } else { (0.6, 0.5, 1.1, 0.7) };
+    // A fight should leave its mark for a while: pools soak in over tens of seconds.
+    let (size, hold, life, a0) = if kill { (1.5, 22.0, 8.0, 0.85) } else { (0.55, 8.0, 5.0, 0.6) };
     // Squash one axis a little (seeded) so pools never read as a stamped circle.
     let squash = 0.72 + (seed % 23) as f32 / 23.0 * 0.28;
     let e = spawn_mark(commands, &fx.marks, MarkKind::Blood, Vec3::new(at.x, at.y + 0.02, at.z), size, seed as f32 * 0.37, squash, a0, seed);
@@ -1354,65 +1399,188 @@ fn mark_seed(at: Vec3, now: f32) -> u32 {
     h.wrapping_mul(0x9e37_79b9) >> 8
 }
 
-/// Emit a translucent ribbon along the sword tip's path across the fast part of the swing — a
-/// cheap weapon trail. Each frame stretches one quad between the previous and current tip
-/// positions ([`FadeFace::Axis`] keeps it rolled toward the camera), so the segments chain into
-/// one continuous smear that follows the real sweep — instead of the old fixed-size camera-facing
-/// cards popping at the tip, which read as white flashes. The blade tip sits at `ArmR`-local
-/// `(0,-0.5,0.96)` (the baked sword's cone), so the arm's `GlobalTransform` places it in the world.
+/// The hero's blade in motion: the tip's world velocity (u/s), for effects that follow the edge.
+#[derive(Resource, Default)]
+pub(crate) struct BladeMotion {
+    pub tip_vel: Vec3,
+}
+
+/// Seconds a blade-trail sample lives (the ribbon's length in time).
+const TRAIL_LIFE: f32 = 0.12;
+/// Tip speed (u/s) above which the blade leaves a trail — the real cut, not the wind-up or carry.
+const TRAIL_SPEED: f32 = 7.0;
+/// Share of the blade (from the tip) the ribbon spans.
+const TRAIL_SPAN: f32 = 0.5;
+/// Sub-steps of the Catmull-Rom between two sampled frames.
+const TRAIL_SUB: usize = 5;
+/// Peak opacity of the ribbon (along its brightest line, a little in from the tip).
+const TRAIL_ALPHA: f32 = 0.24;
+
+/// The blade trail's samples and its one ribbon mesh.
+#[derive(Default)]
+pub struct BladeTrail {
+    /// (time, inner edge, tip, starts a new stroke).
+    samples: std::collections::VecDeque<(f32, Vec3, Vec3, bool)>,
+    mesh: Option<(Entity, Handle<Mesh>)>,
+    last: Option<(f32, Vec3)>,
+    cutting: bool,
+}
+
+/// The weapon trail: a translucent SURFACE swept by the blade (from part-way down the blade to
+/// its tip) over the last [`TRAIL_LIFE`] s, rebuilt each frame as one ribbon mesh. Between
+/// sampled frames both edges follow a Catmull-Rom through the samples, so the smear curves with
+/// the cut instead of chaining straight quads (each frame's chord at a ~1 u/frame tip speed read
+/// as a hard-cornered polyline). Opacity falls off with age and toward the inner edge, so it's a
+/// soft streak of motion, not a band. Emitted wherever the blade really moves fast (any swing,
+/// the Heavy, a Warden art), keyed off the tip's speed rather than a fixed swing window.
 pub fn hero_blade_trail(
     time: Res<Time>,
     fx: Option<Res<CombatFx>>,
     fp: Res<super::FirstPerson>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut meshes: ResMut<Assets<Mesh>>,
     mut commands: Commands,
-    mut last_tip: Local<Option<Vec3>>,
+    mut trail: Local<BladeTrail>,
+    mut motion: ResMut<BladeMotion>,
     hero_q: Query<&Hero>,
     weapon_q: Query<&GlobalTransform, With<super::HeroWeapon>>,
+    mut vis_q: Query<&mut Visibility>,
 ) {
     let Some(fx) = fx else { return };
-    // First person: NO ribbon. The tip path sweeps right across the lens (the whole viewmodel
-    // lives within ~0.5u of the eye), so each camera-rolled segment quad lands ON the camera as
-    // a frame-filling pale wash — the mysterious "whole frame goes tan/black mid-swing" frames
-    // that survived every arm retune. The FP swing reads through the arm + camera sway instead.
-    if fp.blend > 0.3 {
-        *last_tip = None;
+    let now = time.elapsed_secs();
+    let (ribbon, handle) = match &trail.mesh {
+        Some(m) => m.clone(),
+        None => {
+            let h = meshes.add(Mesh::new(
+                bevy::mesh::PrimitiveTopology::TriangleList,
+                bevy::asset::RenderAssetUsages::default(),
+            ));
+            let e = commands
+                .spawn((
+                    Mesh3d(h.clone()),
+                    MeshMaterial3d(fx.trail_mat.clone()),
+                    Transform::IDENTITY,
+                    Visibility::Hidden,
+                    bevy::light::NotShadowCaster,
+                    bevy::light::NotShadowReceiver,
+                    // Rebuilt in world space every frame: its spawn-time bounds mean nothing.
+                    bevy::camera::visibility::NoFrustumCulling,
+                ))
+                .id();
+            trail.mesh = Some((e, h.clone()));
+            return;
+        }
+    };
+    // Sample the blade (its GlobalTransform is last frame's propagate — a steady one-frame lag).
+    let hero = hero_q.single().ok();
+    let blade = weapon_q.single().ok().filter(|_| fp.blend <= 0.3 && hero.is_some());
+    // First person: NO ribbon — the tip sweeps right across the lens, and a swept surface that
+    // close lands ON the camera as a frame-filling wash. The FP swing reads through the arm.
+    if let Some(gt) = blade {
+        let tip = gt.transform_point(super::footman::weapon_tip());
+        let inner = gt.transform_point(super::footman::weapon_tip() * (1.0 - TRAIL_SPAN));
+        let vel = match trail.last {
+            Some((t, p)) if now > t => (tip - p) / (now - t),
+            _ => Vec3::ZERO,
+        };
+        if trail.last.is_none_or(|(t, _)| now > t) {
+            trail.last = Some((now, tip));
+            motion.tip_vel = vel;
+            let fast = vel.length() > TRAIL_SPEED && hero.is_some_and(|h| h.attacking || h.dash_t >= 0.0);
+            if fast {
+                let new_stroke = !trail.cutting;
+                trail.samples.push_back((now, inner, tip, new_stroke));
+            }
+            trail.cutting = fast;
+        }
+    } else {
+        trail.last = None;
+        trail.cutting = false;
+        motion.tip_vel = Vec3::ZERO;
+    }
+    while trail.samples.front().is_some_and(|s| now - s.0 > TRAIL_LIFE) {
+        trail.samples.pop_front();
+    }
+    if let Some(first) = trail.samples.front_mut() {
+        first.3 = true;
+    }
+
+    // ── Rebuild the ribbon: one strip per stroke, sub-stepped on a Catmull-Rom ──
+    let mut pos: Vec<[f32; 3]> = Vec::new();
+    let mut col: Vec<[f32; 4]> = Vec::new();
+    let mut idx: Vec<u32> = Vec::new();
+    let samples: Vec<_> = trail.samples.iter().copied().collect();
+    let mut start = 0;
+    while start < samples.len() {
+        let mut end = start + 1;
+        while end < samples.len() && !samples[end].3 {
+            end += 1;
+        }
+        let stroke = &samples[start..end];
+        if stroke.len() >= 2 {
+            let at = |i: isize| stroke[i.clamp(0, stroke.len() as isize - 1) as usize];
+            // Each stroke is its own strip: quads only join edges of the same stroke.
+            let first = pos.len() as u32;
+            let mut push = |t: f32, inner: Vec3, tip: Vec3| {
+                let age = ((now - t) / TRAIL_LIFE).clamp(0.0, 1.0);
+                let a = TRAIL_ALPHA * (1.0 - age) * (1.0 - age);
+                // Three rows (inner, brightest, tip): soft on both edges, so it's a smear of
+                // motion rather than a sheet with a cut outline.
+                let base = pos.len() as u32;
+                pos.push(inner.to_array());
+                pos.push(inner.lerp(tip, 0.78).to_array());
+                pos.push(tip.to_array());
+                col.push([1.0, 1.0, 1.0, 0.0]);
+                col.push([1.0, 1.0, 1.0, a]);
+                col.push([1.0, 1.0, 1.0, a * 0.3]);
+                if base >= first + 3 {
+                    let q = |i: u32, j: u32| [i, j, i + 3, i + 3, j, j + 3];
+                    idx.extend_from_slice(&q(base - 3, base - 2));
+                    idx.extend_from_slice(&q(base - 2, base - 1));
+                }
+            };
+            let cat = |a: Vec3, b: Vec3, c: Vec3, d: Vec3, u: f32| {
+                let (u2, u3) = (u * u, u * u * u);
+                0.5 * (2.0 * b + (c - a) * u + (2.0 * a - 5.0 * b + 4.0 * c - d) * u2 + (3.0 * b - a - 3.0 * c + d) * u3)
+            };
+            for i in 0..stroke.len() as isize - 1 {
+                let (s0, s1, s2, s3) = (at(i - 1), at(i), at(i + 1), at(i + 2));
+                let subs = if i == stroke.len() as isize - 2 { TRAIL_SUB + 1 } else { TRAIL_SUB };
+                for k in 0..subs {
+                    let u = k as f32 / TRAIL_SUB as f32;
+                    push(
+                        s1.0 + (s2.0 - s1.0) * u,
+                        cat(s0.1, s1.1, s2.1, s3.1, u),
+                        cat(s0.2, s1.2, s2.2, s3.2, u),
+                    );
+                }
+            }
+        }
+        start = end;
+    }
+    let shown = !idx.is_empty();
+    if let Ok(mut v) = vis_q.get_mut(ribbon) {
+        v.set_if_neq(if shown { Visibility::Visible } else { Visibility::Hidden });
+    }
+    if !shown {
         return;
     }
-    let Ok(hero) = hero_q.single() else { return };
-    let phase = if hero.attacking { hero.attack_t / hero.attack_dur } else { -1.0 };
-    if !(0.25..0.55).contains(&phase) {
-        *last_tip = None; // only across the fast sweep, where the blade actually whips through
-        return;
+    if let Some(mut mesh) = meshes.get_mut(&handle) {
+        let normals = vec![[0.0, 1.0, 0.0]; pos.len()];
+        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, col);
+        mesh.insert_indices(bevy::mesh::Indices::U32(idx));
     }
-    let Ok(gt) = weapon_q.single() else { return };
-    let tip = gt.transform_point(super::footman::weapon_tip());
-    let prev = last_tip.replace(tip);
-    let Some(prev) = prev else { return }; // first sweep frame: just record the anchor
-    let seg = tip - prev;
-    let len = seg.length();
-    if len < 1e-3 {
-        return;
-    }
-    let axis = seg / len;
-    spawn_fade(
-        &mut commands, &mut materials, &fx.trail_mat, &fx.quad,
-        // Rough spawn-frame alignment; FadeFace::Axis re-rolls it toward the camera every frame.
-        Transform::from_translation(prev.midpoint(tip))
-            .with_rotation(Quat::from_rotation_arc(Vec3::X, axis)),
-        // Slight overlap (×1.15) hides the seams between consecutive segments; the ribbon fades
-        // by THINNING (height → ~0) rather than ballooning, so it dissolves instead of flashing.
-        Vec3::new(len * 1.15, 0.055, 1.0), Vec3::new(len * 1.15, 0.012, 1.0), 0.28, 0.18,
-        FadeFace::Axis(axis), time.elapsed_secs(),
-    );
 }
 
 pub fn update_sparks(
     time: Res<Time>,
+    fx: Option<Res<CombatFx>>,
     mut commands: Commands,
     mut q: Query<(Entity, &mut Spark, &mut Transform)>,
 ) {
     let dt = time.delta_secs();
+    let now = time.elapsed_secs();
     for (e, mut s, mut tf) in &mut q {
         s.life -= dt;
         if s.life <= 0.0 {
@@ -1423,7 +1591,17 @@ pub fn update_sparks(
         s.vel.y -= g * dt;
         let v = s.vel;
         tf.translation += v * dt;
-        let k = s.life / s.life0;
+        if let Some(ground) = s.drip {
+            if tf.translation.y <= ground && v.y < 0.0 {
+                // Only the heavier drops stain (about half): a long siege mustn't pile up decals.
+                if let Some(fx) = fx.as_deref().filter(|_| s.scale0 > 0.5) {
+                    spawn_fleck(&mut commands, fx, Vec3::new(tf.translation.x, ground, tf.translation.z), s.scale0, now);
+                }
+                commands.entity(e).despawn();
+                continue;
+            }
+        }
+        let k = if s.drip.is_some() { 1.0 } else { s.life / s.life0 };
         if s.stretch {
             // A streak: orient the mote along its flight and elongate it by speed, so glints and
             // droplets read as motion trails instead of floating balls. Thins as it fades.

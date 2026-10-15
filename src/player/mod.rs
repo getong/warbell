@@ -440,6 +440,7 @@ impl Plugin for PlayerPlugin {
             // `setup_combat_fx` stays UNGATED: it inserts the shared `CombatFx` resource that
             // ungated modules (projectile/defenses impact sparks) read, and RTS archer arrows
             // reuse those FX in Skirmish. Everything hero-specific below is Campaign-only.
+            .init_resource::<combat::BladeMotion>()
             .add_systems(Startup, combat::setup_combat_fx)
             // Ungated spawn: the hero rig + its campaign HUD (ability bar, charge bar, target ring)
             // are built in EVERY boot (the mode can flip Campaign⇄Skirmish mid-process). Each root

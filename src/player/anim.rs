@@ -2035,9 +2035,9 @@ pub struct ClipBlend {
     from: Option<(Pose, f32, f32)>,
     /// The airborne clip leads with the right leg (mirrored) this jump.
     lead_right: bool,
-    /// The light swing playing last frame (its combo step), to start its recovery when it ends.
-    swinging: Option<u8>,
-    /// A finished light swing settling back to the guard: (combo step, when the swing ended).
+    /// The light swing playing last frame (its combo step, duration), to start its recovery when it ends.
+    swinging: Option<(u8, f32)>,
+    /// A finished light swing settling back to the guard: (combo step, when its blade made contact).
     recover: Option<(u8, f32)>,
 }
 
@@ -2336,7 +2336,7 @@ pub fn hero_anim(
     } else if attack {
         let ap = (hero.attack_t / hero.attack_dur).clamp(0.0, 1.0);
         let atk = if hero.attack_variant < super::combat::HEAVY_VARIANT {
-            swordplay::strike_pose(hero.attack_variant, ap, super::combat::HIT_PHASE)
+            swordplay::strike_pose(hero.attack_variant, ap, super::combat::HIT_PHASE, hero.attack_dur)
         } else {
             heavy_strike_pose(ap)
         };
@@ -2378,10 +2378,12 @@ pub fn hero_anim(
     // Recovery bookkeeping: a light swing that just ended starts its recovery; anything else
     // taking over (another swing, a block, a roll, a jump…) or the clip running out ends it.
     let light = hero.attacking && hero.attack_variant < super::combat::HEAVY_VARIANT;
-    if let (Some(v), false) = (blend.swinging, hero.attacking) {
-        blend.recover = Some((v, now));
+    if let (Some((v, dur)), false) = (blend.swinging, hero.attacking) {
+        // The recovery runs on the step's own timeline from its blade contact (the strike already
+        // ran on into it inside the swing): stamp when that contact was.
+        blend.recover = Some((v, now - (1.0 - super::combat::HIT_PHASE) * dur));
     }
-    blend.swinging = light.then_some(hero.attack_variant);
+    blend.swinging = light.then_some((hero.attack_variant, hero.attack_dur));
     let busy = hero.attacking || hero.victory || hero.roll_t >= 0.0 || hero.dash_t >= 0.0 || !hero.on_ground
         || hero.charge_t > CHARGE_GRACE || block_amt > 0.001;
     if let Some((v, ended)) = blend.recover {

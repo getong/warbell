@@ -149,20 +149,49 @@ fn aim_leg(upper: Vec3, lower: Vec3, bind: (Vec3, Vec3)) -> (Quat, Quat) {
 
 // The source clips are stylised game moves — a lunge that drops the hips ~45% of a leg, a
 // stance a full leg long, the trunk folded 60–80° over the front knee and wound 120–170° round.
-// An armoured shield-bearer fights tall and closed, so each is kept only in part:
+// An armoured shield-bearer fights a little taller and closer, so each is kept in part — but
+// most of it: kept under half (0.4–0.6) the blows were all arm, the trunk barely turning into
+// them and the hips staying up, and the knight read as timid in every swing.
 /// …of the hips' drop (the feet still plant; the legs just bend less).
-const SINK: f32 = 0.4;
-/// …of the stance's spread and the hips' travel over it.
-const STRIDE: f32 = 0.6;
-/// …of the trunk's turn about the vertical (the arms ride the eased trunk unchanged).
-const TURN_KEEP: f32 = 0.45;
+const SINK: f32 = 0.65;
+/// …of the stance's spread and the hips' travel over it (the step into the blow).
+const STRIDE: f32 = 0.8;
+/// …of the trunk's turn about the vertical (the arms ride the eased trunk, so this is also how
+/// much of the blade's sweep survives).
+const TURN_KEEP: f32 = 0.75;
 /// …of its forward/side fold.
-const LEAN_KEEP: f32 = 0.45;
+const LEAN_KEEP: f32 = 0.65;
 /// …and of the head's: the eyes stay on the foe.
 const GAZE_KEEP: f32 = 0.15;
 const HEAD_LEAN: f32 = 0.3;
 /// How far the shield arm follows the clip's free left arm away from the guard it holds the board in.
 const SHIELD_FOLLOW: f32 = 0.15;
+
+/// The body-commit shares above, overridable for look-dev with
+/// `FOREST_SWORDKEEP="sink,stride,turn,lean,gaze,shield"` (any prefix of the list).
+struct Keep {
+    sink: f32,
+    stride: f32,
+    turn: f32,
+    lean: f32,
+    gaze: f32,
+    shield: f32,
+}
+
+fn keep() -> &'static Keep {
+    static K: std::sync::OnceLock<Keep> = std::sync::OnceLock::new();
+    K.get_or_init(|| {
+        let mut v = [SINK, STRIDE, TURN_KEEP, LEAN_KEEP, GAZE_KEEP, SHIELD_FOLLOW];
+        if let Ok(s) = std::env::var("FOREST_SWORDKEEP") {
+            for (slot, x) in v.iter_mut().zip(s.split(',')) {
+                if let Ok(x) = x.trim().parse() {
+                    *slot = x;
+                }
+            }
+        }
+        Keep { sink: v[0], stride: v[1], turn: v[2], lean: v[3], gaze: v[4], shield: v[5] }
+    })
+}
 
 /// `q` with only `turn` of its heading and `lean` of its tilt off the vertical (swing–twist about Y).
 fn ease(q: Quat, turn: f32, lean: f32) -> Quat {
@@ -179,9 +208,10 @@ fn solve(f: &Frame) -> Pose {
     let mut p = rest();
 
     // ── Pelvis: the clip's travel off its T-pose in our leg lengths ──
-    let pelvis = ease(f.pelvis_r, TURN_KEEP, LEAN_KEEP);
+    let k = keep();
+    let pelvis = ease(f.pelvis_r, k.turn, k.lean);
     let d = (f.pelvis - tp.pelvis) * leg_len;
-    let d = Vec3::new(d.x * STRIDE, d.y * SINK, d.z * STRIDE);
+    let d = Vec3::new(d.x * k.stride, d.y * k.sink, d.z * k.stride);
     let mut hips = Vec3::new(0.0, super::super::model::HIP_REST_Y, 0.0) + d;
 
     // ── Legs: ankles where the clip plants them, scaled from our rest stance ──
@@ -191,7 +221,7 @@ fn solve(f: &Frame) -> Pose {
     };
     let target = |i: usize| {
         let d = (f.ankle[i] - tp.ankle[i]) * leg_len;
-        ankle_rest(i == 1) + Vec3::new(d.x * STRIDE, d.y, d.z * STRIDE)
+        ankle_rest(i == 1) + Vec3::new(d.x * k.stride, d.y, d.z * k.stride)
     };
     // Never stretch a leg past its reach: the hips settle onto the straighter one (as the idle).
     let reach = 0.995 * leg_len;
@@ -226,9 +256,9 @@ fn solve(f: &Frame) -> Pose {
     p.hips = Jp { t: Some(hips + Vec3::Y * (1.05 - super::super::model::HIP_REST_Y)), r: pelvis };
 
     // ── Trunk: turn and fold eased (above); the head holds the foe ──
-    let chest = ease(f.chest, TURN_KEEP, LEAN_KEEP);
+    let chest = ease(f.chest, k.turn, k.lean);
     p.torso = Jp::r(pelvis.inverse() * chest);
-    p.head = Jp::r(chest.inverse() * ease(f.head, GAZE_KEEP, HEAD_LEAN));
+    p.head = Jp::r(chest.inverse() * ease(f.head, k.gaze, HEAD_LEAN));
 
     // ── Sword arm and blade: posed against the clip's own chest, so they ride the eased one ──
     let ab = super::super::footman::arm_bind();
@@ -244,8 +274,8 @@ fn solve(f: &Frame) -> Pose {
 
     // ── Shield arm: the board stays up in guard, swayed a little by the clip's free arm ──
     let (sl, el) = arm(f.l_upper, f.l_fore, ab[1]);
-    p.sh_l = Jp::r(e3(-0.45, 0.1, -0.35).slerp(sl, SHIELD_FOLLOW));
-    p.el_l = Jp::r(rx(-1.05).slerp(el, SHIELD_FOLLOW));
+    p.sh_l = Jp::r(e3(-0.45, 0.1, -0.35).slerp(sl, k.shield));
+    p.el_l = Jp::r(rx(-1.05).slerp(el, k.shield));
     p.shield = Jp { t: Some(Vec3::new(-0.02, -0.02, 0.12)), r: e3(0.7, -0.8, 0.0) };
     p
 }
@@ -253,10 +283,17 @@ fn solve(f: &Frame) -> Pose {
 /// A combo step: the strike clip (ending where the next step's starts), its blade-contact time,
 /// the recovery that settles it back to the ready when the chain stops there, and — for a strike
 /// cut out of a longer clip — the pose it is stepped into from (the previous step's end).
+/// `settle` is where the strike's follow-through is spent and `go` where the recovery starts to
+/// move: between them the clips hold still (the window the next step chains from), which
+/// [`after_contact`] skims.
 struct Step {
     strike: &'static [[f32; 53]],
     hit: f32,
+    settle: f32,
     recover: &'static [[f32; 53]],
+    go: f32,
+    /// Playback rate of the recovery proper (a touch brisker than the clip: back on guard sooner).
+    rec_rate: f32,
     lead: Option<&'static [f32; 53]>,
 }
 
@@ -266,24 +303,40 @@ struct Step {
 const C_START: usize = 16;
 const C_SPLIT: usize = 26;
 
+/// Clip time of key `n`.
+const fn key(n: usize) -> f32 {
+    n as f32 / ual::FPS
+}
+
 fn step(variant: u8) -> Step {
+    // `settle` / `go` are read off the clips' blade and trunk speeds (per-key deltas of the bake).
     match variant {
         1 => Step {
             strike: &ual::SWORD_REGULAR_B,
             hit: ual::SWORD_REGULAR_B_HIT,
+            settle: key(10),
             recover: &ual::SWORD_REGULAR_B_REC,
+            go: key(10),
+            // `_B` ends arms flung wide and draws them back in slowly: hurry it more.
+            rec_rate: 1.5,
             lead: None,
         },
         2 => Step {
             strike: &ual::SWORD_REGULAR_C[C_START..=C_SPLIT],
-            hit: ual::SWORD_REGULAR_C_HIT - C_START as f32 / ual::FPS,
+            hit: ual::SWORD_REGULAR_C_HIT - key(C_START),
+            settle: key(24 - C_START),
             recover: &ual::SWORD_REGULAR_C[C_SPLIT..],
+            go: key(6),
+            rec_rate: 1.25,
             lead: ual::SWORD_REGULAR_B.last(),
         },
         _ => Step {
             strike: &ual::SWORD_REGULAR_A,
             hit: ual::SWORD_REGULAR_A_HIT,
+            settle: key(10),
             recover: &ual::SWORD_REGULAR_A_REC,
+            go: key(5),
+            rec_rate: 1.25,
             lead: None,
         },
     }
@@ -293,42 +346,66 @@ fn step(variant: u8) -> Step {
 const LEAD_IN: f32 = 0.7;
 /// Boot lift over a lead-in step, per unit of its travel.
 const STEP_LIFT: f32 = 0.2;
+/// Playback rate through the still stretch between a strike's `settle` and its recovery's `go`.
+const SKIM: f32 = 3.0;
 
 fn length(clip: &[[f32; 53]]) -> f32 {
     (clip.len() - 1) as f32 / ual::FPS
 }
 
-/// Clip time at swing progress `ap`: a monotone cubic through (0, 0), (`hp`, `hit`), (1, `end`), so
-/// the blade contact lands exactly on the damage instant with the playback rate continuous across
-/// it. (Two straight lines ran the wind-up at ~2× and the follow-through at ~0.5× — the blade
-/// braked 4× in one frame at contact, the swing's most visible moment, on every swing.) The rate
-/// now eases down from the quick wind-up through a near-natural-speed contact into an unhurried
-/// follow-through.
-fn warp(ap: f32, hp: f32, hit: f32, end: f32) -> f32 {
-    let (h0, h1) = (hp, 1.0 - hp);
-    let (d0, d1) = (hit / h0, (end - hit) / h1);
-    // Fritsch–Carlson interior slope (weighted harmonic mean: never overshoots either side).
-    let (w0, w1) = (2.0 * h1 + h0, h1 + 2.0 * h0);
-    let m1 = if d0 > 0.0 && d1 > 0.0 { (w0 + w1) / (w0 / d0 + w1 / d1) } else { 0.0 };
-    let (m0, m2) = ((1.5 * d0 - 0.5 * m1).max(0.0), (1.5 * d1 - 0.5 * m1).max(0.0));
-    let herm = |a: f32, b: f32, ma: f32, mb: f32, s: f32| {
-        let (s2, s3) = (s * s, s * s * s);
-        a * (2.0 * s3 - 3.0 * s2 + 1.0) + ma * (s3 - 2.0 * s2 + s) + b * (3.0 * s2 - 2.0 * s3) + mb * (s3 - s2)
-    };
-    if ap < hp {
-        herm(0.0, hit, m0 * h0, m1 * h0, ap / h0)
-    } else {
-        herm(hit, end, m1 * h1, m2 * h1, (ap - hp) / h1)
+/// Where a step is `tau` real seconds after its blade contact, on one timeline running through
+/// the strike's follow-through (clip time below `length(strike)`) and on into its recovery (past
+/// it, offset by the strike's length). The follow-through plays at the clip's own speed; the
+/// still stretch where the clips wait for the next combo press is skimmed at [`SKIM`]× — held at
+/// clip speed that read as the whole body freezing mid-swing for ~0.4 s before it began to settle.
+fn after_contact(s: &Step, tau: f32) -> f32 {
+    let end = length(s.strike);
+    let follow = s.settle - s.hit;
+    if tau <= follow {
+        return s.hit + tau;
     }
+    let skim = (end - s.settle + s.go) / SKIM;
+    if tau <= follow + skim {
+        return s.settle + (tau - follow) * SKIM;
+    }
+    end + s.go + (tau - follow - skim) * s.rec_rate
 }
 
-/// The swing at progress `ap` (0..1 of the game's swing): the clip is time-warped so its
-/// fastest blade lands on the game's damage instant `hit_phase`.
-pub(crate) fn strike_pose(variant: u8, ap: f32, hit_phase: f32) -> Pose {
-    let s = step(variant);
+/// Timeline time ([`after_contact`]) at swing progress `ap` of a swing lasting `dur` s. The
+/// wind-up is squeezed so the clip's contact lands exactly on the damage instant `hp` (the game
+/// hits 105–135 ms after the press; the clips take ~267 ms to get there), on a cubic that arrives
+/// at the contact already at the clip's own speed.
+///
+/// (It used to be two straight lines through the contact: ~2× into it, then the rest of the clip
+/// stretched over the rest of the swing — the blade braked 4× in one frame at contact, then the
+/// body sat in the strike's held last key until the recovery began. Every light swing read as a
+/// snap and a freeze.)
+fn strike_time(s: &Step, ap: f32, hp: f32, dur: f32) -> f32 {
+    if ap >= hp {
+        return after_contact(s, (ap - hp) * dur);
+    }
+    let d0 = s.hit / hp;
+    // Hermite in `ap` from (0, 0) to (hp, hit), arriving at real-time speed (dt/dap = dur).
+    let (m0, m1) = ((1.5 * d0 - 0.5 * dur).max(0.0) * hp, dur * hp);
+    let u = ap / hp;
+    let (u2, u3) = (u * u, u * u * u);
+    m0 * (u3 - 2.0 * u2 + u) + s.hit * (3.0 * u2 - 2.0 * u3) + m1 * (u3 - u2)
+}
+
+/// The pose at timeline time `t` past the wind-up: the strike, or once it is spent its recovery.
+fn timeline_pose(s: &Step, t: f32) -> Pose {
     let end = length(s.strike);
+    if t < end { solve(&sample(s.strike, t)) } else { solve(&sample(s.recover, t - end)) }
+}
+
+/// The swing at progress `ap` (0..1 of a swing lasting `dur` s; see [`strike_time`]).
+pub(crate) fn strike_pose(variant: u8, ap: f32, hit_phase: f32, dur: f32) -> Pose {
+    let s = step(variant);
     let ap = ap.clamp(0.0, 1.0);
-    let t = warp(ap, hit_phase, s.hit, end);
+    let t = strike_time(&s, ap, hit_phase, dur);
+    if ap >= hit_phase {
+        return timeline_pose(&s, t);
+    }
     let c = sample(s.strike, t);
     let f = match s.lead {
         Some(row) if ap < hit_phase * LEAD_IN => {
@@ -337,7 +414,7 @@ pub(crate) fn strike_pose(variant: u8, ap: f32, hit_phase: f32) -> Pose {
             let mut f = from.lerp(&c, b);
             // The stepping boot (the one travelling furthest) leaves the ground instead of sliding
             // across it; the other stays planted to push off — lifting both reads as a hop.
-            let travel = |i: usize| (c.ankle[i] - from.ankle[i]).with_y(0.0).length() * STRIDE;
+            let travel = |i: usize| (c.ankle[i] - from.ankle[i]).with_y(0.0).length() * keep().stride;
             let i = if travel(0) >= travel(1) { 0 } else { 1 };
             f.ankle[i].y += STEP_LIFT * travel(i) * (std::f32::consts::PI * b).sin();
             f
@@ -347,15 +424,19 @@ pub(crate) fn strike_pose(variant: u8, ap: f32, hit_phase: f32) -> Pose {
     solve(&f)
 }
 
-/// Seconds the recovery of `variant` runs once the swing is over.
+/// Seconds after its blade contact that the recovery of `variant` has fully settled.
 pub(crate) fn recover_len(variant: u8) -> f32 {
-    length(step(variant).recover)
+    let s = step(variant);
+    let skim = (length(s.strike) - s.settle + s.go) / SKIM;
+    s.settle - s.hit + skim + (length(s.recover) - s.go) / s.rec_rate
 }
 
-/// The recovery `t` s after the swing ended, and how much of it still shows (fading into the
-/// stance over its last stretch, so the clip's own sword idle hands over to the game's guard).
-pub(crate) fn recover_pose(variant: u8, t: f32) -> (Pose, f32) {
+/// The step `tau` s after its blade contact (the swing itself may be over), and how much of it
+/// still shows (fading into the stance over the recovery's last stretch, so the clip's own sword
+/// idle hands over to the game's guard).
+pub(crate) fn recover_pose(variant: u8, tau: f32) -> (Pose, f32) {
     let s = step(variant);
-    let len = length(s.recover);
-    (solve(&sample(s.recover, t)), 1.0 - smoothstep((t / len - 0.55) / 0.45))
+    let t = after_contact(&s, tau);
+    let r = (t - length(s.strike)) / length(s.recover);
+    (timeline_pose(&s, t), 1.0 - smoothstep((r - 0.55) / 0.45))
 }

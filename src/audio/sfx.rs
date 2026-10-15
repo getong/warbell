@@ -67,6 +67,13 @@ pub(crate) struct SfxBank {
     /// target takes; replaced the old single flesh clip (which the comment used to call out as the
     /// old game's one-clip rule — we now have proper variation).
     flesh: Vec<Handle<AudioSource>>,
+    /// Layered UNDER a connecting blow's steel take so it lands in a body, not on a board (see
+    /// `assets/CREDITS.md`): a wet flesh bite (`flesh-cut-*`), a low body-weight thud
+    /// (`body-thud-*`), and heavier takes of both for a kill / crit / Heavy.
+    flesh_cut: Vec<Handle<AudioSource>>,
+    flesh_heavy: Vec<Handle<AudioSource>>,
+    thud: Vec<Handle<AudioSource>>,
+    thud_heavy: Vec<Handle<AudioSource>>,
     /// Metallic chips (`ore-chip-{1,2}`) — picked at random for chipping stone (ore). These are the
     /// old `sword-hit-var-{1,3}` clinks, relocated when the `sword-hit-*` namespace became the
     /// flesh pool — the ore pick must stay a dry metallic clink, not a fleshy thud.
@@ -145,6 +152,10 @@ pub(crate) fn setup_sfx(asset: Res<AssetServer>, mut commands: Commands) {
             .iter()
             .map(|f| asset.load(*f))
             .collect(),
+        flesh_cut: ["audio/flesh-cut-1.ogg", "audio/flesh-cut-2.ogg", "audio/flesh-cut-3.ogg"].iter().map(|f| asset.load(*f)).collect(),
+        flesh_heavy: ["audio/flesh-heavy-1.ogg", "audio/flesh-heavy-2.ogg"].iter().map(|f| asset.load(*f)).collect(),
+        thud: ["audio/body-thud-1.ogg", "audio/body-thud-2.ogg", "audio/body-thud-3.ogg"].iter().map(|f| asset.load(*f)).collect(),
+        thud_heavy: ["audio/body-thud-heavy-1.ogg", "audio/body-thud-heavy-2.ogg"].iter().map(|f| asset.load(*f)).collect(),
         chips: ["audio/ore-chip-1.ogg", "audio/ore-chip-2.ogg"]
             .iter()
             .map(|f| asset.load(*f))
@@ -299,6 +310,14 @@ pub(crate) fn play_cues(
                     let p = if kill { jitter(&mut seed, 0.06) * 0.85 } else { jitter(&mut seed, 0.08) };
                     one_shot(&mut commands, pick(&bank.flesh, &mut seed), v, p);
                 }
+                // The body under the steel: a flesh bite + a low thud (heavier takes on a kill or
+                // a crit — a Heavy is always a crit), each on its own jitter so the stack never
+                // repeats. The steel take alone read as hitting a plank.
+                let hard = kill || crit;
+                let (cut, thud) = if hard { (&bank.flesh_heavy, &bank.thud_heavy) } else { (&bank.flesh_cut, &bank.thud) };
+                let (cv, tv) = if hard { (0.55, 0.5) } else { (0.42, 0.36) };
+                one_shot(&mut commands, pick(cut, &mut seed), cv * sfx, jitter(&mut seed, 0.1));
+                one_shot(&mut commands, pick(thud, &mut seed), tv * sfx, jitter(&mut seed, 0.08) * if hard { 0.9 } else { 1.0 });
             }
             // Metallic chip per ore pick-swing — random clang + wide pitch jitter so a long mine
             // never repeats the same note (old game's `playPick`).
