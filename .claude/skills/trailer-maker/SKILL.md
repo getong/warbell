@@ -11,6 +11,12 @@ The Bevy window can't be screen-captured externally and can't take live input he
 titles, and crossfades are added in post.** That keeps each clip reusable (GIFs, store page) and
 lets the trailer's music breathe across cuts.
 
+> **Oct 2026: clips now carry the game's REAL audio.** Every `FOREST_CLIP` run also writes
+> `<clip dir>/audio.wav` — the game's own mix (music director, ambience, footsteps, VO, combat SFX,
+> spatialised), frame-locked to the PNGs (`src/audio_capture.rs`). Prefer it over hand-layered SFX:
+> mux it per scene (`-i audio.wav`, `loudnorm`), and only add extra stingers / the trailer music bed
+> in post. The SFX-layering recipes below are the fallback (`FOREST_CLIP_AUDIO=0` disables capture).
+
 Pipeline: **stage a scene → capture frames → encode one scene clip (with SFX) → assemble the
 trailer (titles + music) → publish.**
 

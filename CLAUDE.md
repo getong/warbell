@@ -159,6 +159,12 @@ biome_footprints` writes a hillshaded biome map (pass trails, warden lairs, riva
 These scale with `MAP_SCALE` — code with a hand-authored world coord
 should route it through `worldmap::world22` (rescales 2.2-era coords) instead of baking the scale in.
 Clip knobs: `FOREST_CLIP_FRAMES` (150) · `FOREST_CLIP_FPS` (30) · `FOREST_CLIP_WARMUP` (30).
+**Clips record the game's OWN audio** into `<clip dir>/audio.wav`, sample-locked to the frames
+(`audio_capture.rs`: every started sound is mirrored into an offline rodio mixer that advances
+exactly 1/fps per saved frame, copying live volume/fades, pitch, pause and spatial positions; the
+sim runs a fixed 1/fps step while it's on). Mux: `ffmpeg -framerate 30 -i frame_%05d.png -i audio.wav
+-c:v libx264 -pix_fmt yuv420p -c:a aac -shortest out.mp4` (the in-game mix is quiet, ~-30 dB mean —
+`loudnorm` it). `FOREST_CLIP_AUDIO=0` = video only.
 
 Env hooks that stage a scene for a shot (combine with `FOREST_SHOT` **or** `FOREST_CLIP`), all read at startup:
 

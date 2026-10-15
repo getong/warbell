@@ -41,6 +41,10 @@ gltf = { version = "1.4", default-features = false, features = ["names", "utils"
 # headless run can capture a chosen frame (`FOREST_RDOC`) for `tools/rdoc/` per-draw analysis.
 renderdoc = { version = "0.12.1", optional = true }
 meshopt = "0.4"
+# Clip audio capture (`src/audio_capture.rs`): an offline rodio mixer (same crate/version bevy_audio
+# uses, so the decoders match) pulled per recorded frame, written as WAV.
+rodio = { version = "0.22", default-features = false }
+hound = "3"
 
 # Profiling build: turns on Bevy's per-system tracing spans, written to a chrome-trace JSON on exit
 # (`trace-<ts>.json`). `cargo run --features profiling` then `tools/trace_summary.py <file>` gives an

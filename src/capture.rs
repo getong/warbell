@@ -14,6 +14,7 @@
 //! | `FOREST_CLIP_FPS`    | playback fps → fixed timestep + ffmpeg rate (default 30) |
 //! | `FOREST_CLIP_WARMUP` | warm-up frames before the first save (default 30) |
 //! | `FOREST_CLIP_ORBIT`  | `"cx,cy,cz,radius,height,deg_per_sec"` slow camera orbit around a point |
+//! | `FOREST_CLIP_AUDIO`  | `0` = no `<dir>/audio.wav` (default: the game's own audio, frame-locked — `audio_capture.rs`) |
 
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
@@ -64,7 +65,9 @@ impl Plugin for CapturePlugin {
             // `FOREST_CLIP_FIXED=1`: every tick advances the sim by exactly one playback frame
             // (the default only caps the step, so quick ticks between PNG saves record unevenly
             // spaced frames) — for frame-exact animation reviews.
-            if std::env::var("FOREST_CLIP_FIXED").is_ok() {
+            // The clip audio capture (`audio_capture.rs`, on unless `FOREST_CLIP_AUDIO=0`) needs this
+            // too: it renders exactly 1/fps of audio per saved frame, so the sim must advance exactly that.
+            if std::env::var("FOREST_CLIP_FIXED").is_ok() || std::env::var("FOREST_CLIP_AUDIO").as_deref() != Ok("0") {
                 app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(
                     1.0 / cfg.fps as f32,
                 )));
@@ -272,6 +275,8 @@ struct Orbit {
     height: f32,
     /// degrees per second
     speed: f32,
+    /// optional 7th value: starting angle in degrees (0 = the +X side of `center`)
+    start: f32,
 }
 
 #[derive(Resource, Default)]
@@ -314,11 +319,12 @@ fn clip_cfg(dir: String) -> ClipCfg {
 
 fn parse_orbit(s: String) -> Option<Orbit> {
     let v: Vec<f32> = s.split(',').filter_map(|p| p.trim().parse().ok()).collect();
-    (v.len() == 6).then(|| Orbit {
+    (v.len() == 6 || v.len() == 7).then(|| Orbit {
         center: Vec3::new(v[0], v[1], v[2]),
         radius: v[3],
         height: v[4],
         speed: v[5],
+        start: v.get(6).copied().unwrap_or(0.0),
     })
 }
 
@@ -334,13 +340,27 @@ fn clip_setup(cfg: Res<ClipCfg>, mut vtime: ResMut<Time<Virtual>>) {
 /// Optional cinematic move: circle `center` at a fixed radius/height, `speed` deg/s. Driven off
 /// the saved-frame index (not wall time) so the path is deterministic. The fly-cam is idle under
 /// capture (no input), so writing the transform here doesn't fight it.
+///
+/// `FOREST_CLIP_ORBIT_REL=1` makes the centre's y and the camera height offsets above the terrain
+/// at the centre (no guessing a biome's ground level), and keeps the eye ≥3u above the ground
+/// under it so a low orbit never dips into a hillside.
 fn clip_orbit(cfg: Res<ClipCfg>, clock: Res<ClipClock>, mut cam: Query<&mut Transform, With<Camera3d>>) {
     let Some(o) = cfg.orbit else { return };
     let t = clock.frame.saturating_sub(cfg.warmup) as f32 / cfg.fps as f32;
-    let ang = (o.speed * t).to_radians();
-    let pos = Vec3::new(o.center.x + o.radius * ang.cos(), o.height, o.center.z + o.radius * ang.sin());
+    let ang = (o.start + o.speed * t).to_radians();
+    let (mut center, mut height) = (o.center, o.height);
+    let mut pos = Vec3::new(o.center.x + o.radius * ang.cos(), 0.0, o.center.z + o.radius * ang.sin());
+    if std::env::var("FOREST_CLIP_ORBIT_REL").is_ok() {
+        let g = crate::worldmap::ground_at_world(center.x, center.z).unwrap_or(0.0);
+        center.y += g;
+        height += g;
+        if let Some(under) = crate::worldmap::ground_at_world(pos.x, pos.z) {
+            height = height.max(under + 3.0);
+        }
+    }
+    pos.y = height;
     for mut tf in &mut cam {
-        *tf = Transform::from_translation(pos).looking_at(o.center, Vec3::Y);
+        *tf = Transform::from_translation(pos).looking_at(center, Vec3::Y);
     }
 }
 
