@@ -433,7 +433,7 @@ pub fn setup_combat_fx(
     // Debris is real matter: PBR-LIT (matte), so blood, stone chips, dust and leaves take the
     // scene's sun / shade / torchlight instead of drawing as flat-colour beads.
     let matte = |c: Color| StandardMaterial { base_color: c, perceptual_roughness: 0.95, reflectance: 0.25, ..default() };
-    let blood = materials.add(StandardMaterial { perceptual_roughness: 0.35, ..matte(Color::srgb(0.36, 0.05, 0.04)) });
+    let blood = materials.add(StandardMaterial { perceptual_roughness: 0.2, ..matte(Color::srgb(0.2, 0.015, 0.012)) });
     let chip = materials.add(matte(Color::srgb(0.46, 0.44, 0.42)));
     let dust = materials.add(matte(Color::srgb(0.62, 0.54, 0.40)));
     let leaf = materials.add(matte(Color::srgb(0.26, 0.36, 0.16)));
@@ -1170,7 +1170,7 @@ pub(crate) fn spawn_motes(
 
 pub(crate) fn spawn_burst(commands: &mut Commands, fx: &CombatFx, at: Vec3, kill: bool) {
     let (n, spd, mat, scale0) =
-        if kill { (16u32, 4.0, fx.kill.clone(), 1.0) } else { (8, 2.6, fx.hit.clone(), 0.7) };
+        if kill { (16u32, 4.0, fx.kill.clone(), 0.45) } else { (8, 2.6, fx.hit.clone(), 0.3) };
     for i in 0..n {
         let a = i as f32 * 2.399_963_2; // golden angle → even-ish spread
         let mag = 0.6 + ((i * 37 % 10) as f32) * 0.06;
@@ -1193,8 +1193,8 @@ pub(crate) fn spawn_burst(commands: &mut Commands, fx: &CombatFx, at: Vec3, kill
             commands.spawn((
                 Mesh3d(fx.mesh.clone()),
                 MeshMaterial3d(fx.hit.clone()),
-                Transform::from_translation(at).with_scale(Vec3::splat(0.45)),
-                Spark { grav: 2.2, ..Spark::new(vel, 1.0, 0.45) },
+                Transform::from_translation(at).with_scale(Vec3::splat(0.22)),
+                Spark { grav: 2.2, ..Spark::new(vel, 1.0, 0.22) },
                 bevy::light::NotShadowCaster,
             ));
         }
@@ -1214,8 +1214,8 @@ pub(crate) fn spawn_clash(commands: &mut Commands, fx: &CombatFx, at: Vec3, dir:
         commands.spawn((
             Mesh3d(fx.mesh.clone()),
             MeshMaterial3d(fx.kill.clone()),
-            Transform::from_translation(at).with_scale(Vec3::splat(0.5)),
-            Spark::streak(vel, 0.4, 0.5),
+            Transform::from_translation(at).with_scale(Vec3::splat(0.26)),
+            Spark::streak(vel, 0.4, 0.26),
             bevy::light::NotShadowCaster,
         ));
     }
@@ -1224,8 +1224,8 @@ pub(crate) fn spawn_clash(commands: &mut Commands, fx: &CombatFx, at: Vec3, dir:
         commands.spawn((
             Mesh3d(fx.mesh.clone()),
             MeshMaterial3d(fx.hit.clone()),
-            Transform::from_translation(at).with_scale(Vec3::splat(0.4)),
-            Spark { grav: 2.2, ..Spark::new(vel, 0.8, 0.4) },
+            Transform::from_translation(at).with_scale(Vec3::splat(0.2)),
+            Spark { grav: 2.2, ..Spark::new(vel, 0.8, 0.2) },
             bevy::light::NotShadowCaster,
         ));
     }
@@ -1271,7 +1271,7 @@ pub(crate) fn spawn_blood(
     let dir3 = Vec3::new(dir.x, 0.0, dir.y);
     // The edge's travel, flattened a little toward the ground plane and capped: drops ride it.
     let edge = (sweep * Vec3::new(1.0, 0.6, 1.0)).clamp_length_max(9.0) * 0.32;
-    let (n, spd) = if kill { (26u32, 1.25) } else { (15, 1.0) };
+    let (n, spd) = if kill { (36u32, 1.25) } else { (22, 1.0) };
     let seed = mark_seed(at, now);
     for i in 0..n {
         let h = seed.wrapping_add(i.wrapping_mul(0x9e37_79b9)).wrapping_mul(0x85eb_ca6b);
@@ -1279,8 +1279,9 @@ pub(crate) fn spawn_blood(
         let a = i as f32 * 2.399_963_2; // golden angle → even spread
         let spread = Vec3::new(a.cos(), 0.0, a.sin()) * (0.35 + 0.5 * r(0));
         let vel = (edge * (0.55 + 0.6 * r(1)) + dir3 * (0.9 + 0.8 * r(2)) + spread + Vec3::Y * (0.4 + 1.3 * r(3))) * spd;
-        // Fine spray and a few fat drops (the sphere mote is 0.07 u across ×scale).
-        let sc = if i % 5 == 0 { 0.75 + 0.35 * r(4) } else { 0.32 + 0.3 * r(4) };
+        // Fine spray and a few fat drops (the sphere mote is 0.14 u across ×scale: a fat drop
+        // ~5 cm, the spray 1.5–3 cm — any bigger and they read as red capsules, not blood).
+        let sc = if i % 5 == 0 { 0.3 + 0.12 * r(4) } else { 0.1 + 0.1 * r(4) };
         commands.spawn((
             Mesh3d(fx.mesh.clone()),
             MeshMaterial3d(fx.blood.clone()),
@@ -1307,7 +1308,7 @@ pub(crate) fn spawn_blood(
 fn spawn_fleck(commands: &mut Commands, fx: &CombatFx, at: Vec3, size: f32, now: f32) {
     use crate::combat_marks::{spawn_mark, MarkFade, MarkKind};
     let seed = mark_seed(at, now);
-    let d = 0.07 + 0.15 * size;
+    let d = 0.06 + 0.2 * size;
     let squash = 0.55 + (seed % 17) as f32 / 17.0 * 0.4;
     let e = spawn_mark(commands, &fx.marks, MarkKind::Blood, at + Vec3::Y * 0.02, d, seed as f32 * 0.37, squash, 0.8, seed);
     commands.entity(e).insert((
@@ -1594,7 +1595,7 @@ pub fn update_sparks(
         if let Some(ground) = s.drip {
             if tf.translation.y <= ground && v.y < 0.0 {
                 // Only the heavier drops stain (about half): a long siege mustn't pile up decals.
-                if let Some(fx) = fx.as_deref().filter(|_| s.scale0 > 0.5) {
+                if let Some(fx) = fx.as_deref().filter(|_| s.scale0 > 0.28) {
                     spawn_fleck(&mut commands, fx, Vec3::new(tf.translation.x, ground, tf.translation.z), s.scale0, now);
                 }
                 commands.entity(e).despawn();
