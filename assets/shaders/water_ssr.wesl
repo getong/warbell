@@ -6,15 +6,13 @@
 // ships) into the water with a Fresnel weight. Misses keep the water shader's own sky reflection.
 
 import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput;
+import bevy_render::view::View;
 
 @group(0) @binding(0) var screen_texture: texture_2d<f32>;
 @group(0) @binding(1) var texture_sampler: sampler;
 @group(0) @binding(2) var depth_texture: texture_depth_2d;
 
 struct Settings {
-    world_from_clip: mat4x4<f32>,
-    clip_from_world: mat4x4<f32>,
-    cam_pos: vec3<f32>,
     sea_y: f32,
     time: f32,
     strength: f32,   // 0 = off; scales the Fresnel blend
@@ -22,6 +20,8 @@ struct Settings {
     max_dist: f32,   // longest reflected ray (world units)
 }
 @group(0) @binding(3) var<uniform> settings: Settings;
+// This frame's render-world camera (jittered like the depth it unprojects) — see `src/water_ssr.rs`.
+@group(0) @binding(4) var<uniform> view: View;
 
 const STEPS: i32 = 48;
 const REFINE: i32 = 6;
@@ -36,13 +36,13 @@ fn depth_at(uv: vec2<f32>) -> f32 {
 }
 
 fn unproject(uv: vec2<f32>, d: f32) -> vec3<f32> {
-    let ws = settings.world_from_clip * vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, d, 1.0);
+    let ws = view.world_from_clip * vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, d, 1.0);
     return ws.xyz / ws.w;
 }
 
 // World point → (uv, ok). `ok` false behind the camera.
 fn project(p: vec3<f32>) -> vec3<f32> {
-    let c = settings.clip_from_world * vec4<f32>(p, 1.0);
+    let c = view.clip_from_world * vec4<f32>(p, 1.0);
     if c.w <= 0.0001 {
         return vec3<f32>(0.0, 0.0, -1.0);
     }
@@ -99,7 +99,7 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         return scene; // not the water plane
     }
 
-    let to_p = pos - settings.cam_pos;
+    let to_p = pos - view.world_position;
     let dist = length(to_p);
     let v = to_p / dist;
     // Wind ripples tilt the mirror normal (smooth sum-of-sines slope — continuous across pixels, so
@@ -146,8 +146,8 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
             sky_uv = pr.xy;
         } else {
             let sp = unproject(pr.xy, sd);
-            let d_scene = length(sp - settings.cam_pos);
-            let d_ray = length(p - settings.cam_pos);
+            let d_scene = length(sp - view.world_position);
+            let d_ray = length(p - view.world_position);
             let thick = max(0.8, d_ray * 0.035);
             if d_ray > d_scene && d_ray - d_scene < thick {
                 // Refine between the last miss and this step.
@@ -158,7 +158,7 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
                     let pm = pos + r * m;
                     let prm = project(pm);
                     let sdm = depth_at(prm.xy);
-                    let in_front = sdm <= 0.0 || length(pm - settings.cam_pos) <= length(unproject(prm.xy, sdm) - settings.cam_pos);
+                    let in_front = sdm <= 0.0 || length(pm - view.world_position) <= length(unproject(prm.xy, sdm) - view.world_position);
                     if in_front { lo = m; } else { hi = m; }
                 }
                 let ph = project(pos + r * hi);
@@ -171,7 +171,7 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
                     // Rays that only graze the back of a thin object (a trunk, a leg) are the
                     // streaky ones: trust a hit less the deeper behind the surface it landed.
                     let ph_w = pos + r * hi;
-                    let behind = length(ph_w - settings.cam_pos) - length(unproject(ph.xy, sdh) - settings.cam_pos);
+                    let behind = length(ph_w - view.world_position) - length(unproject(ph.xy, sdh) - view.world_position);
                     conf = 1.0 - smoothstep(0.35, 1.0, behind / thick);
                 }
                 break;
