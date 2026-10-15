@@ -91,7 +91,7 @@ impl Default for FilmGrade {
             vibrance: 0.24,
             saturation: 1.0,
             contrast: 1.18,
-            sharpen: 0.32,
+            sharpen: 0.16,
             grain: 0.0,
             vignette: 0.0,
             aberration: 0.0,
@@ -202,13 +202,14 @@ fn drive_film_grade(sun: Query<&GlobalTransform, With<Sun>>, mut cams: Query<&mu
             g.shadow_tint = sh;
             // Day: no vibrance push (it made the grass neon), soft contrast, olive greens, a lifted
             // toe. Night / golden hour keep their earlier character on top.
-            g.vibrance = 0.05 + 0.07 * night + 0.03 * golden;
-            g.saturation = 0.98;
-            g.contrast = 1.16 + 0.02 * golden - 0.04 * night;
+            g.vibrance = 0.10 + 0.02 * night + 0.03 * golden;
+            g.saturation = 1.05;
+            g.contrast = 1.10 + 0.02 * golden;
             g.split = 0.45 + 0.15 * golden + 0.10 * night;
-            // Mid-radius local contrast: the modelling a photo-real frame has on every tuft and trunk.
-            g.clarity = 0.9 - 0.4 * night;
-            g.olive = 1.4 * (1.0 - smoothstep(-0.10, 0.02, -y)); // full whenever the sun is up
+            // Mid-radius local contrast: a touch of modelling on tufts and trunks. Kept low — at 0.9
+            // (stacked on the unsharp mask + CAS) the moving game read as harshly over-sharpened.
+            g.clarity = 0.25 - 0.1 * night;
+            g.olive = 1.0 * (1.0 - smoothstep(-0.10, 0.02, -y)); // full whenever the sun is up
             g.toe = 0.03 - 0.012 * night;
         }
     }

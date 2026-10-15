@@ -653,13 +653,7 @@ impl Kit {
 
     fn attach_tree_with<B: Bundle + Clone>(&self, e: &mut EntityCommands, lod0: usize, cull: bool, fruit_tag: B, snow: bool, band: f32) {
         let fruit = self.mat_by_name("fruit");
-        let lod1 = self.models.get(lod0 + 1);
         e.insert(Visibility::default());
-        let near = VisibilityRange {
-            start_margin: 0.0..0.0,
-            end_margin: (LOD_NEAR - band)..(LOD_NEAR + band),
-            use_aabb: false,
-        };
         // Past `IMP_NEAR` a culled tree becomes a merged impostor quad (`impostor`) instead of
         // drawing LOD1 out to `TREE_FAR`.
         let imp = if cull { self.impostors.as_ref().and_then(|a| a.layer_of.get(&lod0).copied()) } else { None };
@@ -667,8 +661,18 @@ impl Kit {
             e.insert(impostor::ImpostorTree { layer, snow: if snow { 0.75 } else { 0.0 } });
         }
         let far_end = if imp.is_some() { impostor::IMP_NEAR } else if cull { TREE_FAR } else { 1.0e6 };
+        // An impostor tree keeps LOD0 right up to its impostor (baked from LOD0, so it matches):
+        // the hand-built LOD1 has a visibly different crown, and LOD0 → LOD1 at 30u → impostor at
+        // 62u read as two drastic crown swaps while running at the trees.
+        let lod_near = if imp.is_some() { tree_lod_near().min(far_end) } else { LOD_NEAR };
+        let lod1 = if lod_near >= far_end { None } else { self.models.get(lod0 + 1) };
+        let near = VisibilityRange {
+            start_margin: 0.0..0.0,
+            end_margin: (lod_near - band)..(lod_near + band),
+            use_aabb: false,
+        };
         let far = VisibilityRange {
-            start_margin: (LOD_NEAR - band)..(LOD_NEAR + band),
+            start_margin: (lod_near - band)..(lod_near + band),
             end_margin: far_end..far_end,
             use_aabb: false,
         };
@@ -690,6 +694,13 @@ impl Kit {
             }
         });
     }
+}
+
+/// Where an impostor tree's LOD0 hands over (`FOREST_TREELOD=<u>` for A/B; default = the impostor
+/// start, i.e. no LOD1 at all).
+fn tree_lod_near() -> f32 {
+    static V: OnceLock<f32> = OnceLock::new();
+    *V.get_or_init(|| std::env::var("FOREST_TREELOD").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(impostor::IMP_NEAR))
 }
 
 /// Two decorrelated uniform rolls hashed from a world position — the kit's variety picks, kept

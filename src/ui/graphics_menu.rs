@@ -342,7 +342,7 @@ fn graphics_pane(p: &mut Pane<'_>, fonts: &UiFonts, quality: GraphicsQuality, s:
     ], Seg::Preset(quality));
     divider(p);
     // Max 2.0: above 1.0 supersamples (SSAA) for true edge-AA, below 1.0 trims fragment cost.
-    slider_row(p, fonts, "Render scale", SliderId::RenderScale, s.render_scale, 0.3, 2.0);
+    slider_row(p, fonts, "Render scale", SliderId::RenderScale, s.render_scale.min(1.0), 0.3, 1.0);
     seg_row(p, fonts, "Shadows", &[
         ("Off", Seg::Shadows(ShadowLevel::Off)),
         ("Low", Seg::Shadows(ShadowLevel::Low)),

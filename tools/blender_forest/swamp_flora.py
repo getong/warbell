@@ -218,27 +218,35 @@ def willow_strand(w=512, h=1024):
     return rgba, nrm
 
 
-def cattail_clump(w=512, h=512):
-    """Cattails + sedge: a fan of long strap blades from the base, two-three brown cattail heads."""
+def cattail_clump(w=256, h=512, heads=2):
+    """Cattails / sedge: a fan of long strap blades from the base (olive to sage, a share of dead
+    straw, dark at the foot), with `heads` slim chocolate-brown spikes. heads=0 is the plain sedge
+    the clumps mix in so a reed bed isn't a uniform field of seed heads."""
     cv = Canvas(w, h)
-    for i in range(46):
-        x = w * (0.5 + crng.normal() * 0.07)
-        ang = crng.normal() * 0.32
-        pts = walk((x, h * 0.995), ang, h * crng.uniform(0.45, 0.95), 18, 0.07 + abs(ang) * 0.1, crng)
+    k = w / 512  # stroke widths were authored for a 512-wide cell
+    for i in range(40 if heads else 52):
+        x = w * (0.5 + crng.normal() * 0.11)
+        ang = crng.normal() * 0.30
+        pts = walk((x, h * 0.995), ang, h * crng.uniform(0.40, 0.95), 18, 0.07 + abs(ang) * 0.1, crng)
         g = crng.uniform(0, 1)
-        col = np.array([0.26 + 0.12 * g, 0.36 + 0.08 * g, 0.14 + 0.04 * g])
-        if crng.random() < 0.18:
-            col = np.array([0.52, 0.45, 0.28])  # a dead straw blade
+        col = np.array([0.20 + 0.10 * g, 0.28 + 0.08 * g, 0.11 + 0.05 * g])  # olive .. sage
+        r = crng.random()
+        if r < 0.22:
+            col = np.array([0.46, 0.40, 0.26]) * crng.uniform(0.85, 1.1)  # a dead straw blade
+        elif r < 0.32:
+            col = np.array([0.30, 0.27, 0.14])  # a yellowing, half-dead one
         n = len(pts)
-        for k, (a, b) in enumerate(zip(pts[:-1], pts[1:])):
-            f = k / n
-            stroke(cv, a, b, 9 * (1 - f) + 1.5, 9 * (1 - (k + 1) / n) + 1.0, col * (0.7 + 0.35 * f), 0.6)
-    for i in range(3):
-        x = w * (0.42 + 0.08 * i + crng.normal() * 0.02)
-        top = h * crng.uniform(0.04, 0.22)
-        stroke(cv, (x, h * 0.99), (x + crng.normal() * 6, top + 40), 4, 3, (0.34, 0.36, 0.18), 0.6)
-        stroke(cv, (x, top + 115), (x, top + 20), 17, 15, (0.30, 0.18, 0.09), 0.95)  # the brown spike
-        stroke(cv, (x, top + 20), (x, top), 2.5, 1.5, (0.40, 0.34, 0.20), 0.6)
+        for kk, (a, b) in enumerate(zip(pts[:-1], pts[1:])):
+            f = kk / n
+            # Dark, wet foot -> lit tip: the base of a clump sits in its own shade.
+            stroke(cv, a, b, (8 * (1 - f) + 1.2) * k * 1.4, (8 * (1 - (kk + 1) / n) + 0.9) * k * 1.4,
+                   col * (0.45 + 0.65 * f), 0.6)
+    for i in range(heads):
+        x = w * (0.40 + 0.2 * i + crng.normal() * 0.03)
+        top = h * crng.uniform(0.04, 0.20)
+        stroke(cv, (x, h * 0.99), (x + crng.normal() * 4, top + 40), 4 * k * 1.4, 3 * k * 1.4, (0.30, 0.32, 0.16), 0.6)
+        stroke(cv, (x, top + 95), (x, top + 22), 13 * k * 1.4, 11 * k * 1.4, (0.19, 0.12, 0.07), 0.95)  # the brown spike
+        stroke(cv, (x, top + 22), (x, top), 2.5 * k * 1.4, 1.5 * k * 1.4, (0.36, 0.32, 0.20), 0.6)
     return cv.finish()
 
 
@@ -287,7 +295,8 @@ atlas = np.zeros((1024, 2048, 4), np.float32)
 atlas_n = np.zeros((1024, 2048, 3), np.float32)
 CELLS = {}
 for name, fn, x, y, w, h in [("frond", cypress_frond, 0, 0, 512, 1024), ("moss", spanish_moss, 512, 0, 512, 1024),
-                             ("willow", willow_strand, 1024, 0, 512, 1024), ("cattail", cattail_clump, 1536, 0, 512, 512),
+                             ("willow", willow_strand, 1024, 0, 512, 1024), ("cattail", cattail_clump, 1536, 0, 256, 512),
+                             ("sedge", lambda w, h: cattail_clump(w, h, heads=0), 1792, 0, 256, 512),
                              ("lily", lily_pads, 1536, 512, 512, 512)]:
     rgba, nrm = fn(w, h)
     atlas[y:y + h, x:x + w] = rgba
@@ -303,7 +312,7 @@ def scell(name):
     return (x / SW, 1 - (y + h) / SH, (x + w) / SW, 1 - y / SH, w / h)
 
 
-UV_FROND, UV_MOSS, UV_WILLOW, UV_CATTAIL, UV_LILY = (scell(n) for n in ("frond", "moss", "willow", "cattail", "lily"))
+UV_FROND, UV_MOSS, UV_WILLOW, UV_CATTAIL, UV_SEDGE, UV_LILY = (scell(n) for n in ("frond", "moss", "willow", "cattail", "sedge", "lily"))
 CARDS = 1  # material slot of swamp_cards in every model below
 
 # ------------------------------------------------------------------ geometry
@@ -554,8 +563,9 @@ def knees(seed, stump):
     return b, mats
 
 
-def cover_cross(seed, uvr, size, n, tint, splay=0.3):
-    """Crossed upright cards (cattail / sedge clumps)."""
+def cover_cross(seed, uvr, size, n, tint, splay=0.3, uvr2=None):
+    """Crossed upright cards (cattail / sedge clumps). With `uvr2`, only the first card carries
+    `uvr` (the seed heads) and the rest show `uvr2` (plain sedge) — fewer, scattered heads."""
     rng = np.random.default_rng(seed)
     b = Builder()
     mats = ["swamp_cards"]
@@ -563,14 +573,14 @@ def cover_cross(seed, uvr, size, n, tint, splay=0.3):
     a0 = rng.uniform(0, math.pi)
     for i in range(n):
         a = a0 + i * math.pi / n + rng.uniform(-0.2, 0.2)
-        x0, vb, x1, vt, asp = uvr
-        w = size * asp * rng.uniform(0.85, 1.05)
+        x0, vb, x1, vt, asp = uvr if (i == 0 or uvr2 is None) else uvr2
+        w = size * asp * 1.5 * rng.uniform(0.85, 1.05)
         h = size * rng.uniform(0.85, 1.1)
         side = Vector((math.cos(a), math.sin(a), 0)) * w * 0.5
         face_n = Vector((-math.sin(a), math.cos(a), 0))
         lean = face_n * h * splay * rng.uniform(0.3, 1.0) * (1 if i % 2 else -1)
         p = [-side - upv * 0.04, side - upv * 0.04, side + upv * h + lean, -side + upv * h + lean]
-        cb = tuple(c * 0.55 for c in tint)
+        cb = tuple(c * 0.42 for c in tint)
         ns = [(face_n * 0.3 + upv * 0.7).normalized()] * 4
         b.face(tuple(b.v(q) for q in p), [(x0, vb), (x1, vb), (x1, vt), (x0, vt)], ns, [cb, cb, tint, tint], 0)
     return b, mats
@@ -604,9 +614,9 @@ for lod in (0, 1):
     MODELS[f"snag_b_lod{lod}"] = lambda lod=lod: snag(353, lod, 2.8, 0.22, (0.80, 0.80, 0.78), 3)
 MODELS["knees_a"] = lambda: knees(371, True)
 MODELS["knees_b"] = lambda: knees(379, False)
-MODELS["sw_cattail_a"] = lambda: cover_cross(401, UV_CATTAIL, 1.25, 3, (0.95, 1.0, 0.9))
-MODELS["sw_cattail_b"] = lambda: cover_cross(409, UV_CATTAIL, 1.0, 3, (1.0, 0.95, 0.85))
-MODELS["sw_sedge_a"] = lambda: cover_cross(419, UV_CATTAIL, 0.55, 2, (0.9, 1.0, 0.8), splay=0.45)
+MODELS["sw_cattail_a"] = lambda: cover_cross(401, UV_CATTAIL, 1.25, 3, (0.92, 0.95, 0.84), uvr2=UV_SEDGE)
+MODELS["sw_cattail_b"] = lambda: cover_cross(409, UV_SEDGE, 1.0, 3, (1.0, 0.95, 0.82), uvr2=UV_SEDGE)
+MODELS["sw_sedge_a"] = lambda: cover_cross(419, UV_SEDGE, 0.55, 2, (0.9, 0.95, 0.78), splay=0.45)
 MODELS["sw_lily_a"] = lambda: lily(431, 1.4)
 
 clear_scene()

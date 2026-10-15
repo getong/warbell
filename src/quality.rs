@@ -1096,17 +1096,18 @@ fn apply_quality(
 /// (rasterising the whole scene) IS the frame — a Radeon 840M iGPU spends ~30 ms in
 /// `main_opaque_pass_3d` alone at native res — so dropping below 1.0 is the dominant fragment lever.
 ///
-/// Above 1.0 the main pass renders at a HIGHER resolution and is downsampled to the window
-/// (supersampling / SSAA) — the only true edge-AA we have for thin sub-pixel geometry (grass blades,
-/// flower petals) that the post-process SMAA can't catch. Heavy (cost ≈ scale²), so it rides the
-/// Ultra "showcase" preset only. Clamp 0.3..2.0.
+/// NEVER above 1.0: Bevy's `MainPassResolutionOverride` "must be smaller than the camera's viewport
+/// size" — there is no supersample-and-downsample behind it. At 2.0 the main pass rasterised 4x the
+/// pixels into a window-sized target (tragic frame times), its depth no longer matched the post
+/// passes' UVs (black, flickering blotches in the water reflections) and the frame read blurred /
+/// over-sharpened. Clamp 0.3..1.0 (an old saved 2.0 lands on 1.0).
 fn render_scale_for(settings: &GraphicsSettings) -> f32 {
     if let Some(v) =
         std::env::var("FOREST_RENDERSCALE").ok().and_then(|s| s.trim().parse::<f32>().ok())
     {
-        return v.clamp(0.3, 2.0);
+        return v.clamp(0.3, 1.0);
     }
-    settings.render_scale.clamp(0.3, 2.0)
+    settings.render_scale.clamp(0.3, 1.0)
 }
 
 /// Drive Bevy's [`MainPassResolutionOverride`] from the window size × the render-scale: the
