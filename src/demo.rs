@@ -565,15 +565,33 @@ fn defend_cam(
     prog: Option<Res<crate::capture::ClipProgress>>,
     mut cam_q: Query<&mut Transform, (With<Camera3d>, Without<Hero>)>,
 ) {
+    // A `FOREST_CLIP_ORBIT` owns the camera instead (both write it in Update, unordered).
+    if std::env::var("FOREST_CLIP_ORBIT").is_ok() {
+        return;
+    }
     let Ok(mut ctf) = cam_q.single_mut() else { return };
     let f = prog.as_ref().map_or(0, |p| p.frame) as f32;
-    let centre = Vec2::new(0.0, 5.6); // between the keep and the knight's stand at (0,7)
-    let ang = 0.55 + f / 30.0 * 0.085; // rad; ~4.9°/s of playback — a slow battle pan
-    let r = 9.6;
+    let centre = defend_stand() - Vec2::new(0.0, 1.4); // just behind the knight's stand (default: by the keep)
+    let ang = env_f32("FOREST_DEMO_CAMA").unwrap_or(0.55) + f / 30.0 * 0.085; // rad; ~4.9°/s of playback — a slow battle pan
+    let r = env_f32("FOREST_DEMO_CAMR").unwrap_or(9.6);
     let eye2 = centre + Vec2::new(ang.sin(), ang.cos()) * r;
     let gy = crate::worldmap::ground_at_world(centre.x, centre.y).unwrap_or(0.0);
     ctf.translation = Vec3::new(eye2.x, gy + 3.2, eye2.y);
     ctf.look_at(Vec3::new(centre.x, gy + 1.4, centre.y), Vec3::Y);
+}
+
+/// The knight's battle stand. Default (0,7): in the courtyard by the keep, where breached orks +
+/// guards meet. Gates now shut at dusk, so a night horde first piles up hacking at the SOUTH gate —
+/// `FOREST_DEMO_STAND="0,13.5"` puts him (and the battle-cam, which orbits just behind him; radius
+/// `FOREST_DEMO_CAMR`, start angle `FOREST_DEMO_CAMA` rad from +Z) out in that melee instead.
+fn defend_stand() -> Vec2 {
+    std::env::var("FOREST_DEMO_STAND")
+        .ok()
+        .and_then(|s| {
+            let v: Vec<f32> = s.split(',').filter_map(|p| p.trim().parse().ok()).collect();
+            (v.len() == 2).then(|| Vec2::new(v[0], v[1]))
+        })
+        .unwrap_or(Vec2::new(0.0, 7.0))
 }
 
 const HERO_SWING: f32 = 0.45; // matches combat::ATTACK_DURATION
@@ -594,7 +612,7 @@ fn defend_hero(
     let dt = time.delta_secs();
     player.0.hp = player.0.max_hp; // invulnerable for the show
     let Ok((mut hero, mut htf)) = hero_q.single_mut() else { return };
-    let stand = Vec2::new(0.0, 7.0); // in the courtyard by the keep, where breached orks + guards meet
+    let stand = defend_stand();
 
     // Face the nearest living invader.
     let mut best: Option<f32> = None;

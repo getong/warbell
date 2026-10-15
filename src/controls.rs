@@ -112,6 +112,14 @@ fn fly_camera(
     if *mode != crate::player::PlayMode::FreeRoam {
         return;
     }
+    // A `FOREST_CLIP` recording takes no input, and its camera is owned by `FOREST_CAM` / the
+    // clip orbit / a `FOREST_DEMO` director (several write it in Update, unordered vs this) —
+    // rebuilding the rotation from the stale yaw/pitch here would swing their shots back to the
+    // boot heading.
+    static CLIP: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *CLIP.get_or_init(|| std::env::var("FOREST_CLIP").is_ok()) {
+        return;
+    }
     // Don't grab the cursor / look around while the debug panel owns the pointer (so dragging
     // a slider can't rotate the view).
     let over_ui = egui_wants.0;

@@ -291,6 +291,8 @@ struct ClipClock {
     settled_frames: u32,
     /// warm-up passed; recording (latched)
     started: bool,
+    /// flush tail: every frame up to this index is confirmed on disk
+    flushed: u32,
 }
 
 /// Read by the demo director (`demo.rs` / `town.rs`) so scripted timelines (the hero walk, the
@@ -401,11 +403,20 @@ fn drive_clip(
     let warm = clock.started;
     prog.recording = warm;
     prog.frame = clock.saved;
-    // Flush tail: all frames requested → keep rendering until the LAST one is on disk (the async
-    // readback + PNG write land a few frames later), with a safety cap, then exit.
+    // Flush tail: all frames requested → keep rendering until EVERY one is on disk, then exit. The
+    // async readbacks run on the shared async-compute pool, which the world streaming can starve
+    // in a heavy scene: they land out of order and late, and exiting on just the LAST frame
+    // dropped whole runs of mid-clip frames (a 10-frame hole → a stutter + audio drift). Safety cap.
     if let Some(done) = clock.done_at {
-        let last = format!("{}/frame_{:05}.png", cfg.dir, cfg.frames);
-        if (clock.frame >= done + 15 && std::path::Path::new(&last).exists()) || clock.frame >= done + 1800 {
+        while clock.flushed < cfg.frames
+            && std::path::Path::new(&format!("{}/frame_{:05}.png", cfg.dir, clock.flushed + 1)).exists()
+        {
+            clock.flushed += 1;
+        }
+        if (clock.frame >= done + 15 && clock.flushed >= cfg.frames) || clock.frame >= done + 3600 {
+            if clock.flushed < cfg.frames {
+                warn!("clip: exiting with frame {} still unsaved", clock.flushed + 1);
+            }
             exit.write(AppExit::Success);
         }
         clock.frame += 1;
