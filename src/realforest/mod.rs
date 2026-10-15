@@ -1058,6 +1058,7 @@ pub fn keep_clear(x: f32, z: f32, r: f32) -> bool {
         || crate::vignettes::overlaps_planned(x, z, r)
         || crate::ruins::near_landmark_visual_footprint(x, z)
         || crate::castle::village_keep_clear(x, z, r)
+        || crate::countryside::overlaps_planned(x, z, r)
 }
 
 impl Chunks {

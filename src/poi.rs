@@ -308,6 +308,7 @@ pub fn story_clearings() -> StoryClearings {
     spots.extend(crate::castaway::planned_footprints());
     spots.extend(crate::ork_graveyard::planned_footprints());
     spots.extend(crate::witch::planned_footprints());
+    spots.extend(crate::countryside::planned_footprints());
     StoryClearings(spots)
 }
 /// Does a circle at `(x, z)` of radius `radius` overlap a planned story clearing (gallows

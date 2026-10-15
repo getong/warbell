@@ -583,6 +583,20 @@ fn build_curves() -> Vec<(Vec<Vec2>, f32)> {
     caps.retain(|c| !polyline_hits_clearing(c));
     let mut out: Vec<(Vec<Vec2>, f32)> = curves.into_iter().map(|c| (c, HALF_W)).collect();
     out.extend(caps.into_iter().map(|c| (c, CAP_HALF_W)));
+    // Cart tracks to the countryside farmsteads (`countryside::FARMS`): a capillary from the
+    // nearest point of the network to each yard gate. After the capillaries, so nothing re-deals.
+    {
+        let net: Vec<Vec2> = out.iter().flat_map(|(c, _)| c.iter().copied()).collect();
+        for i in 0..crate::countryside::FARMS.len() {
+            let gate = crate::countryside::farm_gate(i);
+            let Some(&near) = net.iter().min_by(|a, b| a.distance(gate).total_cmp(&b.distance(gate))) else { continue };
+            if near.distance(gate) < 3.0 {
+                continue;
+            }
+            note_junction(near);
+            out.push((route(near, gate, spur, 0x00FA_0000 + i as u32), CAP_HALF_W));
+        }
+    }
     // The village's side lane (narrow, like a capillary, but fixed with its cottages).
     out.push((catmull(&crate::castle::LANE), CAP_HALF_W));
     // Pass trails LAST and deliberately outside the spur/capillary source net: the mesa ramp

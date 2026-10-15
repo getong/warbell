@@ -150,12 +150,17 @@ $env:FOREST_CLIP="target/clips/siege"; $env:FOREST_WAVE="1"; $env:FOREST_DEFEND=
 # stitch (per-clip mp4 + gif): ffmpeg -framerate 30 -i frame_%05d.png -pix_fmt yuv420p out.mp4
 ```
 Biome region centres (world XZ, at `MAP_SCALE` 3.9): snow (-179,-117) · desert (145,-133) · rock (176,23) ·
-forest (-156,101) · swamp (0,148) (the castle/village stay world-fixed at the origin). Base space (`worldmap::REGIONS`,
+forest (-154,99) · swamp (0,148) (the castle/village stay world-fixed at the origin). Base space (`worldmap::REGIONS`,
 144×164, world = base·3.9 − (280.5, 210.6)): snow (26,24) r48 · desert (109,20) r44 · rock (117,60) r38 · forest
-(32,80) r36 · swamp (72,92) r20 — the Oct 2026 biome rebalance grew the desert ~47% over the rock range's old low
+(32.5,79.5) r38 · swamp (72,92) r20 — the Oct 2026 biome rebalance grew the desert ~47% over the rock range's old low
 northern plateau and dropped the E marsh arm (the lake is a tarn at the rock range's SW foot); the rival stronghold
 (`rival::RIVAL_CENTRE`, world (117,-156)) sits in the desert's NW. `BIOME_DUMP=<file.ppm> cargo test --release
 biome_footprints` writes a hillshaded biome map (pass trails, warden lairs, rival) + per-biome tile counts.
+The grass between the castle meadow and the biomes is the **countryside** (`countryside.rs`: farmstead at (28,66) +
+croft (-64,52) with levelled yards, hedges, dry-stone walls, groves, biome-foreland scrub, flower drifts, hay,
+paddock horses). Planning diagnostics: `COUNTRY_DUMP=<ppm>` (2 px/u map: roads, fields, plots, village, clearings,
+the plan), `FARM_SCAN=1` (open yard sites), `SPOT_WHY="x,z,r"`, `MEADOW_SURVEY=1` (open-grass depth per bearing).
+Relief round the castle is keyed on distance past the walls (`worldmap::relief_ease`), not `SAFE_R`.
 These scale with `MAP_SCALE` — code with a hand-authored world coord
 should route it through `worldmap::world22` (rescales 2.2-era coords) instead of baking the scale in.
 Clip knobs: `FOREST_CLIP_FRAMES` (150) · `FOREST_CLIP_FPS` (30) · `FOREST_CLIP_WARMUP` (30).

@@ -83,21 +83,29 @@ fn fp_heights(p: vec2<f32>, w: vec3<f32>, dx: vec2<f32>, dy: vec2<f32>) -> vec3<
 // `field_table_matches_shader` test): xy = centre, zw = half extents (x along the furrows when
 // it is the longer one), and (yaw, plough). The rows are analytic here: the 2 texel/u masks
 // could only carry soft blobs, never straight, evenly spaced ridges.
-const FIELD_A = array<vec4<f32>, 6>(
+const FIELD_A = array<vec4<f32>, 10>(
     vec4<f32>(-11.0, 31.0, 6.0, 2.1),
     vec4<f32>(-11.5, 35.6, 6.0, 2.1),
     vec4<f32>(11.5, 33.5, 5.5, 2.2),
     vec4<f32>(-9.5, -33.5, 6.0, 2.2),
     vec4<f32>(16.0, -32.0, 5.0, 2.1),
     vec4<f32>(41.0, 0.0, 2.2, 6.0),
+    vec4<f32>(12.5, 55.5, 2.0, 5.0),
+    vec4<f32>(16.8, 56.0, 1.9, 4.6),
+    vec4<f32>(-31.0, 37.5, 5.5, 2.0),
+    vec4<f32>(-30.5, 41.8, 5.0, 1.9),
 );
-const FIELD_B = array<vec2<f32>, 6>(
+const FIELD_B = array<vec2<f32>, 10>(
     vec2<f32>(0.04, 1.0),
     vec2<f32>(0.04, 0.55),
     vec2<f32>(-0.05, 0.85),
     vec2<f32>(-0.03, 0.7),
     vec2<f32>(0.06, 1.0),
     vec2<f32>(0.0, 0.8),
+    vec2<f32>(0.03, 1.0),
+    vec2<f32>(0.03, 0.5),
+    vec2<f32>(0.08, 0.8),
+    vec2<f32>(0.1, 0.45),
 );
 // Ridge-to-ridge spacing of the plough rows (world units).
 const FURROW_P: f32 = 0.78;
@@ -118,10 +126,15 @@ struct FieldHit {
 fn field_sample(p: vec2<f32>) -> FieldHit {
     var o: FieldHit;
     o.zone = 0.0; o.soil = 0.0; o.ridge = 0.5; o.grad = vec2<f32>(0.0); o.rows = 0.0;
-    for (var i = 0u; i < 6u; i = i + 1u) {
+    for (var i = 0u; i < 10u; i = i + 1u) {
         let a = FIELD_A[i];
-        let b = FIELD_B[i];
         let d = p - a.xy;
+        // Cheap bounding-circle reject before the trig (most fragments are far from every strip).
+        let br = a.z + a.w + 1.7;
+        if dot(d, d) > br * br {
+            continue;
+        }
+        let b = FIELD_B[i];
         let sn = sin(b.x);
         let cs = cos(b.x);
         // Same local frame as `castle_ground::field_at`.
