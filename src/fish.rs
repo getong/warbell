@@ -414,8 +414,12 @@ fn swim_fish(
         let above = ((y - SEA_Y - SURFACE_LIFT) / 0.25).clamp(0.0, 1.0);
         tf.scale = Vec3::new(1.0, SUBMERGED_SQUASH + (1.0 - SUBMERGED_SQUASH) * above, 1.0);
         let alpha = f.fade * (0.45 + 0.55 * above);
-        if let Some(mut m) = mats.get_mut(&f.mat) {
-            m.base_color = SUBMERGED_TINT.mix(&Color::WHITE, above).with_alpha(alpha);
+        // Only on a real change (a gliding fish holds steady): `get_mut` marks the asset modified.
+        let want = SUBMERGED_TINT.mix(&Color::WHITE, above).with_alpha(alpha);
+        if mats.get(&f.mat).is_some_and(|m| m.base_color != want) {
+            if let Some(mut m) = mats.get_mut(&f.mat) {
+                m.base_color = want;
+            }
         }
     }
 }

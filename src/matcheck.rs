@@ -21,7 +21,8 @@ impl Plugin for MatCheckPlugin {
             app.add_systems(PostUpdate, hide_mat);
         }
         if std::env::var_os("FOREST_VERTREPORT").is_some() {
-            app.init_resource::<VertCensus>().add_systems(PostUpdate, (census_added, census_report).chain());
+            app.init_resource::<VertCensus>().add_systems(PostUpdate, (census_added, census_report).chain())
+                .add_systems(Last, asset_churn);
         }
     }
 }
@@ -237,5 +238,76 @@ fn hide_mat(
         if hit && *vis != Visibility::Hidden {
             *vis = Visibility::Hidden;
         }
+    }
+}
+
+/// Per-frame asset mutations: any `Modified` mesh / material in a frame makes Bevy's
+/// `check_entities_needing_specialization` hash-check EVERY entity of every material type.
+#[allow(clippy::too_many_arguments)]
+fn asset_churn(
+    mut mesh: MessageReader<AssetEvent<Mesh>>,
+    mut std: MessageReader<AssetEvent<StandardMaterial>>,
+    mut fol: MessageReader<AssetEvent<crate::realforest::foliage::FoliageMaterial>>,
+    mut cre: MessageReader<AssetEvent<crate::creature::CreatureMaterial>>,
+    mut ter: MessageReader<AssetEvent<crate::terrain::TerrainMaterial>>,
+    mut img: MessageReader<AssetEvent<Image>>,
+    time: Res<Time<Real>>,
+    mut acc: Local<([u32; 6], u32, f32)>,
+    mut ids: Local<bevy::platform::collections::HashMap<AssetId<StandardMaterial>, u32>>,
+    mut mids: Local<bevy::platform::collections::HashMap<AssetId<Mesh>, u32>>,
+    users: Query<(Entity, &MeshMaterial3d<StandardMaterial>)>,
+    smats: Res<Assets<StandardMaterial>>,
+    musers: Query<(Entity, &Mesh3d)>,
+    names: Query<&Name>,
+    parents: Query<&ChildOf>,
+) {
+    let chain = |e: Entity| {
+        let mut v = Vec::new();
+        let mut cur = Some(e);
+        while let Some(c) = cur {
+            v.push(names.get(c).map(|n| n.as_str().to_string()).unwrap_or_else(|_| format!("{c}")));
+            cur = parents.get(c).ok().map(|p| p.parent());
+            if v.len() > 5 { break; }
+        }
+        v.join(" < ")
+    };
+    fn m<A: Asset>(r: &mut MessageReader<AssetEvent<A>>) -> u32 {
+        r.read().filter(|e| matches!(e, AssetEvent::Modified { .. })).count() as u32
+    }
+    let mut n = [0, 0, m(&mut fol), m(&mut cre), m(&mut ter), m(&mut img)];
+    for e in std.read() {
+        if let AssetEvent::Modified { id } = e {
+            n[1] += 1;
+            *ids.entry(*id).or_default() += 1;
+        }
+    }
+    for e in mesh.read() {
+        if let AssetEvent::Modified { id } = e {
+            n[0] += 1;
+            *mids.entry(*id).or_default() += 1;
+        }
+    }
+    for i in 0..6 {
+        acc.0[i] += n[i];
+    }
+    acc.1 += 1;
+    if time.elapsed_secs() - acc.2 > 5.0 {
+        acc.2 = time.elapsed_secs();
+        let f = acc.1.max(1) as f32;
+        info!("CHURN modified/frame: mesh {:.1} std {:.1} foliage {:.1} creature {:.1} terrain {:.1} image {:.1}", acc.0[0] as f32 / f, acc.0[1] as f32 / f, acc.0[2] as f32 / f, acc.0[3] as f32 / f, acc.0[4] as f32 / f, acc.0[5] as f32 / f);
+        let mut top: Vec<_> = ids.drain().collect();
+        top.sort_by(|a, b| b.1.cmp(&a.1));
+        for (id, k) in top.iter().take(8) {
+            let us: Vec<Entity> = users.iter().filter(|(_, m)| m.0.id() == *id).map(|(e, _)| e).collect();
+            let desc = smats.get(*id).map(|m| format!("base {:?} emis {:?} alpha {:?} unlit {} tex {}", m.base_color.to_srgba(), m.emissive, m.alpha_mode, m.unlit, m.base_color_texture.is_some())).unwrap_or_default();
+            info!("CHURN std {id:?} x{k}: {} users, e.g. {} | {desc}", us.len(), us.first().map(|e| chain(*e)).unwrap_or_default());
+        }
+        let mut mt: Vec<_> = mids.drain().collect();
+        mt.sort_by(|a, b| b.1.cmp(&a.1));
+        for (id, k) in mt.iter().take(4) {
+            let us: Vec<Entity> = musers.iter().filter(|(_, m)| m.0.id() == *id).map(|(e, _)| e).collect();
+            info!("CHURN mesh {id:?} x{k}: {} users, e.g. {}", us.len(), us.first().map(|e| chain(*e)).unwrap_or_default());
+        }
+        *acc = ([0; 6], 0, acc.2);
     }
 }

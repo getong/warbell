@@ -255,15 +255,18 @@ fn drive_night_sky(
     // Fade the shared materials with `night` (+ a gentle global twinkle on the stars).
     let twinkle = 1.0 + 0.06 * (t * 2.3).sin() + 0.04 * (t * 5.1).sin();
     let s = STAR_BRIGHT * night * twinkle;
-    if let Some(mut m) = materials.get_mut(&mats.stars) {
-        m.base_color = Color::linear_rgb(s, s, s);
-    }
-    if let Some(mut m) = materials.get_mut(&mats.moon) {
-        m.base_color = Color::linear_rgb(0.9 * night, 0.93 * night, night);
-    }
-    if let Some(mut m) = materials.get_mut(&mats.glow) {
-        let g = 0.10 * night;
-        m.base_color = Color::linear_rgb(g * 0.8, g * 0.9, g);
+    // Write only real changes (all three sit at 0 the whole day): `get_mut` marks the asset modified.
+    let g = 0.10 * night;
+    for (h, want) in [
+        (&mats.stars, Color::linear_rgb(s, s, s)),
+        (&mats.moon, Color::linear_rgb(0.9 * night, 0.93 * night, night)),
+        (&mats.glow, Color::linear_rgb(g * 0.8, g * 0.9, g)),
+    ] {
+        if materials.get(h).is_some_and(|m| m.base_color != want) {
+            if let Some(mut m) = materials.get_mut(h) {
+                m.base_color = want;
+            }
+        }
     }
 }
 

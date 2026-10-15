@@ -2579,8 +2579,13 @@ fn window_glow(
 ) {
     let Some(mats) = mats else { return };
     let night = crate::scene::night_of(clock.t);
-    if let Some(mut m) = materials.get_mut(&mats.0.get(M::Window)) {
-        m.emissive = srgb(WINDOW_GLOW).to_linear() * (0.35 + 4.4 * night);
+    let want = srgb(WINDOW_GLOW).to_linear() * (0.35 + 4.4 * night);
+    let h = mats.0.get(M::Window);
+    // Only on a real change (constant all day): `get_mut` marks the asset modified.
+    if materials.get(&h).is_some_and(|m| m.emissive != want) {
+        if let Some(mut m) = materials.get_mut(&h) {
+            m.emissive = want;
+        }
     }
 }
 

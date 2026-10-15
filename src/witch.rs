@@ -468,19 +468,23 @@ fn hearth_fx(
     time: Res<Time>,
     clock: Option<Res<crate::scene::SkyClock>>,
     mut mats: ResMut<Assets<StandardMaterial>>,
-    mut steam: Query<(&Steam, &mut Transform, &MeshMaterial3d<StandardMaterial>), (Without<Ember>, Without<Firefly>)>,
+    mut steam: Query<(&Steam, &mut Transform, &MeshMaterial3d<StandardMaterial>, &ViewVisibility), (Without<Ember>, Without<Firefly>)>,
     mut embers: Query<(&Ember, &mut Transform), (Without<Steam>, Without<Firefly>)>,
     mut flies: Query<(&Firefly, &mut Transform), (Without<Steam>, Without<Ember>)>,
 ) {
     let t = time.elapsed_secs();
-    for (s, mut tf, m) in &mut steam {
+    for (s, mut tf, m, vis) in &mut steam {
         let u = ((t / s.period) + s.phase).fract();
         let drift = Vec3::new((t * 0.4 + s.phase * 6.0).sin() * 0.25, 0.0, (t * 0.3 + s.phase * 4.0).cos() * 0.2) * u;
         tf.translation = s.from + Vec3::Y * (u * 1.7) + drift;
         let r = 0.07 + 0.24 * u;
         tf.scale = Vec3::new(r, r * 0.72, r);
-        if let Some(mut mat) = mats.get_mut(&m.0) {
-            mat.base_color.set_alpha(0.09 * (u * PI).sin().powf(1.6));
+        // Each puff's own material: only rewrite it while it's on screen — `get_mut` marks the asset
+        // modified, which re-uploads it and makes Bevy re-check every mesh entity that frame.
+        if vis.get() {
+            if let Some(mut mat) = mats.get_mut(&m.0) {
+                mat.base_color.set_alpha(0.09 * (u * PI).sin().powf(1.6));
+            }
         }
     }
     for (e, mut tf) in &mut embers {

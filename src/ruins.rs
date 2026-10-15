@@ -477,9 +477,14 @@ fn fx_rise(time: Res<Time>, mut q: Query<(&FxRise, &RestXf, &mut Transform)>) {
     }
 }
 
-fn fx_pulse(time: Res<Time>, mut mats: ResMut<Assets<StandardMaterial>>, q: Query<&FxPulse>) {
+fn fx_pulse(time: Res<Time>, mut mats: ResMut<Assets<StandardMaterial>>, q: Query<(&FxPulse, &ViewVisibility)>) {
     let t = time.elapsed_secs();
-    for p in &q {
+    // Only parts on screen: every landmark glow on the island used to rewrite its material each
+    // frame (`get_mut` re-uploads it and makes Bevy re-check every mesh entity for specialization).
+    for (p, vis) in &q {
+        if !vis.get() {
+            continue;
+        }
         if let Some(mut m) = mats.get_mut(&p.mat) {
             m.emissive = p.emissive * (1.0 + (t * p.freq + p.phase).sin() * p.amp);
         }

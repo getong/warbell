@@ -232,9 +232,13 @@ fn fly_butterflies(
         let target = if show { 1.0 } else { 0.0 };
         b.fade += (target - b.fade).clamp(-FADE_RATE * dt, FADE_RATE * dt);
         // Push the eased alpha into this butterfly's own wing/hind/body materials.
+        // Only on a real change: `get_mut` marks the asset modified, which re-uploads it and makes
+        // Bevy re-check every mesh entity for specialization that frame.
         for h in &b.mats {
-            if let Some(mut m) = mats.get_mut(h) {
-                m.base_color.set_alpha(b.fade);
+            if mats.get(h).is_some_and(|m| m.base_color.alpha() != b.fade) {
+                if let Some(mut m) = mats.get_mut(h) {
+                    m.base_color.set_alpha(b.fade);
+                }
             }
         }
         if b.fade <= 0.001 {
