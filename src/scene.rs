@@ -457,6 +457,11 @@ fn advance_sky(
             light.color = lerp_col(light.color, t.sun_color, bw);
             light.illuminance *= 1.0 + (t.sun_illuminance / BASE_SUN_LUX - 1.0) * bw;
         }
+        // Daylight key ×1.4 (Oct 2026 look pass, with the ×1.5 fill below): a stronger sun against a
+        // lifted sky fill models every form instead of leaving the frame evenly flat-lit.
+        // `FOREST_SUNK=<x>` overrides it for look-dev shots.
+        static SUNK: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+        light.illuminance *= 1.0 + (*SUNK.get_or_init(|| std::env::var("FOREST_SUNK").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(1.4)) - 1.0) * day;
         // Neutral noon. The warm-gold key above (and the warm biome sun colours) were tuned before
         // the Atmosphere attenuated directional lights; stacked on its transmittance they turned the
         // whole noon frame mustard (grass), peach (snow) and beige (sky — the Atmosphere is lit by
@@ -515,9 +520,9 @@ fn advance_sky(
     // the sun's shadow contrast.
     // `FOREST_FILL=<x>`: scale the whole shadow-side fill (ambient + IBL) for look-dev shots.
     static FILL: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
-    // Daylight fill ×1.8 (Oct 2026 look pass): shade read near-black against the sun — real
+    // Daylight fill ×1.5 (Oct 2026 look pass): shade read near-black against the sun — real
     // skylight leaves cast shadows at roughly a third of the lit value. Nights keep their tuning.
-    let fill = *FILL.get_or_init(|| std::env::var("FOREST_FILL").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(1.8));
+    let fill = *FILL.get_or_init(|| std::env::var("FOREST_FILL").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(1.5));
     let fill = 1.0 + (fill - 1.0) * (1.0 - night); // full from sunrise on, not only at noon
     ambient.brightness *= fill;
     for mut env in &mut env_q {

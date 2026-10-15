@@ -75,6 +75,8 @@ pub struct FilmGrade {
     pub weave: f32,
     /// Pull pure greens toward olive / straw (0 = off).
     pub olive: f32,
+    /// Mid-radius local contrast (0 = off).
+    pub clarity: f32,
 }
 
 impl Default for FilmGrade {
@@ -98,6 +100,7 @@ impl Default for FilmGrade {
             streak: 0.0,
             weave: 0.0,
             olive: 0.0,
+            clarity: 0.0,
         }
     }
 }
@@ -188,6 +191,7 @@ fn drive_film_grade(sun: Query<&GlobalTransform, With<Sun>>, mut cams: Query<&mu
             g.toe = v[3];
             g.split = v[4];
             g.olive = v[5];
+            g.clarity = std::env::var("FOREST_CLARITY").ok().and_then(|c| c.trim().parse().ok()).unwrap_or(g.clarity);
             continue;
         }
         let hi = mix3(mix3(hi_day, hi_night, night), hi_gold, golden);
@@ -198,12 +202,14 @@ fn drive_film_grade(sun: Query<&GlobalTransform, With<Sun>>, mut cams: Query<&mu
             g.shadow_tint = sh;
             // Day: no vibrance push (it made the grass neon), soft contrast, olive greens, a lifted
             // toe. Night / golden hour keep their earlier character on top.
-            g.vibrance = 0.0 + 0.12 * night + 0.03 * golden;
-            g.saturation = 0.97;
-            g.contrast = 1.06 + 0.02 * golden + 0.06 * night;
-            g.split = 0.40 + 0.15 * golden + 0.15 * night;
+            g.vibrance = 0.05 + 0.07 * night + 0.03 * golden;
+            g.saturation = 0.98;
+            g.contrast = 1.16 + 0.02 * golden - 0.04 * night;
+            g.split = 0.45 + 0.15 * golden + 0.10 * night;
+            // Mid-radius local contrast: the modelling a photo-real frame has on every tuft and trunk.
+            g.clarity = 0.9 - 0.4 * night;
             g.olive = 1.4 * (1.0 - smoothstep(-0.10, 0.02, -y)); // full whenever the sun is up
-            g.toe = 0.035 - 0.017 * night;
+            g.toe = 0.03 - 0.012 * night;
         }
     }
 }

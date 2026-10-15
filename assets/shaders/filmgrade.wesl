@@ -27,6 +27,7 @@ struct FilmGrade {
     streak: f32,
     weave: f32,
     olive: f32, // pull pure greens toward olive / straw (0 = off)
+    clarity: f32, // mid-radius local contrast (0 = off)
 }
 @group(0) @binding(2) var<uniform> grade: FilmGrade;
 
@@ -113,6 +114,25 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         // Clamp the detail term so high-contrast silhouettes (sky vs. trunk) don't ring.
         let detail = clamp(l0 - blur, -0.06, 0.06);
         let l1 = max(l0 + detail * grade.sharpen * 2.0, 0.0);
+        lin = lin * (l1 / max(l0, 1e-4));
+    }
+
+    // ── Clarity ── mid-radius local contrast (two 8-tap rings, ~4 and ~10 px): gives surfaces,
+    // tufts and bark their modelling back without touching global contrast. Luma-only, clamped, and
+    // weighted to the midtones so silhouettes against the sky don't halo.
+    if grade.clarity > 0.001 {
+        var acc = 0.0;
+        for (var i = 0; i < 8; i++) {
+            let a = f32(i) * 0.7853982 + 0.39;
+            let d = vec2<f32>(cos(a), sin(a));
+            acc += luma(textureSampleLevel(screen_texture, texture_sampler, uv + d * px * 4.0, 0.0).rgb);
+            acc += luma(textureSampleLevel(screen_texture, texture_sampler, uv + d * px * 10.0, 0.0).rgb);
+        }
+        let wide = acc / 16.0;
+        let l0 = luma(lin);
+        let m = clamp(4.0 * l0 * (1.0 - l0) * 1.6, 0.0, 1.0);
+        let detail = clamp(l0 - wide, -0.10, 0.10);
+        let l1 = max(l0 + detail * grade.clarity * m, 0.0);
         lin = lin * (l1 / max(l0, 1e-4));
     }
 
