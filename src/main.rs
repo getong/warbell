@@ -20,6 +20,7 @@ mod alpine; // snow / meadow / scree / rock terrain layers + snow-dusted kit sca
 mod ambient_life;
 mod atmospherics;
 mod meadow;
+mod countryside; // the farmed countryside between the castle meadow and the biomes (Oct 2026)
 mod pasture; mod drill_yard; mod watch_beacon; mod caravan; // WP4 meadow sites (spec 2026-10-13 §2 D–E)
 mod melee_ring;
 mod meshkit; // shared low-poly mesh helpers (tinted/merged/flat_shaded) — see the module doc
@@ -401,6 +402,8 @@ fn main() {
         // Castle-meadow dressing (props spawned by worldmap::build_step phase 29; this plugin
         // only runs the campfire rest-heal).
         .add_plugins(meadow::MeadowPlugin)
+        // The farmed countryside's grazing horses (the rest is static, spawned by the world build).
+        .add_plugins(countryside::CountrysidePlugin)
         .add_plugins((pasture::PasturePlugin, drill_yard::DrillYardPlugin, watch_beacon::WatchBeaconPlugin, caravan::CaravanPlugin))
         // Last-of-the-line alert (heir-count stinger + persistent banner). Standalone: the tuples
         // above are at the `Plugins` arity-15 cap.

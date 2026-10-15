@@ -641,11 +641,16 @@ pub(crate) fn kit_piece(commands: &mut Commands, name: &str, x: f32, z: f32, yaw
 #[allow(clippy::type_complexity)]
 pub fn ground_wear_passes() -> Vec<(Vec2, f32, Box<dyn Fn(f32, f32) -> Option<(f32, f32, f32)> + Send + Sync>)> {
     let beacon = crate::watch_beacon::site();
-    vec![
+    let mut passes: Vec<(Vec2, f32, Box<dyn Fn(f32, f32) -> Option<(f32, f32, f32)> + Send + Sync>)> = vec![
         (crate::pasture::WEAR_C, crate::pasture::WEAR_R, Box::new(crate::pasture::ground_wear)),
         (Vec2::new(15.0, -39.0), 14.0, Box::new(crate::drill_yard::ground_wear)),
         (beacon, 6.0, Box::new(move |x, z| crate::watch_beacon::ground_wear_at(beacon, x, z))),
-    ]
+    ];
+    // The countryside farmyards (`countryside::ground_wear`).
+    for (c, r) in crate::countryside::wear_sites() {
+        passes.push((c, r, Box::new(crate::countryside::ground_wear)));
+    }
+    passes
 }
 
 /// Grass tufts (the scatter's own `grass_*` / flower models) set on a kit piece's turf as children

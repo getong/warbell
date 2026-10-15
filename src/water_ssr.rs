@@ -27,7 +27,7 @@ use bevy::{
             *,
         },
         renderer::{RenderContext, RenderDevice, ViewQuery},
-        view::ViewTarget,
+        view::{ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms},
         RenderApp, RenderStartup,
     },
 };
@@ -35,12 +35,15 @@ use bevy::{
 const SHADER_ASSET_PATH: &str = "shaders/water_ssr.wesl";
 
 /// Per-camera settings + shader uniform; field ORDER matches the WGSL `Settings` struct.
+///
+/// The camera matrices come from Bevy's own render-world `View` uniform, NOT from here: matrices
+/// computed in the main world's `Update` were a frame stale (the follow-cam moves later, in
+/// PostUpdate) and lacked the TAA jitter the depth was rendered with, so while the camera moved
+/// the unprojected depth missed the water plane and the reflections blinked out / re-formed on
+/// every camera motion.
 #[derive(Component, Clone, Copy, ExtractComponent, ShaderType)]
 #[extract_app(RenderApp)]
 pub struct WaterSsr {
-    pub world_from_clip: Mat4,
-    pub clip_from_world: Mat4,
-    pub cam_pos: Vec3,
     pub sea_y: f32,
     pub time: f32,
     /// Fresnel blend scale (0 = off).
@@ -53,13 +56,10 @@ pub struct WaterSsr {
 
 pub fn default_water_ssr() -> WaterSsr {
     WaterSsr {
-        world_from_clip: Mat4::IDENTITY,
-        clip_from_world: Mat4::IDENTITY,
-        cam_pos: Vec3::ZERO,
         sea_y: crate::worldmap::SEA_Y,
         time: 0.0,
         strength: std::env::var("FOREST_WATERSSR").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(1.0),
-        ripple: std::env::var("FOREST_WATERRIPPLE").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0.035),
+        ripple: std::env::var("FOREST_WATERRIPPLE").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0.03),
         max_dist: 220.0,
     }
 }
@@ -89,24 +89,24 @@ impl Plugin for WaterSsrPlugin {
     }
 }
 
-fn drive_water_ssr(time: Res<Time>, mut cams: Query<(&GlobalTransform, &Camera, &mut WaterSsr)>) {
-    for (tf, cam, mut s) in &mut cams {
-        let world_from_clip = tf.to_matrix() * cam.clip_from_view().inverse();
-        s.world_from_clip = world_from_clip;
-        s.clip_from_world = world_from_clip.inverse();
-        s.cam_pos = tf.translation();
+fn drive_water_ssr(time: Res<Time>, mut cams: Query<&mut WaterSsr>) {
+    for mut s in &mut cams {
         s.time = time.elapsed_secs();
     }
 }
 
 pub(crate) fn water_ssr_pass(
-    view: ViewQuery<(&ViewTarget, &ViewPrepassTextures, &WaterSsr, &DynamicUniformIndex<WaterSsr>)>,
+    view: ViewQuery<(&ViewTarget, &ViewPrepassTextures, &WaterSsr, &DynamicUniformIndex<WaterSsr>, &ViewUniformOffset)>,
     pipeline_res: Res<WaterSsrPipeline>,
     pipeline_cache: Res<PipelineCache>,
     uniforms: Res<ComponentUniforms<WaterSsr>>,
+    view_uniforms: Res<ViewUniforms>,
     mut ctx: RenderContext,
 ) {
-    let (view_target, prepass, _settings, settings_index) = view.into_inner();
+    let (view_target, prepass, _settings, settings_index, view_offset) = view.into_inner();
+    let Some(view_binding) = view_uniforms.uniforms.binding() else {
+        return;
+    };
     let Some(pipeline) = pipeline_cache.get_render_pipeline(pipeline_res.pipeline_id) else {
         return;
     };
@@ -120,7 +120,7 @@ pub(crate) fn water_ssr_pass(
     let bind_group = ctx.render_device().create_bind_group(
         "water_ssr_bind_group",
         &pipeline_cache.get_bind_group_layout(&pipeline_res.layout),
-        &BindGroupEntries::sequential((post_process.source, &pipeline_res.sampler, depth_view, settings_binding.clone())),
+        &BindGroupEntries::sequential((post_process.source, &pipeline_res.sampler, depth_view, settings_binding.clone(), view_binding)),
     );
     let mut pass = ctx.command_encoder().begin_render_pass(&RenderPassDescriptor {
         label: Some("water_ssr_pass"),
@@ -133,7 +133,7 @@ pub(crate) fn water_ssr_pass(
         ..default()
     });
     pass.set_pipeline(pipeline);
-    pass.set_bind_group(0, &bind_group, &[settings_index.index()]);
+    pass.set_bind_group(0, &bind_group, &[settings_index.index(), view_offset.offset]);
     pass.draw(0..3, 0..1);
 }
 
@@ -160,6 +160,7 @@ fn init_pipeline(
                 sampler(SamplerBindingType::Filtering),
                 texture_depth_2d(),
                 uniform_buffer::<WaterSsr>(true),
+                uniform_buffer::<ViewUniform>(true),
             ),
         ),
     );

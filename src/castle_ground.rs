@@ -220,7 +220,7 @@ struct Field {
     plough: f32,
 }
 
-const FIELDS: [Field; 6] = [
+const FIELDS: [Field; 10] = [
     // South meadow, W of the south gate road: two strips side by side, ploughed + stubble.
     Field { c: Vec2::new(-11.0, 31.0), half: Vec2::new(6.0, 2.1), yaw: 0.04, plough: 1.0 },
     Field { c: Vec2::new(-11.5, 35.6), half: Vec2::new(6.0, 2.1), yaw: 0.04, plough: 0.55 },
@@ -231,6 +231,12 @@ const FIELDS: [Field; 6] = [
     Field { c: Vec2::new(16.0, -32.0), half: Vec2::new(5.0, 2.1), yaw: 0.06, plough: 1.0 },
     // East meadow, off the solid east wall (furrows run N-S).
     Field { c: Vec2::new(41.0, 0.0), half: Vec2::new(2.2, 6.0), yaw: 0.0, plough: 0.8 },
+    // The countryside farmstead's strips, between the south road and its yard, north of the gate path (`countryside::FARMS`).
+    Field { c: Vec2::new(12.5, 55.5), half: Vec2::new(2.0, 5.0), yaw: 0.03, plough: 1.0 },
+    Field { c: Vec2::new(16.8, 56.0), half: Vec2::new(1.9, 4.6), yaw: 0.03, plough: 0.5 },
+    // Two more SW of the south fields, toward the croft (one fresh, one gone to stubble).
+    Field { c: Vec2::new(-31.0, 37.5), half: Vec2::new(5.5, 2.0), yaw: 0.08, plough: 0.8 },
+    Field { c: Vec2::new(-30.5, 41.8), half: Vec2::new(5.0, 1.9), yaw: 0.1, plough: 0.45 },
 ];
 
 /// A field at world `(wx, wz)`: `(weight, plough)` — `None` off every field.

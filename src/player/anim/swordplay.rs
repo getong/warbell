@@ -74,12 +74,58 @@ impl Frame {
     }
 }
 
-/// Linear in time between the baked frames.
+/// Uniform Catmull-Rom between `p1` and `p2` (C1 through every key).
+fn cr<T>(p0: T, p1: T, p2: T, p3: T, s: f32) -> T
+where
+    T: Copy + std::ops::Add<Output = T> + std::ops::Sub<Output = T> + std::ops::Mul<f32, Output = T>,
+{
+    let (s2, s3) = (s * s, s * s * s);
+    (p1 * 2.0 + (p2 - p0) * s + (p0 * 2.0 - p1 * 5.0 + p2 * 4.0 - p3) * s2 + (p1 * 3.0 - p0 - p2 * 3.0 + p3) * s3) * 0.5
+}
+
+/// [`cr`] on rotations: the neighbours sign-matched to `q1` (same hemisphere), then renormalised.
+fn cr_q(q0: Quat, q1: Quat, q2: Quat, q3: Quat, s: f32) -> Quat {
+    let v = |q: Quat, r: Quat| if q.dot(r) < 0.0 { -Vec4::from(q) } else { Vec4::from(q) };
+    let q2v = v(q2, q1);
+    let q3v = v(q3, Quat::from_vec4(q2v));
+    Quat::from_vec4(cr(v(q0, q1), Vec4::from(q1), q2v, q3v, s)).normalize()
+}
+
+impl Frame {
+    /// `b` → `c` by `s` on a Catmull-Rom through `a`, `b`, `c`, `d`.
+    fn cubic(a: &Frame, b: &Frame, c: &Frame, d: &Frame, s: f32) -> Frame {
+        let p = |f: fn(&Frame) -> Vec3| cr(f(a), f(b), f(c), f(d), s);
+        let dir = |f: fn(&Frame) -> Vec3| p(f).normalize_or(f(b));
+        let q = |f: fn(&Frame) -> Quat| cr_q(f(a), f(b), f(c), f(d), s);
+        Frame {
+            pelvis: p(|f| f.pelvis),
+            pelvis_r: q(|f| f.pelvis_r),
+            chest: q(|f| f.chest),
+            head: q(|f| f.head),
+            r_upper: dir(|f| f.r_upper),
+            r_fore: dir(|f| f.r_fore),
+            blade: dir(|f| f.blade),
+            edge: dir(|f| f.edge),
+            l_upper: dir(|f| f.l_upper),
+            l_fore: dir(|f| f.l_fore),
+            ankle: [p(|f| f.ankle[0]), p(|f| f.ankle[1])],
+            pole: [dir(|f| f.pole[0]), dir(|f| f.pole[1])],
+            foot: [q(|f| f.foot[0]), q(|f| f.foot[1])],
+        }
+    }
+}
+
+/// Cubic in time between the baked frames. The clips are keyed at 30 fps and the strike moves the
+/// blade up to ~90° a key, so a straight line between keys turned every key into a visible corner
+/// (the blade's path and the trunk's spin changing speed in one frame): a Catmull-Rom keeps both
+/// the path and its speed continuous, still passing through every authored key.
 fn sample(clip: &[[f32; 53]], t: f32) -> Frame {
-    let x = (t.max(0.0) * ual::FPS).min((clip.len() - 1) as f32);
-    let i = (x.floor() as usize).min(clip.len().saturating_sub(2));
-    let (a, b) = (Frame::of(&clip[i]), Frame::of(&clip[(i + 1).min(clip.len() - 1)]));
-    a.lerp(&b, (x - i as f32).clamp(0.0, 1.0))
+    let n = clip.len();
+    let x = (t.max(0.0) * ual::FPS).min((n - 1) as f32);
+    let i = (x.floor() as usize).min(n.saturating_sub(2));
+    let k = |j: isize| Frame::of(&clip[j.clamp(0, n as isize - 1) as usize]);
+    let i = i as isize;
+    Frame::cubic(&k(i - 1), &k(i), &k(i + 1), &k(i + 2), (x - i as f32).clamp(0.0, 1.0))
 }
 
 /// Right-handed frame with `a` first and `b` (made orthogonal to it) second.
@@ -252,17 +298,37 @@ fn length(clip: &[[f32; 53]]) -> f32 {
     (clip.len() - 1) as f32 / ual::FPS
 }
 
+/// Clip time at swing progress `ap`: a monotone cubic through (0, 0), (`hp`, `hit`), (1, `end`), so
+/// the blade contact lands exactly on the damage instant with the playback rate continuous across
+/// it. (Two straight lines ran the wind-up at ~2× and the follow-through at ~0.5× — the blade
+/// braked 4× in one frame at contact, the swing's most visible moment, on every swing.) The rate
+/// now eases down from the quick wind-up through a near-natural-speed contact into an unhurried
+/// follow-through.
+fn warp(ap: f32, hp: f32, hit: f32, end: f32) -> f32 {
+    let (h0, h1) = (hp, 1.0 - hp);
+    let (d0, d1) = (hit / h0, (end - hit) / h1);
+    // Fritsch–Carlson interior slope (weighted harmonic mean: never overshoots either side).
+    let (w0, w1) = (2.0 * h1 + h0, h1 + 2.0 * h0);
+    let m1 = if d0 > 0.0 && d1 > 0.0 { (w0 + w1) / (w0 / d0 + w1 / d1) } else { 0.0 };
+    let (m0, m2) = ((1.5 * d0 - 0.5 * m1).max(0.0), (1.5 * d1 - 0.5 * m1).max(0.0));
+    let herm = |a: f32, b: f32, ma: f32, mb: f32, s: f32| {
+        let (s2, s3) = (s * s, s * s * s);
+        a * (2.0 * s3 - 3.0 * s2 + 1.0) + ma * (s3 - 2.0 * s2 + s) + b * (3.0 * s2 - 2.0 * s3) + mb * (s3 - s2)
+    };
+    if ap < hp {
+        herm(0.0, hit, m0 * h0, m1 * h0, ap / h0)
+    } else {
+        herm(hit, end, m1 * h1, m2 * h1, (ap - hp) / h1)
+    }
+}
+
 /// The swing at progress `ap` (0..1 of the game's swing): the clip is time-warped so its
 /// fastest blade lands on the game's damage instant `hit_phase`.
 pub(crate) fn strike_pose(variant: u8, ap: f32, hit_phase: f32) -> Pose {
     let s = step(variant);
     let end = length(s.strike);
     let ap = ap.clamp(0.0, 1.0);
-    let t = if ap < hit_phase {
-        s.hit * ap / hit_phase
-    } else {
-        s.hit + (end - s.hit) * (ap - hit_phase) / (1.0 - hit_phase)
-    };
+    let t = warp(ap, hit_phase, s.hit, end);
     let c = sample(s.strike, t);
     let f = match s.lead {
         Some(row) if ap < hit_phase * LEAD_IN => {

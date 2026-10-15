@@ -150,12 +150,17 @@ $env:FOREST_CLIP="target/clips/siege"; $env:FOREST_WAVE="1"; $env:FOREST_DEFEND=
 # stitch (per-clip mp4 + gif): ffmpeg -framerate 30 -i frame_%05d.png -pix_fmt yuv420p out.mp4
 ```
 Biome region centres (world XZ, at `MAP_SCALE` 3.9): snow (-179,-117) · desert (145,-133) · rock (176,23) ·
-forest (-156,101) · swamp (0,148) (the castle/village stay world-fixed at the origin). Base space (`worldmap::REGIONS`,
+forest (-154,99) · swamp (0,148) (the castle/village stay world-fixed at the origin). Base space (`worldmap::REGIONS`,
 144×164, world = base·3.9 − (280.5, 210.6)): snow (26,24) r48 · desert (109,20) r44 · rock (117,60) r38 · forest
-(32,80) r36 · swamp (72,92) r20 — the Oct 2026 biome rebalance grew the desert ~47% over the rock range's old low
+(32.5,79.5) r38 · swamp (72,92) r20 — the Oct 2026 biome rebalance grew the desert ~47% over the rock range's old low
 northern plateau and dropped the E marsh arm (the lake is a tarn at the rock range's SW foot); the rival stronghold
 (`rival::RIVAL_CENTRE`, world (117,-156)) sits in the desert's NW. `BIOME_DUMP=<file.ppm> cargo test --release
 biome_footprints` writes a hillshaded biome map (pass trails, warden lairs, rival) + per-biome tile counts.
+The grass between the castle meadow and the biomes is the **countryside** (`countryside.rs`: farmstead at (28,66) +
+croft (-64,52) with levelled yards, hedges, dry-stone walls, groves, biome-foreland scrub, flower drifts, hay,
+paddock horses). Planning diagnostics: `COUNTRY_DUMP=<ppm>` (2 px/u map: roads, fields, plots, village, clearings,
+the plan), `FARM_SCAN=1` (open yard sites), `SPOT_WHY="x,z,r"`, `MEADOW_SURVEY=1` (open-grass depth per bearing).
+Relief round the castle is keyed on distance past the walls (`worldmap::relief_ease`), not `SAFE_R`.
 These scale with `MAP_SCALE` — code with a hand-authored world coord
 should route it through `worldmap::world22` (rescales 2.2-era coords) instead of baking the scale in.
 Clip knobs: `FOREST_CLIP_FRAMES` (150) · `FOREST_CLIP_FPS` (30) · `FOREST_CLIP_WARMUP` (30).
@@ -202,7 +207,7 @@ Env hooks that stage a scene for a shot (combine with `FOREST_SHOT` **or** `FORE
 | `FOREST_FLAGTEST=1` | park one cloth banner in open air at `(0, 6, -22)` to frame the flutter in isolation (`banner.rs`). NB the cloth streams along world ≈`(0.9, 0, -0.43)` — shoot from a spot perpendicular to that or it reads edge-on |
 | `FOREST_BELLTEST=1` | re-toll the war bell on a ~12s loop (swing + clapper + SFX) so a shot/clip frames the ring without a keypress (`castle::swing_bell`); the bell stands at `castle::BELL_POS` (4.5, 7.5) |
 | `FOREST_ROLLTEST=1` | re-arm the hero's **Alt dodge-roll** (forward, along the facing) on a ~1.8s loop so a `FOREST_TPS` shot/clip frames the somersault without a keypress (`player/movement.rs::player_roll`); skips the pointer-lock/stamina gates |
-| `FOREST_SWINGTEST=1` | re-arm the hero's **attack chain** on a ~1.15s loop (inside the combo window, so it steps chop → slash → thrust; every 4th swing is the Heavy) with no keypress, skipping the pointer-lock gate, so a `FOREST_FP`/`FOREST_TPS` clip frames every swing variant (`player/combat.rs::swing_test`). |
+| `FOREST_SWINGTEST=1` | re-arm the hero's **attack chain** on a ~1.15s loop (inside the combo window, so it steps chop → slash → thrust; every 4th swing is the Heavy, released out of a held charge stance as in play) with no keypress, skipping the pointer-lock gate, so a `FOREST_FP`/`FOREST_TPS` clip frames every swing variant (`player/combat.rs::swing_test`). A number sets the gap between swing starts (`FOREST_SWINGTEST=0.3` = mashed, back-to-back chain). Side view of the sword arm: `FOREST_TPS=1 FOREST_HERO=-12,30 FOREST_TPS_AZ=4.6 FOREST_TPS_PITCH=0.12 FOREST_TPS_DIST=3.2 FOREST_NOBLUR=1 FOREST_CLIP_FPS=60` (no `FOREST_ORKLINE`: ringed foes dolly the follow-cam out). |
 | `FOREST_NOSTREAM=1` / `FOREST_MEMREPORT=1` | spawn the kit undergrowth/clutter/props chunks for the WHOLE island at boot instead of streaming them within 95u of the camera (`realforest::stream_cover`; `FOREST_NOCULL=1` also bypasses it) / log one `MEM` breakdown 12 s after `WorldReady` — CPU-retained mesh bytes by owning component, top meshes/images (`perftest::mem_report`; always on under `FOREST_PERFTEST`) |
 | `FOREST_IMMORTAL=1` | the hero takes hits with full juice (floats/flash/shake) but can't drop below 1 HP, so a filmed melee never trips the **succession beat** — which slow-mos the world and swings the camera to the nearest townsperson, hijacking a combat clip's framing (`player/health.rs::apply_hero_damage`) |
 | `FOREST_HURT_ALL=<frac>` | wound every foe / townsfolk to `frac` of max HP, then step it down 9% every 1.3s (4 steps, per-entity phase) so a still frames the world HP bars mid-fight with fresh **damage trails**; holds the hero on a matching 72%→48% staircase for the HUD vitals (`combat_fx::hurt_all_test`). Calm ring shot: `FOREST_TPS=1 FOREST_HERO=-12,30 FOREST_ORKLINE=-12,34 FOREST_TPS_AZ=2.9 FOREST_TPS_PITCH=0.5 FOREST_HURT_ALL=0.6 FOREST_IMMORTAL=1 FOREST_NOBLUR=1` (the hero spawns facing +Z, so the line must sit at +Z for the soft-lock ring) |

@@ -125,6 +125,13 @@ const SAFE_PAD: f32 = 6.6;
 /// swings ±3.7 — clamped so the ring stays ≥15u and doesn't bite into the nearby mesas.
 const SAFE_FRAY: f32 = 0.8;
 
+/// The swamp keeps this far (base units, past the walls — [`castle_ring_dist`]) from the castle:
+/// the south meadow under the bell, the fields and the beacon on the south track stay dry grass.
+/// Was `dist_from_castle < SAFE_R`, a keep-centred circle that grew to ≈78u when castle v2 raised
+/// `SAFE_R` — the marsh started a long, empty walk south of the gate (Oct 2026 countryside pass).
+/// 10 base ≈ 39u past the south wall → the bog edge sits ≈64u out instead of ≈80u.
+const SWAMP_HOLD: f32 = 10.0;
+
 /// Base-space distance from `(x, z)` to the castle's open ground (0 inside the walls): the
 /// enceinte polygon (`castle::outside_dist`, world-centred on the origin = base `(CX, CZ)`) — and
 /// the VILLAGE LOBE west of it: the street village along the King's Road out of the W gate
@@ -140,6 +147,11 @@ fn castle_ring_dist(x: f32, z: f32) -> f32 {
     // The lobe reaches the ring's nominal edge (SAFE_PAD) at VILLAGE_FLAT off the streets.
     let lobe = (crate::castle::village_dist(wx, wz) - VILLAGE_FLAT + SAFE_PAD * MAP_SCALE).max(0.0);
     ring.min(lobe) / MAP_SCALE
+}
+/// [`castle_ring_dist`] at a WORLD point, in world units: how far past the castle walls (or the
+/// village streets' open lobe) a spot lies. The forced-grass ring ends at ≈`SAFE_PAD·MAP_SCALE`.
+pub fn castle_ring_world(wx: f32, wz: f32) -> f32 {
+    castle_ring_dist((wx + GX) / MAP_SCALE, (wz + GZ) / MAP_SCALE) * MAP_SCALE
 }
 /// World units of open flat ground either side of the village streets, nominal (the frayed edge
 /// swings ±2u): a house + its burgage yard reach ≈16u off the road.
@@ -344,7 +356,12 @@ const REGIONS: [Region; 5] = [
     // SW forest + S swamp: r +2/+3 (pass 0, map-character overhaul) — the two most
     // "nothing left once you subtract the claims" biomes get extra interior on top of the
     // MAP_SCALE 2.2 bump. Snow/desert radii stay (their shared seam is already tuned tight).
-    Region { x: 32.0, z: 80.0, r: 36.0, biome: TB::Forest, peak: 0, cliffy: false, passes: &[] }, // SW forest
+    // r 36→38 + centre (32,80)→(32.5,79.5) (countryside pass, player: "some biomes could be
+    // bigger"): the forest reaches ~10u further into the empty S/SW grass between the street village
+    // and the marsh, so the walk out of the south gate meets woodland instead of a long bare lawn —
+    // but its edge stays ≈30u past the south wall (r39 put trees ~25u off it, screening the night
+    // waves' approach from the bell tower).
+    Region { x: 32.5, z: 79.5, r: 38.0, biome: TB::Forest, peak: 0, cliffy: false, passes: &[] }, // SW forest
     // S swamp: r 29→23 (less bog) → 20 (biome rebalance: "shrink the swamp a bit too"); its bog
     // pools are region-relative (`POOL_BLOBS`) and shrink with it.
     Region { x: 72.0, z: 92.0, r: 20.0, biome: TB::Swamp, peak: 0, cliffy: false, passes: &[] },
@@ -1237,9 +1254,11 @@ fn coast_hill(x: f32, z: f32) -> Option<f32> {
 /// island — grassy knolls on the frontier, dunes in the desert, wooded rises in the forest —
 /// so the middle of the map isn't one flat sheet. Nested thresholds mean a hill always climbs
 /// through each class ring in turn, keeping every face a 1-class step the nav-grid can walk;
-/// inside `SAFE_R + 8` it stays flat so the castle approaches and siege lanes stay open.
+/// next to the castle it stays flat ([`relief_ease`]) so the approaches and siege lanes stay open.
 fn inland_hills_f(x: f32, z: f32, dc: f32, max: i32) -> f32 {
-    if dc <= SAFE_R + 8.0 {
+    let _ = dc;
+    let ease = relief_ease(x, z);
+    if ease <= 0.0 {
         return 1.0;
     }
     // Thresholds lowered + a 5th class added (map-character overhaul feedback: "musi być
@@ -1256,16 +1275,37 @@ fn inland_hills_f(x: f32, z: f32, dc: f32, max: i32) -> f32 {
     // the tallest knolls into flat-topped tables).
     let knee = max.max(1) as f32 - 1.35;
     let e = if e > knee { knee + 0.8 * (1.0 - (-(e - knee) / 0.8).exp()) } else { e };
-    let ease = ((dc - SAFE_R - 8.0) / 6.0).clamp(0.0, 1.0);
-    1.0 + e * ease * ease * (3.0 - 2.0 * ease)
+    1.0 + e * ease
 }
+
+/// Flat-to-rolling ease (0 = dead flat, 1 = full relief) for the inland hills / dunes round the
+/// castle. Keyed on the distance PAST THE WALLS (`castle_ring_dist`, base units), not from the
+/// keep: it used to be `dc > SAFE_R + 8`, and when castle v2 raised `SAFE_R` 12.45 → 20.1 (and
+/// MAP_SCALE went 2.6 → 3.9) that silently grew a dead-flat disc of ≈110 world units round the
+/// keep — the "huge empty meadow" (Oct 2026 countryside pass). Now the ground stays level for
+/// [`RELIEF_GAP`] past the forced-grass ring (the meadow sites, fields, beacon and gate lanes) and
+/// rolls in fully over the next [`RELIEF_RAMP`].
+fn relief_ease(x: f32, z: f32) -> f32 {
+    if is_arena() {
+        return 1.0;
+    }
+    let t = ((castle_ring_dist(x, z) - SAFE_PAD - RELIEF_GAP) / RELIEF_RAMP).clamp(0.0, 1.0);
+    // The farmsteads' yards are levelled too (their buildings need flat footing).
+    t * t * (3.0 - 2.0 * t) * crate::countryside::farm_flatten(x * MAP_SCALE - GX, z * MAP_SCALE - GZ)
+}
+/// Base units of level ground kept past the forced-grass ring (≈8u world).
+const RELIEF_GAP: f32 = 2.0;
+/// Base units over which the knolls / dunes rise to full height (≈23u world).
+const RELIEF_RAMP: f32 = 6.0;
 
 /// Desert DUNES (mountains feedback round: "the desert can't have high mountains — big natural
 /// dunes"): long transverse ridges across a NW wind, a gentle windward back and a steeper lee
 /// (kept under the nav-grid's step limit), their crests broken into barchan-like segments by a
 /// slow amplitude field, rising to ~2.7u. Fractional class like [`inland_hills_f`].
 fn dune_h(x: f32, z: f32, dc: f32) -> f32 {
-    if dc <= SAFE_R + 8.0 {
+    let _ = dc;
+    let ease = relief_ease(x, z);
+    if ease <= 0.0 {
         return 1.0;
     }
     // Wind-aligned coordinate (wind from the NW), crest lines warped so they meander.
@@ -1277,8 +1317,7 @@ fn dune_h(x: f32, z: f32, dc: f32) -> f32 {
     let prof = prof * prof * (3.0 - 2.0 * prof);
     let amp = (0.55 + 0.45 * noise_b(x * 0.09 - 2.0, z * 0.09 + 6.0)).clamp(0.0, 1.0);
     let amp = amp * (0.6 + 0.4 * vnoise(x * 0.21 + 5.0, z * 0.21));
-    let ease = ((dc - SAFE_R - 8.0) / 6.0).clamp(0.0, 1.0);
-    1.0 + 5.4 * amp * prof * ease * ease * (3.0 - 2.0 * ease)
+    1.0 + 5.4 * amp * prof * ease
 }
 
 /// FOREST uplands (mountains feedback round 2: "mountains in every biome"): the forest's OUTER
@@ -2291,7 +2330,7 @@ fn classify(x: f32, z: f32) -> Option<(TB, i32)> {
     }
     if let Some(ri) = region_at(x, z) {
         let reg = &active_map().regions[ri];
-        if reg.biome == TB::Swamp && dc < SAFE_R {
+        if reg.biome == TB::Swamp && castle_ring_dist(x, z) < SWAMP_HOLD {
             return Some((TB::Grass, 1));
         }
         // (Marsh pools removed: a small carved pool is tiny, so the water shader's shore-distance
@@ -3227,7 +3266,7 @@ fn region_weights(x: f32, z: f32, out: &mut [f32; MAX_REGIONS]) -> usize {
         }
         let mut w = smoothstep(-0.85, 0.85, e[i].min((e[i] - other) * 0.5));
         if regs[i].biome == TB::Swamp && w > 0.0 {
-            w *= smoothstep(SAFE_R - 0.6, SAFE_R + 0.6, dist_from_castle(x, z) + omottle(x, z, 34.0, 211.0) * 0.3);
+            w *= smoothstep(SWAMP_HOLD - 0.6, SWAMP_HOLD + 0.6, castle_ring_dist(x, z) + omottle(x, z, 34.0, 211.0) * 0.3);
         }
         out[i] = w;
         sum += w;
@@ -3305,6 +3344,40 @@ fn cover_of(wx: f32, wz: f32, want: impl Fn(TB) -> bool) -> f32 {
     (0..n).filter(|&i| want(regs[i].biome)).map(|i| w[i]).sum::<f32>().min(1.0)
 }
 
+/// Base units outside a biome's edge over which the grass frontier takes on its character.
+const FORELAND: f32 = 7.0;
+
+/// The biome FORELAND (countryside pass, player: "transitions between biomes could be smoother"):
+/// the ecotone cut itself stays narrow and ragged on purpose (see [`region_weights`] — a wide palette
+/// blend averaged into mud), so the smoothing happens on the GRASS side instead. Over [`FORELAND`]
+/// (≈27u) before each biome the meadow already leans toward it — sun-dried olive before the dunes,
+/// cool grey-green under the snow massif and the crags, deep damp green at the wood's edge, sour
+/// rushy green before the marsh — so the eye reads a gradient, then the line. `free` is the grass
+/// share left after the region blends; the colour is a hue lean, never the neighbour's palette.
+fn foreland_tint(x: f32, z: f32, col: [f32; 3], free: f32) -> [f32; 3] {
+    let wob = 2.4 * (x * 0.4 + 1.1).sin() + 2.4 * (z * 0.36 - 0.7).cos();
+    let mut out = col;
+    for reg in active_map().regions {
+        let fray = if reg.peak > 0 { 0.0 } else { edge_fray(x, z) };
+        let e = reg.r - ((x - reg.x).hypot(z - reg.z) + wob + fray);
+        if !(-FORELAND..0.4).contains(&e) {
+            continue;
+        }
+        let (tint, k) = match reg.biome {
+            TB::Desert => (0x86904c, 0.42),
+            TB::Snow => (0x6f8a66, 0.34),
+            TB::Rock => (0x77845c, 0.36),
+            TB::Forest => (0x467a33, 0.34),
+            TB::Swamp => (0x56683a, 0.40),
+            _ => continue,
+        };
+        // Broken by the same tongue noise as the ecotone so the lean arrives in fingers, not a band.
+        let t = ((e + FORELAND) / FORELAND + omottle(x, z, 11.0, 433.0) * 0.18).clamp(0.0, 1.0);
+        out = mix3(out, lin3(tint), t * t * k * free);
+    }
+    out
+}
+
 /// Smooth blended ground colour at tile-space (x,z): grass base, each biome blob mixed in
 /// over a narrow noise-broken [`region_weights`] at its edge, plus a sandy coast fade.
 pub(crate) fn ground_color(x: f32, z: f32) -> [f32; 4] {
@@ -3351,6 +3424,9 @@ pub(crate) fn ground_color(x: f32, z: f32) -> [f32; 4] {
             }
         }
         col = [0, 1, 2].map(|ch| col[ch] * (1.0 - total) + acc[ch]);
+    }
+    if total < 1.0 && !is_arena() {
+        col = foreland_tint(x, z, col, 1.0 - total);
     }
     // The Blight blends in by its own shape (it's not a `Region` — the landmass lives in
     // `ork_fortress.rs`): the south-swamp green smears into the trampled mud over `BLEND`.
@@ -3776,6 +3852,7 @@ pub fn build_step(
         crate::castaway::reset_plan();
         crate::ork_graveyard::reset_plan();
         crate::witch::reset_plan();
+        crate::countryside::reset_plan();
         crate::realforest::reset_cover_stream();
         // Warm the per-map sampling bakes ([`tiles`] → [`water_near`] → [`tile_centre_ground`])
         // behind the loading veil: the first caller would otherwise pay the one-time bake as a
@@ -3864,7 +3941,11 @@ pub fn build_step(
         29 => crate::meadow::build(commands, meshes, std_mats),
         // Wayside furniture (map-character overhaul pass 2): junction signposts + roadside
         // cairns/fences/shrines. Late — its placement rejects everything the earlier phases own.
-        30 => crate::wayside::populate(commands, meshes, std_mats),
+        30 => {
+            crate::wayside::populate(commands, meshes, std_mats);
+            // The farmed countryside (farmsteads, hedges, groves, foreland scrub, flowers).
+            crate::countryside::populate(commands, meshes);
+        }
         // Bog dressing (pass 3): drowned trees/wisps/glow-mushrooms over the swamp pools + the
         // drowned tower + stilt hut. After bridges (boardwalk keep-out) and roads.
         31 => crate::bog::populate(commands, meshes, std_mats),
@@ -4122,6 +4203,8 @@ fn bs_sea_and_boats(commands: &mut Commands, meshes: &mut Assets<Mesh>, images: 
     crate::witch::plan(); // Old Seffa's trodden yard by the Witch's Hut (WP2)
     // FOREST_CASTLEKIT_SHOWCASE: reserve open ground for the castle-kit showcase rows.
     crate::castle_kit::plan();
+    // Last: the farmed countryside keeps clear of every set-piece planned above.
+    crate::countryside::plan();
 }
 
 /// Scatter one biome's props on its tiles (height-aware), and capture its atmosphere/weather into
@@ -5801,6 +5884,53 @@ mod tests {
             let mut out = format!("P6\n{w} {h}\n255\n").into_bytes();
             out.extend_from_slice(&px);
             std::fs::write(path, out).unwrap();
+        }
+    }
+
+    /// `MEADOW_SURVEY=1`: from the walls outward in 24 directions, how far until the first non-grass
+    /// tile / the first biome blob — the measure behind the Oct 2026 countryside pass ("the meadow
+    /// round the castle is huge and empty").
+    #[test]
+    fn meadow_survey() {
+        if std::env::var("MEADOW_SURVEY").is_err() {
+            return;
+        }
+        for k in 0..24 {
+            let a = k as f32 / 24.0 * std::f32::consts::TAU;
+            let (dx, dz) = (a.cos(), a.sin());
+            let mut wall = None;
+            let mut first_nongrass = None;
+            let mut first_region = None;
+            let mut r = 0.0f32;
+            while r < 400.0 {
+                let (wx, wz) = (dx * r, dz * r);
+                if wall.is_none() && crate::castle::outside_dist(wx, wz) > 0.0 {
+                    wall = Some(r);
+                }
+                if wall.is_some() {
+                    let (bx, bz) = ((wx + GX) / MAP_SCALE, (wz + GZ) / MAP_SCALE);
+                    let t = tile_at((wx + GX).floor() as i32, (wz + GZ).floor() as i32);
+                    if first_nongrass.is_none() && !matches!(t, Some((TB::Grass, _))) {
+                        first_nongrass = Some((r, t.map(|t| t.0)));
+                    }
+                    if first_region.is_none() && region_at(bx, bz).is_some() {
+                        first_region = Some((r, region_at(bx, bz).map(|i| active_map().regions[i].biome)));
+                    }
+                    if first_nongrass.is_some() && first_region.is_some() {
+                        break;
+                    }
+                }
+                r += 0.5;
+            }
+            eprintln!(
+                "MEADOW ang {:>5.0}° (x {:+.2}, z {:+.2}) wall {:>5.1}  first non-grass {:?}  first biome {:?}",
+                a.to_degrees(),
+                dx,
+                dz,
+                wall.unwrap_or(-1.0),
+                first_nongrass,
+                first_region
+            );
         }
     }
 }
