@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use bevy::camera::visibility::DynamicSkinnedMeshBounds;
+use bevy::camera::visibility::{DynamicSkinnedMeshBounds, VisibleEntities};
 use bevy::gltf::{Gltf, GltfMaterialName};
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldAssetRoot, WorldInstanceReady};
@@ -131,8 +131,13 @@ pub struct Skinned {
     props: Vec<(Entity, Held, f32)>,
     /// Which grip the props are in (true = the two-handed work / fight grip).
     work_grip: bool,
-    /// Far from the camera: the player's graph is detached (see `ANIM_CULL2`).
+    /// Far from / unseen by the camera: the player's graph is detached (see `ANIM_CULL2`).
     parked: bool,
+    /// One of the skin's mesh entities — its presence in the camera's visible set says whether
+    /// this person is on screen (see `crate::anim_lod`).
+    body: Option<Entity>,
+    /// Seconds the body has been off screen.
+    unseen: f32,
 }
 
 impl Skinned {
@@ -400,6 +405,8 @@ fn attach_skins(
             props: Vec::new(),
             work_grip: false,
             parked: false,
+            body: None,
+            unseen: 0.0,
         });
     }
 }
@@ -449,6 +456,7 @@ fn skin_ready(
                 // the prepass and every shadow cascade (~6M skinned indices in the village).
                 // Past the haze a townsperson is a few pixels: stop drawing them (and their shadow).
                 commands.entity(d).insert((MeshMaterial3d(m.clone()), DynamicSkinnedMeshBounds, SKIN_RANGE));
+                sk.body.get_or_insert(d);
             }
         }
         if let Ok(n) = names.get(d) {
@@ -678,7 +686,7 @@ fn copy_tools(
 fn drive_skins(
     mut commands: Commands,
     time: Res<Time>,
-    cam: Query<&GlobalTransform, With<Camera3d>>,
+    cam: Query<(&GlobalTransform, &VisibleEntities), With<Camera3d>>,
     cast: Res<NpcCast>,
     mut roots: Query<(&mut Skinned, &BipedDrive, &GlobalTransform, Has<crate::dying::Dying>, Option<&SkinClip>)>,
     mut players: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
@@ -689,7 +697,8 @@ fn drive_skins(
     if dt <= 0.0 {
         return; // paused / hit-stop: hold the pose
     }
-    let cam_p = cam.iter().next().map(|g| g.translation());
+    let cam_p = cam.iter().next().map(|(g, _)| g.translation());
+    let on_screen = crate::anim_lod::on_screen_set(cam.iter().next().map(|(_, v)| v));
     for (mut sk, d, gt, dying, hint) in &mut roots {
         let Some(pe) = sk.player else { continue };
         let Ok((mut player, mut tr)) = players.get_mut(pe) else { continue };
@@ -699,6 +708,9 @@ fn drive_skins(
         sk.speed += (v.min(8.0) - sk.speed) * (dt * 8.0).min(1.0);
         let d2 = cam_p.map_or(0.0, |c| c.distance_squared(p));
         let far = d2 > if sk.parked { ANIM_WAKE2 } else { ANIM_CULL2 };
+        let (body, mut unseen) = (sk.body, sk.unseen);
+        let far = crate::anim_lod::park(far, d2, body, on_screen, &mut unseen, dt);
+        sk.unseen = unseen;
         if far != sk.parked {
             sk.parked = far;
             if far {

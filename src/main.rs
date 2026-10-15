@@ -101,6 +101,7 @@ mod orks;
 mod outline;
 mod palette;
 mod particles;
+mod anim_lod; // skinned crowd animation LOD: park far / off-screen skins (npc_skin, animal_skin)
 mod matcheck; // FOREST_MATCHECK=1: log mesh entities carrying two material types (double-bin panic)
 mod perftest;
 #[cfg(feature = "renderdoc")]

@@ -22,7 +22,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use bevy::camera::visibility::DynamicSkinnedMeshBounds;
+use bevy::camera::visibility::{DynamicSkinnedMeshBounds, VisibleEntities};
 use bevy::gltf::Gltf;
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldAssetRoot, WorldInstanceReady};
@@ -176,8 +176,12 @@ pub struct AnimalSkin {
     speed: f32,
     /// World units per real metre of this body (the per-animal size jitter included).
     k: f32,
-    /// Far from the camera: the player's graph is detached so `animate_targets` skips its bones.
+    /// Far from / unseen by the camera: the player's graph is detached so `animate_targets` skips
+    /// its bones (see `crate::anim_lod`).
     parked: bool,
+    /// One of the skin's mesh entities (on-screen test) and how long it has been off screen.
+    body: Option<Entity>,
+    unseen: f32,
 }
 
 /// On the skin instance: the gameplay root it dresses.
@@ -265,6 +269,8 @@ fn attach_skins(
             speed: 0.0,
             k: WORLD_PER_M * size,
             parked: false,
+            body: None,
+            unseen: 0.0,
         });
     }
 }
@@ -296,6 +302,7 @@ fn skin_ready(
             // frustum-culled on joint-driven bounds (a lunge or a fall grows the box with the pose);
             // past the haze a distant animal is a few pixels: stop drawing it (and its shadow) there
             commands.entity(d).insert((DynamicSkinnedMeshBounds, SKIN_RANGE));
+            sk.body.get_or_insert(d);
         }
     }
     sk.clip = "";
@@ -329,7 +336,7 @@ fn reveal_skins(
 fn drive_skins(
     mut commands: Commands,
     time: Res<Time>,
-    cam: Query<&GlobalTransform, With<Camera3d>>,
+    cam: Query<(&GlobalTransform, &VisibleEntities), With<Camera3d>>,
     mut roots: Query<(Entity, &mut AnimalSkin, &Animal, &QuadDrive, &GlobalTransform, Has<crate::dying::Dying>)>,
     mut players: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
     models: Res<AnimalModels>,
@@ -339,7 +346,8 @@ fn drive_skins(
         return;
     }
     let now = time.elapsed_secs();
-    let cam_p = cam.iter().next().map(|g| g.translation());
+    let cam_p = cam.iter().next().map(|(g, _)| g.translation());
+    let on_screen = crate::anim_lod::on_screen_set(cam.iter().next().map(|(_, v)| v));
     for (e, mut sk, a, d, gt, dying) in &mut roots {
         let Some(pe) = sk.player else { continue };
         let Ok((mut player, mut tr)) = players.get_mut(pe) else { continue };
@@ -350,6 +358,9 @@ fn drive_skins(
         sk.speed += (v.min(14.0) - sk.speed) * (dt * 6.0).min(1.0);
         let d2 = cam_p.map_or(0.0, |c| c.distance_squared(p));
         let far = d2 > if sk.parked { ANIM_WAKE2 } else { ANIM_CULL2 };
+        let (body, mut unseen) = (sk.body, sk.unseen);
+        let far = crate::anim_lod::park(far, d2, body, on_screen, &mut unseen, dt);
+        sk.unseen = unseen;
         if far != sk.parked {
             sk.parked = far;
             if far {
