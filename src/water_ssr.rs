@@ -59,7 +59,7 @@ pub fn default_water_ssr() -> WaterSsr {
         sea_y: crate::worldmap::SEA_Y,
         time: 0.0,
         strength: std::env::var("FOREST_WATERSSR").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(1.0),
-        ripple: std::env::var("FOREST_WATERRIPPLE").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0.035),
+        ripple: std::env::var("FOREST_WATERRIPPLE").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0.03),
         max_dist: 220.0,
     }
 }
