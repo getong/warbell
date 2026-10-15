@@ -741,6 +741,9 @@ fn setup_camera(
     if let Some(g) = crate::filmgrade::default_film_grade() {
         commands.entity(cam).insert(g);
     }
+    if std::env::var_os("FOREST_NOMV").is_some() {
+        commands.entity(cam).remove::<MotionVectorPrepass>();
+    }
     commands.entity(cam).insert((
         // Listener for spatial wildlife audio (see `audio.rs`). `gap` = ear separation in
         // world units; scaled by the global `SpatialScale` set in `main.rs`.

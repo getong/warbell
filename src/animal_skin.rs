@@ -301,7 +301,7 @@ fn skin_ready(
         if meshes.contains(d) {
             // frustum-culled on joint-driven bounds (a lunge or a fall grows the box with the pose);
             // past the haze a distant animal is a few pixels: stop drawing it (and its shadow) there
-            commands.entity(d).insert((DynamicSkinnedMeshBounds, SKIN_RANGE));
+            commands.entity(d).insert((DynamicSkinnedMeshBounds, SKIN_RANGE, crate::quality::SmallDetail));
             sk.body.get_or_insert(d);
         }
     }

@@ -455,7 +455,7 @@ fn skin_ready(
                 // which drew every townsperson within range behind the camera too, in the main pass,
                 // the prepass and every shadow cascade (~6M skinned indices in the village).
                 // Past the haze a townsperson is a few pixels: stop drawing them (and their shadow).
-                commands.entity(d).insert((MeshMaterial3d(m.clone()), DynamicSkinnedMeshBounds, SKIN_RANGE));
+                commands.entity(d).insert((MeshMaterial3d(m.clone()), DynamicSkinnedMeshBounds, SKIN_RANGE, crate::quality::SmallDetail));
                 sk.body.get_or_insert(d);
             }
         }

@@ -17,6 +17,9 @@ impl Plugin for MatCheckPlugin {
         if std::env::var_os("FOREST_WHOIS").is_some() {
             app.add_systems(Last, whois);
         }
+        if std::env::var_os("FOREST_HIDEMAT").is_some() {
+            app.add_systems(PostUpdate, hide_mat);
+        }
         if std::env::var_os("FOREST_VERTREPORT").is_some() {
             app.init_resource::<VertCensus>().add_systems(PostUpdate, (census_added, census_report).chain());
         }
@@ -138,7 +141,7 @@ fn census_added(
     }
 }
 
-fn census_report(time: Res<Time<Real>>, vis: Query<(Entity, &ViewVisibility)>, gt: Query<&GlobalTransform>, cam: Query<&GlobalTransform, With<Camera3d>>, cam_vis: Query<&bevy::camera::visibility::VisibleEntities, With<Camera3d>>, mut c: ResMut<VertCensus>) {
+fn census_report(players: Query<(Entity, Has<AnimationGraphHandle>), With<AnimationPlayer>>, targets: Query<&bevy::animation::AnimatedBy>, names: Query<&Name>, parents: Query<&ChildOf>, time: Res<Time<Real>>, vis: Query<(Entity, &ViewVisibility)>, gt: Query<&GlobalTransform>, cam: Query<&GlobalTransform, With<Camera3d>>, cam_vis: Query<&bevy::camera::visibility::VisibleEntities, With<Camera3d>>, mut c: ResMut<VertCensus>) {
     let main_vis: bevy::platform::collections::HashSet<Entity> = cam_vis.single().map(|v| v.iter(std::any::TypeId::of::<Mesh3d>()).copied().collect()).unwrap_or_default();
     let now = time.elapsed_secs();
     if now - c.last < 5.0 {
@@ -171,5 +174,68 @@ fn census_report(time: Res<Time<Real>>, vis: Query<(Entity, &ViewVisibility)>, g
         }
         info!("VERTS std COVER visible chunks by 20u distance band from camera {:?} (cam {:?})", hist, cp.translation());
     }
+    let mut all: bevy::platform::collections::HashMap<String, u32> = Default::default();
+    for (_, (tag, _)) in &c.per {
+        *all.entry(tag.clone()).or_default() += 1;
+    }
+    let mut av: Vec<_> = all.into_iter().collect();
+    av.sort_by(|a, b| b.1.cmp(&a.1));
+    info!("MESHES all (entities by kind, {} total): {}", c.per.len(), av.iter().take(16).map(|(t, n)| format!("{n} {t}")).collect::<Vec<_>>().join(" | "));
+    let mut tcount: bevy::platform::collections::HashMap<Entity, u32> = Default::default();
+    for t in &targets {
+        *tcount.entry(t.0).or_default() += 1;
+    }
+    let mut pl: bevy::platform::collections::HashMap<String, (u32, u32, u32)> = Default::default();
+    for (pe, graph) in &players {
+        let mut root = pe;
+        while let Ok(p) = parents.get(root) {
+            root = p.parent();
+        }
+        let rn = names.get(root).map(|n| n.as_str().chars().take(18).collect::<String>()).unwrap_or_else(|_| "?".into());
+        let e = pl.entry(rn).or_default();
+        e.0 += 1;
+        if graph {
+            e.1 += 1;
+            e.2 += tcount.get(&pe).copied().unwrap_or(0);
+        }
+    }
+    let mut pv: Vec<_> = pl.into_iter().collect();
+    pv.sort_by(|a, b| b.1 .2.cmp(&a.1 .2));
+    info!("ANIM players (total/with graph/animated targets): {}", pv.iter().take(12).map(|(n, (a, g, t))| format!("{n}: {a}/{g}/{t}")).collect::<Vec<_>>().join(" | "));
     info!("VERTS visible {:.2}M idx | {}", total as f64 / 1e6, top.join(" | "));
+}
+
+/// `FOREST_HIDEMAT=std,reskin,…`: hide every mesh of the listed material types (profiling A/B:
+/// what a material category costs on the GPU). Keys as in [`check`]'s list, lower-case.
+#[allow(clippy::type_complexity)]
+fn hide_mat(
+    mut q: Query<(
+        &mut Visibility,
+        (
+            Has<M<StandardMaterial>>,
+            Has<M<crate::creature::CreatureMaterial>>,
+            Has<M<crate::vista::FallsMaterial>>,
+            Has<M<crate::combat_marks::MarkMaterial>>,
+            Has<M<crate::realforest::reskin::ReskinMaterial>>,
+            Has<M<crate::terrain::TerrainMaterial>>,
+            Has<M<crate::water::WaterMaterial>>,
+            Has<M<crate::realforest::foliage::FoliageMaterial>>,
+            Has<M<crate::alpine::snowkit::SnowKitMaterial>>,
+            Has<M<crate::clouds::CloudSkyMaterial>>,
+        ),
+        Has<bevy::mesh::skinning::SkinnedMesh>,
+    ), With<Mesh3d>>,
+) {
+    const N: [&str; 10] = ["std", "creature", "falls", "mark", "reskin", "terrain", "water", "foliage", "snowkit", "cloudsky"];
+    static WANT: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    let want = WANT.get_or_init(|| std::env::var("FOREST_HIDEMAT").unwrap_or_default().split(',').map(|s| s.trim().to_string()).collect());
+    for (mut vis, h, skin) in &mut q {
+        let f = [h.0, h.1, h.2, h.3, h.4, h.5, h.6, h.7, h.8, h.9];
+        let hit = f.iter().zip(N).any(|(b, n)| *b && want.iter().any(|w| w == n))
+            || (skin && want.iter().any(|w| w == "skin"))
+            || (h.0 && !skin && want.iter().any(|w| w == "stdnoskin"));
+        if hit && *vis != Visibility::Hidden {
+            *vis = Visibility::Hidden;
+        }
+    }
 }

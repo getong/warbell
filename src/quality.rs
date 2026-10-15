@@ -276,7 +276,7 @@ fn rescale_range(r: &mut bevy::camera::visibility::VisibilityRange, from: f32, t
 /// appear. At Normal with nothing baked in this returns before touching a single entity.
 fn scale_visibility_ranges(
     mut applied: Local<Option<f32>>,
-    mut ranges: Query<(&mut bevy::camera::visibility::VisibilityRange, Has<crate::biome::GroundCoverChunk>)>,
+    mut ranges: Query<(&mut bevy::camera::visibility::VisibilityRange, Has<crate::biome::GroundCoverChunk>, Has<SmallDetail>)>,
 ) {
     let k = view_scale();
     let from = applied.unwrap_or(1.0);
@@ -287,10 +287,13 @@ fn scale_visibility_ranges(
     // Ground cover (grass tufts / flowers / ferns — the bulk of the vertex work: ~0.4M indices
     // per 16u chunk) only stretches by `ground_factor`: blades are sub-pixel specks past ~60u, and
     // at the full x3 the Extreme level drew 9x the cover area (GPU 10.6 -> 21.9 ms in the village)
-    // for grass nobody can see. Trees, props and terrain keep the full multiplier.
+    // for grass nobody can see. Skinned people / animals ([`SmallDetail`]) likewise: a villager at
+    // 480u is a few pixels, but still a full skinned draw in four passes. Trees, props and terrain
+    // keep the full multiplier.
     let fac = |cover: bool, v: f32| if cover { ground_factor(v) } else { v };
     if from != k {
-        for (mut r, cover) in &mut ranges {
+        for (mut r, cover, small) in &mut ranges {
+            let cover = cover || small;
             // A range added since our last run was spawned at base scale (1.0), not `from`.
             let base_from = if r.is_added() { 1.0 } else { fac(cover, from) };
             rescale_range(&mut r, base_from, fac(cover, k));
@@ -298,12 +301,18 @@ fn scale_visibility_ranges(
         *applied = Some(k);
         return;
     }
-    for (mut r, cover) in &mut ranges {
+    for (mut r, cover, small) in &mut ranges {
+        let cover = cover || small;
         if r.is_added() {
             rescale_range(&mut r, 1.0, fac(cover, k));
         }
     }
 }
+
+/// Marks a small-detail mesh (skinned townsfolk / animals) whose `VisibilityRange` only takes
+/// [`ground_factor`] of the render-distance multiplier, like ground cover.
+#[derive(Component, Default)]
+pub struct SmallDetail;
 
 /// Ground-cover share of the render-distance multiplier: Far x1.24, Extreme x1.6 (vs x1.8 / x3).
 fn ground_factor(k: f32) -> f32 {
