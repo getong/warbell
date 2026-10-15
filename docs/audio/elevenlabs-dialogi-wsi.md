@@ -42,6 +42,9 @@ różne postacie z dwóch miejsc, więc przestrzenny dźwięk je rozdziela. W ta
 
 ## Blok 1 — CHŁOP (Darby Skelm): 74 kwestii, 2 części
 
+> ✅ **Nagrane 2026-10-15** (jeden plik): część 1 (kwestie 1–48) czyta Darby Skelm, część 2 (49–74) czyta **Richie**.
+> Do powtórki Darbym: `life_dlg_08_9` (rola A dialogu 08 — reszta tej roli to Darby) i `life_m_chat_2` (luźna kwestia `life_m_*`).
+
 ### CHŁOP część 1 → `dlg_man_1.mp3`
 
 ```

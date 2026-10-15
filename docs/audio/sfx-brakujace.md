@@ -7,7 +7,7 @@ Dopisuj tu każdy nowy brakujący odgłos; po dostarczeniu zmień status na ✅.
 |---|---|---|---|
 | ⬜ | `life_sfx_coins` | a few copper coins dropped and slid across a wooden market counter, close | 1.5 s |
 | ⬜ | `life_sfx_purse` | small leather coin purse jingling as it is tied shut | 1.2 s |
-| ⬜ | `life_sfx_bench_sit` | person sitting down heavily on an old wooden bench, wood creak | 1.0 s |
+| ✅ | `life_sfx_bench_sit` | person sitting down heavily on an old wooden bench, wood creak | 1.0 s |
 | ⬜ | `life_sfx_bench_stand` | person getting up from a creaky wooden bench, cloth rustle | 1.0 s |
 | ⬜ | `life_sfx_stool` | wooden stool scraping on packed dirt floor | 0.8 s |
 | ⬜ | `life_sfx_bread` | tearing a crusty loaf of bread by hand | 1.0 s |
@@ -37,6 +37,7 @@ Dopisuj tu każdy nowy brakujący odgłos; po dostarczeniu zmień status na ✅.
 | ⬜ | `cs_wreck_strike` | wooden sailing ship hits a reef in a violent night storm: sharp close thunder crack, hull timbers splintering and groaning, a ship's bell clanging wildly, distant panicked shouting with no clear words, a heavy wave crashing over the deck | 8 s |
 
 ## Uwagi
+- `life_sfx_bench_sit` — Firefly, variation 1 → `life_sfx_bench_sit.ogg`, variation 3 → `life_sfx_bench_sit_2.ogg` (gra losuje; każdy klucz może mieć warianty `_2`…`_4`).
 - `life_sfx_hammer` — Firefly, „hammering a nail into timber, four strikes, variation 2” (1.0 s).
 - Pętle (loop) muszą się bezszwowo zapętlać — poproś generator o „seamless loop” albo daj 2× dłuższy plik, przytnę sam.
 - `life_sfx_chatter`: ElevenLabs, 14.9 s → pętla 13.9 s (crossfade 1 s), mono, -18.8 LUFS. Jeszcze nie w `SFX_KEYS` (`village_life.rs`).

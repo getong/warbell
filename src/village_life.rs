@@ -426,12 +426,15 @@ const SFX_KEYS: [&str; 23] = [
 ];
 
 /// Only the SFX actually on disk get a handle — a missing one stays silent without an asset error.
+/// Extra takes `<key>_2.ogg` … `<key>_4.ogg` load under the same key; `sfx` picks one at random.
 fn load_life_sfx(mut commands: Commands, assets: Res<AssetServer>) {
     let mut v = Vec::new();
     for k in SFX_KEYS {
-        let rel = format!("audio/sfx/life/{k}.ogg");
-        if crate::realforest::load::asset_path(&rel).is_file() {
-            v.push((k, assets.load(rel)));
+        for n in 1..=4 {
+            let rel = if n == 1 { format!("audio/sfx/life/{k}.ogg") } else { format!("audio/sfx/life/{k}_{n}.ogg") };
+            if crate::realforest::load::asset_path(&rel).is_file() {
+                v.push((k, assets.load(rel)));
+            }
         }
     }
     commands.insert_resource(LifeSfx(v));
@@ -1340,7 +1343,11 @@ fn sfx(commands: &mut Commands, bank: &LifeSfx, talk: &mut LifeTalk, cfg: &crate
     if now < talk.sfx_next || pos.xz().distance(hero) > 22.0 {
         return;
     }
-    let Some((_, h)) = bank.0.iter().find(|(k, _)| *k == key) else { return };
+    let takes: Vec<_> = bank.0.iter().filter(|(k, _)| *k == key).map(|(_, h)| h).collect();
+    if takes.is_empty() {
+        return;
+    }
+    let h = takes[(now * 7919.0) as usize % takes.len()];
     talk.sfx_next = now + 0.25;
     commands.spawn((
         AudioPlayer(h.clone()),
