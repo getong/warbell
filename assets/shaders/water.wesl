@@ -150,7 +150,10 @@ fn fragment(
     // first → teal), lightly silted river (green), tannin bog (blue goes first → brown-black).
     let sigma = mix(mix(vec3<f32>(0.50, 0.17, 0.13), vec3<f32>(0.90, 0.30, 0.38), river),
         vec3<f32>(2.4, 2.9, 3.8), bog);
-    let scat = mix(mix(vec3<f32>(0.006, 0.050, 0.062), vec3<f32>(0.020, 0.055, 0.045), river),
+    // Inland water (pools, the lake, rivers) is peat- and silt-stained: a dark olive-brown body,
+    // not the sea's lit teal — in the forest that teal read as an opaque milky sheet seen from above.
+    let still = mix(vec3<f32>(0.006, 0.050, 0.062), vec3<f32>(0.010, 0.021, 0.017), fld.inland);
+    let scat = mix(mix(still, vec3<f32>(0.013, 0.027, 0.021), river),
         vec3<f32>(0.012, 0.010, 0.005), bog);
     let trans = exp(-sigma * path);
     // Bed: mottled silt / sand (static — the bed doesn't drift), wobbled by refraction; dark peat

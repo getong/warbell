@@ -1886,6 +1886,15 @@ fn arrive(
                 return;
             };
             let s = w.spots[i];
+            // A drill partner who ran out of time short of his mark (usually slowed by the
+            // personal-space steering around the man already sparring on the line) would start
+            // swinging inside his partner: drop the drill instead of sparring off the mark.
+            if s.kind == SpotKind::Spar && v.pos.distance(s.pos) > 0.35 {
+                release(w, a, me);
+                a.st = St::Idle;
+                a.until = now + 1.0;
+                return;
+            }
             a.face = s.face;
             if s.kind == SpotKind::Seat {
                 let (root, _) = seat_root(&s, a.root_scale);

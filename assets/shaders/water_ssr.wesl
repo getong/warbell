@@ -6,15 +6,13 @@
 // ships) into the water with a Fresnel weight. Misses keep the water shader's own sky reflection.
 
 import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput;
+import bevy_render::view::View;
 
 @group(0) @binding(0) var screen_texture: texture_2d<f32>;
 @group(0) @binding(1) var texture_sampler: sampler;
 @group(0) @binding(2) var depth_texture: texture_depth_2d;
 
 struct Settings {
-    world_from_clip: mat4x4<f32>,
-    clip_from_world: mat4x4<f32>,
-    cam_pos: vec3<f32>,
     sea_y: f32,
     time: f32,
     strength: f32,   // 0 = off; scales the Fresnel blend
@@ -22,6 +20,8 @@ struct Settings {
     max_dist: f32,   // longest reflected ray (world units)
 }
 @group(0) @binding(3) var<uniform> settings: Settings;
+// This frame's render-world camera (jittered like the depth it unprojects) — see `src/water_ssr.rs`.
+@group(0) @binding(4) var<uniform> view: View;
 
 const STEPS: i32 = 48;
 const REFINE: i32 = 6;
@@ -36,13 +36,13 @@ fn depth_at(uv: vec2<f32>) -> f32 {
 }
 
 fn unproject(uv: vec2<f32>, d: f32) -> vec3<f32> {
-    let ws = settings.world_from_clip * vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, d, 1.0);
+    let ws = view.world_from_clip * vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, d, 1.0);
     return ws.xyz / ws.w;
 }
 
 // World point → (uv, ok). `ok` false behind the camera.
 fn project(p: vec3<f32>) -> vec3<f32> {
-    let c = settings.clip_from_world * vec4<f32>(p, 1.0);
+    let c = view.clip_from_world * vec4<f32>(p, 1.0);
     if c.w <= 0.0001 {
         return vec3<f32>(0.0, 0.0, -1.0);
     }
@@ -60,17 +60,6 @@ fn vnoise(p: vec2<f32>) -> f32 {
     let u = f * f * (3.0 - 2.0 * f);
     return mix(mix(hash2(i), hash2(i + vec2<f32>(1.0, 0.0)), u.x),
                mix(hash2(i + vec2<f32>(0.0, 1.0)), hash2(i + vec2<f32>(1.0, 1.0)), u.x), u.y);
-}
-
-// Small-scale wave slope: two drifting octaves, central differences.
-fn ripple_slope(p: vec2<f32>, t: f32) -> vec2<f32> {
-    let e = 0.15;
-    let q = p * 0.55 + vec2<f32>(t * 0.11, t * 0.07);
-    let r = p * 1.6 + vec2<f32>(-t * 0.23, t * 0.17);
-    let h = vnoise(q) + 0.5 * vnoise(r);
-    let hx = vnoise(q + vec2<f32>(e, 0.0)) + 0.5 * vnoise(r + vec2<f32>(e, 0.0));
-    let hz = vnoise(q + vec2<f32>(0.0, e)) + 0.5 * vnoise(r + vec2<f32>(0.0, e));
-    return vec2<f32>(hx - h, hz - h) / e;
 }
 
 // Wind ripples: a small spectrum of directional wavelets fanned around a fixed breeze (sum of
@@ -110,21 +99,23 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         return scene; // not the water plane
     }
 
-    let to_p = pos - settings.cam_pos;
+    let to_p = pos - view.world_position;
     let dist = length(to_p);
     let v = to_p / dist;
-    // Ripples fade with distance (they'd alias to noise far out) — distant water is a calmer mirror.
-    let s = ripple_slope(pos.xz, settings.time) * settings.ripple / (1.0 + dist * 0.02);
+    // Wind ripples tilt the mirror normal (smooth sum-of-sines slope — continuous across pixels, so
+    // the mirrored image bends in waves instead of tearing into slices), fading out far away where
+    // they'd only alias: distant water is a calmer mirror.
+    let wr = wind_ripples(pos.xz, settings.time) * (1.0 - smoothstep(30.0, 110.0, dist));
+    let s = wr * settings.ripple;
     let n = normalize(vec3<f32>(-s.x, 1.0, -s.y));
     var r = reflect(v, n);
     r.y = max(r.y, 0.02); // always leave the plane
+    // Crests tilted toward the sky read lighter, troughs darker.
+    let band = clamp(1.0 + dot(wr, -normalize(v.xz + vec2<f32>(1e-4))) * 0.30, 0.55, 1.45);
 
-    // Ripples on the mirror image: a screen-space wobble of where the reflection is sampled (shrinks
-    // with distance like the waves themselves) and light / dark bands where crests tilt toward or
-    // away from the sky. Faded out far away, where they'd only alias.
-    let wr = wind_ripples(pos.xz, settings.time) * (1.0 - smoothstep(25.0, 90.0, dist));
-    let wobble = vec2<f32>(wr.x, wr.y * 0.6) * 0.055 / max(dist, 3.0);
-    let band = clamp(1.0 + dot(wr, -normalize(v.xz + vec2<f32>(1e-4))) * 0.34, 0.5, 1.6);
+    // The ripples shade the surface itself too (seen from above the mirror is weak, and the
+    // water would otherwise read as a flat painted sheet).
+    let base = scene.rgb * (1.0 + (band - 1.0) * 0.55);
 
     // Schlick Fresnel, water F0 0.02.
     let cos_t = clamp(-v.y, 0.0, 1.0);
@@ -136,6 +127,8 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     var prev_t = 0.0;
     var hit = false;
     var hit_uv = vec2<f32>(0.0);
+    var hit_t = 0.0;
+    var conf = 1.0;
     // Last on-screen sample that was open SKY: a ray that escapes through it mirrors the real drawn
     // sky (the env map the water shader reflects is ~2x dimmer than the Atmosphere sky above).
     var sky_uv = vec2<f32>(-1.0);
@@ -153,9 +146,10 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
             sky_uv = pr.xy;
         } else {
             let sp = unproject(pr.xy, sd);
-            let d_scene = length(sp - settings.cam_pos);
-            let d_ray = length(p - settings.cam_pos);
-            if d_ray > d_scene && d_ray - d_scene < max(1.2, d_ray * 0.06) {
+            let d_scene = length(sp - view.world_position);
+            let d_ray = length(p - view.world_position);
+            let thick = max(0.8, d_ray * 0.035);
+            if d_ray > d_scene && d_ray - d_scene < thick {
                 // Refine between the last miss and this step.
                 var lo = prev_t;
                 var hi = t;
@@ -164,7 +158,7 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
                     let pm = pos + r * m;
                     let prm = project(pm);
                     let sdm = depth_at(prm.xy);
-                    let in_front = sdm <= 0.0 || length(pm - settings.cam_pos) <= length(unproject(prm.xy, sdm) - settings.cam_pos);
+                    let in_front = sdm <= 0.0 || length(pm - view.world_position) <= length(unproject(prm.xy, sdm) - view.world_position);
                     if in_front { lo = m; } else { hi = m; }
                 }
                 let ph = project(pos + r * hi);
@@ -173,6 +167,12 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
                 if sdh > 0.0 && abs(unproject(ph.xy, sdh).y - settings.sea_y) > 0.05 {
                     hit = true;
                     hit_uv = ph.xy;
+                    hit_t = hi;
+                    // Rays that only graze the back of a thin object (a trunk, a leg) are the
+                    // streaky ones: trust a hit less the deeper behind the surface it landed.
+                    let ph_w = pos + r * hi;
+                    let behind = length(ph_w - view.world_position) - length(unproject(ph.xy, sdh) - view.world_position);
+                    conf = 1.0 - smoothstep(0.35, 1.0, behind / thick);
                 }
                 break;
             }
@@ -191,22 +191,32 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
             // the bare dark water.
             let top = vec2<f32>(in.uv.x, 0.03);
             if depth_at(top) > 0.0 {
-                return scene;
+                return vec4<f32>(base, scene.a);
             }
             sky_uv = top;
         }
         // Sky mirror: weaker than a scene hit (the water shader already carries some sky).
-        let sky = textureSampleLevel(screen_texture, texture_sampler, clamp(sky_uv + wobble, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).rgb * MURK;
+        let sky = textureSampleLevel(screen_texture, texture_sampler, clamp(sky_uv, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).rgb * MURK;
         let ws = clamp(cos_w * 0.5 * band, 0.0, 0.5);
-        return vec4<f32>(mix(scene.rgb, sky, ws), scene.a);
+        return vec4<f32>(mix(base, sky, ws), scene.a);
     }
 
     // Fade toward the screen edges (the mirrored content runs out there) and with ray length.
     let edge = min(min(hit_uv.x, 1.0 - hit_uv.x), min(hit_uv.y, 1.0 - hit_uv.y));
     let fade = smoothstep(0.0, 0.06, edge) * (1.0 - smoothstep(0.7, 1.0, length(hit_uv - in.uv) / 0.9));
-    let refl = textureSampleLevel(screen_texture, texture_sampler, clamp(hit_uv + wobble, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).rgb * MURK;
+    // Rough-mirror blur: real water never mirrors razor-sharp — the image smears along the view
+    // (mostly vertically on screen) and more the farther the reflected object stands from the
+    // surface. Five taps in a short vertical cross, widened with the ray length.
+    let px = 1.0 / vec2<f32>(textureDimensions(screen_texture));
+    let rad = clamp(1.5 + hit_t * 0.25, 1.5, 9.0) * px;
+    var refl = textureSampleLevel(screen_texture, texture_sampler, clamp(hit_uv, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).rgb * 0.28;
+    refl += textureSampleLevel(screen_texture, texture_sampler, clamp(hit_uv + vec2<f32>(0.0, rad.y), vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).rgb * 0.2;
+    refl += textureSampleLevel(screen_texture, texture_sampler, clamp(hit_uv - vec2<f32>(0.0, rad.y), vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).rgb * 0.2;
+    refl += textureSampleLevel(screen_texture, texture_sampler, clamp(hit_uv + vec2<f32>(rad.x * 0.6, rad.y * 2.0), vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).rgb * 0.16;
+    refl += textureSampleLevel(screen_texture, texture_sampler, clamp(hit_uv - vec2<f32>(rad.x * 0.6, rad.y * 2.0), vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).rgb * 0.16;
+    refl *= MURK;
     // The water shader already reflects the SKY at Fresnel strength; a hit replaces that sky with
     // the mirrored scene, so blend at (a lifted) Fresnel — calm water near grazing is a mirror.
-    let w = clamp(cos_w * band, 0.0, 0.9) * fade;
-    return vec4<f32>(mix(scene.rgb, refl, w), scene.a);
+    let w = clamp(cos_w * band, 0.0, 0.85) * fade * conf;
+    return vec4<f32>(mix(base, refl, w), scene.a);
 }
