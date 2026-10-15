@@ -117,13 +117,13 @@ struct VertCensus {
 
 #[allow(clippy::type_complexity)]
 fn census_added(
-    q: Query<(Entity, &Mesh3d, Has<M<StandardMaterial>>, Has<M<crate::realforest::foliage::FoliageMaterial>>, Has<M<crate::terrain::TerrainMaterial>>, Has<crate::biome::GroundCoverChunk>, Has<bevy::light::NotShadowCaster>, Option<&bevy::camera::visibility::VisibilityRange>), Added<Mesh3d>>,
+    q: Query<(Entity, &Mesh3d, Has<M<StandardMaterial>>, Has<M<crate::realforest::foliage::FoliageMaterial>>, Has<M<crate::terrain::TerrainMaterial>>, Has<crate::biome::GroundCoverChunk>, Has<bevy::light::NotShadowCaster>, Option<&bevy::camera::visibility::VisibilityRange>, Has<bevy::mesh::skinning::SkinnedMesh>), Added<Mesh3d>>,
     meshes: Res<Assets<Mesh>>,
     names: Query<&Name>,
     parents: Query<&ChildOf>,
     mut c: ResMut<VertCensus>,
 ) {
-    for (e, m, std, fol, ter, cover, nsc, vr) in &q {
+    for (e, m, std, fol, ter, cover, nsc, vr, skin) in &q {
         let Some(mesh) = meshes.get(&m.0) else { continue };
         let n = mesh.indices().map_or(mesh.count_vertices(), |i| i.len()) as u32;
         let mut root = e;
@@ -133,7 +133,7 @@ fn census_added(
         let rn = names.get(root).map(|n| n.as_str().split(['(', ' ', '#']).next().unwrap_or("").to_string()).unwrap_or_default();
         let mat = if std { "std" } else if fol { "foliage" } else if ter { "terrain" } else { "other" };
         let rng = vr.map_or("".to_string(), |r| format!(" R{:.0}", r.end_margin.end));
-        let tag = format!("{mat}{}{}{rng} root={}", if cover { " COVER" } else { "" }, if nsc { "" } else { " +shadow" }, if root == e { "-".into() } else { rn });
+        let tag = format!("{mat}{}{}{}{rng} root={}", if skin { " SKIN" } else { "" }, if cover { " COVER" } else { "" }, if nsc { "" } else { " +shadow" }, if root == e { "-".into() } else { rn });
         c.per.insert(e, (tag, n));
     }
 }

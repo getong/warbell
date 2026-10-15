@@ -22,7 +22,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use bevy::camera::visibility::NoFrustumCulling;
+use bevy::camera::visibility::DynamicSkinnedMeshBounds;
 use bevy::gltf::Gltf;
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldAssetRoot, WorldInstanceReady};
@@ -293,9 +293,9 @@ fn skin_ready(
             sk.parked = false; // a fresh player starts with its graph attached
         }
         if meshes.contains(d) {
-            // skinned bounds follow the rest pose only; a lunge or a fall would cull wrongly — but past
-            // the haze a distant animal is a few pixels: stop drawing it (and its shadow) there
-            commands.entity(d).insert((NoFrustumCulling, SKIN_RANGE));
+            // frustum-culled on joint-driven bounds (a lunge or a fall grows the box with the pose);
+            // past the haze a distant animal is a few pixels: stop drawing it (and its shadow) there
+            commands.entity(d).insert((DynamicSkinnedMeshBounds, SKIN_RANGE));
         }
     }
     sk.clip = "";

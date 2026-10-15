@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use bevy::camera::visibility::NoFrustumCulling;
+use bevy::camera::visibility::DynamicSkinnedMeshBounds;
 use bevy::gltf::{Gltf, GltfMaterialName};
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldAssetRoot, WorldInstanceReady};
@@ -443,9 +443,12 @@ fn skin_ready(
                 _ => None,
             };
             if let Some(m) = var.or_else(|| look.mats.get(mn.0.as_str())) {
-                // Skinned bounds follow the rest pose only; a crouch / sit / swing would cull wrongly.
+                // Frustum-culled on joint-driven bounds (`DynamicSkinnedMeshBounds`, the Bevy 0.20 glTF
+                // default — a crouch / sit / swing grows the box with the pose). Was `NoFrustumCulling`,
+                // which drew every townsperson within range behind the camera too, in the main pass,
+                // the prepass and every shadow cascade (~6M skinned indices in the village).
                 // Past the haze a townsperson is a few pixels: stop drawing them (and their shadow).
-                commands.entity(d).insert((MeshMaterial3d(m.clone()), NoFrustumCulling, SKIN_RANGE));
+                commands.entity(d).insert((MeshMaterial3d(m.clone()), DynamicSkinnedMeshBounds, SKIN_RANGE));
             }
         }
         if let Ok(n) = names.get(d) {
