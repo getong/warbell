@@ -47,6 +47,40 @@ impl MaterialExtension for FoliageExt {
     fn prepass_vertex_shader() -> ShaderRef {
         if wind_enabled() { "shaders/foliage_wind_prepass.wesl".into() } else { ShaderRef::Default }
     }
+    fn specialize(
+        _pipeline: &bevy::pbr::MaterialExtensionPipeline,
+        descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
+        _layout: &bevy::mesh::MeshVertexBufferLayoutRef,
+        key: bevy::pbr::MaterialExtensionKey<Self>,
+    ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
+        use bevy::pbr::MeshPipelineKey;
+        // Main-pass early-Z for alpha-masked foliage. The depth prepass has already written each
+        // card's exact (wind-bent, alpha-tested) depth, so the main pass draws with an EQUAL depth
+        // test and NO `discard`: a cut-out texel fails the test (the buffer holds whatever is behind
+        // it), so the coverage is identical — but without a discard in the shader the GPU keeps
+        // early depth testing, and every hidden / cut-out grass fragment is rejected before shading
+        // instead of after.
+        let main = descriptor.label.as_deref().is_some_and(|l| l.ends_with("opaque_mesh_pipeline"));
+        if main
+            && grass_eq()
+            && key.mesh_key.contains(MeshPipelineKey::DEPTH_PREPASS | MeshPipelineKey::MAY_DISCARD)
+        {
+            if let Some(ds) = descriptor.depth_stencil.as_mut() {
+                ds.depth_compare = Some(bevy::render::render_resource::CompareFunction::Equal);
+                ds.depth_write_enabled = Some(false);
+            }
+            if let Some(frag) = descriptor.fragment.as_mut() {
+                frag.shader_defs.retain(|d| !matches!(d, bevy::shader::ShaderDefVal::Bool(n, _) if n == "MAY_DISCARD"));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// `FOREST_GRASSEQ=0` restores the stock (discarding, GreaterEqual) foliage main pass for A/B.
+fn grass_eq() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("FOREST_GRASSEQ").map(|v| v != "0").unwrap_or(true))
 }
 
 pub struct FoliagePlugin;

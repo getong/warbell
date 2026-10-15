@@ -276,7 +276,7 @@ fn rescale_range(r: &mut bevy::camera::visibility::VisibilityRange, from: f32, t
 /// appear. At Normal with nothing baked in this returns before touching a single entity.
 fn scale_visibility_ranges(
     mut applied: Local<Option<f32>>,
-    mut ranges: Query<&mut bevy::camera::visibility::VisibilityRange>,
+    mut ranges: Query<(&mut bevy::camera::visibility::VisibilityRange, Has<crate::biome::GroundCoverChunk>)>,
 ) {
     let k = view_scale();
     let from = applied.unwrap_or(1.0);
@@ -284,20 +284,30 @@ fn scale_visibility_ranges(
         *applied = Some(1.0);
         return;
     }
+    // Ground cover (grass tufts / flowers / ferns — the bulk of the vertex work: ~0.4M indices
+    // per 16u chunk) only stretches by `ground_factor`: blades are sub-pixel specks past ~60u, and
+    // at the full x3 the Extreme level drew 9x the cover area (GPU 10.6 -> 21.9 ms in the village)
+    // for grass nobody can see. Trees, props and terrain keep the full multiplier.
+    let fac = |cover: bool, v: f32| if cover { ground_factor(v) } else { v };
     if from != k {
-        for mut r in &mut ranges {
+        for (mut r, cover) in &mut ranges {
             // A range added since our last run was spawned at base scale (1.0), not `from`.
-            let base_from = if r.is_added() { 1.0 } else { from };
-            rescale_range(&mut r, base_from, k);
+            let base_from = if r.is_added() { 1.0 } else { fac(cover, from) };
+            rescale_range(&mut r, base_from, fac(cover, k));
         }
         *applied = Some(k);
         return;
     }
-    for mut r in &mut ranges {
+    for (mut r, cover) in &mut ranges {
         if r.is_added() {
-            rescale_range(&mut r, 1.0, k);
+            rescale_range(&mut r, 1.0, fac(cover, k));
         }
     }
+}
+
+/// Ground-cover share of the render-distance multiplier: Far x1.24, Extreme x1.6 (vs x1.8 / x3).
+fn ground_factor(k: f32) -> f32 {
+    1.0 + (k - 1.0) * 0.3
 }
 
 /// The authored main-camera far plane (`scene::default_projection`).
@@ -763,6 +773,12 @@ fn env_overrides(settings: &mut GraphicsSettings) {
         Some("high") => settings.antialias = AaLevel::High,
         Some("ultra") => settings.antialias = AaLevel::Ultra,
         Some("taa") => settings.antialias = AaLevel::Taa,
+        _ => {}
+    }
+    match std::env::var("FOREST_TERRAIN").ok().as_deref() {
+        Some("low") => settings.terrain = TerrainDetail::Low,
+        Some("high") => settings.terrain = TerrainDetail::High,
+        Some("ultra") => settings.terrain = TerrainDetail::Ultra,
         _ => {}
     }
     match std::env::var("FOREST_SSAO").ok().as_deref() {
