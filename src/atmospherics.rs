@@ -102,7 +102,7 @@ impl Default for Atmospherics {
             // ~150u (distant peaks lost ALL internal shading and went to flat pale fill — paper
             // cutouts — and the far coast disappeared entirely). 0.009 is still a real +50% over
             // the 0.006 it replaces, which is the "a bit stronger" that was actually asked for.
-            density: 0.009,
+            density: 0.012,
             sun_dir: Vec3::Y,
             // 0.07: fog thins with altitude, so it pools in the valleys / river cuts and thins
             // over the ridge tops — the layering that separates near hills from far ones.
@@ -123,7 +123,7 @@ impl Default for Atmospherics {
             // 44 (was 48, earlier 24): the clear bubble is what keeps the *gameplay* radius —
             // hero, melee, loot, the near treeline — completely haze-free. Pulled in only a
             // little, so the raised density lands on the mid/far field where it belongs.
-            fog_start: 44.0,
+            fog_start: 32.0,
             // 0.66 (was 0.62, earlier 0.84): the ceiling. Lets the far coast + ridgelines sit
             // clearly BEHIND air instead of hovering in the same plane as the mid-ground, while
             // still holding a third of the terrain's own value so the island never dissolves to a
@@ -271,13 +271,21 @@ pub(crate) fn atmospherics_pass(
         &ViewPrepassTextures,
         &Atmospherics,
         &DynamicUniformIndex<Atmospherics>,
+        &bevy::render::view::ViewUniformOffset,
     )>,
     pipeline_res: Res<AtmosphericsPipeline>,
     pipeline_cache: Res<PipelineCache>,
     uniforms: Res<ComponentUniforms<Atmospherics>>,
+    view_uniforms: Res<bevy::render::view::ViewUniforms>,
     mut ctx: RenderContext,
 ) {
-    let (view_target, prepass, _settings, settings_index) = view.into_inner();
+    let (view_target, prepass, _settings, settings_index, view_offset) = view.into_inner();
+    // The shader unprojects depth with Bevy's render-world `View` (this frame's camera, TAA-jittered
+    // like the depth itself): the main-world matrix in `Atmospherics` was a frame stale against the
+    // follow-cam, so the haze slid against the geometry while the camera moved.
+    let Some(view_binding) = view_uniforms.uniforms.binding() else {
+        return;
+    };
     let Some(pipeline) = pipeline_cache.get_render_pipeline(pipeline_res.pipeline_id) else {
         return;
     };
@@ -297,6 +305,7 @@ pub(crate) fn atmospherics_pass(
             &pipeline_res.sampler,
             depth_view,
             settings_binding.clone(),
+            view_binding,
         )),
     );
 
@@ -312,7 +321,7 @@ pub(crate) fn atmospherics_pass(
     });
 
     render_pass.set_pipeline(pipeline);
-    render_pass.set_bind_group(0, &bind_group, &[settings_index.index()]);
+    render_pass.set_bind_group(0, &bind_group, &[settings_index.index(), view_offset.offset]);
     render_pass.draw(0..3, 0..1);
 }
 
@@ -339,6 +348,7 @@ fn init_pipeline(
                 sampler(SamplerBindingType::Filtering),
                 texture_depth_2d(),
                 uniform_buffer::<Atmospherics>(true),
+                uniform_buffer::<bevy::render::view::ViewUniform>(true),
             ),
         ),
     );

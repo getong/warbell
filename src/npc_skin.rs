@@ -218,6 +218,11 @@ const CLOTH_DYES: [Vec3; 6] = [
     Vec3::new(0.7, 0.66, 0.62),
     Vec3::new(1.05, 1.05, 1.05),
 ];
+/// Multipliers over every townsperson's baked albedo (player: the folk read garish — bright
+/// lemon / scarlet cloth and pink skin against the muted world). Cloth is darkened and pulled off
+/// yellow (blue kept a touch higher); skin loses a little red so bare torsos aren't salmon.
+const CLOTH_MUTE: Color = Color::srgb(0.76, 0.74, 0.82);
+const SKIN_MUTE: Color = Color::srgb(0.84, 0.86, 0.88);
 /// Hair shades over the card texture: own, darker brown, near-black, sandy, greying.
 const HAIR_SHADES: [Vec3; 5] = [
     Vec3::new(1.0, 1.0, 1.0),
@@ -265,6 +270,7 @@ fn load_cast(mut commands: Commands, server: Res<AssetServer>, mut materials: Re
         // the cloth islands that renders as black patches: her cloth skips the occlusion read.
         let layered = name == "maud";
         let atlas = |double: bool| StandardMaterial {
+            base_color: if double { CLOTH_MUTE } else { SKIN_MUTE },
             base_color_texture: Some(tex("albedo")),
             normal_map_texture: Some(tex("normal")),
             metallic_roughness_texture: Some(tex("orm")),
@@ -294,7 +300,10 @@ fn load_cast(mut commands: Commands, server: Res<AssetServer>, mut materials: Re
                 m.insert(card_key(k), materials.add(card(k, rough)));
             }
         }
-        let tint = |base: StandardMaterial, k: Vec3| StandardMaterial { base_color: Color::srgb(k.x, k.y, k.z), ..base };
+        let tint = |base: StandardMaterial, k: Vec3| {
+            let m = base.base_color.to_srgba();
+            StandardMaterial { base_color: Color::srgb(k.x * m.red, k.y * m.green, k.z * m.blue), ..base }
+        };
         let cloth: Vec<_> = CLOTH_DYES.iter().map(|&k| materials.add(tint(atlas(true), k))).collect();
         let hair: Vec<_> = if m.contains_key("npc_hair") {
             HAIR_SHADES.iter().map(|&k| materials.add(tint(card("hair", 0.62), k))).collect()

@@ -6,6 +6,7 @@
 // its own gradient, and fogging it flattens the frame to a wall.
 
 import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput;
+import bevy_render::view::View;
 
 @group(0) @binding(0) var screen_texture: texture_2d<f32>;
 @group(0) @binding(1) var texture_sampler: sampler;
@@ -31,6 +32,9 @@ struct Settings {
     _pad: f32,
 }
 @group(0) @binding(3) var<uniform> settings: Settings;
+// This frame's render-world camera (see `atmospherics_pass`); `view.world_from_clip` /
+// `cam_pos` are kept in the struct for layout but no longer read.
+@group(0) @binding(4) var<uniform> view: View;
 
 fn hash2(p: vec2<f32>) -> f32 {
     return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453);
@@ -73,10 +77,10 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
 
     // Reverse-Z unprojection → exact world position of this pixel's surface.
     let ndc = vec4<f32>(in.uv.x * 2.0 - 1.0, 1.0 - in.uv.y * 2.0, d, 1.0);
-    let ws = settings.world_from_clip * ndc;
+    let ws = view.world_from_clip * ndc;
     let pos = ws.xyz / ws.w;
 
-    let ray = pos - settings.cam_pos;
+    let ray = pos - view.world_position;
     let dist = length(ray);
     let ray_dir = ray / max(dist, 0.001);
 
@@ -107,8 +111,8 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     // Analytic exponential height fog (Wenzel): integrate density e^(-falloff·y) along the
     // ray from the camera to the surface. `dy` near 0 (level ray) degenerates → limit 1.
     let k = settings.height_falloff;
-    let cam_h = settings.cam_pos.y - settings.base_height;
-    let dy = pos.y - settings.cam_pos.y;
+    let cam_h = view.world_position.y - settings.base_height;
+    let dy = pos.y - view.world_position.y;
     var height_int = 1.0;
     if abs(dy * k) > 0.001 {
         height_int = (1.0 - exp(-k * dy)) / (k * dy);

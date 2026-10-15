@@ -834,12 +834,16 @@ fn life_setup(
             let tangent_yaw = (-a.cos()).atan2(-a.sin());
             // The log itself is solid (folk sit ON it, never walk THROUGH it).
             crate::blockers::add_obb(lc.x, lc.y, 0.62, 0.16, tangent_yaw);
-            add_seats(&mut w, lc, tangent_yaw, yaw_to(lc, f), LOG_TOP, &[-0.4, 0.4], 0.04, c, 0);
+            // One sitter per log and a single standing warmer: three logs × two seats + three standing
+            // spots packed nine people round one small fire (player: "za duże skupiska ludzi").
+            add_seats(&mut w, lc, tangent_yaw, yaw_to(lc, f), LOG_TOP, &[0.0], 0.04, c, 0);
             // Standing room to warm the hands: in the gap between this log and the next, inside the
             // ring of logs and outside the tripod's legs (r 1.0).
-            let g = a + TAU / 6.0;
-            let p = f + Vec2::new(g.cos(), g.sin()) * 1.8;
-            add_spot(&mut w, SpotKind::Fire, p, yaw_to(p, f), c, None, 0);
+            if k == 0 {
+                let g = a + TAU / 6.0;
+                let p = f + Vec2::new(g.cos(), g.sin()) * 1.8;
+                add_spot(&mut w, SpotKind::Fire, p, yaw_to(p, f), c, None, 0);
+            }
         }
     }
     if let Some(well) = crate::castle::town_plot("well") {
@@ -1794,9 +1798,9 @@ fn think(a: &mut LifeAgent, v: &Villager, w: &mut LifeWorld, stalls: &mut Stalls
     let x = r01(&mut a.rng);
     // A chat with a neighbour (paired up by `life_social`).
     let chatty = match phase {
-        Phase::Afternoon => 0.40,
-        Phase::Noon => 0.20,
-        _ => 0.22,
+        Phase::Afternoon => 0.26,
+        Phase::Noon => 0.14,
+        _ => 0.15,
     };
     if a.body != Body::Kid && x < chatty {
         a.want_chat = true;

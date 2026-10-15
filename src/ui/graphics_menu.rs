@@ -350,10 +350,12 @@ fn graphics_pane(p: &mut Pane<'_>, fonts: &UiFonts, quality: GraphicsQuality, s:
         ("High", Seg::Shadows(ShadowLevel::High)),
     ], Seg::Shadows(s.shadows));
     seg_row(p, fonts, "Anti-aliasing", &[
+        // The SMAA levels only smooth still edges; TAA is the one that stops distant foliage
+        // shimmering frame to frame — "Ultra" on the SMAA rung read as the best and wasn't.
         ("Off", Seg::Aa(AaLevel::Off)),
-        ("Low", Seg::Aa(AaLevel::Low)),
-        ("High", Seg::Aa(AaLevel::High)),
-        ("Ultra", Seg::Aa(AaLevel::Ultra)),
+        ("SMAA-", Seg::Aa(AaLevel::Low)),
+        ("SMAA", Seg::Aa(AaLevel::High)),
+        ("SMAA+", Seg::Aa(AaLevel::Ultra)),
         ("TAA", Seg::Aa(AaLevel::Taa)),
     ], Seg::Aa(s.antialias));
     seg_row(p, fonts, "Ambient occlusion", &[
