@@ -2705,6 +2705,11 @@ pub fn is_land_tile_world(wx: f32, wz: f32) -> bool {
 pub fn is_grass_world(wx: f32, wz: f32) -> bool {
     matches!(tile_at((wx + GX).floor() as i32, (wz + GZ).floor() as i32).map(|t| t.0), Some(TB::Grass))
 }
+/// Is the tile under world `(wx, wz)` beach / dune sand? (`biome_at_world` folds it into `None`
+/// with grass — the footstep surface probe needs the difference.)
+pub fn is_sand_world(wx: f32, wz: f32) -> bool {
+    matches!(tile_at((wx + GX).floor() as i32, (wz + GZ).floor() as i32).map(|t| t.0), Some(TB::Sand))
+}
 /// Smoothed terrain height at integer grid CORNER `(cx, cz)` **as seen from a tile of class
 /// `h_ref`**: the mean flat-top Y of the corner's land tiles that are CLUSTER-CONNECTED to
 /// `h_ref` — chained by ≤1-class links. On terraced ground every corner tile chains together,

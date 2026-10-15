@@ -1279,6 +1279,12 @@ const PAVED_RECTS: [(f32, f32, f32, f32); 4] = [
     (-HALF_X, W_GATE_Z, 5.0, 3.8),
 ];
 
+/// Is `(wx, wz)` on the cobble paving [`PAVED_RECTS`] lays once the walls stand? The footstep
+/// surface probe (`footing::surface_at`) asks — it only counts while `Defenses::walls` is set.
+pub(crate) fn on_cobbles(wx: f32, wz: f32) -> bool {
+    PAVED_RECTS.iter().any(|&(cx, cz, w, d)| (wx - cx).abs() < w / 2.0 && (wz - cz).abs() < d / 2.0)
+}
+
 /// How strongly world point `(wx, wz)` sits on the trodden castle yard (the plaza + the gate paths
 /// + the market square of [`PATH_RECTS`]): 1 across a rect's core, fading to 0 over ~`EDGE` beyond
 /// its rim, with a little sine wobble so the outline isn't a crisp rectangle. `worldmap::ground_color`

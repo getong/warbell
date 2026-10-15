@@ -1,26 +1,23 @@
-//! **Footstep feedback** — the visual twin of [`audio::footsteps`](crate::audio). Each footfall
-//! (same `walk_phase` half-cycle gate the audio uses) kicks up a small puff of motes, tinted by
-//! the surface underfoot (snow / stone / dirt). Stepping over the river swaps the puff for a
-//! splash + an expanding ripple ring. Pure spawn-and-fade — the world finally answers your feet.
+//! **Footstep feedback** — the visual twin of [`audio::footsteps`](crate::audio). Each hero
+//! [`Footfall`] (from [`crate::footing`], shared with the step sound and the boot prints) kicks up
+//! a small puff of motes tinted by the surface underfoot (dust / sand / snow powder / mud clods;
+//! nothing off grass, stone or planks). Wading the shallows swaps the puff for a splash + an
+//! expanding ripple ring. Pure spawn-and-fade — the world answers your feet.
 //!
 //! Fades run **ungated** (like the combat sparks) so a frozen scene still settles its dust; the
 //! emitter is gated on `Modal::None` so panels/pauses don't spawn steps.
 
-use std::f32::consts::{FRAC_PI_2, PI};
+use std::f32::consts::FRAC_PI_2;
 
 use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 
-use crate::biome::Biome;
-use crate::player::Hero;
-use crate::worldmap;
+use crate::footing::{Footfall, FootfallSet, Stepper, Surface};
 use crate::game_state::SimAppExt;
+use crate::worldmap;
 
 /// Downward pull on settling dust motes.
 const GRAV: f32 = 6.0;
-/// A drop shorter than this lands clean — no dust kick. (Below `movement::FALL_SAFE`, so even a
-/// painless hop still puffs, but a flat-ground micro-bounce doesn't.)
-const LAND_MIN_FALL: f32 = 0.6;
 
 /// A kicked-up dust/splash mote — shrinks to nothing over its life (shared material, no per-mote
 /// alpha, so thousands still batch).
@@ -52,7 +49,8 @@ pub(crate) struct FxAssets {
     ring: Handle<Mesh>,
     dirt: Handle<StandardMaterial>,
     snow: Handle<StandardMaterial>,
-    stone: Handle<StandardMaterial>,
+    sand: Handle<StandardMaterial>,
+    mud: Handle<StandardMaterial>,
     splash: Handle<StandardMaterial>,
     /// Pale stone/mortar dust — construction bursts (`build_fx`), not footfalls.
     pub(crate) mortar: Handle<StandardMaterial>,
@@ -63,7 +61,7 @@ pub struct FootstepFxPlugin;
 impl Plugin for FootstepFxPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, setup)
-            .add_sim_systems(emit)
+            .add_sim_systems(emit.after(FootfallSet))
             // Fades are visual — keep settling even while frozen.
             .add_systems(Update, (fade_puffs, fade_ripples));
     }
@@ -86,95 +84,92 @@ fn setup(
     commands.insert_resource(FxAssets {
         puff: meshes.add(Sphere::new(0.12).mesh().ico(1).unwrap()),
         // Authored flat in XY (z=0) — laid into the ground plane with a -90° X tilt at spawn.
-        ring: meshes.add(Annulus::new(0.5, 0.62).mesh().resolution(24).build()),
+        ring: meshes.add(Annulus::new(0.5, 0.53).mesh().resolution(48).build()),
         dirt: mk(Color::srgb(0.62, 0.50, 0.34), 0.7),
         snow: mk(Color::srgb(0.95, 0.97, 1.0), 0.85),
-        stone: mk(Color::srgb(0.62, 0.62, 0.66), 0.7),
-        splash: mk(Color::srgb(0.70, 0.85, 1.0), 0.8),
+        sand: mk(Color::srgb(0.80, 0.70, 0.52), 0.6),
+        mud: mk(Color::srgb(0.24, 0.19, 0.13), 0.9),
+        splash: mk(Color::srgb(0.86, 0.92, 0.98), 0.55),
         mortar: mk(Color::srgb(0.74, 0.68, 0.56), 0.75),
     });
 }
 
-/// Surface dust material under a world XZ — mirrors `audio::footsteps::surface_for`.
-fn surf_mat(fx: &FxAssets, pos: Vec2) -> Handle<StandardMaterial> {
-    match worldmap::biome_at_world(pos.x, pos.y) {
-        Some(Biome::Snow) => fx.snow.clone(),
-        Some(Biome::Rocky) => fx.stone.clone(),
-        _ => fx.dirt.clone(),
+/// The kicked-up mote material for a surface; `None` = the step throws nothing (grass blades,
+/// hard stone / planks — the step SOUND carries those).
+fn surf_mat(fx: &FxAssets, s: Surface) -> Option<Handle<StandardMaterial>> {
+    match s {
+        Surface::Dirt => Some(fx.dirt.clone()),
+        Surface::Sand => Some(fx.sand.clone()),
+        Surface::Snow => Some(fx.snow.clone()),
+        Surface::Mud => Some(fx.mud.clone()),
+        Surface::Water => Some(fx.splash.clone()),
+        Surface::Grass | Surface::Wood | Surface::Stone => None,
     }
 }
 
-/// On each gait half-cycle (a footfall), kick up a puff — or a splash + ripple over the river.
-/// Also two non-footfall beats: a fatter **landing** burst on touchdown after a real drop, and
-/// **sprint** footfalls that throw more, faster dust trailing behind the heading.
+/// Per hero [`Footfall`] (from [`crate::footing`]): a puff of the surface's motes, a splash +
+/// ripple ring in the shallows, a fatter burst on a real **landing**, and sprint footfalls that
+/// throw more, faster dust trailing behind the travel. NPC footfalls kick nothing (prints + sound
+/// only) to keep a crowd cheap.
 fn emit(
-    mut last_half: Local<i64>,
-    mut last_ground: Local<bool>,
+    mut steps: MessageReader<Footfall>,
     mut commands: Commands,
     fx: Option<Res<FxAssets>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    hero_q: Query<&Hero>,
 ) {
-    let (Some(fx), Ok(hero)) = (fx, hero_q.single()) else {
+    let Some(fx) = fx else {
+        steps.clear();
         return;
     };
-
-    // ── Landing kick: on the airborne→grounded edge, a drop above the threshold thumps up dust,
-    // scaled by fall height. (Runs before the footfall gate so a jump that lands while standing
-    // still still puffs.) At startup `air_takeoff_y == y`, so the fall is 0 and nothing fires.
-    if hero.on_ground && !*last_ground {
-        let fall = hero.air_takeoff_y - hero.y;
-        if fall > LAND_MIN_FALL {
-            let k = ((fall - LAND_MIN_FALL) / 3.0).clamp(0.0, 1.0);
-            let mat = surf_mat(&fx, hero.pos);
-            let feet = Vec3::new(hero.pos.x, hero.y, hero.pos.y);
-            spawn_puffs(&mut commands, &fx.puff, &mat, feet, 7 + (k * 9.0) as u32, 1.4 + k * 1.8, 0.9 + k * 0.4, 0.0);
+    for f in steps.read() {
+        let p = f.at;
+        match f.who {
+            Stepper::Npc { .. } => continue,
+            Stepper::HeroLanding { fall } => {
+                // Scaled by fall height; even grass / stone thump up a little grit on a big drop.
+                let k = ((fall - 0.6) / 3.0).clamp(0.0, 1.0);
+                let mat = surf_mat(&fx, f.surface).unwrap_or_else(|| fx.dirt.clone());
+                spawn_puffs(&mut commands, &fx.puff, &mat, p, 7 + (k * 9.0) as u32, 1.4 + k * 1.8, 0.9 + k * 0.4, 0.0);
+                continue;
+            }
+            Stepper::Hero => {}
         }
-    }
-    *last_ground = hero.on_ground;
-
-    let half = (hero.walk_phase / PI).floor() as i64;
-    if !(hero.moving && hero.on_ground) {
-        *last_half = half; // idle/airborne: stay current so resuming doesn't fire a stale puff
-        return;
-    }
-    if half == *last_half {
-        return;
-    }
-    *last_half = half;
-
-    let p = Vec3::new(hero.pos.x, hero.y, hero.pos.y);
-    if worldmap::is_river_world(hero.pos.x, hero.pos.y) {
-        spawn_puffs(&mut commands, &fx.puff, &fx.splash, p, 6, 1.6, 0.9, 0.0);
-        let mat = materials.add(StandardMaterial {
-            base_color: Color::srgb(0.8, 0.9, 1.0).with_alpha(0.5),
-            unlit: true,
-            alpha_mode: AlphaMode::Blend,
-            cull_mode: None,
-            ..default()
-        });
-        commands.spawn((
-            Mesh3d(fx.ring.clone()),
-            MeshMaterial3d(mat.clone()),
-            Transform::from_translation(p + Vec3::Y * 0.04)
-                .with_rotation(Quat::from_rotation_x(-FRAC_PI_2))
-                .with_scale(Vec3::splat(0.3)),
-            Ripple { life: 0.55, life0: 0.55, scale0: 0.3, scale1: 2.6, alpha0: 0.5, mat },
-            NotShadowCaster,
-        ));
-    } else {
-        let mat = surf_mat(&fx, hero.pos);
-        // Sprinting (run_amt → 1) throws more, faster dust, kicked back behind the heading so the
-        // trail reads as churned-up sprint. A walk (run_amt ≈ 0) is unchanged (5 motes at 1.1).
-        let run = hero.run_amt.clamp(0.0, 1.0);
-        // Kick the dust back along the actual TRAVEL (velocity), not the facing — in the combat
-        // stance the two differ (body squared to the foe while strafing), and a facing-keyed kick
-        // would trail dust sideways off a backpedal.
-        let fwd = hero.vel.normalize_or_zero();
-        let kick = p - Vec3::new(fwd.x, 0.0, fwd.y) * (0.22 * run);
-        // Toned down (was 5 + run*5 motes @ 0.8 + run*0.3): a walk kicked up too much dust. Now
-        // 3 motes @ 0.65 for a walk, ramping to 6 @ 0.9 at a full sprint.
-        spawn_puffs(&mut commands, &fx.puff, &mat, kick, 3 + (run * 3.0) as u32, 1.1 + run * 1.6, 0.65 + run * 0.25, 0.0);
+        if f.surface == Surface::Water {
+            // Wading: a spray of fine droplets + a thin ring spreading on the water plane.
+            let n = 9 + (f.gait * 8.0) as u32;
+            spawn_puffs(&mut commands, &fx.puff, &fx.splash, p, n, 1.5 + f.gait * 1.4, 0.24 + f.gait * 0.1, 0.0);
+            let mat = materials.add(StandardMaterial {
+                base_color: Color::srgb(0.85, 0.92, 1.0).with_alpha(0.28),
+                unlit: true,
+                alpha_mode: AlphaMode::Blend,
+                cull_mode: None,
+                ..default()
+            });
+            // On the water plane itself: where the ring runs up the bank the terrain hides it.
+            let water_y = worldmap::SEA_Y + 0.015;
+            commands.spawn((
+                Mesh3d(fx.ring.clone()),
+                MeshMaterial3d(mat.clone()),
+                Transform::from_translation(Vec3::new(p.x, water_y, p.z))
+                    .with_rotation(Quat::from_rotation_x(-FRAC_PI_2))
+                    .with_scale(Vec3::splat(0.2)),
+                Ripple { life: 0.9, life0: 0.9, scale0: 0.2, scale1: 1.7, alpha0: 0.28, mat },
+                NotShadowCaster,
+            ));
+            continue;
+        }
+        let Some(mat) = surf_mat(&fx, f.surface) else { continue };
+        // Sprinting (gait → 1) throws more, faster dust, kicked back behind the TRAVEL (velocity,
+        // not facing — a strafing combat stance would otherwise trail dust sideways). Mud throws
+        // a few heavy clods low instead of a drifting puff.
+        let run = f.gait;
+        let kick = p - Vec3::new(f.dir.x, 0.0, f.dir.y) * (0.22 * run);
+        let (n, spd, sc) = match f.surface {
+            Surface::Mud => (2 + (run * 3.0) as u32, 0.7 + run * 1.0, 0.45 + run * 0.15),
+            Surface::Snow => (3 + (run * 4.0) as u32, 1.0 + run * 1.6, 0.6 + run * 0.3),
+            _ => (3 + (run * 3.0) as u32, 1.1 + run * 1.6, 0.65 + run * 0.25),
+        };
+        spawn_puffs(&mut commands, &fx.puff, &mat, kick, n, spd, sc, 0.0);
     }
 }
 

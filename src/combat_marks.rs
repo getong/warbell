@@ -69,13 +69,16 @@ pub enum MarkKind {
     Select = 8,
     /// RTS attack-order click-mark (muted rust) — [`MarkAssets::light`].
     OrderAttack = 9,
+    /// A boot print pressed into mud / sand / snow (`footprints`) — [`MarkAssets::stain`]. Its
+    /// `aux` byte is a bit field, not a 0..1 age: packed by [`boot_tag`].
+    Boot = 10,
 }
 
 impl MarkKind {
     /// Whether this kind draws with the lit premultiplied [`MarkAssets::light`] recipe (vs the
     /// multiply [`MarkAssets::stain`]).
     pub fn is_light(self) -> bool {
-        !matches!(self, MarkKind::Blood | MarkKind::BloodDry | MarkKind::Scorch)
+        !matches!(self, MarkKind::Blood | MarkKind::BloodDry | MarkKind::Scorch | MarkKind::Boot)
     }
 }
 
@@ -126,6 +129,15 @@ pub fn tag(kind: MarkKind, alpha: f32, seed: u32, aux: f32) -> MeshTag {
     let a = (alpha.clamp(0.0, 1.0) * 255.0).round() as u32;
     let x = (aux.clamp(0.0, 1.0) * 255.0).round() as u32;
     MeshTag::new(a | (kind as u32) << 8 | (seed & 0xff) << 12 | x << 20)
+}
+
+/// [`tag`] for a [`MarkKind::Boot`] print: `aux` carries bit fields instead of a 0..1 value —
+/// bits 0-1 the ground (`0` mud, `1` sand, `2` snow), bit 2 a LEFT boot (the shader mirrors the
+/// sole), bit 3 a sprinting push-off (toe dug in, spoil thrown back).
+pub fn boot_tag(alpha: f32, seed: u32, ground: u32, left: bool, sprint: bool) -> MeshTag {
+    let a = (alpha.clamp(0.0, 1.0) * 255.0).round() as u32;
+    let aux = (ground & 3) | (left as u32) << 2 | (sprint as u32) << 3;
+    MeshTag::new(a | (MarkKind::Boot as u32) << 8 | (seed & 0xff) << 12 | aux << 20)
 }
 
 /// The shared quad + the two material recipes. Every mark spawns `Mesh3d(quad)` with one of them.

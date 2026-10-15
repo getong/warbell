@@ -37,13 +37,9 @@ use bevy::prelude::*;
 
 use crate::biome::Biome;
 
-/// Ground surface under the hero — selects which footstep clip plays.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Surface {
-    Dirt,
-    Snow,
-    Stone,
-}
+/// Ground surface under a foot — selects which footstep clip set plays (classified in
+/// [`crate::footing`]).
+pub use crate::footing::Surface;
 
 
 /// A one-shot audio request. Gameplay writes these via `MessageWriter<AudioCue>`; [`sfx`] and
@@ -69,8 +65,12 @@ pub enum AudioCue {
     Impact { kill: bool, crit: bool },
     /// A hit was actually absorbed by the raised shield (wood/steel knock).
     Block,
-    /// One footstep; `landing` = the louder touchdown step after a jump/fall.
-    Footstep { surface: Surface, landing: bool },
+    /// One hero footstep; `gait` 0 = walk … 1 = sprint (louder), `landing` = the touchdown
+    /// step after a jump/fall.
+    Footstep { surface: Surface, gait: f32, landing: bool },
+    /// A nearby townsperson / ork / rival soldier's step, at a world position (spatial, quiet,
+    /// throttled so a marching column doesn't patter into mush).
+    NpcStep { surface: Surface, at: Vec3 },
     /// UI confirm blip (biome switch).
     UiSelect,
     // ── Hero "mouth" (head-locked, one at a time, handled by `voice`) ──
@@ -373,7 +373,7 @@ impl Plugin for GameAudioPlugin {
                     ambience::war_drums,
                     // Faint kid-play chatter near the play patch; silent on the menu / at night.
                     ambience::kids_chatter.run_if(in_state(crate::game_state::AppState::Playing)),
-                    footsteps::hero_footsteps,
+                    footsteps::hero_footsteps.after(crate::footing::FootfallSet),
                     music::update_music,
                     sfx::play_cues,
                     voice::play_voice_cues,

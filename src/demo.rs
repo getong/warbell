@@ -98,6 +98,20 @@ fn explore_route() -> &'static [Vec2] {
             let v: Vec<f32> = std::env::var(k).ok()?.split(',').filter_map(|p| p.trim().parse().ok()).collect();
             (v.len() == 2).then(|| Vec2::new(v[0], v[1]))
         };
+        // `FOREST_DEMO_PATH="x,z;x,z;…"` — an explicit waypoint walk (film the footing on a chosen
+        // ground: swamp mud, a river bank, the castle cobbles, snow).
+        if let Ok(spec) = std::env::var("FOREST_DEMO_PATH") {
+            let pts: Vec<Vec2> = spec
+                .split(';')
+                .filter_map(|p| {
+                    let v: Vec<f32> = p.split(',').filter_map(|c| c.trim().parse().ok()).collect();
+                    (v.len() == 2).then(|| Vec2::new(v[0], v[1]))
+                })
+                .collect();
+            if pts.len() >= 2 {
+                return pts;
+            }
+        }
         let Some(to) = env2("FOREST_DEMO_TO") else {
             return EXPLORE_PATH.to_vec();
         };
@@ -213,6 +227,7 @@ fn explore_drive(
     mut hero_q: Query<(&mut Hero, &mut Transform), Without<Camera3d>>,
     mut cam_q: Query<&mut Transform, (With<Camera3d>, Without<Hero>)>,
     mut dist: Local<f32>,
+    mut blocked: Local<bool>,
 ) {
     let dt = time.delta_secs();
     let Ok((mut hero, mut htf)) = hero_q.single_mut() else {
@@ -221,11 +236,14 @@ fn explore_drive(
     // Hold at the start until recording begins (warm-up lets shaders/lighting settle first).
     let rec = prog.as_ref().map_or(true, |p| p.recording);
     if rec {
-        // Only step forward onto solid land — never walk out over a river (no terrain there).
+        // Only step forward onto solid land or a bridge deck — never walk out over open water.
         let next = *dist + explore_speed() * dt;
         let (np, _, _) = sample_path(explore_route(), next);
-        if crate::worldmap::ground_at_world(np.x, np.y).is_some() {
+        if crate::worldmap::ground_at_world(np.x, np.y).or_else(|| crate::bridges::deck_y_at(np.x, np.y)).is_some() {
             *dist = next;
+        } else if !*blocked {
+            *blocked = true;
+            warn!("demo: explore route blocked at {np:?} (no footing) — the hero holds there");
         }
     }
     let (pos, dir, arrived) = sample_path(explore_route(), *dist);
@@ -234,7 +252,9 @@ fn explore_drive(
     let (ahead, _, _) = sample_path(explore_route(), *dist + 1.5);
     let dir = if arrived { dir } else { (ahead - pos).try_normalize().unwrap_or(dir) };
 
-    let y = crate::worldmap::ground_at_world(pos.x, pos.y).unwrap_or(hero.y);
+    let y = crate::worldmap::ground_at_world(pos.x, pos.y)
+        .or_else(|| crate::bridges::deck_y_at(pos.x, pos.y))
+        .unwrap_or(hero.y);
     let walking = rec && !arrived;
     hero.pos = pos;
     hero.y = y;

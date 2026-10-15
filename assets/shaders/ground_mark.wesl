@@ -25,6 +25,7 @@ import bevy_pbr::{
     render::pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
     render::forward_io::{VertexOutput, FragmentOutput},
     render::mesh_functions,
+    render::mesh_view_bindings::lights,
 };
 
 const KIND_RING: u32 = 0u;
@@ -37,6 +38,7 @@ const KIND_PLOT: u32 = 6u;    // surveyed build plot (aux ≥ 0.5 = the targeted
 const KIND_ORDER: u32 = 7u;   // RTS move-order click-mark (aux = age)
 const KIND_ORDER_ATK: u32 = 9u; // RTS attack-order click-mark (aux = age)
 const KIND_SELECT: u32 = 8u;  // RTS selected-unit ring (aux ≥ 0.5 = rival side)
+const KIND_BOOT: u32 = 10u;   // boot print (aux = bit field, see `combat_marks::boot_tag`)
 
 const TAU: f32 = 6.28318530718;
 
@@ -98,6 +100,77 @@ fn pool(p: vec2<f32>, seed: f32, dried: bool) -> f32 {
     return clamp(max(body, drops * 0.85), 0.0, 1.0);
 }
 
+fn smin(a: f32, b: f32, k: f32) -> f32 {
+    let h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+    return mix(b, a, h) - k * h * (1.0 - h);
+}
+
+// Uneven capsule (iq's round cone, 2D): a stroke from `a` (radius r1) to `b` (radius r2).
+fn sd_round_cone(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, r1: f32, r2: f32) -> f32 {
+    let ba = b - a;
+    let l2 = dot(ba, ba);
+    let rr = r1 - r2;
+    let a2 = l2 - rr * rr;
+    let il2 = 1.0 / l2;
+    let pa = p - a;
+    let y = dot(pa, ba);
+    let z = y - l2;
+    let xv = pa * l2 - ba * y;
+    let x2 = dot(xv, xv);
+    let y2 = y * y * l2;
+    let z2 = z * z * l2;
+    let k = sign(rr) * rr * rr * x2;
+    if sign(z) * a2 * z2 > k {
+        return sqrt(x2 + z2) * il2 - r2;
+    }
+    if sign(y) * a2 * y2 < k {
+        return sqrt(x2 + y2) * il2 - r1;
+    }
+    return (sqrt(x2 * a2 * il2) + y * rr) * il2 - r1;
+}
+
+// Sole of a RIGHT boot as a signed distance in BOOT space: metres at the design size (the quad
+// is 0.2 x 0.36, so `w` spans +-0.1 across x +-0.18 along), +x = the inner / arch side, +y = toe.
+// A rounded heel swelling into a broad ball and a blunt, slightly in-turned toe, with the arch
+// bitten out of the inner waist. ~0.30 long x 0.10 wide.
+fn boot_sd(w: vec2<f32>) -> f32 {
+    let body = sd_round_cone(w, vec2<f32>(-0.004, -0.108), vec2<f32>(0.006, 0.052), 0.039, 0.050);
+    let toe = length((w - vec2<f32>(0.008, 0.100)) / vec2<f32>(1.0, 1.15)) - 0.043;
+    var d = smin(body, toe, 0.03);
+    // The arch: a soft bite out of the inner edge between heel and ball.
+    let arch = length((w - vec2<f32>(0.060, -0.030)) / vec2<f32>(1.0, 1.9)) - 0.026;
+    d = -smin(-d, arch, 0.02);
+    return d;
+}
+
+// Print height (normalised: -1 = full depth, + = spoil pushed up round the rim) at boot-space `w`.
+// `ground` 0 mud / 1 sand / 2 snow; `sprint` digs the toe in and throws the spoil back.
+fn boot_height(w: vec2<f32>, seed: f32, ground: u32, sprint: bool) -> f32 {
+    let sd = boot_sd(w);
+    // Wall width (m): snow cuts crisp, mud slumps a little, dry sand pours back in.
+    let wall = select(select(0.010, 0.022, ground == 1u), 0.006, ground == 2u);
+    let inside = 1.0 - smoothstep(-wall, 0.001, sd);
+    // Weight distribution: the heel strikes deepest, the ball next, the arch barely touches.
+    let heel_w = 1.0 - smoothstep(-0.10, -0.04, w.y);
+    let ball_w = smoothstep(0.0, 0.04, w.y) * (1.0 - smoothstep(0.10, 0.14, w.y));
+    var press = 0.62 + 0.38 * heel_w + 0.30 * ball_w;
+    if sprint {
+        press = 0.50 + 0.15 * heel_w + 0.60 * smoothstep(0.02, 0.10, w.y);
+    }
+    // A worn leather sole is not a stamp: soft unevenness across the floor of the print.
+    let floor_n = 0.88 + 0.12 * fbm(w * 40.0 + vec2<f32>(seed * 1.3, seed * 0.7));
+    var h = -inside * min(press, 1.0) * floor_n;
+    // Spoil pushed up round the rim (more behind the push-off when sprinting), broken by noise.
+    var lip_amt = select(select(0.30, 0.20, ground == 1u), 0.40, ground == 2u);
+    if sprint {
+        lip_amt = lip_amt * (0.7 + 1.2 * (1.0 - smoothstep(-0.14, -0.04, w.y)));
+    }
+    let lip_n = 0.55 + 0.9 * fbm(w * 60.0 + vec2<f32>(seed * 2.1, 3.0));
+    let x = (sd - 0.010) / 0.009;
+    h = h + exp(-x * x) * lip_amt * lip_n;
+    return h;
+}
+
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     let tag = mesh_functions::get_tag(in.instance_index);
@@ -115,7 +188,74 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // ── Stains: multiply the lit ground (premultiplied: dst * (c·a + 1 − a)) ──
     var c = vec3<f32>(1.0);
     var a = 0.0;
-    if kind == KIND_SCORCH {
+    if kind == KIND_BOOT {
+        // ── Boot print: a pressed height field, shaded against the sun as relief ──
+        let bits = (tag >> 20u) & 0xffu;
+        let ground = bits & 3u;
+        let left = (bits & 4u) != 0u;
+        let sprint = (bits & 8u) != 0u;
+        var q = p * vec2<f32>(0.1, 0.18); // boot space (metres at the design size)
+        if left {
+            q.x = -q.x; // mirror the sole: the arch always sits on the inner side
+        }
+        // A few degrees of seeded toe-out so a trail isn't a row of stamps.
+        let ang = (fract(seed * 0.61) - 0.5) * 0.14;
+        q = vec2<f32>(q.x * cos(ang) - q.y * sin(ang), q.x * sin(ang) + q.y * cos(ang));
+        // Ground: depth (m at the design size), wall-occlusion strength, cavity tint, lip lift.
+        var amp = 0.022;
+        var tint_deep = vec3<f32>(0.42, 0.40, 0.37); // wet mud: dark, a touch cool where water seeps in
+        var lip_lift = 0.07;                           // the pushed-up rim dries paler
+        if ground == 1u {
+            amp = 0.016;
+            tint_deep = vec3<f32>(0.74, 0.70, 0.64); // dry sand: the relief does most of the work
+            lip_lift = 0.10;
+        } else if ground == 2u {
+            amp = 0.040;
+            tint_deep = vec3<f32>(0.68, 0.76, 0.92); // snow: a blue shadowed plug
+            lip_lift = 0.04;
+        }
+        let e = 0.003;
+        let h = boot_height(q, seed, ground, sprint);
+        var gx = (boot_height(q + vec2<f32>(e, 0.0), seed, ground, sprint) - h) / e * amp;
+        let gz = (boot_height(q + vec2<f32>(0.0, e), seed, ground, sprint) - h) / e * amp;
+        if left {
+            gx = -gx; // back into the quad's own (unmirrored) x
+        }
+        // The quad's world axes, to put the slope in world space.
+        let model = mesh_functions::get_world_from_local(in.instance_index);
+        let axn = normalize(model[0].xyz);
+        let azn = normalize(model[2].xyz);
+        let up = normalize(cross(azn, axn));
+        var grad = axn * gx + azn * gz;
+        let gl = length(grad);
+        if gl > 1.6 {
+            grad = grad * (1.6 / gl);
+        }
+        // Relief lit from the sun's AZIMUTH (not its elevation, so a noon sun still reads the
+        // walls): the wall facing the sun brightens, the wall with its back to it falls into
+        // shadow — what makes a print look pressed IN rather than painted on. HDR multiply, so > 1
+        // lightens.
+        var l = vec3<f32>(0.6, 0.6, 0.5);
+        if lights.n_directional_lights > 0u {
+            l = lights.directional_lights[0].direction_to_light;
+        }
+        var lh = l - up * dot(l, up);
+        if length(lh) < 0.05 {
+            lh = axn + azn;
+        }
+        lh = normalize(lh);
+        let relief = clamp(1.0 - 0.48 * dot(grad, lh), 0.45, 1.5);
+        let depth = clamp(-h, 0.0, 1.0);
+        let lip = clamp(h, 0.0, 1.0);
+        // Occlusion pooled along the foot of the walls.
+        let sd = boot_sd(q);
+        let band = exp(-pow((sd + 0.006) / 0.010, 2.0));
+        let ao = 1.0 - 0.22 * band;
+        let tint = mix(vec3<f32>(1.0), tint_deep, pow(depth, 0.85)) * (1.0 + lip_lift * lip);
+        c = tint * relief * ao;
+        // Coverage feathers out past the spoil rim so the quad's edge never shows.
+        a = 1.0 - smoothstep(0.016, 0.034, sd);
+    } else if kind == KIND_SCORCH {
         let dir = p / max(r, 1.0e-4);
         let edge = 0.62 + (ring_noise(dir, 2.2, seed) - 0.5) * 0.28;
         let body = 1.0 - smoothstep(edge - 0.22, edge + 0.04, r);

@@ -17,15 +17,17 @@ use super::{jitter, pick, AudioConfig, AudioCue, Surface};
 // and at most N may play in any one frame, so a same-frame pile-up collapses to one or two
 // voices. The hero's own Impact/Swing are NOT throttled — those are foreground, one-per-swing
 // already, and the player wants to hear every one.
-const THROTTLE_N: usize = 4;
+const THROTTLE_N: usize = 5;
 const T_GRUNT: usize = 0;
 const T_ROAR: usize = 1;
 const T_BITE: usize = 2;
 const T_GUARD: usize = 3;
+/// Nearby NPC footsteps — a marching column patters, it must not machine-gun.
+const T_STEP: usize = 4;
 /// Min seconds between two plays of each throttled category.
-const THROTTLE_GAP: [f32; THROTTLE_N] = [0.18, 0.30, 0.10, 0.12];
+const THROTTLE_GAP: [f32; THROTTLE_N] = [0.18, 0.30, 0.10, 0.12, 0.07];
 /// Max plays of each category within a single frame.
-const THROTTLE_FRAME_CAP: [u8; THROTTLE_N] = [1, 1, 2, 1];
+const THROTTLE_FRAME_CAP: [u8; THROTTLE_N] = [1, 1, 2, 1, 1];
 
 /// Per-category rate limiter for the background combat stings (see above).
 #[derive(Default)]
@@ -106,10 +108,9 @@ pub(crate) struct SfxBank {
     /// Sampled orchestral level-up fanfare (the old game's `playLevelUpFanfare`) — replaces the
     /// synth arpeggio on `AudioCue::LevelUp` (hero level-up + the big landmark/shrine rewards).
     level_up: Handle<AudioSource>,
-    /// Dirt footstep variants (the old `footstep-dirt-var-{1,2,3}`); snow/stone are single clips.
-    foot_dirt: Vec<Handle<AudioSource>>,
-    foot_snow: Handle<AudioSource>,
-    foot_stone: Handle<AudioSource>,
+    /// Leather-boot footstep takes per [`Surface`] (indexed by [`foot_index`]), 4 each —
+    /// `assets/audio/footsteps/<surface>-<n>.ogg` (sources in `assets/CREDITS.md`).
+    foot: Vec<Vec<Handle<AudioSource>>>,
     ork_grunts: Vec<Handle<AudioSource>>,
     ork_roars: Vec<Handle<AudioSource>>,
     /// Warden (biome boss) roars — the deep "ancient thing wakes" bellow, picked at random per
@@ -165,12 +166,10 @@ pub(crate) fn setup_sfx(asset: Res<AssetServer>, mut commands: Commands) {
         forage: asset.load("audio/forage.ogg"),
         war_bell: asset.load("audio/war-bell.ogg"),
         level_up: asset.load("audio/level-up-orchestra.ogg"),
-        foot_dirt: ["audio/footstep-dirt-1.ogg", "audio/footstep-dirt-2.ogg", "audio/footstep-dirt-3.ogg"]
+        foot: FOOT_SETS
             .iter()
-            .map(|f| asset.load(*f))
+            .map(|name| (1..=FOOT_TAKES).map(|n| asset.load(format!("audio/footsteps/{name}-{n}.ogg"))).collect())
             .collect(),
-        foot_snow: asset.load("audio/footstep-snow.ogg"),
-        foot_stone: asset.load("audio/footstep-stone.ogg"),
         ork_grunts: ["audio/ork-grunt-1.ogg", "audio/ork-grunt-2.ogg", "audio/ork-grunt-3.ogg", "audio/monster-snarl.ogg", "audio/monster-growl.ogg"]
             .iter()
             .map(|f| asset.load(*f))
@@ -185,6 +184,52 @@ pub(crate) fn setup_sfx(asset: Res<AssetServer>, mut commands: Commands) {
         snowman: ["audio/snowman-1.ogg", "audio/snowman-2.ogg"].iter().map(|f| asset.load(*f)).collect(),
         snowman_wake: ["audio/snowman-wake-1.ogg", "audio/snowman-wake-2.ogg"].iter().map(|f| asset.load(*f)).collect(),
     });
+}
+
+/// Footstep clip-set file stems, in [`foot_index`] order.
+const FOOT_SETS: [&str; 8] = ["grass", "dirt", "mud", "water", "wood", "stone", "snow", "sand"];
+const FOOT_TAKES: usize = 4;
+
+fn foot_index(s: Surface) -> usize {
+    match s {
+        Surface::Grass => 0,
+        Surface::Dirt => 1,
+        Surface::Mud => 2,
+        Surface::Water => 3,
+        Surface::Wood => 4,
+        Surface::Stone => 5,
+        Surface::Snow => 6,
+        Surface::Sand => 7,
+    }
+}
+
+/// Per-surface trim on top of the shared step level (the sets are loudness-matched on disk; a
+/// splash or a squelch carries a little more body than a grass brush).
+fn foot_gain(s: Surface) -> f32 {
+    match s {
+        Surface::Water => 1.1,
+        Surface::Mud => 1.05,
+        Surface::Stone | Surface::Wood => 0.95,
+        _ => 1.0,
+    }
+}
+
+/// Hero step level (× the sfx master, before the gait scale). The surface sets sit at ~-24 dB RMS,
+/// ~8 dB under the old `footstep-dirt-*` clips the former 0.144 was tuned for — hence the lift.
+const STEP_VOL: f32 = 0.32;
+
+/// A random take from a surface set that never repeats the previous one back-to-back.
+fn pick_take(set: &[Handle<AudioSource>], last: &mut u8, seed: &mut u32) -> Handle<AudioSource> {
+    let n = set.len();
+    if n < 2 {
+        return set[0].clone();
+    }
+    let mut i = (super::frand(seed) * (n - 1) as f32) as usize % (n - 1);
+    if i >= *last as usize {
+        i += 1; // skip the last take
+    }
+    *last = i as u8;
+    set[i].clone()
 }
 
 /// Spawn a non-spatial one-shot.
@@ -225,6 +270,7 @@ pub(crate) fn play_cues(
     mode: Res<crate::rts::GameMode>,
     mut seed: Local<u32>,
     mut throttle: Local<SfxThrottle>,
+    mut last_take: Local<[u8; 8]>,
     mut cues: MessageReader<AudioCue>,
 ) {
     // In skirmish the listener rides the far RTS camera eye (~90u up), so SPATIAL combat cues
@@ -285,15 +331,21 @@ pub(crate) fn play_cues(
             AudioCue::Sweep => one_shot(&mut commands, bank.sweep.clone(), 0.6 * sfx, jitter(&mut seed, 0.05)),
             // Ground-Slam — random of the two heavy impacts, wide pitch jitter so repeats vary.
             AudioCue::Slam => one_shot(&mut commands, pick(&bank.slams, &mut seed), 0.7 * sfx, jitter(&mut seed, 0.08)),
-            AudioCue::Footstep { surface, landing } => {
-                let clip = match surface {
-                    Surface::Dirt => pick(&bank.foot_dirt, &mut seed),
-                    Surface::Snow => bank.foot_snow.clone(),
-                    Surface::Stone => bank.foot_stone.clone(),
-                };
-                // STEP_VOL 0.144; a touchdown step is +20% (LAND_STEP_VOL) — Character.tsx.
-                let v = if landing { 0.144 * 1.2 } else { 0.144 } * sfx;
-                one_shot(&mut commands, clip, v, jitter(&mut seed, 0.12));
+            AudioCue::Footstep { surface, gait, landing } => {
+                let i = foot_index(surface);
+                let clip = pick_take(&bank.foot[i], &mut last_take[i], &mut seed);
+                // Walk → jog → sprint: a heavier plant the faster the hero goes; a touchdown after
+                // a drop lands hardest. ±6% pitch so no two steps are stamped.
+                let g = if landing { 1.35 } else { 0.8 + 0.4 * gait };
+                one_shot(&mut commands, clip, STEP_VOL * g * foot_gain(surface) * sfx, jitter(&mut seed, 0.06));
+            }
+            AudioCue::NpcStep { surface, at } => {
+                if !throttle.allow(T_STEP, now) {
+                    continue;
+                }
+                let i = foot_index(surface);
+                let clip = pick_take(&bank.foot[i], &mut last_take[i], &mut seed);
+                spatial_shot(&mut commands, clip, STEP_VOL * 0.7 * foot_gain(surface) * sfx, jitter(&mut seed, 0.06), at);
             }
             AudioCue::UiSelect => one_shot(&mut commands, bank.ui.clone(), 0.22 * sfx, jitter(&mut seed, 0.06)),
             // Triumph fanfare — old game's sampled orchestral level-up sting (`playLevelUpFanfare`,
