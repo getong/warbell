@@ -101,7 +101,10 @@ mod orks;
 mod outline;
 mod palette;
 mod particles;
+mod matcheck; // FOREST_MATCHECK=1: log mesh entities carrying two material types (double-bin panic)
 mod perftest;
+#[cfg(feature = "renderdoc")]
+mod rdoc; // FOREST_RDOC=<secs>: one RenderDoc GPU frame capture (`--features renderdoc`)
 mod pipeline_sync; // prepass waits for the main-pass pipeline (no sky-coloured foliage holes)
 mod previs_knight;
 mod peasant_model;
@@ -427,5 +430,8 @@ fn main() {
             render.insert_resource(meshes);
         }
     }
+    app.add_plugins(matcheck::MatCheckPlugin);
+    #[cfg(feature = "renderdoc")]
+    app.add_plugins(rdoc::RdocPlugin);
     app.run();
 }

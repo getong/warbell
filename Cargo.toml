@@ -37,6 +37,9 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # GLB parsing for the Blender forest kit (`realforest::load`), read synchronously at PreStartup.
 # Same crate + features bevy_gltf already pulls in, so cargo unifies it at no extra compile.
 gltf = { version = "1.4", default-features = false, features = ["names", "utils"] }
+# GPU frame captures (`--features renderdoc`, `src/rdoc.rs`): the in-app RenderDoc API, so a
+# headless run can capture a chosen frame (`FOREST_RDOC`) for `tools/rdoc/` per-draw analysis.
+renderdoc = { version = "0.12.1", optional = true }
 
 # Profiling build: turns on Bevy's per-system tracing spans, written to a chrome-trace JSON on exit
 # (`trace-<ts>.json`). `cargo run --features profiling` then `tools/trace_summary.py <file>` gives an
@@ -49,6 +52,7 @@ ddsfile = "0.5"
 
 [features]
 profiling = ["bevy/trace_chrome"]
+renderdoc = ["dep:renderdoc"]
 
 # Windows-only: embed the app icon + version metadata (ProductName/Company/version) into the
 # .exe resource section via build.rs. This brands the .exe FILE icon (Explorer / installer /
@@ -70,3 +74,13 @@ opt-level = 1
 # debug session, temporarily set CARGO_PROFILE_DEV_DEBUG=1 and accept the (currently failing) link,
 # or split the binary. `split-debuginfo` doesn't help on windows-msvc (still one combined PDB).
 debug = 0
+
+# Local fix for a Bevy 0.20.0 render-phase bug (no upstream patch release yet): pending renderables
+# were re-queued without a visibility check, so one that went pending -> invisible -> visible got
+# binned twice and panicked ("Binning main entity … already binned"). The changes are in
+# `vendor/bevy_render/src/camera.rs` (`DirtySpecializations::iter_to_queue`) and
+# `vendor/bevy_render/src/render_phase/mod.rs` (`BinnedRenderPhase::add`), both marked WARBELL PATCH.
+# Drop this once Bevy ships the fix.
+[patch.crates-io]
+bevy_render = { path = "vendor/bevy_render" }
+
