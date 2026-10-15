@@ -168,6 +168,10 @@ fn main() {
         return;
     }
     let only = std::env::var("PACK_ONLY").ok();
+    if only.as_deref() == Some("impostor") {
+        pack_impostors(&dir);
+        return;
+    }
     // Ground + structure re-skin: three layers per map → one array file each.
     for (prefix, names) in [("ground", &GROUND[..]), ("struct", &STRUCT[..]), ("creature", &CREATURE[..]), ("alpine", &ALPINE[..]), ("people", &PEOPLE[..])] {
         if only.as_deref().is_some_and(|o| o != prefix) {
@@ -235,6 +239,28 @@ fn main() {
         let (px, w, h) = load(&png);
         let chain = mips(px, w, h, srgb, card.then_some(CARD_CUTOFF));
         write_dds(&png.with_extension("dds"), vec![Layer::Px(chain)], srgb, alpha);
+    }
+}
+
+/// `PACK_ONLY=impostor`: the far-tree impostor atlases (`tools/blender_forest/impostors.py`, PNGs
+/// in `IMPOSTOR_SRC`, default `target/impostors`) → two array files, one layer per model in
+/// `impostors.json` order: `impostor_albedo.dds` (sRGB, alpha-test coverage kept per mip) and
+/// `impostor_nd.dds` (linear normal + depth).
+fn pack_impostors(dir: &Path) {
+    let src = std::env::var("IMPOSTOR_SRC").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("target/impostors"));
+    let meta: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("impostors.json")).expect("impostors.json")).expect("json");
+    let cutoff = meta["cutoff"].as_f64().unwrap_or(0.42) as f32;
+    let names: Vec<String> = meta["models"].as_array().expect("models").iter().map(|m| m["name"].as_str().unwrap().to_string()).collect();
+    for (map, srgb) in [("albedo", true), ("nd", false)] {
+        let layers = names
+            .iter()
+            .map(|n| {
+                let (px, w, h) = load(&src.join(format!("impostor_{n}_{map}.png")));
+                Layer::Px(mips(px, w, h, srgb, srgb.then_some(cutoff)))
+            })
+            .collect();
+        write_dds(&dir.join(format!("impostor_{map}.dds")), layers, srgb, true);
     }
 }
 

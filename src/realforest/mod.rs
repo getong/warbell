@@ -20,6 +20,7 @@
 
 pub mod biomekit;
 pub mod foliage;
+pub mod impostor;
 pub mod load;
 pub mod reskin;
 
@@ -62,6 +63,15 @@ const CLUTTER_FAR: f32 = 34.0;
 /// green moss layer under the carpet carries the read with zero geometry.
 const LUSH_NEAR: f32 = 22.0;
 const LUSH_FAR: f32 = 46.0;
+/// Undergrowth chunks thin out tuft by tuft over this many units before their cull distance
+/// (and the far lush ring thins in over the same band before [`LUSH_NEAR`], under the near ring's
+/// thin-out) instead of popping as whole 16u squares — `foliage::dissolve`.
+const DISSOLVE_BAND: f32 = 9.0;
+
+/// [`DISSOLVE_BAND`], or 0 when `FOREST_DISSOLVE=0`.
+fn dissolve_band() -> f32 {
+    if std::env::var("FOREST_DISSOLVE").is_ok_and(|v| v == "0") { 0.0 } else { DISSOLVE_BAND }
+}
 
 /// Which merge bucket a kit prop lands in - decides its cull distance and landmark clearing.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -163,6 +173,8 @@ pub struct Kit {
     models: Vec<Model>,
     by_name: HashMap<String, usize>,
     pub ground: GroundTextures,
+    /// Far-tree impostor atlases (`impostor`), `None` when disabled / not packed.
+    pub impostors: Option<impostor::Atlas>,
 }
 
 /// Material sets by the names Blender exported: (name, PBR set file stem, foliage card?).
@@ -579,7 +591,13 @@ impl Kit {
             end_margin: (LOD_NEAR - band)..(LOD_NEAR + band),
             use_aabb: false,
         };
-        let far_end = if cull { TREE_FAR } else { 1.0e6 };
+        // Past `IMP_NEAR` a culled tree becomes a merged impostor quad (`impostor`) instead of
+        // drawing LOD1 out to `TREE_FAR`.
+        let imp = if cull { self.impostors.as_ref().and_then(|a| a.layer_of.get(&lod0).copied()) } else { None };
+        if let Some(layer) = imp {
+            e.insert(impostor::ImpostorTree { layer, snow: if snow { 0.75 } else { 0.0 } });
+        }
+        let far_end = if imp.is_some() { impostor::IMP_NEAR } else if cull { TREE_FAR } else { 1.0e6 };
         let far = VisibilityRange {
             start_margin: (LOD_NEAR - band)..(LOD_NEAR + band),
             end_margin: far_end..far_end,
@@ -591,6 +609,10 @@ impl Kit {
             for (model, range) in lods {
                 for part in &model.parts {
                     let mut c = p.spawn((Mesh3d(part.handle.clone()), tf, range.clone()));
+                    if imp.is_some() {
+                        // The hand-off stretches with the render distance's ground factor only.
+                        c.insert(crate::quality::SmallDetail);
+                    }
                     self.mat(part.mat, snow).insert(&mut c);
                     if Some(part.mat) == fruit {
                         c.insert((fruit_tag.clone(), Visibility::Visible));
@@ -1041,11 +1063,22 @@ fn spawn_group(
         Tier::Cover => (0.0, COVER_FAR),
         Tier::Clutter => (0.0, CLUTTER_FAR),
         Tier::LushNear => (0.0, LUSH_NEAR),
-        Tier::LushFar => (LUSH_NEAR, LUSH_FAR),
+        // Starts a band early: it thins in under the near ring's thin-out (`DISSOLVE_BAND`).
+        Tier::LushFar => (LUSH_NEAR - dissolve_band(), LUSH_FAR),
     };
+    // Origin on the AABB centre: the range test (`use_aabb: false`) and the shader's dissolve
+    // (`foliage_wind_prepass.wesl`, which only sees the entity origin) measure the same distance.
+    let centre = match base.attribute(Mesh::ATTRIBUTE_POSITION) {
+        Some(bevy::mesh::VertexAttributeValues::Float32x3(p)) if !p.is_empty() => {
+            let (lo, hi) = p.iter().fold((Vec3::MAX, Vec3::MIN), |(lo, hi), v| (lo.min(Vec3::from(*v)), hi.max(Vec3::from(*v))));
+            (lo + hi) * 0.5
+        }
+        _ => Vec3::ZERO,
+    };
+    base.translate_by(-centre);
     let mut e = commands.spawn((
         Mesh3d(meshes.add(base)),
-        Transform::from_translation(chunk_center(key)),
+        Transform::from_translation(chunk_center(key) + centre),
         bevy::light::NotShadowCaster,
         crate::biome::BiomeEntity,
         DensitySlice(r.slice),
@@ -1057,7 +1090,7 @@ fn spawn_group(
     }
     if cull || near > 0.0 {
         let far = if cull { far } else { 1.0e6 };
-        e.insert(VisibilityRange { start_margin: near..near, end_margin: far..far, use_aabb: true });
+        e.insert(VisibilityRange { start_margin: near..near, end_margin: far..far, use_aabb: false });
     }
     e.id()
 }
@@ -1229,6 +1262,7 @@ impl Plugin for RealForestPlugin {
             return;
         }
         // Before the world build (Startup) reads the kit inside `biome::scatter_region`.
+        app.add_plugins(impostor::ImpostorPlugin);
         app.add_systems(PreStartup, build_kit).add_systems(Update, (patch_terrain, drive_forest_look, apply_undergrowth));
     }
 }
@@ -1361,7 +1395,10 @@ fn try_build(
         // crown / undergrowth colour variety (see `foliage`).
         mats.push(match name {
             "canopy" => KitMat::Foliage(foliage_mats.add(foliage::material(m, 0.025, 1.2, 0.6))),
-            "undergrowth" => KitMat::Foliage(foliage_mats.add(foliage::ground_match(foliage::material(m, 0.035, 2.5, 0.35), 0.8, 0.6))),
+            "undergrowth" => KitMat::Foliage(foliage_mats.add(foliage::dissolve(
+                foliage::ground_match(foliage::material(m, 0.035, 2.5, 0.35), 0.8, 0.6),
+                DISSOLVE_BAND,
+            ))),
             // Hanging moss / willow whips swing a touch more than a crown edge.
             "swamp_cards" => KitMat::Foliage(foliage_mats.add(foliage::material(m, 0.03, 1.6, 0.4))),
             _ => KitMat::Std(materials.add(m)),
@@ -1435,7 +1472,14 @@ fn try_build(
         [Ok(a), Ok(o)] => crate::creature::set_people_layers(images.add(a), images.add(o)),
         _ => warn!("realforest: people garment layers missing — townsfolk use the creature cloth layer"),
     }
-    Ok(Kit { mats, snow_mats: snow_twins, models, by_name, ground })
+    let impostors = if impostor::enabled() {
+        impostor::load_atlas(images, &by_name)
+            .inspect_err(|e| warn!("realforest: no tree impostors ({e}) — far trees stay LOD1 meshes"))
+            .ok()
+    } else {
+        None
+    };
+    Ok(Kit { mats, snow_mats: snow_twins, models, by_name, ground, impostors })
 }
 
 /// (XZ half-extent, trunk-base radius) of a model from its CPU meshes. The trunk radius is the

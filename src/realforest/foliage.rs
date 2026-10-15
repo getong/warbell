@@ -23,8 +23,9 @@ pub struct FoliageWind {
     /// x = blade-root ground match (see `ground_match`), y unused, z = amplitude (world units at
     /// weight 1), w = ripple.
     pub wind: Vec4,
-    /// x = crown tint strength, y = snow amount (`alpine::snowkit` twins), z unused, w = shading-
-    /// normal lean toward world up (see `ground_match`).
+    /// x = crown tint strength, y = snow amount (`alpine::snowkit` twins), z = range-dissolve band
+    /// (world units, 0 = off; see [`dissolve`]), w = shading-normal lean toward world up (see
+    /// `ground_match`).
     pub tint: Vec4,
 }
 
@@ -45,7 +46,11 @@ impl MaterialExtension for FoliageExt {
         "shaders/foliage_wind.wesl".into()
     }
     fn prepass_vertex_shader() -> ShaderRef {
-        if wind_enabled() { "shaders/foliage_wind_prepass.wesl".into() } else { ShaderRef::Default }
+        // Always ours (amplitude 0 when wind is off): it also feeds the range dissolve.
+        "shaders/foliage_wind_prepass.wesl".into()
+    }
+    fn prepass_fragment_shader() -> ShaderRef {
+        "shaders/foliage_wind_prepass.wesl".into()
     }
     fn specialize(
         _pipeline: &bevy::pbr::MaterialExtensionPipeline,
@@ -120,6 +125,16 @@ pub fn ground_match(mut mat: FoliageMaterial, root: f32, up: f32) -> FoliageMate
     }
     mat.extension.wind.wind.x = v[0];
     mat.extension.wind.tint.w = v[1];
+    mat
+}
+
+/// Undergrowth chunks: thin out tuft by tuft over the last `band` units of their `VisibilityRange`
+/// instead of popping (`foliage_wind_prepass.wesl`). The chunk's distance is measured from its
+/// entity origin, so chunks using this must be centred on their AABB with `use_aabb: false`
+/// (`realforest::spawn_group`). `FOREST_DISSOLVE=0` turns it off (A/B).
+pub fn dissolve(mut mat: FoliageMaterial, band: f32) -> FoliageMaterial {
+    let on = std::env::var("FOREST_DISSOLVE").map(|v| v != "0").unwrap_or(true);
+    mat.extension.wind.tint.z = if on { band } else { 0.0 };
     mat
 }
 

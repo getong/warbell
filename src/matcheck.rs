@@ -126,11 +126,17 @@ fn census_added(
     meshes: Res<Assets<Mesh>>,
     names: Query<&Name>,
     parents: Query<&ChildOf>,
+    roots: Query<(Has<crate::verbs::ChopTree>, Has<crate::realforest::impostor::ImpostorTree>, Has<crate::wind::Sway>, &Transform)>,
     mut c: ResMut<VertCensus>,
 ) {
     for (e, m, std, fol, ter, cover, nsc, vr, skin) in &q {
         let Some(mesh) = meshes.get(&m.0) else { continue };
-        let n = mesh.indices().map_or(mesh.count_vertices(), |i| i.len()) as u32;
+        // GPU-only meshes (merged chunks, impostors) may already be extracted: skip, don't panic.
+        let n = match mesh.try_indices_option() {
+            Ok(Some(i)) => i.len() as u32,
+            Ok(None) => mesh.count_vertices() as u32,
+            Err(_) => continue,
+        };
         let mut root = e;
         while let Ok(p) = parents.get(root) {
             root = p.parent();
@@ -139,6 +145,13 @@ fn census_added(
         let mat = if std { "std" } else if fol { "foliage" } else if ter { "terrain" } else { "other" };
         let rng = vr.map_or("".to_string(), |r| format!(" R{:.0}", r.end_margin.end));
         let tag = format!("{mat}{}{}{}{rng} root={}", if skin { " SKIN" } else { "" }, if cover { " COVER" } else { "" }, if nsc { "" } else { " +shadow" }, if root == e { "-".into() } else { rn });
+        // `FOREST_VERTSAMPLE=<tag substring>`: log a few entities of that bucket, for FOREST_WHOIS.
+        if let Ok(want) = std::env::var("FOREST_VERTSAMPLE") {
+            static LOGGED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            if tag.contains(want.as_str()) && LOGGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 4 {
+                info!("VERTSAMPLE {e} root {root} n={n} tag {tag} root(chop,imp,sway,tf)={:?}", roots.get(root).ok());
+            }
+        }
         c.per.insert(e, (tag, n));
     }
 }

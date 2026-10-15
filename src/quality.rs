@@ -309,13 +309,14 @@ fn scale_visibility_ranges(
     }
 }
 
-/// Marks a small-detail mesh (skinned townsfolk / animals) whose `VisibilityRange` only takes
+/// Marks a small-detail mesh (skinned townsfolk / animals, and the LOD1 meshes of impostor trees,
+/// whose hand-off to the impostor must match `realforest::impostor`) whose `VisibilityRange` only takes
 /// [`ground_factor`] of the render-distance multiplier, like ground cover.
 #[derive(Component, Default)]
 pub struct SmallDetail;
 
 /// Ground-cover share of the render-distance multiplier: Far x1.24, Extreme x1.6 (vs x1.8 / x3).
-fn ground_factor(k: f32) -> f32 {
+pub(crate) fn ground_factor(k: f32) -> f32 {
     1.0 + (k - 1.0) * 0.3
 }
 
