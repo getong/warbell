@@ -473,12 +473,17 @@ fn track_total(mut disc: ResMut<Discoveries>, q: Query<&Landmark>, mut done: Loc
 }
 
 /// Drift each beacon mote up its column, wrap at the top, gentle sway — a slow rising wisp.
-fn beacon_drift(time: Res<Time>, mut q: Query<(&Beacon, &mut Transform)>) {
+fn beacon_drift(time: Res<Time>, mut q: Query<(&Beacon, &mut Transform, &ViewVisibility)>) {
     let dt = time.delta_secs();
     let t = time.elapsed_secs_wrapped();
     // One shared breeze leans every column the same way, more with height (smoke bends downwind).
     let lean = Vec2::new(0.9 + 0.3 * (t * 0.07).sin(), 0.35);
-    for (b, mut tf) in &mut q {
+    for (b, mut tf, vis) in &mut q {
+        // Off screen: hold the puff (it resumes rising when seen) — island-wide columns otherwise
+        // rewrite ~200 transforms a frame for transform propagation.
+        if !vis.get() {
+            continue;
+        }
         tf.translation.y += b.rise * dt;
         if tf.translation.y > b.y_hi {
             tf.translation.y = b.y_lo;

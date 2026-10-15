@@ -210,6 +210,10 @@ fn main() {
     if std::env::var("FOREST_NOVSYNC").is_ok() {
         window.present_mode = bevy::window::PresentMode::AutoNoVsync;
     }
+    // FOREST_FRAMELAT=<n>: swapchain frames the CPU may run ahead of the GPU (wgpu default 2).
+    if let Some(n) = std::env::var("FOREST_FRAMELAT").ok().and_then(|v| v.parse::<u32>().ok()) {
+        window.desired_maximum_frame_latency = std::num::NonZeroU32::new(n);
+    }
     // FOREST_RES="WxH": force a render resolution. Used to make a fast discrete GPU artificially
     // FRAGMENT-bound (like a weak iGPU) so per-fragment optimizations can be A/B-measured locally
     // (the main_opaque pass cost then scales with on-screen pixels, as it does on the iGPU).

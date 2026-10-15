@@ -22,7 +22,8 @@ impl Plugin for MatCheckPlugin {
         }
         if std::env::var_os("FOREST_VERTREPORT").is_some() {
             app.init_resource::<VertCensus>().add_systems(PostUpdate, (census_added, census_report).chain())
-                .add_systems(Last, asset_churn);
+                .add_systems(Last, (asset_churn, transform_churn))
+                .add_systems(Last, tf_signatures);
         }
     }
 }
@@ -142,7 +143,7 @@ fn census_added(
     }
 }
 
-fn census_report(players: Query<(Entity, Has<AnimationGraphHandle>), With<AnimationPlayer>>, targets: Query<&bevy::animation::AnimatedBy>, names: Query<&Name>, parents: Query<&ChildOf>, time: Res<Time<Real>>, vis: Query<(Entity, &ViewVisibility)>, gt: Query<&GlobalTransform>, cam: Query<&GlobalTransform, With<Camera3d>>, cam_vis: Query<&bevy::camera::visibility::VisibleEntities, With<Camera3d>>, mut c: ResMut<VertCensus>) {
+fn census_report(aplayers: Query<&AnimationPlayer, With<AnimationGraphHandle>>, players: Query<(Entity, Has<AnimationGraphHandle>), With<AnimationPlayer>>, targets: Query<&bevy::animation::AnimatedBy>, names: Query<&Name>, parents: Query<&ChildOf>, time: Res<Time<Real>>, vis: Query<(Entity, &ViewVisibility)>, gt: Query<&GlobalTransform>, cam: Query<&GlobalTransform, With<Camera3d>>, cam_vis: Query<&bevy::camera::visibility::VisibleEntities, With<Camera3d>>, mut c: ResMut<VertCensus>) {
     let main_vis: bevy::platform::collections::HashSet<Entity> = cam_vis.single().map(|v| v.iter(std::any::TypeId::of::<Mesh3d>()).copied().collect()).unwrap_or_default();
     let now = time.elapsed_secs();
     if now - c.last < 5.0 {
@@ -202,6 +203,14 @@ fn census_report(players: Query<(Entity, Has<AnimationGraphHandle>), With<Animat
     }
     let mut pv: Vec<_> = pl.into_iter().collect();
     pv.sort_by(|a, b| b.1 .2.cmp(&a.1 .2));
+    let mut hist = [0u32; 8];
+    let mut zero_w = 0u32;
+    for p in &aplayers {
+        let n = p.playing_animations().count();
+        hist[n.min(7)] += 1;
+        zero_w += p.playing_animations().filter(|(_, a)| a.weight() <= 0.0).count() as u32;
+    }
+    info!("ANIM active-animation count per graphed player (0..7+): {hist:?}, zero-weight actives {zero_w}");
     info!("ANIM players (total/with graph/animated targets): {}", pv.iter().take(12).map(|(n, (a, g, t))| format!("{n}: {a}/{g}/{t}")).collect::<Vec<_>>().join(" | "));
     info!("VERTS visible {:.2}M idx | {}", total as f64 / 1e6, top.join(" | "));
 }
@@ -309,5 +318,74 @@ fn asset_churn(
             info!("CHURN mesh {id:?} x{k}: {} users, e.g. {}", us.len(), us.first().map(|e| chain(*e)).unwrap_or_default());
         }
         *acc = ([0; 6], 0, acc.2);
+    }
+}
+
+/// Entities whose `Transform` changed this frame, bucketed by a marker of their root (each changed
+/// entity dirties its whole subtree for `propagate_parent_transforms`).
+#[allow(clippy::type_complexity)]
+fn transform_churn(
+    q: Query<(Entity, Option<&Children>), Changed<Transform>>,
+    parents: Query<&ChildOf>,
+    kinds: Query<(Has<crate::wind::Sway>, Has<crate::verbs::ChopTree>, Has<bevy::animation::AnimationTargetId>, Has<Mesh3d>, Option<&Name>)>,
+    desc: Query<&Children>,
+    time: Res<Time<Real>>,
+    mut acc: Local<(bevy::platform::collections::HashMap<String, (u32, u32)>, u32, f32)>,
+) {
+    for (e, ch) in &q {
+        let mut root = e;
+        while let Ok(p) = parents.get(root) {
+            root = p.parent();
+        }
+        let tag = match kinds.get(e) {
+            Ok((true, _, _, _, _)) => "sway".to_string(),
+            Ok((_, true, _, _, _)) => "choptree".to_string(),
+            Ok((_, _, true, _, _)) => "bone".to_string(),
+            Ok((_, _, _, m, n)) => format!("{}{}", if m { "mesh:" } else { "node:" }, n.map(|n| n.as_str().chars().take(14).collect::<String>()).unwrap_or_default()),
+            _ => "?".into(),
+        };
+        let sub = ch.map_or(0, |_| desc.iter_descendants(e).count() as u32);
+        let s = acc.0.entry(tag).or_default();
+        s.0 += 1;
+        s.1 += sub;
+    }
+    acc.1 += 1;
+    if time.elapsed_secs() - acc.2 > 5.0 {
+        acc.2 = time.elapsed_secs();
+        let f = acc.1.max(1) as f32;
+        let mut v: Vec<_> = acc.0.drain().collect();
+        v.sort_by(|a, b| (b.1 .0 + b.1 .1).cmp(&(a.1 .0 + a.1 .1)));
+        info!("TFCHURN per frame (changed / +descendants dirtied): {}", v.iter().take(12).map(|(t, (n, d))| format!("{t} {:.0}/+{:.0}", *n as f32 / f, *d as f32 / f)).collect::<Vec<_>>().join(" | "));
+        acc.1 = 0;
+    }
+}
+
+/// Once, ~15 s in: group the mesh / node entities whose `Transform` changed over one frame by their
+/// component set, to name who rewrites transforms every frame.
+fn tf_signatures(world: &mut World, mut st: Local<Option<QueryState<Entity, Changed<Transform>>>>, mut step: Local<u32>) {
+    let t = world.resource::<Time<Real>>().elapsed_secs();
+    if t < 15.0 || *step >= 2 {
+        return;
+    }
+    let q = st.get_or_insert_with(|| world.query_filtered::<Entity, Changed<Transform>>());
+    let es: Vec<Entity> = q.iter(world).collect();
+    *step += 1;
+    if *step < 2 {
+        return; // first pass only primes the change ticks
+    }
+    let mut sig: bevy::platform::collections::HashMap<String, u32> = Default::default();
+    for e in es {
+        let Ok(it) = world.inspect_entity(e) else { continue };
+        let mut names: Vec<String> = it
+            .map(|(_, c)| { let n = format!("{:?}", c.name()); n.rsplit("::").next().unwrap_or("").trim_matches(['"', '>', ')']).to_string() })
+            .filter(|n| !matches!(n.as_str(), "Transform" | "GlobalTransform" | "Visibility" | "InheritedVisibility" | "ViewVisibility" | "TransformTreeChanged" | "ChildOf" | "Children" | "VisibilityClass" | "Aabb" | "Name"))
+            .collect();
+        names.sort();
+        *sig.entry(names.join(",")).or_default() += 1;
+    }
+    let mut v: Vec<_> = sig.into_iter().collect();
+    v.sort_by(|a, b| b.1.cmp(&a.1));
+    for (s, n) in v.iter().take(25) {
+        info!("TFSIG {n:5}  {}", &s[..s.len().min(260)]);
     }
 }

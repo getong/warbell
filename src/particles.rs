@@ -134,11 +134,15 @@ fn update_dusk(clock: Option<Res<crate::scene::SkyClock>>, mut dusk: ResMut<Dusk
 fn face_camera(
     cam_q: Query<&GlobalTransform, With<Camera3d>>,
     parents: Query<&GlobalTransform, Without<FaceCamera>>,
-    mut q: Query<(&mut Transform, Option<&ChildOf>), With<FaceCamera>>,
+    mut q: Query<(&mut Transform, Option<&ChildOf>, &ViewVisibility), With<FaceCamera>>,
 ) {
     let Some(cam) = cam_q.iter().next() else { return };
     let rot = cam.compute_transform().rotation;
-    for (mut tf, parent) in &mut q {
+    for (mut tf, parent, vis) in &mut q {
+        // Off-screen billboards needn't face anyone (one frame stale on entry is invisible).
+        if !vis.get() {
+            continue;
+        }
         // A child sprite (e.g. a landmark model's chimney puff) cancels its parent's rotation.
         tf.rotation = match parent.and_then(|c| parents.get(c.parent()).ok()) {
             Some(pg) => pg.compute_transform().rotation.inverse() * rot,

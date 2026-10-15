@@ -3065,9 +3065,14 @@ fn wobble_flames(time: Res<Time>, mut q: Query<(&Wobble, &mut Transform)>) {
 }
 
 /// Rising smoke (the camps' drift recipe).
-fn drift_smoke(time: Res<Time>, mut q: Query<(&FortSmoke, &mut Transform)>) {
+fn drift_smoke(time: Res<Time>, mut q: Query<(&FortSmoke, &mut Transform, &ViewVisibility)>) {
     let t = time.elapsed_secs();
-    for (s, mut tf) in &mut q {
+    for (s, mut tf, vis) in &mut q {
+        // Off screen (one frame stale is fine — it's a pure function of time): skip; every write
+        // dirties transform propagation, and these run island-wide.
+        if !vis.get() {
+            continue;
+        }
         let cycle = (t * s.speed + s.phase).rem_euclid(1.0);
         tf.translation.x = s.base.x + (t * 0.7 + s.phase * 6.0).sin() * 0.22 * cycle;
         tf.translation.z = s.base.z + (t * 0.6 + s.phase * 6.0).cos() * 0.22 * cycle;

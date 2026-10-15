@@ -805,7 +805,12 @@ fn drive_ore_wear(
             }
             None => 0.0,
         };
-        tf.scale = Vec3::splat((wear.cur * (1.0 - punch)).max(0.02));
+        // Write only a real change: a settled node rewrote the same scale every frame, dirtying
+        // transform propagation for ~60 rocks.
+        let s = Vec3::splat((wear.cur * (1.0 - punch)).max(0.02));
+        if tf.scale != s {
+            tf.scale = s;
+        }
     }
 }
 

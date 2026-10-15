@@ -45,9 +45,14 @@ struct SmokeMote {
     rise: f32,
 }
 
-fn rise_smoke(time: Res<Time>, mut q: Query<(&SmokeMote, &mut Transform)>) {
+fn rise_smoke(time: Res<Time>, mut q: Query<(&SmokeMote, &mut Transform, &ViewVisibility)>) {
     let t = time.elapsed_secs();
-    for (s, mut tf) in &mut q {
+    for (s, mut tf, vis) in &mut q {
+        // Off screen (one frame stale is fine — it's a pure function of time): skip; every write
+        // dirties transform propagation, and these run island-wide.
+        if !vis.get() {
+            continue;
+        }
         let cycle = (t * s.speed + s.phase).rem_euclid(1.0);
         tf.translation = s.base
             + Vec3::new(

@@ -329,6 +329,8 @@ fn reveal_skins(
                 }
             }
         }
+        // The procedural body is hidden for good: stop posing its ~20 joints every frame.
+        commands.entity(of.0).try_insert(crate::quadruped::QuadHidden);
     }
 }
 

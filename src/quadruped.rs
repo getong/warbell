@@ -577,11 +577,17 @@ fn quad_pose(c: &QuadConfig, d: &QuadDrive, now: f32) -> P {
     p
 }
 
+/// On a quadruped root whose procedural body is hidden under a realistic skin (`animal_skin`):
+/// [`animate_quad`] skips it — posing ~20 invisible joints per animal was ~1000 transform writes
+/// (and as many propagations) a frame for a herd nobody could see.
+#[derive(Component)]
+pub struct QuadHidden;
+
 /// Pose every quadruped: one [`QuadPose`] per root, written onto its [`QuadPart`]s. Ungated (like
 /// the hero/biped animators) so a frozen/paused world still draws its animals posed.
 pub fn animate_quad(
     time: Res<Time>,
-    drives: Query<(Entity, &QuadDrive)>,
+    drives: Query<(Entity, &QuadDrive), Without<QuadHidden>>,
     mut parts: Query<(&QuadPart, &mut Transform)>,
     // Reused across frames so a herd's worth of animals doesn't heap-alloc a fresh map every frame.
     mut poses: Local<HashMap<Entity, QuadPose>>,
