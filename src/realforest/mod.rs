@@ -1708,9 +1708,10 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
             }
         }
     }
-    // Separable box blur (radius 3 texels = 1.5u) so the forest edge feathers instead of
-    // stair-stepping along tile borders.
-    let r = 3i32;
+    // Separable box blur (radius 12 texels = 6u): a wide ramp the shader's edge noise can push the
+    // floor's ragged edge back and forth across, so litter and mud interleave in tongues and
+    // islands over several units instead of meeting on one line.
+    let r = 12i32;
     let blur = |src: &[f32], horiz: bool| -> Vec<f32> {
         let mut out = vec![0.0f32; w * h];
         for j in 0..h as i32 {
@@ -1725,14 +1726,15 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
         }
         out
     };
-    // The feather lies INSIDE the forest / meadow edge, never past it: the plain symmetric blur
-    // left ~0.45 at the first texel beyond the tile border, and the shader's edge noise pushed
-    // that over threshold, so litter and moss crept 1-1.5u onto the swamp, Blight, desert and
-    // rock. Remapped, the mask is ~0 at the border and full ~1.2u in.
+    // The feather straddles the (now ragged, `worldmap::region_noise`) forest / meadow edge: ~0.5
+    // at the border, full ~2u in, gone ~2u out, and the shader's edge noise breaks that into
+    // tongues of litter and mud. An earlier remap kept it wholly INSIDE the edge (litter crept onto
+    // the swamp along a straight seam), but that bared a lime strip of raw vertex grass between the
+    // litter and the mud — the seam read as a glowing line.
     let inward = |v: Vec<f32>| -> Vec<f32> {
         v.into_iter()
             .map(|x| {
-                let t = ((x - 0.42) / 0.46).clamp(0.0, 1.0);
+                let t = ((x - 0.25) / 0.5).clamp(0.0, 1.0);
                 t * t * (3.0 - 2.0 * t)
             })
             .collect()

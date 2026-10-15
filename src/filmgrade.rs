@@ -91,7 +91,7 @@ impl Default for FilmGrade {
             vibrance: 0.24,
             saturation: 1.0,
             contrast: 1.18,
-            sharpen: 0.16,
+            sharpen: 0.0,
             grain: 0.0,
             vignette: 0.0,
             aberration: 0.0,

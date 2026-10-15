@@ -221,7 +221,7 @@ const PAL_HOME: Palette = Palette {
     grass_dry: 0x6f9a48, // green-shifted off the old olive 0x8fa953 (player: ground too yellow)
     grass_gold: 0x7ba049, // was a warm gold 0xa8b048 — now a muted lighter green so variety reads green, not yellow
     sand: 0xcdb079,
-    forest: 0x5d9e44,
+    forest: 0x557a3a, // olive, was lime 0x5d9e44: it shows wherever the scanned floor parts (ecotone tongues, slopes) and glowed there
     rock: 0x8d847a,
     snow: 0xe4ecf5,
     desert: 0xddc189,
@@ -1197,6 +1197,20 @@ fn edge_fray(x: f32, z: f32) -> f32 {
     (x * 0.5 + z * 0.35 + 1.3).sin() * 1.1
         + (x * 0.9 - z * 0.82 + 4.0).sin() * 1.6
         + (x * 1.5 + z * 1.3 + 2.2).sin() * 1.0
+}
+
+/// Per-region boundary noise for [`region_weights`] (base units, ≈ ±5): broad wandering lobes (~45u),
+/// tongues (~25u) and a hummock field (~5u), seeded PER REGION so it never cancels where two biomes
+/// meet (`wob` / `edge_fray` are the same for every region at a point, so on a flat-flat seam like
+/// forest / swamp they cancel and the colour followed the bare, straight hyperbola). The TILE class
+/// ([`region_at`]) deliberately keeps the old exact seam: story sites, camps and trails are placed
+/// against it (moving it un-seated 7 placement tests); the visible ground hand-off is soft anyway
+/// (`terrain.wesl` + the feathered forest-floor mask), so the tile line itself no longer shows.
+fn region_noise(x: f32, z: f32, k: f32) -> f32 {
+    let wander = omottle(x, z, 4.0, 401.0 + k * 29.0);
+    let tongue = omottle(x, z, 11.0, 157.0 + k * 37.0);
+    let hum = omottle(x, z, 34.0, 211.0 + k * 41.0) * 0.72 + omottle(x, z, 62.0, 307.0 + k * 53.0) * 0.28;
+    wander * 1.6 + tongue * 1.25 + hum * 1.15
 }
 
 fn region_at(x: f32, z: f32) -> Option<usize> {
@@ -3242,15 +3256,10 @@ fn region_weights(x: f32, z: f32, out: &mut [f32; MAX_REGIONS]) -> usize {
     for (i, reg) in regs.iter().take(n).enumerate() {
         let fray = if reg.peak > 0 { 0.0 } else { edge_fray(x, z) };
         let edge = reg.r - ((x - reg.x).hypot(z - reg.z) + wob + fray);
-        // The jitter moves an edge by < ±4 base units: far from it, skip the noise.
-        e[i] = if edge.abs() > 6.0 {
-            edge
-        } else {
-            let k = i as f32;
-            let tongue = omottle(x, z, 11.0, 157.0 + k * 37.0);
-            let hum = omottle(x, z, 34.0, 211.0 + k * 41.0) * 0.72 + omottle(x, z, 62.0, 307.0 + k * 53.0) * 0.28;
-            edge + tongue * 1.25 + hum * 1.15
-        };
+        // Well outside a region its weight is 0 whatever the noise; inside, the noise must ALWAYS
+        // apply (the old `|edge| > 6` skip left the deep forest/swamp overlap seam noise-free —
+        // straight — and switched the noise on and off abruptly where |edge| crossed 6).
+        e[i] = if edge < -8.0 { edge } else { edge + region_noise(x, z, i as f32) };
     }
     let mut sum = 0.0;
     for i in 0..n {

@@ -64,6 +64,11 @@ pub struct Dof {
     /// >0 switches to a thin-lens CoC, `lens · |1 − focal/dist|` (`range`/`far_ramp` unused): the
     /// cutscene camera's physical aperture. 0 = the game's banded model.
     pub lens: f32,
+    /// Mid-distance edge softening (0..1): where the bokeh is still under half a pixel, blend in a
+    /// 3×3 tent blur that grows from just behind the focal plane to ~35 tiles past it. Alpha-tested
+    /// leaves, grass and branch tips a little way off otherwise keep razor, stair-stepped edges
+    /// that read as an over-sharpened frame. `FOREST_SOFT=<k>` (0 = off).
+    pub soft: f32,
 }
 
 /// A tasteful default; tunable live in the Debug panel.
@@ -103,7 +108,16 @@ pub fn default_dof() -> Dof {
     // hand-off ring (150→176u, `worldmap.rs:3145`) sits at ~1.4-2px — soft enough to hide the
     // swap, sharp enough that the coast no longer reads as unloaded geometry.
     let mut d =
-        Dof { focal: 28.0, range: 44.0, far_ramp: 200.0, max_radius: 3.5, near: NEAR, debug_view: 0.0, lens: 0.0 };
+        Dof {
+        focal: 28.0,
+        range: 44.0,
+        far_ramp: 200.0,
+        max_radius: 3.5,
+        near: NEAR,
+        debug_view: 0.0,
+        lens: 0.0,
+        soft: std::env::var("FOREST_SOFT").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0.6),
+    };
     // `FOREST_DOF="range,far_ramp,max_radius"` — startup override, mirroring `FOREST_ATMO` /
     // `FOREST_GODRAYS`. Added 2026-07-27: the far-field look is a JOINT tune of bokeh against
     // haze, and haze was already env-tunable while DoF needed a 6-minute rebuild per guess — so

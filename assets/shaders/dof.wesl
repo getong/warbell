@@ -19,6 +19,7 @@ struct Settings {
     near: f32,        // camera near plane (reverse-z depth → distance)
     debug_view: f32,  // >0.5 → output raw CoC as grayscale (debug), don't blur
     lens: f32,        // >0 → thin-lens CoC (cutscene camera): lens·|1 − focal/dist|, range/far_ramp unused
+    soft: f32,        // mid-distance edge softening (0..1) where the bokeh is under half a pixel
 }
 @group(0) @binding(3) var<uniform> settings: Settings;
 
@@ -80,7 +81,20 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     }
     let blur_px = c * settings.max_radius;
     if blur_px < 0.5 {
-        return center;
+        // Mid-distance softening: a 3×3 tent (four bilinear taps half a pixel off-centre) blended
+        // in from just behind the focus to ~35 tiles past it, so foliage edges a little way off
+        // go soft like a real lens instead of staying razor-cut. The hero's plane stays crisp.
+        let dist = dist_at(coord);
+        let s = settings.soft * smoothstep(settings.focal + 3.0, settings.focal + 35.0, dist);
+        if s < 0.01 {
+            return center;
+        }
+        let o = 0.5 / dims;
+        let avg = (textureSample(screen_texture, texture_sampler, in.uv + vec2<f32>(o.x, o.y)).rgb
+            + textureSample(screen_texture, texture_sampler, in.uv + vec2<f32>(-o.x, o.y)).rgb
+            + textureSample(screen_texture, texture_sampler, in.uv + vec2<f32>(o.x, -o.y)).rgb
+            + textureSample(screen_texture, texture_sampler, in.uv + vec2<f32>(-o.x, -o.y)).rgb) * 0.25;
+        return vec4<f32>(mix(center.rgb, avg, s), center.a);
     }
 
     let texel = 1.0 / dims;

@@ -1039,12 +1039,10 @@ fn apply_quality(
         // TAA + CAS: the jitter and mip bias TAA requires must leave with it, or the image keeps
         // sub-pixel shaking with nothing resolving it.
         if taa {
-            e.insert((
-                TemporalAntiAliasing::default(),
-                // Light touch: at 0.45 the sharpener re-crunched the alpha-tested leaf edges TAA had just
-                // softened, so distant canopies read harsh and stair-stepped.
-                ContrastAdaptiveSharpening { enabled: true, sharpening_strength: 0.2, denoise: false },
-            ));
+            // No CAS after TAA any more: even at 0.2 the sharpener re-crunched the alpha-tested leaf
+            // and grass edges TAA had just softened — the "over-sharpened" read of the mid-ground.
+            e.insert(TemporalAntiAliasing::default());
+            e.remove::<ContrastAdaptiveSharpening>();
         } else {
             e.remove::<(TemporalAntiAliasing, TemporalJitter, MipBias, ContrastAdaptiveSharpening)>();
         }

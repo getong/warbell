@@ -623,12 +623,19 @@ fn fragment(
     // Standing-water share of the trail (its puddles): they get a stronger specular below.
     var fp_gloss = 0.0;
     if forest.pbr.x > 0.5 {
-        let edge_n = ter_noise(wp * 0.21 + vec2<f32>(3.0, 41.0)) - 0.5;
+        // Two octaves (~5u + ~16u): the floor's edge breaks into tongues and islands of litter
+        // over the wider mask feather instead of following it as one smooth line.
+        let edge_n = (ter_noise(wp * 0.21 + vec2<f32>(3.0, 41.0)) - 0.5) * 0.8
+            + (ter_noise(wp * 0.085 + vec2<f32>(17.0, 5.0)) - 0.5) * 1.8;
         // On a bank the slope gate relaxes, so the forest floor rolls over the lip with the ground
         // instead of fading to bare vertex green there.
         let slope_gate = mix(smoothstep(0.55, 0.85, in.world_normal.y), smoothstep(0.40, 0.70, in.world_normal.y),
             smoothstep(0.0, 0.2, bank));
-        fp_w = smoothstep(0.25, 0.75, fmask.r + edge_n * 0.45) * slope_gate * (1.0 - cliff);
+        // A SOFT hand-off over the wide (~6u) mask feather: the litter thins out gradually into the
+        // neighbouring biome — no line where you could say "the biome changes here". The noise only
+        // makes the fade uneven (strongest mid-ramp, a nudge deep in the forest, never a hole).
+        let fm = fmask.r;
+        fp_w = smoothstep(0.08, 0.92, fm + edge_n * 0.5 * (0.2 + 4.0 * fm * (1.0 - fm))) * slope_gate * (1.0 - cliff);
         fp_forest = fp_w;
         // The scanned soil is woodland earth with leaf litter in it: only the forest / meadow banks
         // (mask R) take it. Off them — swamp pools, the Blight, rocky / snow / desert brooks — the
@@ -1162,7 +1169,10 @@ fn fragment(
     //    with wet moss, and shallow standing water in the low hollows — near-black, glassy, flat —
     //    so only the water glints; the mud / moss stay matte (a 0.40 sheen mirrored the bright
     //    foggy sky off the dark peat at grazing angles - the whole bog read pale sage-grey).
-    let wet = clamp(pbr_input.material.base_color.a, 0.0, 1.0) * (1.0 - alp_k) * (1.0 - fp_w);
+    //    The vertex wetness is boosted ×1.6 so the bog's mud fills the hollows BETWEEN the forest
+    //    floor's ragged tongues right up to the ecotone — at 1× the gap between the fading litter and
+    //    the mud showed the raw lime vertex grass as a glowing strip along the border.
+    let wet = clamp(pbr_input.material.base_color.a * 1.6, 0.0, 1.0) * (1.0 - alp_k) * (1.0 - fp_w);
     if wet > 0.001 {
         let sp = in.world_position.xz;
         let mott = ter_noise_rot(sp * 0.13, 0.81, 0.59) * 0.6 + ter_noise_rot(sp * 0.41, 0.29, 0.957) * 0.4;
@@ -1211,7 +1221,13 @@ fn fragment(
             // Meadow -> bog edge: the bog creeps in through the low texels first, so the boundary is
             // a crisp ragged line following the scan's relief, not a soft ramp (the old blurred ring).
             let t = smoothstep(0.0, 0.75, wet);
-            cov = smoothstep(0.44, 0.56, t + (0.5 - hmix) * 0.55);
+            // Across the ecotone (wet < ~0.85) the bog fades in GRADUALLY — mud first in the low
+            // texels and in uneven ~10u patches, never on one crisp contour; deep in the bog the old
+            // crisp relief-following water line takes over again.
+            let mudp = (ter_noise(sp * 0.1 + vec2<f32>(7.0, 29.0)) - 0.5) * 0.5;
+            let crisp = smoothstep(0.44, 0.56, t + (0.5 - hmix) * 0.55);
+            let soft = clamp(t * 1.15 + (0.5 - hmix) * 0.3 + mudp * (1.0 - t), 0.0, 1.0);
+            cov = mix(soft, crisp, smoothstep(0.85, 1.0, wet));
             // Standing water fills the LOW texels below a noise-varied water line: shores follow
             // every crumb of peat and moss head, sharp but natural (no soft blob, no halo).
             let wline = (0.43 - pool_n) * 2.6 + 0.35;
