@@ -513,8 +513,15 @@ fn advance_sky(
     // skylight after dark, but the moonlight key keeps the contrast (see above). The daytime
     // value is deliberately modest (430): like ambient above, too much skylight fill kills
     // the sun's shadow contrast.
+    // `FOREST_FILL=<x>`: scale the whole shadow-side fill (ambient + IBL) for look-dev shots.
+    static FILL: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    // Daylight fill ×1.8 (Oct 2026 look pass): shade read near-black against the sun — real
+    // skylight leaves cast shadows at roughly a third of the lit value. Nights keep their tuning.
+    let fill = *FILL.get_or_init(|| std::env::var("FOREST_FILL").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(1.8));
+    let fill = 1.0 + (fill - 1.0) * (1.0 - night); // full from sunrise on, not only at noon
+    ambient.brightness *= fill;
     for mut env in &mut env_q {
-        env.intensity = 360.0 + (IBL_INTENSITY - 360.0) * day;
+        env.intensity = (360.0 + (IBL_INTENSITY - 360.0) * day) * fill;
     }
 
     // Darken night at the GRADE stage. Camera `Exposure` only scales PBR lighting, but

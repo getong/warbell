@@ -104,6 +104,7 @@ mod particles;
 mod anim_lod; // skinned crowd animation LOD: park far / off-screen skins (npc_skin, animal_skin)
 mod autolod; // meshopt auto-LOD: simplified far twins of kit props / statics / skins
 mod audio_capture; // FOREST_CLIP: the game's own audio mirrored offline, frame-locked, into <dir>/audio.wav
+mod water_ssr; // water screen-space reflections: rivers/lake/sea mirror the banks, trees and buildings
 mod shadow_lod; // shadow LOD: small static meshes stop casting sun shadows past a size-scaled distance
 mod matcheck; // FOREST_MATCHECK=1: log mesh entities carrying two material types (double-bin panic)
 mod perftest;
@@ -438,7 +439,7 @@ fn main() {
             render.insert_resource(meshes);
         }
     }
-    app.add_plugins((shadow_lod::ShadowLodPlugin, audio_capture::AudioCapturePlugin));
+    app.add_plugins((shadow_lod::ShadowLodPlugin, audio_capture::AudioCapturePlugin, water_ssr::WaterSsrPlugin));
     app.add_plugins(matcheck::MatCheckPlugin);
     #[cfg(feature = "renderdoc")]
     app.add_plugins(rdoc::RdocPlugin);

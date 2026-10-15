@@ -73,7 +73,8 @@ pub struct FilmGrade {
     pub halation: f32,
     pub streak: f32,
     pub weave: f32,
-    pub _pad: f32,
+    /// Pull pure greens toward olive / straw (0 = off).
+    pub olive: f32,
 }
 
 impl Default for FilmGrade {
@@ -96,7 +97,7 @@ impl Default for FilmGrade {
             halation: 0.0,
             streak: 0.0,
             weave: 0.0,
-            _pad: 0.0,
+            olive: 0.0,
         }
     }
 }
@@ -165,23 +166,44 @@ fn drive_film_grade(sun: Query<&GlobalTransform, With<Sun>>, mut cams: Query<&mu
     let night = 1.0 - day;
 
     let mix3 = |a: Vec3, b: Vec3, t: f32| a.lerp(b, t.clamp(0.0, 1.0));
-    let hi_day = Vec3::new(1.07, 1.00, 0.89);
+    // Oct 2026 look pass (matched against a photo-real repaint of our own swamp frame): warm,
+    // olive, soft — shadows lean neutral-warm, not teal, and greens are pulled toward olive/straw.
+    let hi_day = Vec3::new(1.08, 1.00, 0.86);
     let hi_gold = Vec3::new(1.15, 0.98, 0.78);
     let hi_night = Vec3::new(0.94, 0.99, 1.08);
-    let sh_day = Vec3::new(0.90, 0.99, 1.10);
+    let sh_day = Vec3::new(0.99, 1.00, 0.95);
     let sh_gold = Vec3::new(0.88, 0.92, 1.16);
     let sh_night = Vec3::new(0.84, 0.94, 1.18);
 
+    // `FOREST_LOOK="vibrance,saturation,contrast,toe,split,olive"`: override the day look for look-dev.
+    static LOOK: std::sync::OnceLock<Option<Vec<f32>>> = std::sync::OnceLock::new();
+    let look = LOOK.get_or_init(|| {
+        std::env::var("FOREST_LOOK").ok().map(|s| s.split(',').filter_map(|p| p.trim().parse().ok()).collect::<Vec<f32>>()).filter(|v| v.len() == 6)
+    });
     for mut g in &mut cams {
+        if let Some(v) = look {
+            g.vibrance = v[0];
+            g.saturation = v[1];
+            g.contrast = v[2];
+            g.toe = v[3];
+            g.split = v[4];
+            g.olive = v[5];
+            continue;
+        }
         let hi = mix3(mix3(hi_day, hi_night, night), hi_gold, golden);
         let sh = mix3(mix3(sh_day, sh_night, night), sh_gold, golden);
         let changed = g.highlight_tint.distance_squared(hi) > 1e-8 || g.shadow_tint.distance_squared(sh) > 1e-8;
         if changed {
             g.highlight_tint = hi;
             g.shadow_tint = sh;
-            g.vibrance = 0.24 - 0.12 * night + 0.08 * golden;
-            g.contrast = 1.18 + 0.04 * golden - 0.06 * night;
-            g.split = 0.55 + 0.15 * golden;
+            // Day: no vibrance push (it made the grass neon), soft contrast, olive greens, a lifted
+            // toe. Night / golden hour keep their earlier character on top.
+            g.vibrance = 0.0 + 0.12 * night + 0.03 * golden;
+            g.saturation = 0.97;
+            g.contrast = 1.06 + 0.02 * golden + 0.06 * night;
+            g.split = 0.40 + 0.15 * golden + 0.15 * night;
+            g.olive = 1.4 * (1.0 - smoothstep(-0.10, 0.02, -y)); // full whenever the sun is up
+            g.toe = 0.035 - 0.017 * night;
         }
     }
 }

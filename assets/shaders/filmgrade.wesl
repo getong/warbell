@@ -26,7 +26,7 @@ struct FilmGrade {
     halation: f32,
     streak: f32,
     weave: f32,
-    _pad: f32,
+    olive: f32, // pull pure greens toward olive / straw (0 = off)
 }
 @group(0) @binding(2) var<uniform> grade: FilmGrade;
 
@@ -132,6 +132,10 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let sat = max(max(c.r, c.g), c.b) - min(min(c.r, c.g), c.b);
     let vib = 1.0 + grade.vibrance * (1.0 - smoothstep(0.0, 0.6, sat));
     c = mix(vec3<f32>(lv), c, vib * grade.saturation);
+    // ── Olive ── a green that beats both red and blue gains red: lawn-green -> olive / straw, the
+    // muted foliage palette of photo-real outdoor scenes (no effect on skin, sky, wood or stone).
+    let greenness = max(c.g - max(c.r, c.b), 0.0);
+    c = vec3<f32>(c.r + grade.olive * greenness * 0.55, c.g, c.b + grade.olive * greenness * 0.05);
 
     // ── Filmic S-curve ── pivot just under mid-grey; a smooth blend toward a contrasted line,
     // shoulder/toe rolled by smoothstep so nothing clips harshly.

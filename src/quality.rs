@@ -940,6 +940,13 @@ fn apply_quality(
             e.remove::<crate::atmospherics::Atmospherics>();
         }
 
+        // Water screen-space reflections (`water_ssr.rs`): same premium tier, same toggle.
+        if god {
+            e.insert(crate::water_ssr::default_water_ssr());
+        } else {
+            e.remove::<crate::water_ssr::WaterSsr>();
+        }
+
         // Cinematic lens: a static edge vignette only. Chromatic aberration is OFF by default (user
         // preference) — the component is never inserted, so `postfx::drive_chromatic` finds nothing
         // and there's no resting fringe NOR hit-spike fringe. The vignette rides the existing
