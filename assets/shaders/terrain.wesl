@@ -17,6 +17,7 @@ import bevy_pbr::{
     render::pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
     render::forward_io::{VertexOutput, FragmentOutput},
     render::mesh_view_bindings::{view, lights},
+    render::shadows::fetch_directional_shadow,
 };
 @if(VISIBILITY_RANGE_DITHER)
 import bevy_pbr::render::pbr_functions::visibility_range_dither;
@@ -303,6 +304,66 @@ fn twig_field(wp: vec2<f32>, seedoff: f32, base_w: f32) -> vec2<f32> {
     return vec2<f32>(cov, tone);
 }
 
+// Small stones bedded in a trail: one candidate per ~0.38u cell (3x3 neighbourhood), a share of
+// them filled (`dens`), each an elliptic flattened dome of random size / yaw. The dome gives the
+// stone a real lit shape (normal tilt), and the soil round it takes a contact ring plus a short
+// cast shadow AWAY from the sun (`lsh` = sun XZ offset per unit stone radius), which is what
+// sells a pebble as lying ON the ground instead of being painted into it.
+struct Pebble {
+    cov: f32,
+    h: f32,
+    tilt: vec2<f32>,
+    shadow: f32,
+    tone: f32,
+};
+
+fn pebble_field(p: vec2<f32>, lsh: vec2<f32>, dens: f32) -> Pebble {
+    var o: Pebble;
+    o.cov = 0.0; o.h = 0.0; o.tilt = vec2<f32>(0.0); o.shadow = 0.0; o.tone = 0.0;
+    let cell = 0.38;
+    let ci = floor(p / cell);
+    for (var dy = -1; dy <= 1; dy += 1) {
+        for (var dx = -1; dx <= 1; dx += 1) {
+            let c = ci + vec2<f32>(f32(dx), f32(dy));
+            let r1 = ter_hash(c + vec2<f32>(5.3, 1.7));
+            if r1 < dens {
+                let r2 = ter_hash(c + vec2<f32>(17.1, 3.9));
+                let r3 = ter_hash(c + vec2<f32>(2.7, 29.3));
+                let r4 = ter_hash(c + vec2<f32>(41.9, 11.3));
+                // 0.04 .. 0.12u, mostly small: gravel with the odd fist-sized stone.
+                let rad = cell * (0.10 + 0.24 * r2 * r2 * r2);
+                let ctr = (c + 0.22 + 0.56 * vec2<f32>(r3, r4)) * cell;
+                let a = r2 * 37.7 + r3 * 5.0;
+                let cs = cos(a);
+                let sn = sin(a);
+                let el = 1.0 + 0.8 * r3;
+                let d = p - ctr;
+                let l = vec2<f32>(cs * d.x + sn * d.y, -sn * d.x + cs * d.y);
+                let q = vec2<f32>(l.x / el, l.y) / rad;
+                let rr = dot(q, q);
+                let ds = d + lsh * rad;
+                let ls = vec2<f32>(cs * ds.x + sn * ds.y, -sn * ds.x + cs * ds.y);
+                let qs = vec2<f32>(ls.x / el, ls.y) / rad;
+                let rs = dot(qs, qs);
+                o.shadow = max(o.shadow, (1.0 - smoothstep(0.50, 1.20, rs)) * 0.70 + (1.0 - smoothstep(0.95, 1.9, rr)) * 0.30);
+                if rr < 1.0 {
+                    let hd = sqrt(1.0 - rr);
+                    if hd > o.h {
+                        o.h = hd;
+                        o.cov = 1.0 - smoothstep(0.70, 1.0, rr);
+                        // Outward dome normal in the stone's frame, flattened (pebbles lie flat).
+                        let tl = vec2<f32>(q.x / el, q.y) / max(hd, 0.25) * 0.6;
+                        o.tilt = vec2<f32>(cs * tl.x - sn * tl.y, sn * tl.x + cs * tl.y);
+                        o.tone = r4;
+                    }
+                }
+            }
+        }
+    }
+    o.shadow = clamp(o.shadow, 0.0, 1.0) * (1.0 - o.cov);
+    return o;
+}
+
 @fragment
 fn fragment(
     in: VertexOutput,
@@ -546,6 +607,8 @@ fn fragment(
     // The forest's own share of the floor: parallax + self-shadow follow it alone, so bank soil
     // off the forest is a flat scanned layer (no ray march) — the march is the floor's big cost.
     var fp_forest = 0.0;
+    // Standing-water share of the trail (its puddles): they get a stronger specular below.
+    var fp_gloss = 0.0;
     if forest.pbr.x > 0.5 {
         let edge_n = ter_noise(wp * 0.21 + vec2<f32>(3.0, 41.0)) - 0.5;
         // On a bank the slope gate relaxes, so the forest floor rolls over the lip with the ground
@@ -587,7 +650,15 @@ fn fragment(
         // Moss/grass is the dominant floor (it sits under the green carpet and IS the carpet past
         // its draw range); leaf litter keeps the drier hollows.
         // Glades open to the sun: the grass/moss layer takes over there, litter keeps the groves.
-        let moss = clamp(smoothstep(0.30, 0.55, mossn) + glade * 0.7 - (1.0 - glade) * 0.08, 0.0, 1.0);
+        var moss = clamp(smoothstep(0.30, 0.55, mossn) + glade * 0.7 - (1.0 - glade) * 0.08, 0.0, 1.0);
+        // ...but a glade is no lawn: drifts of fallen leaves and dead stuff break the sward in
+        // ragged patches (the litter scan, height-blended below, so leaves lie IN the grass with
+        // organic edges). Thinner on open meadow, away from any trees (grove field ~0).
+        let woodsy = mix(0.45, 1.0, smoothstep(0.004, 0.05, fmask4.a));
+        let gpat = smoothstep(0.56, 0.80, ter_noise_rot(wp * 0.21, 0.81, 0.59) * 0.7
+                                        + ter_noise(wp * 0.75 + vec2<f32>(37.0, 5.0)) * 0.3)
+                 * glade * woodsy * (1.0 - fld_on);
+        moss = moss * (1.0 - 0.8 * gpat);
         var w = vec3<f32>((1.0 - moss) * (1.0 - path), moss * (1.0 - path), path);
         // Height blend: the taller texel of the competing layers wins across a narrow band.
         let h0 = fp_heights(wp, w, wp_dx, wp_dy);
@@ -605,11 +676,15 @@ fn fragment(
         let q = forest.params2.y;
         let dist = distance(view.world_position.xyz, in.world_position.xyz);
         let pom_far = select(0.0, select(16.0, 26.0, q >= 2.0), q >= 1.0);
-        let depth = FP_DEPTH * fp_forest * (1.0 - smoothstep(pom_far * 0.55, pom_far, dist));
+        // The trail marches a touch deeper: its crumbs, roots and stones are the floor's tallest relief.
+        let depth = FP_DEPTH * fp_forest * (1.0 + 0.15 * w.z) * (1.0 - smoothstep(pom_far * 0.55, pom_far, dist));
         if depth > 0.002 {
             let vdir = normalize(view.world_position.xyz - in.world_position.xyz);
             shift = -vdir.xz / max(vdir.y, 0.2) * depth;
-            let steps = select(10, 18, q >= 2.0);
+            // More steps at grazing angles, where a fixed count slices every leaf into a stack of
+            // horizontal bars; fewer looking down, where the ray is short.
+            let graze = 1.0 - clamp(vdir.y, 0.0, 1.0);
+            let steps = i32(round(select(mix(7.0, 13.0, graze), mix(11.0, 24.0, graze), q >= 2.0)));
             var prev_d = 0.0;
             var prev_diff = 1.0 - dot(w, h0);
             var hit = 1.0;
@@ -642,7 +717,7 @@ fn fragment(
                     let hk = dot(w, fp_heights(pw + lstep * t * (1.0 - hit_h), w, wp_dx, wp_dy));
                     self_shadow = max(self_shadow, (hk - ray_h) * 7.0);
                 }
-                self_shadow = clamp(self_shadow, 0.0, 1.0) * (depth / (FP_DEPTH * fp_forest + 1e-4));
+                self_shadow = clamp(self_shadow, 0.0, 1.0) * min(depth / (FP_DEPTH * fp_forest * (1.0 + 0.15 * w.z) + 1e-4), 1.0);
             }
         }
 
@@ -680,7 +755,7 @@ fn fragment(
                 o1 = mix(o1, textureSampleGrad(fp_ormh, fp_samp, ru, 1, rgx, rgy).rgb, t);
                 // ...and past mid range, where even two lattices read as a dotted moire, fade to the
                 // layer's mean (its last mip) and the flat normal; the broad drifts below carry it.
-                let far = smoothstep(14.0, 40.0, dist) * glade * 0.7;
+                let far = smoothstep(20.0, 50.0, dist) * glade * 0.7;
                 if far > 0.0 {
                     a1 = mix(a1, textureSampleLevel(fp_albedo, fp_samp, vec2<f32>(0.5), 1, 12.0).rgb, far);
                     n1 = mix(n1, vec3<f32>(0.0, 0.0, 1.0), far);
@@ -703,9 +778,11 @@ fn fragment(
             // lighter and sandier, a gentler relief. Plough strips keep the dark soil.
             if open_g > 0.01 {
                 let mean = textureSampleLevel(fp_albedo, fp_samp, vec2<f32>(0.5), 2, 12.0).rgb;
-                let packed = (mean + (a2 - mean) * 0.42) * vec3<f32>(1.30, 1.20, 1.02);
-                a2 = mix(a2, packed, open_g * 0.85);
-                n2 = mix(n2, vec3<f32>(0.0, 0.0, 1.0), open_g * 0.45);
+                // (Keeps most of the scan's crumbs, stones and relief: the old 0.42 contrast + 45 %
+                // normal flattening read as a smooth brown ribbon with no depth at all.)
+                let packed = (mean + (a2 - mean) * 0.80) * vec3<f32>(1.16, 1.10, 1.0);
+                a2 = mix(a2, packed, open_g * 0.75);
+                n2 = mix(n2, vec3<f32>(0.0, 0.0, 1.0), open_g * 0.12);
             }
             alb += w.z * a2;
             nts += w.z * n2;
@@ -724,6 +801,8 @@ fn fragment(
         // as dry straw-mustard on its own; pull it toward a living sward green (luminance kept, so it
         // stays a photo texture, never the old flat neon lawn), lusher in broad patches.
         let sward = glade * (1.0 - w.z);
+        // 1 inside the grass cards' draw range (`realforest::LUSH_FAR` = 46u), fading out beyond.
+        let near_c = 1.0 - smoothstep(24.0, 50.0, dist);
         if sward > 0.01 {
             let al = dot(alb, vec3<f32>(0.2126, 0.7152, 0.0722));
             let lushn = smoothstep(0.30, 0.75, ter_noise(wp * 0.045 + vec2<f32>(3.0, 17.0)));
@@ -743,7 +822,61 @@ fn fragment(
             let lumw = vec3<f32>(0.2126, 0.7152, 0.0722);
             let sw = mix(vec3<f32>(al) * tint / dot(tint, lumw), alb, 0.15)
                    * mix(0.98, 0.80, damp) * (1.0 + 0.10 * straw);
-            alb = mix(alb, sw, sward * 0.92);
+            // Under the grass cards (their draw range, ~46u) the ground is what shows BETWEEN the
+            // blades: only the scan's leafy texels are pulled green, its soil crumbs, dead straw and
+            // twigs keep their own colour — the flat luminance re-tint painted the whole sward one
+            // mint green, so the tufts read as props stuck on a green sheet. Past the cards' range the
+            // floor has to carry the meadow's green on its own, so the full re-tint returns there.
+            // Near: a white-balance grade instead (scale the scan so its MEAN lands on a softer
+            // version of the same tint), which keeps every crumb's, straw's and leaf's own hue.
+            let mean1 = textureSampleLevel(fp_albedo, fp_samp, vec2<f32>(0.5), 1, 12.0).rgb;
+            // Linear target means: a darker, earthier olive than the scan's straw-mustard mean
+            // (0.25, 0.20, 0.08), greener in the damp patches, golden on the dry swells.
+            // (Warmer than it looks: the day film grade's vibrance + teal shade push olive green.)
+            // (Low blue too: the sky ambient + the grade's teal shade cool the shaded ground to sage.)
+            var tgt = mix(vec3<f32>(0.172, 0.160, 0.048), vec3<f32>(0.128, 0.142, 0.040), damp);
+            tgt = mix(tgt, vec3<f32>(0.215, 0.175, 0.060), dryn * (1.0 - damp) * 0.75);
+            let graded = alb * (tgt / max(mean1, vec3<f32>(0.03)));
+            alb = mix(alb, mix(mix(alb, sw, 0.92), graded, near_c), sward);
+        }
+        // Earth under the sward / forest moss (everything but the trail): broad ragged patches of
+        // bare humus, dead straw and dark damp moss, each keeping the scan's own value detail. A
+        // real woodland / meadow floor is a patchwork, never one colour; strongest near the camera
+        // (under the grass cards), a soft echo far out so the open ground doesn't go flat either.
+        let lumw2 = vec3<f32>(0.2126, 0.7152, 0.0722);
+        let pat_n = mix(0.45, 1.0, near_c) * (1.0 - fld_on * fld.soil);
+        let pat_w = (1.0 - w.z) * pat_n;
+        if pat_n > 0.01 {
+            let rel = clamp(dot(alb, lumw2) / 0.16, 0.45, 1.3);
+            // Three scales (~1.5u bare spots, ~3u dead drifts, ~6u dark moss), each edge ragged by
+            // the scan's own height so it follows crumbs and blades instead of a soft blob outline.
+            let he = (hit_h - 0.5) * 0.35;
+            let pn1 = ter_noise_rot(wp * 0.62, 0.81, 0.59) * 0.65 + ter_noise(wp * 2.1 + vec2<f32>(9.0, 71.0)) * 0.35;
+            let pn2 = ter_noise_rot(wp * 0.33, 0.29, 0.957) * 0.65 + ter_noise(wp * 1.2 + vec2<f32>(53.0, 2.0)) * 0.35;
+            let pn3 = ter_noise_rot(wp * 0.16, 0.60, 0.80) * 0.7 + ter_noise(wp * 0.6 + vec2<f32>(19.0, 33.0)) * 0.3;
+            let bare = smoothstep(0.56, 0.70, pn1 - he);
+            let dead = smoothstep(0.54, 0.72, pn2 + he * 0.6);
+            let dmoss = smoothstep(0.48, 0.70, pn3);
+            let humus = vec3<f32>(0.100, 0.064, 0.032) * rel;
+            let strawc = vec3<f32>(0.22, 0.16, 0.080) * rel;
+            // Dark damp moss: a deeper, richer green than the sward around it (not a grey one).
+            let mossc = mix(vec3<f32>(dot(alb, lumw2)), alb, 0.6) * vec3<f32>(0.60, 0.80, 0.27);
+            alb = mix(alb, mossc, dmoss * 0.60 * pat_w);
+            alb = mix(alb, strawc, dead * 0.45 * pat_w);
+            alb = mix(alb, humus, bare * 0.65 * pat_w);
+            // Soil under the plant cover (mask B also carries the grass tufts' own soft splats):
+            // damp, darker, browner earth where the blades root, so a clump grows OUT of the
+            // ground instead of standing on it.
+            // The trodden shoulder (the band between the track and the carpet, where only a few
+            // verge tufts grow) was bare lawn - a pale sage kerb along every path. Scuffed straw
+            // and soil, broken by the bare-spot noise.
+            let shoulder = smoothstep(0.12, 0.34, fmask.g) * (1.0 - smoothstep(0.55, 0.80, fmask.g));
+            // (Weighted past the trail's own edge too: the path layer's packed margin was a pale band.)
+            alb = mix(alb, mix(strawc * 0.9, humus * 1.15, smoothstep(0.35, 0.65, pn1)), shoulder * 0.55 * pat_n);
+            let under = fmask.b * (1.0 - w.z);
+            alb = mix(alb, humus * 0.85, under * 0.55) * (1.0 - 0.18 * under);
+            // Overall: the lawn's saturated green toned down toward an olive / earthy floor.
+            alb = mix(vec3<f32>(dot(alb, lumw2)), alb, mix(1.0, 0.90, pat_w * glade));
         }
         // Micro self-shadow (above), contact darkening where roots / stones meet the floor (mask
         // B), and the cart-wheel ruts pressed back into the scanned path as damp, darker grooves
@@ -756,19 +889,73 @@ fn fragment(
         // Plough rows: damp dark furrow bottoms, sun-dried crumbly crests.
         let frow = fld.rows * fld_on * fld.soil;
         alb *= mix(1.0, mix(0.38, 1.25, fld.ridge), frow);
-        // Wet mud + puddles on the trail: the path layer darkens toward damp earth, and water
-        // pools in its LOW texels (height below a noise-varied water line, deeper in the ruts).
-        // Puddles are near-black, glassy and flat, so the IBL sky and sun glint off them.
-        let damp = w.z * (0.45 + 0.55 * ter_noise(wp * 0.11 + vec2<f32>(41.0, 7.0))) * (1.0 - 0.7 * open_g);
-        alb *= 1.0 - 0.22 * damp;
         alb *= mix(vec3<f32>(1.0), bank_tint, bank_fp / fp_w) * (1.0 - 0.48 * bank_damp);
-        // Small, scattered puddles: mostly IN the ruts, occasionally in a dip — never a flooded track.
+
+        // ── The trail as real 3D ground: a trodden trough, bedded stones, damp mud and standing
+        //    puddles that mirror the sky. (No SSR in this pipeline: the "reflection" is the stock
+        //    IBL + sun specular on a flat, near-zero-roughness water surface, which Fresnel turns
+        //    into a bright sky mirror at the grazing angles a trail is seen from.)
+        // (a) Trough: the track is worn ~0.1-0.2u below its verges. Its banks tilt the shading
+        //     normal toward the centre line (mask G gradient, 4 explicit-level taps ~1.1u apart, so
+        //     the 2 texel/u mask's bilinear facets average out), so the sun lights one bank and the
+        //     other falls into shade - the path reads as pressed INTO the ground, not printed on it.
+        var trough_tilt = vec3<f32>(0.0);
+        var centre = 0.0;
+        if w.z > 0.02 && q >= 1.0 {
+            let o = 0.55;
+            let ox = vec2<f32>(o * forest.pbr_region.z, 0.0);
+            let oz = vec2<f32>(0.0, o * forest.pbr_region.w);
+            let txp = smoothstep(0.20, 0.90, textureSampleLevel(fp_mask, fp_mask_samp, fmask_uv + ox, 0.0).g);
+            let txm = smoothstep(0.20, 0.90, textureSampleLevel(fp_mask, fp_mask_samp, fmask_uv - ox, 0.0).g);
+            let tzp = smoothstep(0.20, 0.90, textureSampleLevel(fp_mask, fp_mask_samp, fmask_uv + oz, 0.0).g);
+            let tzm = smoothstep(0.20, 0.90, textureSampleLevel(fp_mask, fp_mask_samp, fmask_uv - oz, 0.0).g);
+            // height = -0.20 * T  ->  N ~ (0.20 dT/dx, 1, 0.20 dT/dz)
+            trough_tilt = vec3<f32>(txp - txm, 0.0, tzp - tzm) * (0.20 / (2.0 * o)) * (1.0 - fld_on);
+            centre = smoothstep(0.60, 0.97, fmask.g);
+        }
+        // (b) Water: low basins along the track (broad noise, deeper toward the centre line and in
+        //     the cart ruts) hold water up to a line; the scan's height decides the exact shore, so
+        //     every crumb and leaf pokes out of it. A wider band above the water line is wet mud.
+        let basin = ter_noise_rot(wp * 0.20, 0.95, 0.31) * 0.7 + ter_noise(wp * 0.62 + vec2<f32>(13.0, 57.0)) * 0.3;
         let pocket = smoothstep(0.62, 0.85, ter_noise(wp * 0.33 + vec2<f32>(71.0, 5.0)));
-        let water_line = smoothstep(0.70, 0.92, ter_noise(wp * 0.16 + vec2<f32>(13.0, 57.0))) * 0.35 + rut * 0.32 * pocket;
-        // No puddles standing on a bank slope (the bank's own damp band handles the wet look).
-        let puddle = clamp((water_line - hit_h) * 10.0, 0.0, 1.0) * w.z * smoothstep(0.5, 0.8, path)
-            * (1.0 - smoothstep(0.0, 0.2, bank)) * (1.0 - 0.8 * open_g);
-        alb = mix(alb, alb * 0.16, puddle);
+        let water_line = smoothstep(0.55, 0.82, basin) * (0.32 + 0.32 * centre) + rut * 0.32 * pocket;
+        // No puddles on a bank slope (the bank's own damp band handles that) or a field strip.
+        let wet_gate = w.z * smoothstep(0.45, 0.80, path) * (1.0 - smoothstep(0.0, 0.2, bank))
+            * (1.0 - 0.45 * open_g) * (1.0 - fld_on);
+        let pdepth = water_line - hit_h;
+        // Damp patches: broad, irregular, the low texels darkest - with the halo round each puddle.
+        let dampn = ter_noise(wp * 0.11 + vec2<f32>(41.0, 7.0));
+        let damp = w.z * (0.35 + 0.65 * dampn) * (1.0 - 0.6 * open_g);
+        let halo = clamp((pdepth + 0.15) * 5.0, 0.0, 1.0) * smoothstep(0.0, 0.08, water_line);
+        let wet = clamp(max(halo, smoothstep(0.60, 0.86, dampn) * 0.65 * (1.0 - smoothstep(0.30, 0.70, hit_h))), 0.0, 1.0)
+            * wet_gate;
+        alb *= 1.0 - 0.20 * damp;
+        alb *= 1.0 - 0.36 * wet;
+        // (c) Bedded stones (`pebble_field`): gravel strewn along the track, clustered, densest on
+        //     the shoulders; near the camera only (sub-pixel past ~26u) and High / Ultra.
+        var pb = Pebble(0.0, 0.0, vec2<f32>(0.0), 0.0, 0.0);
+        let near_p = w.z * (1.0 - smoothstep(15.0, 26.0, dist)) * f32(q >= 1.0) * (1.0 - fld_on);
+        if near_p > 0.02 {
+            var lsh = vec2<f32>(0.6, 0.3);
+            if lights.n_directional_lights > 0u {
+                let ld = lights.directional_lights[0].direction_to_light;
+                lsh = ld.xz / max(ld.y, 0.3) * 0.9;
+            }
+            let cluster = smoothstep(0.30, 0.78, ter_noise(wp * 0.45 + vec2<f32>(3.0, 61.0)));
+            let dens = (0.08 + 0.42 * cluster) * smoothstep(0.35, 0.75, path) * (1.0 - 0.45 * centre);
+            pb = pebble_field(pw, lsh, dens);
+            pb.cov *= near_p;
+            pb.shadow *= near_p;
+            let stone = mix(vec3<f32>(0.075, 0.068, 0.058), vec3<f32>(0.26, 0.235, 0.20), pb.tone * pb.tone)
+                * (0.72 + 0.40 * pb.h) * (0.9 + 0.2 * ter_noise(wp * 23.0));
+            alb *= 1.0 - 0.55 * pb.shadow;
+            alb = mix(alb, mix(stone, alb * 1.5, 0.2) * (1.0 - 0.35 * wet), pb.cov);
+        }
+        // Stone tops stand proud of the water.
+        let puddle = clamp(pdepth * 28.0, 0.0, 1.0) * wet_gate * (1.0 - pb.cov * smoothstep(0.2, 0.55, pb.h));
+        // Shallow rim shows the mud through the water; deeper water is a dark mirror.
+        let deep = smoothstep(0.0, 0.09, pdepth);
+        alb = mix(alb, alb * mix(0.42, 0.09, deep), puddle);
         rgb = mix(rgb, alb, fp_w);
         // Tangent frame of the planar XZ mapping: u runs along +X, v along +Z, and an OpenGL
         // normal map's +Y (image up = decreasing v) therefore points toward -Z.
@@ -792,10 +979,19 @@ fn fragment(
         }
         // Row relief: ~0.16u ridges, so the sun rakes light/dark bands along every row.
         rut_tilt -= vec3<f32>(fld.grad.x, 0.0, fld.grad.y) * 0.16 * fld_on * fld.soil;
-        fp_nw = normalize(mix(tx * n_ts.x + bz * n_ts.y + gn * n_ts.z + rut_tilt, gn, puddle));
-        fp_ao = orm.r;
-        // Dry packed earth is matte: keep the trail rough so only real puddles glint.
-        fp_rough = mix(max(orm.g, 0.82 * w.z) * mix(1.0, 0.85, rut * rut_wear), 0.04, puddle);
+        // Water surface: flat (the sky mirror needs it) once it's more than a film; the stones' domes
+        // and the trough's banks tilt everything else.
+        let gloss = smoothstep(0.25, 0.75, puddle);
+        fp_gloss = gloss;
+        let tilt_w = rut_tilt + trough_tilt + vec3<f32>(pb.tilt.x, 0.0, pb.tilt.y) * pb.cov;
+        fp_nw = normalize(mix(tx * n_ts.x * (1.0 - pb.cov) + bz * n_ts.y * (1.0 - pb.cov) + gn * n_ts.z + tilt_w, gn, gloss));
+        fp_ao = orm.r * (1.0 - 0.45 * pb.shadow);
+        // Dry packed earth is matte; wet mud takes a soft sheen that catches the sun; stones are
+        // half-rough; standing water is a mirror.
+        var rgh = max(orm.g, 0.82 * w.z) * mix(1.0, 0.85, rut * rut_wear);
+        rgh = mix(rgh, 0.58, pb.cov);
+        rgh = mix(rgh, 0.30, wet);
+        fp_rough = mix(rgh, 0.03, gloss);
     }
 
     // Clamp alpha ≥ 0 on write-back: the negative cliffness flag has served its purpose and
@@ -1066,6 +1262,33 @@ fn fragment(
     pbr_input.material.base_color = select(pbr_input.material.base_color, vec4<f32>(0.25, 0.22, 0.16, 0.0), c_bad);
     if (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_UNLIT_BIT) == 0u {
         out.color = apply_pbr_lighting(pbr_input);
+        // Puddle sky mirror. The IBL here is a dim analytic gradient (scene.rs, ~1/10 of the drawn
+        // sky's radiance), so a glassy puddle lit by it alone reflected murky grey - water that read
+        // as a dark stain. Add the sky's reflection explicitly in display units, Schlick-weighted
+        // (water F0 0.02 -> bright at the grazing angles a trail is seen from), and dimmed where
+        // the sun is shadowed: under a canopy a puddle mirrors leaves, not open sky.
+        let pg = fp_gloss * fp_w;
+        if pg > 0.01 {
+            let vv = normalize(view.world_position.xyz - in.world_position.xyz);
+            let cos_t = clamp(dot(vv, normalize(in.world_normal)), 0.0, 1.0);
+            // (A softened Schlick, F0 0.06 / power 4: in a tonemapped frame the sky is only a few
+            // times brighter than the ground, not 10x as in life, so true water F0 reads too dim.)
+            let fres = 0.06 + 0.94 * pow(1.0 - cos_t, 4.0);
+            var vis = 1.0;
+            var sky = vec3<f32>(0.0);
+            if lights.n_directional_lights > 0u {
+                let view_z = dot(vec4<f32>(view.view_from_world[0].z, view.view_from_world[1].z,
+                    view.view_from_world[2].z, view.view_from_world[3].z), in.world_position);
+                vis = fetch_directional_shadow(0u, in.world_position, normalize(in.world_normal), view_z, in.position.xy);
+                // Sky radiance calibrated off the sun itself: about what a pale surface facing the sun
+                // returns (sun illuminance x exposure / pi), tinted sky-blue. So it follows the time
+                // of day for free - golden at dusk, near nothing at night - and the exposure.
+                let ld = lights.directional_lights[0];
+                let up = clamp(ld.direction_to_light.y * 2.5, 0.0, 1.0);
+                sky = ld.color.rgb * view.exposure * (0.70 / 3.14159) * vec3<f32>(0.62, 0.80, 1.0) * up;
+            }
+            out.color = vec4<f32>(out.color.rgb + sky * fres * mix(0.25, 1.0, vis) * pg, out.color.a);
+        }
     } else {
         out.color = pbr_input.material.base_color;
     }

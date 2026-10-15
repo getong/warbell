@@ -92,11 +92,17 @@ pub enum Tier {
 /// mask's B channel so the floor darkens where roots and stones meet it. Filled during the forest
 /// scatter; [`SCATTER_DONE`] tells the terrain hook the list is complete.
 static SPLATS: std::sync::Mutex<Vec<Vec3>> = std::sync::Mutex::new(Vec::new());
+/// Softer splats (x, z, radius) under the undergrowth's grass / fern tufts, baked into the same B
+/// channel at [`COVER_SPLAT_WEIGHT`]: the soil where a clump roots reads damp and dark (the terrain
+/// shader browns it too), so the tufts grow OUT of the floor instead of standing on a green sheet.
+static COVER_SPLATS: std::sync::Mutex<Vec<Vec3>> = std::sync::Mutex::new(Vec::new());
+const COVER_SPLAT_WEIGHT: f32 = 0.42;
 static SCATTER_DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Called at the top of the forest scatter (also on an in-process world rebuild).
 pub fn begin_scatter() {
     SPLATS.lock().expect("splats poisoned").clear();
+    COVER_SPLATS.lock().expect("splats poisoned").clear();
     SCATTER_DONE.store(false, std::sync::atomic::Ordering::Release);
 }
 
@@ -815,6 +821,7 @@ impl Kit {
                     let s = s * clump_s;
                     let (pos, rot) = lie(m, x, z, d * 131.0 % std::f32::consts::TAU);
                     chunks.push(self, m, pos, rot, s, Tier::LushNear);
+                    COVER_SPLATS.lock().expect("splats poisoned").push(Vec3::new(x, z, 0.30 * s));
                     if k % 2 == 0 && d < 0.85 {
                         chunks.push(self, m, pos, rot, s * 1.35, Tier::LushFar);
                     }
@@ -1396,7 +1403,10 @@ fn try_build(
         mats.push(match name {
             "canopy" => KitMat::Foliage(foliage_mats.add(foliage::material(m, 0.025, 1.2, 0.6))),
             "undergrowth" => KitMat::Foliage(foliage_mats.add(foliage::dissolve(
-                foliage::ground_match(foliage::material(m, 0.035, 2.5, 0.35), 0.8, 0.6),
+                // Root lift 0.35 (was 0.8): the ground under the carpet is now earthy, not a lawn, so
+                // blade bases stay dark and shaded - a clump grows out of the soil instead of
+                // starting in a pale straw halo that read as a card standing on the ground.
+                foliage::ground_match(foliage::material(m, 0.035, 2.5, 0.35), 0.35, 0.6),
                 DISSOLVE_BAND,
             ))),
             // Hanging moss / willow whips swing a touch more than a crown edge.
@@ -1645,7 +1655,10 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
     let forest = inward(blur(&blur(&forest, true), false));
     let woods = blur(&blur(&woods, true), false);
     let mut occl = vec![0.0f32; w * h];
-    for sp in SPLATS.lock().expect("splats poisoned").iter() {
+    let solid = SPLATS.lock().expect("splats poisoned").clone();
+    let cover = COVER_SPLATS.lock().expect("splats poisoned").clone();
+    let all = solid.iter().map(|s| (*s, 1.0)).chain(cover.iter().map(|s| (*s, COVER_SPLAT_WEIGHT)));
+    for (sp, wt) in all {
         let (cx, cz, r) = (sp.x, sp.y, sp.z.max(0.2));
         let reach = r * 2.6;
         let i0 = ((cx - reach - x0) * RES).floor().max(0.0) as usize;
@@ -1656,7 +1669,7 @@ fn bake_mask(images: &mut Assets<Image>) -> (Handle<Image>, Vec4) {
             let dz = z0 + (j as f32 + 0.5) / RES - cz;
             for i in i0..i1 {
                 let dx = x0 + (i as f32 + 0.5) / RES - cx;
-                let v = (-(dx * dx + dz * dz) / (r * r * 1.6)).exp();
+                let v = (-(dx * dx + dz * dz) / (r * r * 1.6)).exp() * wt;
                 let o = &mut occl[j * w + i];
                 *o = 1.0 - (1.0 - *o) * (1.0 - v);
             }
