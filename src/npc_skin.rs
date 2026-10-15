@@ -84,6 +84,7 @@ impl Plugin for NpcSkinPlugin {
         if !enabled() {
             return;
         }
+        app.init_resource::<crate::anim_lod::SkinLodCache>();
         app.add_systems(Startup, load_cast)
             .add_systems(Update, (finish_cast, attach_skins, reveal_skins, hide_studio_rigs, copy_tools, drive_skins, carry_loads).chain());
         if std::env::var_os("FOREST_GAITCHECK").is_some() {
@@ -141,6 +142,8 @@ pub struct Skinned {
     /// Every mesh entity of the skin (shadow LOD) and whether they currently cast.
     meshes: Vec<Entity>,
     casting: bool,
+    /// Drawing the meshopt far twins (`anim_lod::swap_meshes`).
+    lod_far: bool,
 }
 
 impl Skinned {
@@ -412,6 +415,7 @@ fn attach_skins(
             unseen: 0.0,
             meshes: Vec::new(),
             casting: true,
+            lod_far: false,
         });
     }
 }
@@ -698,6 +702,9 @@ fn drive_skins(
     mut players: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
     mut props: Query<&mut Transform>,
     mut prop_vis: Query<&mut Visibility>,
+    mut mesh3d: Query<&mut Mesh3d>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut lod_cache: ResMut<crate::anim_lod::SkinLodCache>,
 ) {
     let dt = time.delta_secs();
     if dt <= 0.0 {
@@ -720,6 +727,10 @@ fn drive_skins(
         if let Some(cast) = crate::anim_lod::shadow_flip(sk.casting, d2) {
             sk.casting = cast;
             crate::anim_lod::set_casting(&mut commands, &sk.meshes, cast);
+        }
+        if let Some(lf) = crate::anim_lod::lod_flip(sk.lod_far, d2) {
+            sk.lod_far = lf;
+            crate::anim_lod::swap_meshes(&sk.meshes, lf, &mut mesh3d, &mut meshes, &mut lod_cache);
         }
         if far != sk.parked {
             sk.parked = far;

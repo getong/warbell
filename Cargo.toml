@@ -40,6 +40,7 @@ gltf = { version = "1.4", default-features = false, features = ["names", "utils"
 # GPU frame captures (`--features renderdoc`, `src/rdoc.rs`): the in-app RenderDoc API, so a
 # headless run can capture a chosen frame (`FOREST_RDOC`) for `tools/rdoc/` per-draw analysis.
 renderdoc = { version = "0.12.1", optional = true }
+meshopt = "0.4"
 
 # Profiling build: turns on Bevy's per-system tracing spans, written to a chrome-trace JSON on exit
 # (`trace-<ts>.json`). `cargo run --features profiling` then `tools/trace_summary.py <file>` gives an

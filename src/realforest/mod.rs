@@ -57,6 +57,14 @@ const TREE_MODEL_SCALE: f32 = 0.62;
 /// floor clutter (fallen-leaf sheets, pebbles, twigs) that only matters near the camera.
 const COVER_FAR: f32 = 58.0;
 const PROPS_FAR: f32 = 75.0;
+/// Props chunks (scanned rocks / logs / stumps / bushes: the heaviest merged geometry) switch to a
+/// meshopt-simplified twin past this distance ([`Tier::PropsFar`]); unscaled by render distance.
+const PROPS_LOD: f32 = 30.0;
+/// Target triangle share of the far props twin (the simplifier stops earlier if the shape would
+/// deviate by more than 2% of the model's size).
+const PROPS_LOD_RATIO: f32 = 0.25;
+/// Biome static models ([`Kit::attach_static_lod`]) swap to their far twin here (unscaled).
+const STATIC_LOD: f32 = 36.0;
 const CLUTTER_FAR: f32 = 34.0;
 /// The green carpet is density-LOD'd like big open-world games do it: every tuft near the camera,
 /// a thinned set of bigger tufts in a ring beyond, nothing past that — where the ground shader's
@@ -68,6 +76,12 @@ const LUSH_FAR: f32 = 46.0;
 /// thin-out) instead of popping as whole 16u squares — `foliage::dissolve`.
 const DISSOLVE_BAND: f32 = 9.0;
 
+/// Far props tier on? (`FOREST_PROPSLOD=0` draws full props to `PROPS_FAR`, A/B.) Read once.
+fn props_lod_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("FOREST_PROPSLOD").map(|v| v != "0").unwrap_or(true))
+}
+
 /// [`DISSOLVE_BAND`], or 0 when `FOREST_DISSOLVE=0`.
 fn dissolve_band() -> f32 {
     if std::env::var("FOREST_DISSOLVE").is_ok_and(|v| v == "0") { 0.0 } else { DISSOLVE_BAND }
@@ -76,8 +90,11 @@ fn dissolve_band() -> f32 {
 /// Which merge bucket a kit prop lands in - decides its cull distance and landmark clearing.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Tier {
-    /// Bushes / rocks / stumps / logs from the main scatter.
+    /// Bushes / rocks / stumps / logs from the main scatter, `0..PROPS_LOD`.
     Props,
+    /// The same props, meshopt-simplified, `PROPS_LOD..PROPS_FAR` (queued alongside every
+    /// [`Tier::Props`] push).
+    PropsFar,
     /// Ferns / grass / stalks from the cover scatter (cleared around landmarks).
     Cover,
     /// Dense near-camera floor clutter ([`Kit::scatter_clutter`]).
@@ -127,6 +144,29 @@ pub struct Part {
     pub mesh: Mesh,
     pub handle: Handle<Mesh>,
     pub mat: usize,
+    /// meshopt-simplified twin for far tiers (`autolod`), built on first use.
+    lod: OnceLock<Option<Mesh>>,
+    /// Its uploaded handle (shared by every instance, so far twins batch like the originals).
+    lod_handle: OnceLock<Option<Handle<Mesh>>>,
+}
+
+impl Part {
+    /// The far-tier mesh: simplified to ~[`PROPS_LOD_RATIO`] of the triangles where that holds
+    /// the shape, else the full mesh.
+    pub fn lod_mesh(&self) -> &Mesh {
+        self.lod.get_or_init(|| crate::autolod::simplify_far(&self.mesh, PROPS_LOD_RATIO, 0.02)).as_ref().unwrap_or(&self.mesh)
+    }
+
+    /// Handle of the far twin, or of the full mesh when simplifying didn't pay.
+    pub fn lod_handle(&self, meshes: &mut Assets<Mesh>) -> Handle<Mesh> {
+        self.lod_handle
+            .get_or_init(|| {
+                self.lod_mesh();
+                self.lod.get().and_then(|m| m.as_ref()).map(|m| meshes.add(m.clone()))
+            })
+            .clone()
+            .unwrap_or_else(|| self.handle.clone())
+    }
 }
 
 pub struct Model {
@@ -550,6 +590,29 @@ impl Kit {
         true
     }
 
+    /// [`Self::attach_static_with`] in two tiers: the full model to [`STATIC_LOD`], its meshopt
+    /// twin from there to `far` (`autolod`). For the biome scatter's big static models (rock spires,
+    /// saguaros, krummholz, cypress knees), which the render-distance setting stretches far.
+    pub fn attach_static_lod(&self, e: &mut EntityCommands, name: &str, tf: Transform, far: f32, meshes: &mut Assets<Mesh>) -> bool {
+        let Some(m) = self.model(name) else { return false };
+        let range = |a: f32, b: f32| VisibilityRange { start_margin: a..a, end_margin: b..b, use_aabb: false };
+        let split = far > STATIC_LOD && props_lod_enabled();
+        e.insert(Visibility::default());
+        let handles: Vec<_> = self.models[m].parts.iter().map(|p| split.then(|| p.lod_handle(meshes))).collect();
+        e.with_children(|p| {
+            for (part, lod) in self.models[m].parts.iter().zip(handles) {
+                let near_end = if lod.is_some() { STATIC_LOD } else { far };
+                let mut c = p.spawn((Mesh3d(part.handle.clone()), tf, range(0.0, near_end)));
+                self.mats[part.mat].insert(&mut c);
+                if let Some(h) = lod {
+                    let mut c = p.spawn((Mesh3d(h), tf, range(STATIC_LOD, far)));
+                    self.mats[part.mat].insert(&mut c);
+                }
+            }
+        });
+        true
+    }
+
     /// Spawn the static kit model `name` as a new root entity at `tf`, `extra` on every part.
     pub fn spawn_static_with<B: Bundle + Clone>(&self, commands: &mut Commands, name: &str, tf: Transform, extra: B) -> Option<Entity> {
         self.model(name)?;
@@ -924,7 +987,7 @@ pub struct Chunks {
 pub struct DensitySlice(pub u8);
 
 fn density_slice(tier: Tier, world: Vec3) -> u8 {
-    if tier == Tier::Props {
+    if matches!(tier, Tier::Props | Tier::PropsFar) {
         return 0;
     }
     let (e, _) = rolls(world.x * 1.7 + 0.13, world.z * 1.3 - 0.71);
@@ -997,6 +1060,9 @@ impl Chunks {
         let slice = density_slice(tier, world);
         for (pi, part) in kit.models[model].parts.iter().enumerate() {
             self.groups.entry((key, tier, slice, part.mat, snow)).or_default().push((model, pi, t));
+            if tier == Tier::Props && props_lod_enabled() {
+                self.groups.entry((key, Tier::PropsFar, slice, part.mat, snow)).or_default().push((model, pi, t));
+            }
         }
         if tier == Tier::Props {
             splat(world.x, world.z, 0.55 * scale);
@@ -1020,7 +1086,7 @@ impl Chunks {
         // Merge every group in parallel (pure vertex work — this was most of each scatter phase),
         // then spawn serially in the groups' iteration order.
         let groups: Vec<_> = self.groups.into_iter().collect();
-        let merged = crate::par::par_map(groups.len(), |gi| merge_group(kit, &groups[gi].1));
+        let merged = crate::par::par_map(groups.len(), |gi| merge_group(kit, &groups[gi].1, groups[gi].0 .1 == Tier::PropsFar));
         for (((key, tier, slice, mat, snow), _), base) in groups.into_iter().zip(merged) {
             if let Some(base) = base {
                 let r = Recipe { tier, slice, mat, snow, items: Vec::new() };
@@ -1031,12 +1097,16 @@ impl Chunks {
 }
 
 /// Merge one group's queued kit parts into a single chunk-local mesh (`None` if empty).
-fn merge_group(kit: &Kit, items: &[(usize, usize, Transform)]) -> Option<Mesh> {
+fn merge_group(kit: &Kit, items: &[(usize, usize, Transform)], lod: bool) -> Option<Mesh> {
+    let mesh = |m: usize, p: usize| {
+        let part = &kit.models[m].parts[p];
+        if lod { part.lod_mesh() } else { &part.mesh }
+    };
     let mut it = items.iter();
     let &(m0, p0, t0) = it.next()?;
-    let mut base = kit.models[m0].parts[p0].mesh.clone().transformed_by(t0);
+    let mut base = mesh(m0, p0).clone().transformed_by(t0);
     for &(m, p, t) in it {
-        let part = kit.models[m].parts[p].mesh.clone().transformed_by(t);
+        let part = mesh(m, p).clone().transformed_by(t);
         if base.merge(&part).is_err() {
             warn!("realforest: chunk merge failed (attribute mismatch) — part skipped");
         }
@@ -1059,7 +1129,9 @@ fn spawn_group(
     // it's uploaded. These merges were ~3 GiB of resident RAM at MAP_SCALE 3.9.
     base.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
     let (near, far) = match r.tier {
+        Tier::Props if props_lod_enabled() => (0.0, PROPS_LOD),
         Tier::Props => (0.0, PROPS_FAR),
+        Tier::PropsFar => (PROPS_LOD, PROPS_FAR),
         Tier::Cover => (0.0, COVER_FAR),
         Tier::Clutter => (0.0, CLUTTER_FAR),
         Tier::LushNear => (0.0, LUSH_NEAR),
@@ -1085,7 +1157,7 @@ fn spawn_group(
         Visibility::default(),
     ));
     kit.mat(r.mat, r.snow).insert(&mut e);
-    if r.tier != Tier::Props {
+    if !matches!(r.tier, Tier::Props | Tier::PropsFar) {
         e.insert(crate::biome::GroundCoverChunk);
     }
     if cull || near > 0.0 {
@@ -1242,8 +1314,9 @@ fn stream_cover(
     need.truncate(STREAM_BUDGET);
     let pool = bevy::tasks::AsyncComputeTaskPool::get();
     for (key, _) in need {
-        let items: Vec<Vec<(usize, usize, Transform)>> = chunks[&key].iter().map(|r| r.items.clone()).collect();
-        let task = pool.spawn(async move { items.iter().map(|it| merge_group(kit, it)).collect::<Vec<_>>() });
+        let items: Vec<(Vec<(usize, usize, Transform)>, bool)> =
+            chunks[&key].iter().map(|r| (r.items.clone(), r.tier == Tier::PropsFar)).collect();
+        let task = pool.spawn(async move { items.iter().map(|(it, lod)| merge_group(kit, it, *lod)).collect::<Vec<_>>() });
         pending.insert(key, task);
     }
 }
@@ -1438,7 +1511,7 @@ fn try_build(
             }
             let parts: Vec<Part> = raw
                 .into_iter()
-                .map(|(mesh, mat)| Part { handle: meshes.add(mesh.clone()), mesh, mat })
+                .map(|(mesh, mat)| Part { handle: meshes.add(mesh.clone()), mesh, mat, lod: OnceLock::new(), lod_handle: OnceLock::new() })
                 .collect();
             let (half, trunk, height) = model_extents(&parts, &mats);
             let solid = ["rock_", "log_", "stump_"].iter().any(|p| name.starts_with(p));

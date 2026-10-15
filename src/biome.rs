@@ -1377,12 +1377,7 @@ pub fn scatter_region(
                                         tree.insert(crate::wind::sway_for(cx, cz, base));
                                     }
                                     let far = if scatter_cull_enabled() { 180.0 } else { 1.0e6 };
-                                    let range = bevy::camera::visibility::VisibilityRange {
-                                        start_margin: 0.0..0.0,
-                                        end_margin: far..far,
-                                        use_aabb: true,
-                                    };
-                                    k.attach_static_with(&mut tree, name, Transform::from_scale(Vec3::splat(sc)), range);
+                                    k.attach_static_lod(&mut tree, name, Transform::from_scale(Vec3::splat(sc)), far, meshes);
                                 }
                             }
                             if cfg.biome == Biome::Desert {
