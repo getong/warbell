@@ -3,7 +3,7 @@ thread of a running process, walks its stack with dbghelp `StackWalk64`, and res
 run it symbolises the addresses through the process's PDBs and prints, per thread, the hottest
 functions by SELF and INCLUSIVE samples.
 
-    python tools/prof/sample.py <pid> [--secs 20] [--hz 400] [--out report.txt] [--top 70]
+    python tools/prof/sample.py <pid> [--secs 20] [--hz 400] [--out report.txt] [--top 70] [--idle] [--merge]
 
 Build the game with symbols for the crates you care about first (the default dev profile has
 `debug = 0`, so there is no PDB at all) — e.g. line tables for the Bevy crates only, which keeps the
@@ -193,12 +193,17 @@ def main():
             cache[addr] = s
         return s
 
+    # `--idle`: keep blocked samples too, to see WHERE a thread waits (present? extract? fences?)
+    keep_idle = "--idle" in a
     IDLE = ("NtWaitFor", "NtDelayExecution", "NtRemoveIoCompletion", "ZwWaitFor", "NtUserMsgWaitFor",
             "NtWaitForAlertByThreadId", "NtWaitForWorkViaWorkerFactory", "NtUserGetMessage", "NtSignalAndWaitForSingleObject")
     with open(out, "w", encoding="utf-8") as f:
         groups = collections.defaultdict(list)
         for tid, st in stacks.items():
-            groups[names.get(tid) or f"tid{tid}"].append(tid)
+            g = names.get(tid) or f"tid{tid}"
+            if "--merge" in a and g.startswith("Compute Task Pool"):
+                g = "Compute Task Pool (all)"  # `--merge`: one profile across the pool's threads
+            groups[g].append(tid)
         rows = []
         for g, tids in groups.items():
             busy = []
@@ -206,7 +211,7 @@ def main():
             for tid in tids:
                 for s in stacks[tid]:
                     total += 1
-                    if s and not any(k in sym(s[0]) for k in IDLE):
+                    if s and (keep_idle or not any(k in sym(s[0]) for k in IDLE)):
                         busy.append(s)
             rows.append((len(busy), total, g, busy))
         rows.sort(key=lambda r: -r[0])
@@ -227,6 +232,21 @@ def main():
             f.write("-- inclusive\n")
             for nm, c in incl.most_common(top):
                 f.write(f"{100.0 * c / nb:6.1f}%  {nm[:200]}\n")
+            # `--callers <substr>`: the first non-wgpu/std frame above each sample that's inside <substr>
+            if "--callers" in sys.argv:
+              for want in sys.argv[sys.argv.index("--callers") + 1].split(","):
+                cal = collections.Counter()
+                for st in busy:
+                    nms = [sym(x) for x in st]
+                    hit = next((i for i, nm in enumerate(nms) if want in nm), None)
+                    if hit is None:
+                        continue
+                    up = next((nm for nm in nms[hit + 1:] if not nm.startswith(("wgpu", "core::", "alloc::", "std::", "?"))
+                               and "drop_glue" not in nm), "?")
+                    cal[up[:160]] += 1
+                f.write(f"-- callers of {want}\n")
+                for nm, c in cal.most_common(40):
+                    f.write(f"{100.0 * c / nb:6.1f}%  {nm}\n")
             f.write("-- self\n")
             for nm, c in selfc.most_common(top // 2):
                 f.write(f"{100.0 * c / nb:6.1f}%  {nm[:200]}\n")

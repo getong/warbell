@@ -10,5 +10,5 @@ for kv in sys.argv[5:]:
     k, v = kv.split("=", 1); env[k] = v
 p = subprocess.Popen([os.path.abspath(exe)], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 time.sleep(warm)
-subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__), "sample.py"), str(p.pid), "--secs", secs, "--out", out, "--symdir", os.path.dirname(os.path.abspath(exe))])
+subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__), "sample.py"), str(p.pid), "--secs", secs, "--out", out, "--symdir", os.path.dirname(os.path.abspath(exe))] + (["--idle"] if os.environ.get("PROF_IDLE") else []) + (["--merge", "--top", "200"] if os.environ.get("PROF_MERGE") else []) + (["--callers", os.environ["PROF_CALLERS"]] if os.environ.get("PROF_CALLERS") else []))
 p.kill()

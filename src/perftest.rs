@@ -427,21 +427,42 @@ fn perf_tick(world: &mut World) {
             let mut q = world.query::<&bevy::camera::visibility::CascadesVisibleEntities>();
             q.iter(world).flat_map(|c| c.entities.values().filter_map(|v| v.last().map(|l| l.entities.clone()))).flatten().collect()
         };
-        let mut hist: std::collections::HashMap<String, u32> = Default::default();
+        let cam = world.query_filtered::<&GlobalTransform, With<Camera3d>>().iter(world).next().map(|t| t.translation()).unwrap_or_default();
+        // signature → (count, Σ distance to the camera, max distance, one sample position)
+        let mut hist: std::collections::HashMap<String, (u32, f32, f32, Vec3)> = Default::default();
         let comps = world.components();
         for e in far {
             let Ok(er) = world.get_entity(e) else { continue };
-            let names: Vec<String> = er.archetype().components().iter()
+            let mut names: Vec<String> = er.archetype().components().iter()
                 .filter_map(|id| comps.get_name(*id).map(|n| n.to_string()))
                 .filter(|n| n.contains("tileworld") || n.contains("MeshMaterial3d") || n.contains("VisibilityRange"))
                 .map(|n| short(&n.replace("MeshMaterial3d<", "M<")))
                 .collect();
-            *hist.entry(names.join(" ")).or_default() += 1;
+            // The range band says which tier a caster belongs to (props / static LOD / tree LOD …).
+            if let Some(r) = er.get::<bevy::camera::visibility::VisibilityRange>() {
+                names.push(format!("[{:.0}..{:.0}]", r.start_margin.end, r.end_margin.end));
+            }
+            if let Some(p) = er.get::<ChildOf>() {
+                if let Ok(pr) = world.get_entity(p.parent()) {
+                    let tag: Vec<String> = pr.archetype().components().iter()
+                        .filter_map(|id| comps.get_name(*id).map(|n| n.to_string()))
+                        .filter(|n| n.contains("tileworld"))
+                        .map(|n| short(&n))
+                        .collect();
+                    names.push(format!("parent({})", tag.join(",")));
+                }
+            }
+            let p = er.get::<GlobalTransform>().map(|t| t.translation()).unwrap_or_default();
+            let d = p.distance(cam);
+            let h = hist.entry(names.join(" ")).or_insert((0, 0.0, 0.0, p));
+            h.0 += 1;
+            h.1 += d;
+            h.2 = h.2.max(d);
         }
         let mut rows: Vec<_> = hist.into_iter().collect();
-        rows.sort_by(|a, b| b.1.cmp(&a.1));
-        for (sig, n) in rows.iter().take(14) {
-            info!("   farcascade {n:>5}  {}", sig.chars().take(160).collect::<String>());
+        rows.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+        for (sig, (n, sum, max, p)) in rows.iter().take(14) {
+            info!("   farcascade {n:>5} avg {:>4.0}u max {:>4.0}u e.g.({:.0},{:.0})  {}", sum / *n as f32, max, p.x, p.z, sig.chars().take(140).collect::<String>());
         }
     }
     info!("PERF draws: mesh3d={m3d} cam_visible={m3d_vis} shadow_casters(visible-tree)={casters} cascades=[{}]", cascades.join(" | "));
