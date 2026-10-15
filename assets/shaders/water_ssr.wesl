@@ -73,6 +73,28 @@ fn ripple_slope(p: vec2<f32>, t: f32) -> vec2<f32> {
     return vec2<f32>(hx - h, hz - h) / e;
 }
 
+// Wind ripples: a small spectrum of directional wavelets fanned around a fixed breeze (sum of
+// sines, analytic slope — smooth and round, no value-noise grid), with a gentle low-frequency domain
+// warp so the crests wander instead of tiling. Returns the surface slope (d/dx, d/dz).
+fn wind_ripples(p: vec2<f32>, t: f32) -> vec2<f32> {
+    let warp = vec2<f32>(vnoise(p * 0.21 + vec2<f32>(t * 0.05, 0.0)), vnoise(p * 0.21 + vec2<f32>(7.3, t * 0.04))) - 0.5;
+    let q = p + warp * 2.2;
+    var g = vec2<f32>(0.0);
+    // (angle off the wind, wavelength in units, amplitude) — longer waves carry more slope.
+    let angles = array<f32, 6>(0.0, 0.42, -0.37, 0.95, -0.88, 0.18);
+    let lens = array<f32, 6>(1.9, 1.3, 1.1, 0.75, 0.62, 0.48);
+    let amps = array<f32, 6>(0.11, 0.08, 0.08, 0.05, 0.05, 0.035);
+    for (var i = 0; i < 6; i++) {
+        let a = 0.64 + angles[i]; // breeze heading (rad)
+        let dir = vec2<f32>(cos(a), sin(a));
+        let k = 6.2831853 / lens[i];
+        let speed = sqrt(9.8 / k) * 0.35; // short waves crawl, longer ones roll faster
+        let phase = dot(q, dir) * k - t * speed * k + f32(i) * 1.7;
+        g += dir * (cos(phase) * amps[i] * k);
+    }
+    return g;
+}
+
 @fragment
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let scene = textureSample(screen_texture, texture_sampler, in.uv);
@@ -96,6 +118,13 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let n = normalize(vec3<f32>(-s.x, 1.0, -s.y));
     var r = reflect(v, n);
     r.y = max(r.y, 0.02); // always leave the plane
+
+    // Ripples on the mirror image: a screen-space wobble of where the reflection is sampled (shrinks
+    // with distance like the waves themselves) and light / dark bands where crests tilt toward or
+    // away from the sky. Faded out far away, where they'd only alias.
+    let wr = wind_ripples(pos.xz, settings.time) * (1.0 - smoothstep(25.0, 90.0, dist));
+    let wobble = vec2<f32>(wr.x, wr.y * 0.6) * 0.055 / max(dist, 3.0);
+    let band = clamp(1.0 + dot(wr, -normalize(v.xz + vec2<f32>(1e-4))) * 0.34, 0.5, 1.6);
 
     // Schlick Fresnel, water F0 0.02.
     let cos_t = clamp(-v.y, 0.0, 1.0);
@@ -167,17 +196,17 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
             sky_uv = top;
         }
         // Sky mirror: weaker than a scene hit (the water shader already carries some sky).
-        let sky = textureSampleLevel(screen_texture, texture_sampler, sky_uv, 0.0).rgb * MURK;
-        let ws = clamp(cos_w * 0.5, 0.0, 0.4);
+        let sky = textureSampleLevel(screen_texture, texture_sampler, clamp(sky_uv + wobble, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).rgb * MURK;
+        let ws = clamp(cos_w * 0.5 * band, 0.0, 0.5);
         return vec4<f32>(mix(scene.rgb, sky, ws), scene.a);
     }
 
     // Fade toward the screen edges (the mirrored content runs out there) and with ray length.
     let edge = min(min(hit_uv.x, 1.0 - hit_uv.x), min(hit_uv.y, 1.0 - hit_uv.y));
     let fade = smoothstep(0.0, 0.06, edge) * (1.0 - smoothstep(0.7, 1.0, length(hit_uv - in.uv) / 0.9));
-    let refl = textureSampleLevel(screen_texture, texture_sampler, hit_uv, 0.0).rgb * MURK;
+    let refl = textureSampleLevel(screen_texture, texture_sampler, clamp(hit_uv + wobble, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).rgb * MURK;
     // The water shader already reflects the SKY at Fresnel strength; a hit replaces that sky with
     // the mirrored scene, so blend at (a lifted) Fresnel — calm water near grazing is a mirror.
-    let w = clamp(cos_w, 0.0, 0.9) * fade;
+    let w = clamp(cos_w * band, 0.0, 0.9) * fade;
     return vec4<f32>(mix(scene.rgb, refl, w), scene.a);
 }
