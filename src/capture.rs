@@ -344,7 +344,11 @@ fn clip_setup(cfg: Res<ClipCfg>, mut vtime: ResMut<Time<Virtual>>) {
 /// `FOREST_CLIP_ORBIT_REL=1` makes the centre's y and the camera height offsets above the terrain
 /// at the centre (no guessing a biome's ground level), and keeps the eye ≥3u above the ground
 /// under it so a low orbit never dips into a hillside.
-fn clip_orbit(cfg: Res<ClipCfg>, clock: Res<ClipClock>, mut cam: Query<&mut Transform, With<Camera3d>>) {
+fn clip_orbit(
+    cfg: Res<ClipCfg>,
+    clock: Res<ClipClock>,
+    mut cam: Query<(&mut Transform, Option<&mut crate::controls::FlyCam>), With<Camera3d>>,
+) {
     let Some(o) = cfg.orbit else { return };
     let t = clock.frame.saturating_sub(cfg.warmup) as f32 / cfg.fps as f32;
     let ang = (o.start + o.speed * t).to_radians();
@@ -359,8 +363,19 @@ fn clip_orbit(cfg: Res<ClipCfg>, clock: Res<ClipClock>, mut cam: Query<&mut Tran
         }
     }
     pos.y = height;
-    for mut tf in &mut cam {
+    for (mut tf, fly) in &mut cam {
         *tf = Transform::from_translation(pos).looking_at(center, Vec3::Y);
+        // The FreeRoam fly-cam rebuilds the rotation from its own yaw/pitch every frame (unordered
+        // vs this system) — hand it the orbit's look, or the orbit only moves the eye while the view
+        // stays locked on the boot overview heading.
+        if let Some(mut fly) = fly {
+            let (yaw, pitch, _) = tf.rotation.to_euler(EulerRot::YXZ);
+            fly.yaw = yaw;
+            fly.pitch = pitch;
+            fly.target_yaw = yaw;
+            fly.target_pitch = pitch;
+            fly.vel = Vec3::ZERO;
+        }
     }
 }
 
