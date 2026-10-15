@@ -1557,6 +1557,32 @@ pub(crate) fn attack_phase(ap: f32) -> (Phase, f32) {
     }
 }
 
+/// The Heavy Strike at swing progress `ap`. It is only ever released out of the held
+/// [`charge_stance`] — the blade already cocked overhead, i.e. the chop's Wind at 1 — so instead of
+/// the shared [`attack_phase`] (which dropped the arm back to rest and re-raised it, then started
+/// the chop exactly at the damage instant, with the blade still overhead) it opens with a short
+/// gather (the coil deepens a touch and lets go: anticipation), then drives the chop so the blade
+/// is mid-arc, coming down through the foe, at `HIT_PHASE`, and settles out unhurried.
+fn heavy_strike_pose(ap: f32) -> Pose {
+    const GATHER_END: f32 = 0.16;
+    const CHOP_END: f32 = 0.44;
+    if ap < GATHER_END {
+        let u = ap / GATHER_END;
+        heavy_chop(&Phase::Wind, 1.0 + 0.14 * (PI * u).sin() * (1.0 - 0.35 * u))
+    } else if ap < CHOP_END {
+        // Accelerate out of the coil, fastest just before contact, braking into the follow-through.
+        let t = (ap - GATHER_END) / (CHOP_END - GATHER_END);
+        heavy_chop(&Phase::Strike, smootherstep(t.powf(0.8)))
+    } else {
+        heavy_chop(&Phase::Recovery, smoothstep((ap - CHOP_END) / (1.0 - CHOP_END)))
+    }
+}
+
+fn smootherstep(t: f32) -> f32 {
+    let c = t.clamp(0.0, 1.0);
+    c * c * c * (c * (c * 6.0 - 15.0) + 10.0)
+}
+
 pub(crate) fn attack_pose(variant: u8, phase: &Phase, p: f32) -> Pose {
     match variant {
         1 => horizontal_slash(phase, p),
@@ -2243,7 +2269,7 @@ pub fn hero_anim(
     }
     let armed = sheath.armed;
 
-    let attack = hero.attacking.then(|| attack_phase((hero.attack_t / hero.attack_dur).clamp(0.0, 1.0)));
+    let attack = hero.attacking;
     let gesture = dir.gesture.map(|g| gesture_pose(g, now - dir.gesture_start));
 
     // Pick the active clip. Actions now LAYER over locomotion so combined moves read right: swinging
@@ -2307,12 +2333,12 @@ pub fn hero_anim(
         let p = (hero.dash_t / super::movement::DASH_TIME).clamp(0.0, 1.0);
         let tail = smoothstep((p - 0.7) / 0.3);
         dash_pose(p).lerp(&loco, tail)
-    } else if let Some((phase, p)) = &attack {
+    } else if attack {
+        let ap = (hero.attack_t / hero.attack_dur).clamp(0.0, 1.0);
         let atk = if hero.attack_variant < super::combat::HEAVY_VARIANT {
-            let ap = (hero.attack_t / hero.attack_dur).clamp(0.0, 1.0);
             swordplay::strike_pose(hero.attack_variant, ap, super::combat::HIT_PHASE)
         } else {
-            attack_pose(hero.attack_variant, phase, *p)
+            heavy_strike_pose(ap)
         };
         if hero.on_ground && moving > 0.05 {
             action_over_loco(&atk, &loco, moving) // running / walking attack
@@ -2366,6 +2392,13 @@ pub fn hero_anim(
 
     if clip != blend.clip {
         let dur = match (blend.clip, clip) {
+            // A light step eases in over most of its wind-up, so the clip takes over by the
+            // contact: a step pressed mid-recovery (or from the guard) starts from wherever the
+            // body is instead of snapping to the clip's first key (the last step's follow-through
+            // crouch) in four frames. Straight chains start where the last step ended anyway.
+            (_, Clip::Attack(v)) if v < super::combat::HEAVY_VARIANT => {
+                hero.attack_dur * super::combat::HIT_PHASE * 0.8
+            }
             (_, Clip::Attack(_)) | (_, Clip::Dash) => 0.07, // actions must stay snappy
             (Clip::Air, Clip::Loco) => 0.09,                 // landing (the squash carries the rest)
             (Clip::Loco, Clip::Air) => 0.12,                 // take-off into the jump/leap
@@ -2444,7 +2477,7 @@ pub fn hero_anim(
 
         // Landing squash folded over the locomotion pose right after touchdown (studio positive-knee
         // crouch: hips dip, knees bend, thighs settle back, feet flatten, torso leans in).
-        if landing > 0.0 && attack.is_none() && hero.on_ground {
+        if landing > 0.0 && !attack && hero.on_ground {
             match part.joint {
                 Joint::Hips => tf.translation.y -= 0.12 * landing,
                 Joint::KneeL | Joint::KneeR => tf.rotation *= rx(0.9 * landing),

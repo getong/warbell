@@ -596,11 +596,13 @@ pub fn ensure_combat_health(
 }
 
 #[allow(clippy::too_many_arguments)]
-/// Debug/capture hook: `FOREST_SWINGTEST=1` re-arms the attack chain on a ~1.15s loop (inside
+/// Debug/capture hook: `FOREST_SWINGTEST=1` re-arms the attack chain on a ~1.15s loop (`=<secs>` sets
+/// the gap; `0.3` chains every swing straight off the last, as mashing does — all inside
 /// `COMBO_WINDOW`, so the combo steps through chop → slash → thrust; every 4th swing fires the
-/// Heavy) with no keypress and skipping the pointer-lock gate, so a `FOREST_FP`/`FOREST_TPS`
-/// shot/clip can frame the full swing set — same pattern as `FOREST_ROLLTEST`. Its own system
-/// (before [`player_attack`], which already sits at Bevy's 16-param ceiling).
+/// Heavy, out of a held charge as in play) with no keypress and skipping the pointer-lock gate, so a
+/// `FOREST_FP`/`FOREST_TPS` shot/clip can frame the full swing set — same pattern as
+/// `FOREST_ROLLTEST`. Its own system (after [`player_attack`], which already sits at Bevy's
+/// 16-param ceiling and would otherwise disarm the staged charge as an unpressed button).
 pub fn swing_test(
     time: Res<Time>,
     mode: Res<PlayMode>,
@@ -610,23 +612,42 @@ pub fn swing_test(
     mut hero_q: Query<&mut Hero>,
     mut next: Local<f32>,
     mut count: Local<u32>,
+    mut charge_from: Local<Option<f32>>,
 ) {
-    if std::env::var("FOREST_SWINGTEST").is_err() {
-        return;
-    }
+    let Ok(test) = std::env::var("FOREST_SWINGTEST") else { return };
+    // A number sets the gap between swing starts (s): `0.3` mashes the chain back to back.
+    let gap = test.parse::<f32>().ok().filter(|g| *g > 0.0 && *g != 1.0).unwrap_or(1.15);
     let Ok(mut hero) = hero_q.single_mut() else { return };
     let now_s = time.elapsed_secs();
-    if *mode != PlayMode::Play
-        || !player.0.is_alive()
-        || hero.roll_t >= 0.0
-        || hero.attacking
-        || now_s < *next
-    {
+    if *mode != PlayMode::Play || !player.0.is_alive() || hero.roll_t >= 0.0 {
+        *charge_from = None;
         return;
     }
-    *next = now_s + 1.15;
+    // The Heavy is held like a real LMB hold — the charge stance coils up — and released past
+    // the threshold. (`player_attack` disarms an unpressed charge each frame; re-stamp it after.)
+    if let Some(from) = *charge_from {
+        hero.charge_t = now_s - from;
+        if hero.charge_t >= CHARGE_THRESHOLD + 0.15 {
+            *charge_from = None;
+            hero.charge_t = -1.0;
+            *next = now_s + gap;
+            begin_swing(&mut hero, true, None, now_s, fp.active);
+            cues.write(AudioCue::HeroGruntSwing);
+            cues.write(AudioCue::Slam);
+        }
+        return;
+    }
+    if hero.attacking || now_s < *next {
+        return;
+    }
     *count += 1;
-    begin_swing(&mut hero, *count % 4 == 0, None, now_s, fp.active);
+    if *count % 4 == 0 {
+        *charge_from = Some(now_s);
+        hero.charge_t = 0.0;
+        return;
+    }
+    *next = now_s + gap;
+    begin_swing(&mut hero, false, None, now_s, fp.active);
     cues.write(AudioCue::HeroGruntSwing);
 }
 

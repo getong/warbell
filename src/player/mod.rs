@@ -471,7 +471,9 @@ impl Plugin for PlayerPlugin {
                     camera::fp_body_visibility
                         .after(camera::player_camera), // FP: hide the rig's head (we look out of it)
                     animtest, // debug: FOREST_ANIMTEST=walk|block stages an animation for a capture
-                    anim::hero_anim,
+                    // After the sim chain: the pose reads this frame's swing / charge (the staged
+                    // `swing_test` charge included), not last frame's.
+                    anim::hero_anim.after(combat::swing_test),
                     camera::fp_head_track.after(anim::hero_anim), // FP eye on the head + spine aim
                     combat::update_sparks,
                     combat::update_fx_fades,
@@ -514,8 +516,8 @@ impl Plugin for PlayerPlugin {
                     movement::player_move,
                     softlock::soft_lock, // pick + gently face the soft target, drive the ring (after move so input wins)
                     block::player_block,
-                    combat::swing_test, // debug: FOREST_SWINGTEST=1 loops the attack chain for a capture
                     combat::player_attack,
+                    combat::swing_test, // debug: FOREST_SWINGTEST=1 loops the attack chain for a capture
                     arts::player_arts, // warden weapon arts (after move/attack so a dash sticks)
                     combat::ensure_combat_health,
                     health::apply_hero_damage,
