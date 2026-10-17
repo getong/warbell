@@ -555,7 +555,7 @@ pub(crate) fn gait_phase_rate(world_speed: f32) -> f32 {
             return 0.0;
         }
         // Both gaits start on the left heel strike, so one phase drives either; its rate is the
-        // walk's below a jog and the curves' above (each foot-locked on its own).
+        // Mixamo walk/jog's below a sprint and the curves' above (each foot-locked on its own).
         return lerp(mixamo::phase_rate(v), gait_phase_rate_curves(world_speed), mixamo::run_weight(v));
     }
     gait_phase_rate_curves(world_speed)
@@ -628,17 +628,17 @@ fn footman_gait(c: f32, speed: f32, armed: f32, shield_back: f32) -> Pose {
         if w >= 1.0 - 1e-3 {
             return footman_gait_curves(c, speed, armed, shield_back);
         }
-        let walk = mixamo::gait(c, armed, shield_back);
+        let mx = mixamo::gait(c, speed.max(0.0) / hero_model_scale(), armed, shield_back);
         if w <= 1e-3 {
-            return walk;
+            return mx;
         }
-        return walk.lerp(&footman_gait_curves(c, speed, armed, shield_back), w);
+        return mx.lerp(&footman_gait_curves(c, speed, armed, shield_back), w);
     }
     footman_gait_curves(c, speed, armed, shield_back)
 }
 
-/// Mixamo clips drive the walk and the dodge roll (the default; run and jump stay on the hand-built
-/// curves); `FOREST_GAIT=curves` brings back the curve walk and the procedural roll (A/B, and what
+/// Mixamo clips drive the walk, the jog and the dodge roll (the default; the sprint and the jump stay
+/// on the hand-built curves); `FOREST_GAIT=curves` brings back the curve walk and the procedural roll (A/B, and what
 /// the curve tests exercise).
 fn mixamo_gait() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -2291,6 +2291,8 @@ pub fn hero_anim(
     mut sheath: Local<Sheath>,
     // Smoothed hips lift/drop that puts the lowest boot point on the ground (grounding pass).
     mut ground_adj: Local<f32>,
+    // First person looks out of this rig: what is slung on the back must not enter the frame.
+    fp: Res<super::camera::FirstPerson>,
     mut sword_vis: Query<(&HeroPart, &mut Visibility), (Without<super::BackSword>, Without<super::BackShield>)>,
     mut back_vis: Query<&mut Visibility, (With<super::BackSword>, Without<HeroPart>, Without<super::BackShield>)>,
     // The shield goes with the sword: on the arm in a fight, slung on the back otherwise. This
@@ -2356,8 +2358,11 @@ pub fn hero_anim(
             vis.set_if_neq(if in_hand { Visibility::Inherited } else { Visibility::Hidden });
         }
     }
+    // A sprint leans the trunk far forward, which swings the slung sword and board up past the eye
+    // (a dark slab and a blade across the frame): in first person they stay hidden.
+    let in_fp = fp.blend > 0.5;
     for mut vis in &mut back_vis {
-        vis.set_if_neq(if sheath.drawn { Visibility::Hidden } else { Visibility::Inherited });
+        vis.set_if_neq(if sheath.drawn || in_fp { Visibility::Hidden } else { Visibility::Inherited });
     }
     let armed = sheath.armed;
 
@@ -2631,7 +2636,7 @@ pub fn hero_anim(
         if *tf != pose_tf {
             *tf = pose_tf;
         }
-        vis.set_if_neq(if shown { Visibility::Inherited } else { Visibility::Hidden });
+        vis.set_if_neq(if shown && !in_fp { Visibility::Inherited } else { Visibility::Hidden });
     }
 }
 

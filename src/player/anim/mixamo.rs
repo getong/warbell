@@ -1,4 +1,4 @@
-//! The hero's walk and dodge roll on Mixamo clips (`mixamo_clips`, baked by
+//! The hero's walk, jog and dodge roll on Mixamo clips (`mixamo_clips`, baked by
 //! `tools/mixamo_retarget/bake.py` from Mixamo's Walking / Running / Jump / Dive Roll).
 //!
 //! Same recipe as the sword combo ([`super::swordplay`]): the clips are rig-free targets (pelvis and
@@ -21,10 +21,25 @@ use super::mixamo_clips as mc;
 use super::swordplay::{aim_leg, Frame};
 use super::{aim_arm, e3, rest, rx, shield_gait_r, smoothstep, sword_rest_r, Jp, Pose, SHIELD_GAIT_T};
 
-/// Model m/s below which the gait is purely the Mixamo walk; above it the walk fades into the
-/// hand-built run curves (which own the jog and the sprint), fully by `RUN_FROM`.
+/// Model m/s below which the gait is purely the Mixamo walk, and from which it is the jog (blended
+/// between). The hand-built sprint curves take over past `SPRINT_FROM`, fully by `SPRINT_TO`.
 const WALK_TO: f32 = 2.3;
-const RUN_FROM: f32 = 3.6;
+const JOG_FROM: f32 = 3.6;
+const SPRINT_FROM: f32 = 4.6;
+const SPRINT_TO: f32 = 5.8;
+/// The slow-run clip is a short-legged shuffle at the speeds the knight runs: its stride is lengthened
+/// (ankle travel x this) so the cadence stays a jog's instead of a scurry.
+const JOG_STRIDE: f32 = 1.4;
+
+/// 0 = the Mixamo walk … 1 = the jog, at a ground speed of `v` model m/s.
+fn jog_weight(v: f32) -> f32 {
+    smoothstep((v - WALK_TO) / (JOG_FROM - WALK_TO))
+}
+
+/// 0 = the Mixamo gaits … 1 = the hand-built sprint curves.
+pub(super) fn run_weight(v: f32) -> f32 {
+    smoothstep((v - SPRINT_FROM) / (SPRINT_TO - SPRINT_FROM))
+}
 
 fn leg_len() -> f32 {
     let rig = super::super::footman::leg_rig();
@@ -32,15 +47,14 @@ fn leg_len() -> f32 {
 }
 
 
-pub(super) fn run_weight(v: f32) -> f32 {
-    smoothstep((v - WALK_TO) / (RUN_FROM - WALK_TO))
-}
-
-/// Walk-loop phase advance (rad/s) at `v` model m/s: the foot-lock contract. A loop of `n` frames
-/// whose stance boot sweeps back at `native` leg-lengths/s plays at `v / (native x leg)` of its own speed.
+/// Gait-phase advance (rad/s) at `v` model m/s: the foot-lock contract. A loop of `n` frames whose
+/// stance boot sweeps back at `native` leg-lengths/s (x `stride`) plays at `v / (native x stride x leg)`
+/// of its own speed.
 pub(super) fn phase_rate(v: f32) -> f32 {
     let l = leg_len();
-    TAU * v / (mc::WALK_SPEED * l) * mc::FPS / mc::WALK.len() as f32
+    let cps = |native: f32, n: usize, stride: f32| v / (native * stride * l) * mc::FPS / n as f32;
+    let w = jog_weight(v);
+    TAU * (cps(mc::WALK_SPEED, mc::WALK.len(), 1.0) * (1.0 - w) + cps(mc::JOG_SPEED, mc::JOG.len(), JOG_STRIDE) * w)
 }
 
 /// A looping clip at cycle phase `u` (0..1), Catmull-Rom between the baked keys.
@@ -64,7 +78,7 @@ fn sample_once(clip: &[[f32; 53]], x: f32) -> Frame {
 /// One clip frame solved onto the footman: legs by two-bone IK onto the ankle targets (the boots go
 /// where the clip puts them), trunk and head by the clip's own rotations, both arms by [`aim_arm`].
 /// The sword and shield joints are left at their carries for the caller to dress.
-fn solve(f: &Frame, ground: bool) -> Pose {
+fn solve(f: &Frame, ground: bool, stride: f32) -> Pose {
     let rig = super::super::footman::leg_rig();
     let tp = Frame::of(&mc::TPOSE);
     let leg_len = leg_len();
@@ -72,7 +86,8 @@ fn solve(f: &Frame, ground: bool) -> Pose {
     let mut p = rest();
 
     let pelvis = f.pelvis_r;
-    let d = (f.pelvis - tp.pelvis) * leg_len;
+    let long = Vec3::new(1.0, 1.0, stride);
+    let d = (f.pelvis - tp.pelvis) * leg_len * long;
     let mut hips = Vec3::new(0.0, hip_rest, 0.0) + d;
 
     let mirror = |v: Vec3, right: bool| if right { Vec3::new(-v.x, v.y, v.z) } else { v };
@@ -87,7 +102,7 @@ fn solve(f: &Frame, ground: bool) -> Pose {
         -low
     };
     let target = |i: usize| {
-        let mut t = ankle_rest(i == 1) + (f.ankle[i] - tp.ankle[i]) * leg_len;
+        let mut t = ankle_rest(i == 1) + (f.ankle[i] - tp.ankle[i]) * leg_len * long;
         if ground {
             t.y = t.y.max(clear(i));
         }
@@ -160,17 +175,38 @@ fn dress(mut p: Pose, run: f32, armed: f32, shield_back: f32) -> Pose {
     p
 }
 
-/// The Mixamo walk at gait phase `c` (rad; the left heel strikes at 0 and the right at pi), dressed
-/// with the knight's kit. The caller fades it into the run curves with [`run_weight`].
-pub(super) fn gait(c: f32, armed: f32, shield_back: f32) -> Pose {
-    dress(solve(&sample_loop(&mc::WALK, c / TAU), true), 0.0, armed, shield_back)
+/// The Mixamo walk / jog at gait phase `c` (rad; the left heel strikes at 0 and the right at pi) and
+/// ground speed `v` (model m/s), dressed with the knight's kit. The caller fades it into the sprint
+/// curves with [`run_weight`].
+pub(super) fn gait(c: f32, v: f32, armed: f32, shield_back: f32) -> Pose {
+    let u = c / TAU;
+    let w = jog_weight(v);
+    // One frame, one solve: blending the two gaits' FRAMES (not their solved joints) keeps the
+    // boots above the floor through the cross-fade.
+    let f = if w <= 1e-3 {
+        sample_loop(&mc::WALK, u)
+    } else {
+        let jog = stretch(sample_loop(&mc::JOG, u), JOG_STRIDE);
+        if w >= 1.0 - 1e-3 { jog } else { sample_loop(&mc::WALK, u).lerp(&jog, w) }
+    };
+    dress(solve(&f, true, 1.0), w, armed, shield_back)
+}
+
+/// A frame with its forward travel (pelvis + ankles, off the T-pose) lengthened by `k`.
+fn stretch(mut f: Frame, k: f32) -> Frame {
+    let tp = Frame::of(&mc::TPOSE);
+    f.pelvis.z = tp.pelvis.z + (f.pelvis.z - tp.pelvis.z) * k;
+    for i in 0..2 {
+        f.ankle[i].z = tp.ankle[i].z + (f.ankle[i].z - tp.ankle[i].z) * k;
+    }
+    f
 }
 
 /// The somersault's limbs at progress `u` (0..1) through the roll: the dive, the tuck, the landing.
 /// The root owns the actual tumble and the pelvis turn, so the hips only sit low over its pivot.
 pub(super) fn roll(u: f32) -> Pose {
     let f = sample_once(&mc::ROLL, u.clamp(0.0, 1.0) * (mc::ROLL.len() - 1) as f32);
-    let mut p = dress(solve(&f, false), 0.5, 1.0, 0.0);
+    let mut p = dress(solve(&f, false, 1.0), 0.5, 1.0, 0.0);
     p.hips = Jp { t: Some(Vec3::new(0.0, 0.74, 0.0)), r: Quat::IDENTITY };
     p
 }

@@ -6,7 +6,7 @@
 Frame layout: see tools/ual_retarget/bake.py (53 floats: pelvis, chest, head, arms, boots, in leg
 lengths / world deltas from the Mixamo T-pose, mirrored onto our body frame).
 
-- WALK: one in-place loop, rotated so frame 0 is the LEFT heel strike (the game keys footstep
+- WALK / JOG: one in-place loop, rotated so frame 0 is the LEFT heel strike (the game keys footstep
   sfx / dust on the gait phase crossing 0 and 0.5), plus the speed the stance boot sweeps back at
   (leg lengths / s) — the player plays the loop at ground speed / that, so the boots never skate.
 - ROLL: the dive-roll's body shape in the pelvis's own frame (the pelvis turn + travel removed): the
@@ -61,16 +61,43 @@ def cycle(F):
     thr = min(yl.min(), yr.min()) + 0.035
     s0, ln = max(stance_runs(yl, thr), key=lambda r: r[1])
     F = np.roll(F, -s0, axis=0)
-    sp = []
-    for col in (35, 45):
-        y = F[:, col - 1]
-        runs = stance_runs(y, thr)
-        s, L = max(runs, key=lambda r: r[1])
-        idx = (s + np.arange(L)) % n
-        t = np.arange(L) / mx.FPS
-        sp.append(-np.polyfit(t, F[idx, col], 1)[0])
+    sp = [stance_speed(F, c, thr) for c in (35, 45)]
     print(f'  cycle {n} frames, left stance {ln}, stance sweep speed L/R {sp[0]:.2f}/{sp[1]:.2f} legs/s')
-    return F, float(np.mean(sp))
+    return F, float(np.mean(sp)), sp[0]
+
+
+def stance_speed(F, col, thr):
+    """Speed (legs/s) the planted boot (ankle z column `col`) sweeps back at."""
+    n = len(F)
+    s, L = max(stance_runs(F[:, col - 1], thr), key=lambda r: r[1])
+    idx = (s + np.arange(L)) % n
+    return float(-np.polyfit(np.arange(L) / mx.FPS, F[idx, col], 1)[0])
+
+
+def mirror_rows(F):
+    """Left <-> right: swap the limb slots and mirror across X (positions / directions x -> -x,
+    rotations (x, y, z, w) -> (x, -y, -z, w))."""
+    M = F.copy()
+    q = np.array([1, -1, -1, 1.0])
+    v = np.array([-1.0, 1.0, 1.0])
+    M[:, 0:3] = F[:, 0:3] * v
+    for s in (3, 7, 11):
+        M[:, s:s + 4] = F[:, s:s + 4] * q
+    for a, b in ((15, 27), (18, 30), (33, 43), (36, 46)):  # right <-> left (dirs / ankles / poles)
+        M[:, a:a + 3] = F[:, b:b + 3] * v
+        M[:, b:b + 3] = F[:, a:a + 3] * v
+    M[:, 21:24] = F[:, 21:24] * v
+    M[:, 24:27] = F[:, 24:27] * v
+    M[:, 39:43] = F[:, 49:53] * q
+    M[:, 49:53] = F[:, 39:43] * q
+    return M
+
+
+def symmetric(F):
+    """A loop whose second step is the mirror of its first (the clip's two legs differ a little, which
+    would show as skating on the weaker side): left strike .. right strike, then that mirrored."""
+    h = len(F) // 2
+    return np.concatenate([F[:h], mirror_rows(F[:h])])
 
 
 def air(F, lo, hi):
@@ -120,10 +147,18 @@ lines.append('/// The Mixamo T-pose (the reference the clips are measured from).
 lines.append('pub(super) const TPOSE: [f32; 53] = [' + ', '.join(f'{v:.4f}' for v in b.tpose_frame()) + '];')
 lines.append('')
 print('Walking')
-Wc, wsp = cycle(W)
+Wc, wsp, _ = cycle(W)
 lines += [f'/// One walk loop ({len(Wc)} frames), frame 0 = left heel strike.',
           f'pub(super) const WALK_SPEED: f32 = {wsp:.4f}; // legs / s',
           f'pub(super) const WALK: [[f32; 53]; {len(Wc)}] = [', fmt(Wc), '];', '']
+b, R = load('Slow Run')
+print('Slow Run')
+Rc, _, rsp = cycle(R)  # the left boot's speed: the loop is rebuilt symmetric from its left half
+Rc = symmetric(Rc)
+print('  ankle y max (legs)', Rc[:, 34].max().round(2), Rc[:, 44].max().round(2), ' hand spread max x', np.abs(Rc[:, [15, 27]]).max().round(2))
+lines += [f'/// One jog loop ({len(Rc)} frames), frame 0 = left heel strike.',
+          f'pub(super) const JOG_SPEED: f32 = {rsp:.4f}; // legs / s',
+          f'pub(super) const JOG: [[f32; 53]; {len(Rc)}] = [', fmt(Rc), '];', '']
 b, D = load('Dive Roll')
 DB = body_frame(D, b.tp_pelvis_y)[33:73]
 lines += [f'/// The dive-roll\'s body shape ({len(DB)} frames: the dive, the tuck, the landing), in the pelvis frame.',
