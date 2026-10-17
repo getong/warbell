@@ -554,9 +554,7 @@ pub(crate) fn gait_phase_rate(world_speed: f32) -> f32 {
         if v < 1e-4 {
             return 0.0;
         }
-        // Both gaits start on the left heel strike, so one phase drives either; its rate is the
-        // Mixamo walk/jog's below a sprint and the curves' above (each foot-locked on its own).
-        return lerp(mixamo::phase_rate(v), gait_phase_rate_curves(world_speed), mixamo::run_weight(v));
+        return mixamo::phase_rate(v);
     }
     gait_phase_rate_curves(world_speed)
 }
@@ -624,21 +622,13 @@ fn leg_rot(thigh_dir: f32, shin_dir: f32, pitch: f32, rig: &super::footman::LegR
 /// shield is on the arm (0) or slung on the back for a sprint (1), when both arms run free.
 fn footman_gait(c: f32, speed: f32, armed: f32, shield_back: f32) -> Pose {
     if mixamo_gait() {
-        let w = mixamo::run_weight(speed.max(0.0) / hero_model_scale());
-        if w >= 1.0 - 1e-3 {
-            return footman_gait_curves(c, speed, armed, shield_back);
-        }
-        let mx = mixamo::gait(c, speed.max(0.0) / hero_model_scale(), armed, shield_back);
-        if w <= 1e-3 {
-            return mx;
-        }
-        return mx.lerp(&footman_gait_curves(c, speed, armed, shield_back), w);
+        return mixamo::gait(c, speed.max(0.0) / hero_model_scale(), armed, shield_back);
     }
     footman_gait_curves(c, speed, armed, shield_back)
 }
 
-/// Mixamo clips drive the walk, the jog and the dodge roll (the default; the sprint and the jump stay
-/// on the hand-built curves); `FOREST_GAIT=curves` brings back the curve walk and the procedural roll (A/B, and what
+/// Mixamo clips drive the walk, jog, run and dodge roll (the default; the jump stays on the hand-built
+/// curves); `FOREST_GAIT=curves` brings back the curve walk and the procedural roll (A/B, and what
 /// the curve tests exercise).
 fn mixamo_gait() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -2350,11 +2340,14 @@ pub fn hero_anim(
     hero_mut.weapons_drawn = sheath.drawn;
     let hero: &Hero = &hero_mut;
     let transit = sheath.shield_transit();
+    // First person, sprinting: nothing of the kit may be in the frame, in the hand or slung (the
+    // trunk, arms and weapons all swing past the eye at a run).
+    let fp_sprint = fp.blend > 0.5 && (hero_mut.gait_speed > 3.0 || hero_mut.run_amt > 0.3);
     for (part, mut vis) in &mut sword_vis {
         if part.joint == Joint::Sword {
-            vis.set_if_neq(if sheath.drawn { Visibility::Inherited } else { Visibility::Hidden });
+            vis.set_if_neq(if sheath.drawn && !fp_sprint { Visibility::Inherited } else { Visibility::Hidden });
         } else if part.joint == Joint::Shield {
-            let in_hand = sheath.drawn && transit.is_none();
+            let in_hand = sheath.drawn && transit.is_none() && !fp_sprint;
             vis.set_if_neq(if in_hand { Visibility::Inherited } else { Visibility::Hidden });
         }
     }

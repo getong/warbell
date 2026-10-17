@@ -138,6 +138,8 @@ fn fp_arm_reach() -> (f32, f32) {
 /// How far the FP look-pitch bends the rig's torso (so the arms, sword and shield follow the view
 /// up and down instead of leaving the frame).
 const FP_SPINE_AIM: f32 = 0.55;
+/// How much of a sprint's forward trunk lean first person cancels (1 = fully upright).
+const FP_SPRINT_UPRIGHT: f32 = 0.9;
 /// First-person look-pitch clamp (radians): how far you can crane up/down. Symmetric, unlike the
 /// third-person `MIN/MAX_PITCH` (which is camera *elevation*, always tilting the view downward).
 const FP_PITCH_LIMIT: f32 = 1.3;
@@ -526,7 +528,7 @@ pub fn fp_body_visibility(
     // midline — straight through the eye, a dark slab filling the frame and smeared to grain by
     // motion blur. KCD-style, the empty hands simply leave the view while sprinting: hide the
     // whole elbow subtree (forearm, gauntlet, hand) past a third of the run blend.
-    let sprint = hero_q.single().is_ok_and(|h| h.run_amt > 0.3);
+    let sprint = hero_q.single().is_ok_and(|h| h.run_amt > 0.3 || h.gait_speed > 3.0);
     let want_fore = if fp.blend > 0.5 && sprint { Visibility::Hidden } else { Visibility::Inherited };
     for (p, mut vis) in &mut parts {
         let w = match p.joint {
@@ -555,15 +557,25 @@ pub fn fp_head_track(
     time: Res<Time>,
     mut fp: ResMut<FirstPerson>,
     hero_q: Query<&GlobalTransform, With<Hero>>,
+    hero_state: Query<&Hero>,
     mut parts: Query<(&super::HeroPart, &mut Transform, &GlobalTransform)>,
 ) {
     let Ok(root) = hero_q.single() else { return };
+    // A sprint folds the trunk far forward, which carries the collar, shoulders and chest plate up
+    // into the lens (the eye rides the head joint). First person keeps the trunk upright instead:
+    // the gait still reads in the legs, bob and stride, the armour stays out of the frame.
+    let run = hero_state.single().map_or(0.0, |h| ((h.gait_speed - 1.8) / 2.4).clamp(0.0, 1.0).max(h.run_amt));
     let dt = time.delta_secs().clamp(1e-4, 0.05);
     let mut head = None;
     for (p, mut tf, gt) in &mut parts {
         match p.joint {
             super::Joint::Head => head = Some(gt.translation() - root.translation()),
             super::Joint::Torso if fp.blend > 0.01 => {
+                let upright = FP_SPRINT_UPRIGHT * run * fp.blend.clamp(0.0, 1.0);
+                if upright > 1e-3 {
+                    let (x, y, z) = tf.rotation.to_euler(EulerRot::XYZ);
+                    tf.rotation = Quat::from_euler(EulerRot::XYZ, x * (1.0 - upright), y, z);
+                }
                 tf.rotation *= Quat::from_rotation_x(-fp.pitch * FP_SPINE_AIM * fp.blend.clamp(0.0, 1.0));
             }
             // Arms reach a little further out and lower than the third-person clips author them, so

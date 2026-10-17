@@ -100,6 +100,20 @@ def symmetric(F):
     return np.concatenate([F[:h], mirror_rows(F[:h])])
 
 
+def tame_run(F, lift=0.5, arms_in=0.45):
+    """The raw Mixamo run lifts the feet very high and throws the arms wide: halve the swing foot's
+    lift above the contact height and pull the arms' sideways spread toward the body."""
+    F = F.copy()
+    for col in (34, 44):
+        c = F[:, col].min()
+        F[:, col] = c + (F[:, col] - c) * lift
+    for c in (15, 18, 27, 30):
+        F[:, c] *= arms_in            # x (sideways) component
+        n = np.linalg.norm(F[:, c:c + 3], axis=1, keepdims=True)
+        F[:, c:c + 3] /= n
+    return F
+
+
 def air(F, lo, hi):
     """Frames lo..=hi with the clip's own pelvis rise taken off (pelvis + both ankles)."""
     F = F[lo:hi + 1].copy()
@@ -159,6 +173,14 @@ print('  ankle y max (legs)', Rc[:, 34].max().round(2), Rc[:, 44].max().round(2)
 lines += [f'/// One jog loop ({len(Rc)} frames), frame 0 = left heel strike.',
           f'pub(super) const JOG_SPEED: f32 = {rsp:.4f}; // legs / s',
           f'pub(super) const JOG: [[f32; 53]; {len(Rc)}] = [', fmt(Rc), '];', '']
+b, R2 = load('Running')
+print('Running (tamed)')
+Qc, _, qsp = cycle(R2)
+Qc = tame_run(Qc)
+Qc = symmetric(Qc)
+lines += [f'/// One run loop ({len(Qc)} frames, tamed: feet lift ~half, arms drawn in), frame 0 = left heel strike.',
+          f'pub(super) const RUN_SPEED: f32 = {qsp:.4f}; // legs / s',
+          f'pub(super) const RUN: [[f32; 53]; {len(Qc)}] = [', fmt(Qc), '];', '']
 b, D = load('Dive Roll')
 DB = body_frame(D, b.tp_pelvis_y)[33:73]
 lines += [f'/// The dive-roll\'s body shape ({len(DB)} frames: the dive, the tuck, the landing), in the pelvis frame.',
