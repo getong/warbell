@@ -15,24 +15,24 @@ use super::{aim_arm, e3, rest, rx, smoothstep, Jp, Pose};
 
 /// One sampled clip frame (see the layout in `ual_sword`).
 #[derive(Clone, Copy)]
-struct Frame {
-    pelvis: Vec3,
-    pelvis_r: Quat,
-    chest: Quat,
-    head: Quat,
-    r_upper: Vec3,
-    r_fore: Vec3,
-    blade: Vec3,
-    edge: Vec3,
-    l_upper: Vec3,
-    l_fore: Vec3,
-    ankle: [Vec3; 2],
-    pole: [Vec3; 2],
-    foot: [Quat; 2],
+pub(super) struct Frame {
+    pub(super) pelvis: Vec3,
+    pub(super) pelvis_r: Quat,
+    pub(super) chest: Quat,
+    pub(super) head: Quat,
+    pub(super) r_upper: Vec3,
+    pub(super) r_fore: Vec3,
+    pub(super) blade: Vec3,
+    pub(super) edge: Vec3,
+    pub(super) l_upper: Vec3,
+    pub(super) l_fore: Vec3,
+    pub(super) ankle: [Vec3; 2],
+    pub(super) pole: [Vec3; 2],
+    pub(super) foot: [Quat; 2],
 }
 
 impl Frame {
-    fn of(row: &[f32; 53]) -> Frame {
+    pub(super) fn of(row: &[f32; 53]) -> Frame {
         let v = |i: usize| Vec3::new(row[i], row[i + 1], row[i + 2]);
         let d = |i: usize| v(i).normalize_or(Vec3::NEG_Y);
         let q = |i: usize| Quat::from_xyzw(row[i], row[i + 1], row[i + 2], row[i + 3]).normalize();
@@ -54,7 +54,7 @@ impl Frame {
     }
 
     /// `self` → `o` by `s` (rotations slerped, directions renormalised).
-    fn lerp(&self, o: &Frame, s: f32) -> Frame {
+    pub(super) fn lerp(&self, o: &Frame, s: f32) -> Frame {
         let dir = |p: Vec3, q: Vec3| p.lerp(q, s).normalize_or(p);
         Frame {
             pelvis: self.pelvis.lerp(o.pelvis, s),
@@ -93,7 +93,7 @@ fn cr_q(q0: Quat, q1: Quat, q2: Quat, q3: Quat, s: f32) -> Quat {
 
 impl Frame {
     /// `b` → `c` by `s` on a Catmull-Rom through `a`, `b`, `c`, `d`.
-    fn cubic(a: &Frame, b: &Frame, c: &Frame, d: &Frame, s: f32) -> Frame {
+    pub(super) fn cubic(a: &Frame, b: &Frame, c: &Frame, d: &Frame, s: f32) -> Frame {
         let p = |f: fn(&Frame) -> Vec3| cr(f(a), f(b), f(c), f(d), s);
         let dir = |f: fn(&Frame) -> Vec3| p(f).normalize_or(f(b));
         let q = |f: fn(&Frame) -> Quat| cr_q(f(a), f(b), f(c), f(d), s);
@@ -129,7 +129,7 @@ fn sample(clip: &[[f32; 53]], t: f32) -> Frame {
 }
 
 /// Right-handed frame with `a` first and `b` (made orthogonal to it) second.
-fn frame(a: Vec3, b: Vec3) -> Mat3 {
+pub(super) fn frame(a: Vec3, b: Vec3) -> Mat3 {
     let a = a.normalize();
     let b = (b - a * b.dot(a)).normalize_or(a.any_orthonormal_vector());
     Mat3::from_cols(a, b, a.cross(b))
@@ -137,7 +137,7 @@ fn frame(a: Vec3, b: Vec3) -> Mat3 {
 
 /// Shoulder + elbow (or hip + knee) rotations laying a two-bone limb's bind segments `bind` along
 /// `upper` / `lower` (parent frame). Arms flex the hinge negative ([`aim_arm`]); knees positive.
-fn aim_leg(upper: Vec3, lower: Vec3, bind: (Vec3, Vec3)) -> (Quat, Quat) {
+pub(super) fn aim_leg(upper: Vec3, lower: Vec3, bind: (Vec3, Vec3)) -> (Quat, Quat) {
     let (u0, f0) = (bind.0.normalize(), bind.1.normalize());
     let bend = upper.angle_between(lower);
     let (a, b) = (u0.y * f0.y + u0.z * f0.z, u0.z * f0.y - u0.y * f0.z);

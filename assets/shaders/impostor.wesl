@@ -224,6 +224,12 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // No alpha test here: the prepass wrote the exact alpha-tested depth and this pass draws with
     // an EQUAL depth test (`ImpostorExt::specialize`), so only visible texels are shaded at all.
     let im = impostor(in.world_position.xyz, centre, rs, yaw, layer, true);
+@if(IMPOSTOR_ALPHA_TEST) {
+    // No prepass (low presets): do the alpha test + far dissolve here, as the prepass would have.
+    if !impostor_keep(im.alpha, in.uv_b.y, im.surf, centre, rs) {
+        discard;
+    }
+}
     var col = im.albedo / max(im.alpha, 1e-3);
     // Crown colour variety, as `foliage_wind.wesl` tints the real crowns (same per-tree hash on the
     // tree base, so the swap doesn't shift a tree's green). Green texels only (bark stays put).

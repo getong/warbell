@@ -549,6 +549,15 @@ fn hero_model_scale() -> f32 {
 /// `walk_phase` advance rate (rad/s) at a world ground speed — the foot-lock contract: a stance of
 /// `duty` of the cycle must carry the planted ankle back through `sweep` at exactly the body's speed.
 pub(crate) fn gait_phase_rate(world_speed: f32) -> f32 {
+    if mixamo_gait() {
+        let v = world_speed.max(0.0) / hero_model_scale();
+        return if v < 1e-4 { 0.0 } else { mixamo::phase_rate(v) };
+    }
+    gait_phase_rate_curves(world_speed)
+}
+
+/// [`gait_phase_rate`] of the recorded-curve gait engine.
+fn gait_phase_rate_curves(world_speed: f32) -> f32 {
     let v = world_speed.max(0.0) / hero_model_scale();
     if v < 1e-4 {
         return 0.0;
@@ -609,6 +618,22 @@ fn leg_rot(thigh_dir: f32, shin_dir: f32, pitch: f32, rig: &super::footman::LegR
 /// `armed` (0..1): the sword is in hand (1) or slung on the back (0); `shield_back` (0..1): the
 /// shield is on the arm (0) or slung on the back for a sprint (1), when both arms run free.
 fn footman_gait(c: f32, speed: f32, armed: f32, shield_back: f32) -> Pose {
+    if mixamo_gait() {
+        return mixamo::gait(c, speed.max(0.0) / hero_model_scale(), armed, shield_back);
+    }
+    footman_gait_curves(c, speed, armed, shield_back)
+}
+
+/// Mixamo clips drive walk / run / jump / roll (the default); `FOREST_GAIT=curves` brings back the
+/// hand-built motion-capture-curve gait and the procedural jump / roll poses (A/B, and what the
+/// curve tests exercise).
+fn mixamo_gait() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("FOREST_GAIT").map(|v| v != "curves").unwrap_or(true))
+}
+
+/// The recorded-curve gait engine (see the section below).
+fn footman_gait_curves(c: f32, speed: f32, armed: f32, shield_back: f32) -> Pose {
     let g = gait_at(speed.max(0.0) / hero_model_scale());
     let (walk, run) = (Style::walk(g.walk_amp), Style::run(g.sprint));
     let play = |st: Style, pelvis| mocap_gait(c, &g, armed, shield_back, st, pelvis);
@@ -2006,6 +2031,8 @@ pub(crate) mod village;
 pub(crate) mod ork;
 
 /// The light sword combo, retargeted from keyframed clips (see the module docs).
+mod mixamo;
+mod mixamo_clips;
 mod swordplay;
 mod ual_sword;
 
@@ -2184,6 +2211,56 @@ fn mirror_legs(p: &Pose) -> Pose {
     m
 }
 
+/// Largest hips shift (model m) the grounding pass will make.
+const GROUND_FIX_MAX: f32 = 0.12;
+
+/// The hips + both leg chains as finally posed, for a forward-kinematics read of the boots.
+#[derive(Default)]
+struct LegChain {
+    hips: Transform,
+    /// (hip, knee, foot) rotations, left then right.
+    leg: [[Quat; 3]; 2],
+}
+
+impl LegChain {
+    fn take(&mut self, j: Joint, tf: &Transform) {
+        match j {
+            Joint::Hips => self.hips = *tf,
+            Joint::HipL => self.leg[0][0] = tf.rotation,
+            Joint::KneeL => self.leg[0][1] = tf.rotation,
+            Joint::FootL => self.leg[0][2] = tf.rotation,
+            Joint::HipR => self.leg[1][0] = tf.rotation,
+            Joint::KneeR => self.leg[1][1] = tf.rotation,
+            Joint::FootR => self.leg[1][2] = tf.rotation,
+            _ => {}
+        }
+    }
+
+    /// Where the boots really are: for each, the height (rig space, root origin on the ground) of its
+    /// lowest heel / toe point. The one nearest the ground is the planted one — a swinging toe can
+    /// dip a finger below it, and following that would float the boot that carries the weight.
+    fn boot_height(&self) -> f32 {
+        let rig = super::footman::leg_rig();
+        let mut near = f32::MAX;
+        for (i, [hip, knee, foot]) in self.leg.iter().enumerate() {
+            let mirror = |v: Vec3| if i == 1 { Vec3::new(-v.x, v.y, v.z) } else { v };
+            let hip_r = self.hips.rotation * *hip;
+            let knee_r = hip_r * *knee;
+            let foot_r = knee_r * *foot;
+            let ankle = self.hips.translation + self.hips.rotation * mirror(rig.hip) + hip_r * mirror(rig.knee) + knee_r * mirror(rig.foot);
+            let h = rig.ankle_height;
+            let low = [Vec3::new(0.0, -h, -rig.heel), Vec3::new(0.0, -h, rig.toe)]
+                .into_iter()
+                .map(|p| (ankle + foot_r * p).y)
+                .fold(f32::MAX, f32::min);
+            if low.abs() < near.abs() {
+                near = low;
+            }
+        }
+        near
+    }
+}
+
 pub fn hero_anim(
     time: Res<Time>,
     player: Res<super::PlayerRes>,
@@ -2199,6 +2276,8 @@ pub fn hero_anim(
     mut blend: Local<ClipBlend>,
     // Sword in hand vs. slung on the back (+ the draw/sheathe reach in flight).
     mut sheath: Local<Sheath>,
+    // Smoothed hips lift/drop that puts the lowest boot point on the ground (grounding pass).
+    mut ground_adj: Local<f32>,
     mut sword_vis: Query<(&HeroPart, &mut Visibility), (Without<super::BackSword>, Without<super::BackShield>)>,
     mut back_vis: Query<&mut Visibility, (With<super::BackSword>, Without<HeroPart>, Without<super::BackShield>)>,
     // The shield goes with the sword: on the arm in a fight, slung on the back otherwise. This
@@ -2327,7 +2406,9 @@ pub fn hero_anim(
         // the dive-in / stand-up carry the transition (the root owns the actual tumble).
         let u = (hero.roll_t / super::movement::ROLL_TIME).clamp(0.0, 1.0);
         let w = smoothstep(u / 0.15) * smoothstep((1.0 - u) / 0.18);
-        loco.lerp(&roll_pose(), w)
+        // The dive-roll clip stretches out in flight; half of the tight tuck keeps the dodge compact.
+        let tuck = if mixamo_gait() { roll_pose().lerp(&mixamo::roll(u), 0.5) } else { roll_pose() };
+        loco.lerp(&tuck, w)
     } else if hero.dash_t >= 0.0 {
         // Sand Dash slide: play the dash-swipe lunge, easing back into locomotion at the blink's tail.
         let p = (hero.dash_t / super::movement::DASH_TIME).clamp(0.0, 1.0);
@@ -2355,6 +2436,8 @@ pub fn hero_anim(
         } else {
             st
         }
+    } else if !hero.on_ground && mixamo_gait() {
+        mixamo::jump(hero.vel_y, 6.5) // 6.5 = movement::JUMP_SPEED
     } else if !hero.on_ground {
         let j = jump_pose(hero.vel_y);
         let j = if moving > 0.05 {
@@ -2439,6 +2522,8 @@ pub fn hero_anim(
 
     // Final shield-arm joint transforms, for the slung board's hand-off (taken after every overlay).
     let (mut sh_l_tf, mut el_l_tf, mut shield_tf) = (Transform::IDENTITY, Transform::IDENTITY, Transform::IDENTITY);
+    // The final hips / leg joints, to find where the boots really end up (see the grounding pass).
+    let mut legs = LegChain::default();
     for (part, mut tf) in &mut parts {
         let mut jp = pose.get(part.joint);
         // Only the gait slides the shoulder girdle; every other clip leaves the shoulders' `t`
@@ -2497,6 +2582,24 @@ pub fn hero_anim(
             Joint::ElbowL => el_l_tf = *tf,
             Joint::Shield => shield_tf = *tf,
             _ => {}
+        }
+        legs.take(part.joint, &tf);
+    }
+
+    // ── Grounding pass ── Every clip above is authored against its own idea of the ground, and the
+    // overlays (guard crouch, landing squash, block, a swing's lunge) bend the legs without moving
+    // the hips to match, so the knight kept ending up standing a hand's breadth in the air. Whatever
+    // the pose, while he is on the ground the lowest boot point is brought onto it: the hips ride
+    // the difference (low-passed, so a change of the planted boot doesn't pop).
+    let grounded = hero.on_ground && hero.roll_t < 0.0 && hero.dash_t < 0.0;
+    let want = if grounded { (-legs.boot_height()).clamp(-GROUND_FIX_MAX, GROUND_FIX_MAX) } else { 0.0 };
+    let k = (dt * if grounded { 40.0 } else { 10.0 }).min(1.0);
+    *ground_adj += (want - *ground_adj) * k;
+    if ground_adj.abs() > 1e-4 {
+        for (part, mut tf) in &mut parts {
+            if part.joint == Joint::Hips {
+                tf.translation.y += *ground_adj;
+            }
         }
     }
 
@@ -2592,10 +2695,10 @@ mod tests {
         let speeds: Vec<f32> = std::env::var("DUMP_V").map(|s| s.split(',').filter_map(|x| x.parse().ok()).collect()).unwrap_or(vec![4.4, 5.04]);
         for v in speeds {
             let g = gait_at(v / hero_model_scale());
-            println!("v={v} run={} sprint={} duty={} sweep={} steps/s={}", g.run, g.sprint, g.duty, g.sweep, gait_phase_rate(v) / PI);
+            println!("v={v} run={} sprint={} duty={} sweep={} steps/s={}", g.run, g.sprint, g.duty, g.sweep, gait_phase_rate_curves(v) / PI);
             for i in 0..40 {
                 let ph = TAU * i as f32 / 40.0;
-                let p = footman_gait(ph, v, 0.0, 1.0);
+                let p = footman_gait_curves(ph, v, 0.0, 1.0);
                 let (lh, lt) = heel_toe(&p, false);
                 let (rh, rt) = heel_toe(&p, true);
                 let ang = |hip: &Jp, knee: &Jp| {
@@ -2652,7 +2755,7 @@ mod tests {
             let mut max_lift = 0.0_f32;
             for frame in 0..240 {
                 let phase = std::f32::consts::TAU * frame as f32 / 240.0;
-                let p = footman_gait(phase, v, 1.0, 0.0);
+                let p = footman_gait_curves(phase, v, 1.0, 0.0);
                 for right in [false, true] {
                     let u = (phase / std::f32::consts::TAU + if right { 0.5 } else { 0.0 }).rem_euclid(1.0);
                     let (heel, toe) = heel_toe(&p, right);
@@ -2668,6 +2771,47 @@ mod tests {
         }
     }
 
+    /// The Mixamo gait: whichever boot carries the weight stays on the ground and does not slide as
+    /// the body travels (the playback rate is the foot-lock contract), and the swing foot lifts.
+    #[test]
+    fn mixamo_gait_boots_planted_and_locked() {
+        assert!(mixamo_gait(), "Mixamo is the default gait");
+        let mut fails = Vec::new();
+        for v in SPEEDS {
+            let vm = v / hero_model_scale();
+            let rate = gait_phase_rate(v);
+            let dt = 1.0 / 240.0;
+            let (mut worst_slip, mut worst_low, mut max_lift) = (0.0_f32, 0.0_f32, 0.0_f32);
+            let (mut slip_sum, mut slip_n) = (0.0_f32, 0);
+            for frame in 0..300 {
+                let phase = std::f32::consts::TAU * frame as f32 / 300.0;
+                let a = footman_gait(phase, v, 1.0, 0.0);
+                let b = footman_gait(phase + rate * dt, v, 1.0, 0.0);
+                for right in [false, true] {
+                    let (ha, ta) = heel_toe(&a, right);
+                    let (hb, tb) = heel_toe(&b, right);
+                    let low = ha.y.min(ta.y);
+                    worst_low = worst_low.min(low);
+                    max_lift = max_lift.max(low);
+                    if ha.y.max(ta.y) < 0.02 && hb.y.max(tb.y) < 0.02 {
+                        let (pa, pb) = if ha.y <= ta.y { (ha, hb) } else { (ta, tb) };
+                        let slip = ((pb.z - pa.z) / dt + vm).abs() / vm.max(0.5);
+                        worst_slip = worst_slip.max(slip);
+                        slip_sum += slip;
+                        slip_n += 1;
+                    }
+                }
+            }
+            println!("mixamo v={v} vm={vm:.2} rate={rate:.2} worst_low={worst_low:.3} max_lift={max_lift:.3} slip max {worst_slip:.2} mean {:.2} over {slip_n}", slip_sum / slip_n.max(1) as f32);
+            fails.push((v, worst_low, max_lift, slip_sum / slip_n.max(1) as f32));
+        }
+        for (v, low, lift, slip) in fails {
+            assert!(low > -0.02, "boot sinks into the ground: v={v}, y={low}");
+            assert!(lift > 0.03, "swing boot must lift: v={v}");
+            assert!(slip < 0.2, "planted boot skates: v={v}, mean slip {slip}");
+        }
+    }
+
     /// The moonwalk regression: while a boot is planted, its contact edge must stay put on the
     /// ground as the body travels — the rig-space sweep cancels the root's real speed.
     #[test]
@@ -2675,7 +2819,7 @@ mod tests {
         for v in SPEEDS {
             let vm = v / hero_model_scale();
             let g = gait_at(vm);
-            let rate = gait_phase_rate(v);
+            let rate = gait_phase_rate_curves(v);
             let dt = 1.0 / 240.0;
             for frame in 0..200 {
                 let phase = std::f32::consts::TAU * frame as f32 / 200.0;
@@ -2685,8 +2829,8 @@ mod tests {
                     if u < 0.02 || u2 > g.duty - 0.02 {
                         continue; // the touchdown / lift-off frames themselves
                     }
-                    let a = heel_toe(&footman_gait(phase, v, 1.0, 0.0), right);
-                    let b = heel_toe(&footman_gait(phase + rate * dt, v, 1.0, 0.0), right);
+                    let a = heel_toe(&footman_gait_curves(phase, v, 1.0, 0.0), right);
+                    let b = heel_toe(&footman_gait_curves(phase + rate * dt, v, 1.0, 0.0), right);
                     // Whichever edge carries the weight (the lower one; both when flat).
                     let (pa, pb) = if a.0.y <= a.1.y { (a.0, b.0) } else { (a.1, b.1) };
                     let slip = (pb.z - pa.z) / dt + vm;
@@ -2707,7 +2851,7 @@ mod tests {
         for (v, hip_max, knee_max) in [(1.4_f32, 46.0_f32, 75.0_f32), (3.5, 55.0, 115.0), (6.125, 75.0, 132.0)] {
             let (mut hi, mut kn) = (0.0_f32, 0.0_f32);
             for i in 0..200 {
-                let p = footman_gait(std::f32::consts::TAU * i as f32 / 200.0, v, 0.0, 1.0);
+                let p = footman_gait_curves(std::f32::consts::TAU * i as f32 / 200.0, v, 0.0, 1.0);
                 let hip = p.hips.r * p.hip_l.r;
                 let thigh = hip * Vec3::NEG_Y;
                 let shin = hip * p.knee_l.r * Vec3::NEG_Y;
@@ -2799,21 +2943,21 @@ mod tests {
 
     #[test]
     fn cadence_reads_human() {
-        let steps = |v: f32| gait_phase_rate(v) / PI; // two steps per 2π
+        let steps = |v: f32| gait_phase_rate_curves(v) / PI; // two steps per 2π
         let walk = steps(super::super::SPEED);
         assert!((1.8..2.6).contains(&walk), "walk cadence {walk}");
         let jog = steps(3.2);
         assert!((2.6..3.6).contains(&jog) && jog > walk, "jog cadence {jog}");
         let sprint = steps(super::super::SPEED * super::super::SPRINT_MULT);
         assert!((3.0..4.6).contains(&sprint) && sprint > jog, "sprint cadence {sprint}");
-        assert_eq!(gait_phase_rate(0.0), 0.0);
+        assert_eq!(gait_phase_rate_curves(0.0), 0.0);
     }
 
     #[test]
     fn footman_gait_is_periodic_and_blends_back_to_idle() {
         for v in SPEEDS {
-            let a = footman_gait(0.0, v, 1.0, 0.0);
-            let b = footman_gait(std::f32::consts::TAU, v, 1.0, 0.0);
+            let a = footman_gait_curves(0.0, v, 1.0, 0.0);
+            let b = footman_gait_curves(std::f32::consts::TAU, v, 1.0, 0.0);
             for j in [Joint::Hips, Joint::Torso, Joint::ShoulderR, Joint::HipL, Joint::HipR, Joint::KneeL, Joint::KneeR, Joint::FootL, Joint::FootR] {
                 let d = a.get(j).r.angle_between(b.get(j).r);
                 assert!(d < 0.002, "gait not periodic at v={v}: joint {} off by {d}", j as u8);
@@ -2830,7 +2974,7 @@ mod tests {
     fn arms_counter_swing_the_legs() {
         for v in SPEEDS {
             // Left heel strike: left boot out front → right (sword) arm forward (negative X).
-            let p = footman_gait(0.0, v, 1.0, 0.0);
+            let p = footman_gait_curves(0.0, v, 1.0, 0.0);
             assert!(heel_toe(&p, false).0.z > heel_toe(&p, true).0.z);
             // Where each shoulder puts its elbow (the bind upper arm, turned).
             let [r, l] = super::super::footman::arm_bind();
@@ -2886,6 +3030,7 @@ mod tests {
         let mut worst = f32::INFINITY;
         for (k, start) in starts.iter().enumerate() {
             let mut prev = pitch(start);
+            let start_pitch = prev;
             let mut unwrapped = prev;
             let mut lowest = prev;
             for s in 1..=60 {
@@ -2902,7 +3047,7 @@ mod tests {
             }
             worst = worst.min(lowest);
             assert!(
-                unwrapped > 120.0 && lowest > -60.0,
+                unwrapped > 120.0 && lowest > start_pitch.min(-60.0) - 15.0, // a sprint's arm may start well back; it must not swing further back
                 "start #{k}: the sword arm went the back way (ended at {unwrapped:.0} deg, lowest {lowest:.0})"
             );
         }

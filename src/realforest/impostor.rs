@@ -160,6 +160,13 @@ impl MaterialExtension for ImpostorExt {
                 ds.depth_compare = Some(bevy::render::render_resource::CompareFunction::Equal);
                 ds.depth_write_enabled = Some(false);
             }
+        } else if main {
+            // No depth prepass (low presets strip it when no DoF/AO/outline/god-rays/TAA needs it):
+            // nothing alpha-tested the quad, so the fragment stage must discard itself or the
+            // whole card draws as an opaque slab.
+            if let Some(f) = descriptor.fragment.as_mut() {
+                f.shader_defs.push("IMPOSTOR_ALPHA_TEST".into());
+            }
         }
         Ok(())
     }
