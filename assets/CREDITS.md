@@ -38,7 +38,7 @@ Photographic textures from Poly Haven (CC0) are listed in `assets/forest_pbr/ATT
 | Maud (campaign cast): hair elvs_braid_bun, garment elvs_ladies_apron | Elvaerwyn | CC-BY (credit required) | MakeHuman community asset library (installed via MPFB) |
 | Fabric / leather textures (linen, wool, hessian, leather) | Poly Haven | CC0 | https://polyhaven.com |
 | Townsfolk mocap clips (walk, run, idles, sitting, work, death — list in `tools/npc_mpfb/mixamo_private.ps1`) | Adobe Mixamo | Mixamo terms: royalty-free in games, **no redistribution as files** — kept out of this repo (gitignored `assets/npc_private/`, rebuilt per machine) | https://www.mixamo.com |
-| Hero locomotion clips: Walking, Running, Jump, Dive Roll (X Bot, in place) — baked to numbers in `src/player/anim/mixamo_clips.rs` by `tools/mixamo_retarget/bake.py`; the source FBX are **not** in the repo | Adobe Mixamo | Mixamo terms: royalty-free in games, no redistribution of the FBX files | https://www.mixamo.com |
+| Hero locomotion clips: Walking, Dive Roll (X Bot, in place) — baked to numbers in `src/player/anim/mixamo_clips.rs` by `tools/mixamo_retarget/bake.py`; the source FBX are **not** in the repo | Adobe Mixamo | Mixamo terms: royalty-free in games, no redistribution of the FBX files | https://www.mixamo.com |
 
 ## Cutscene audio
 

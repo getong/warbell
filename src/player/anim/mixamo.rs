@@ -1,4 +1,4 @@
-//! The hero's walk, run, jump and dodge roll on Mixamo clips (`mixamo_clips`, baked by
+//! The hero's walk and dodge roll on Mixamo clips (`mixamo_clips`, baked by
 //! `tools/mixamo_retarget/bake.py` from Mixamo's Walking / Running / Jump / Dive Roll).
 //!
 //! Same recipe as the sword combo ([`super::swordplay`]): the clips are rig-free targets (pelvis and
@@ -21,7 +21,8 @@ use super::mixamo_clips as mc;
 use super::swordplay::{aim_leg, Frame};
 use super::{aim_arm, e3, rest, rx, shield_gait_r, smoothstep, sword_rest_r, Jp, Pose, SHIELD_GAIT_T};
 
-/// Model m/s below which the gait is the walk loop, and above which it is the run loop (blended between).
+/// Model m/s below which the gait is purely the Mixamo walk; above it the walk fades into the
+/// hand-built run curves (which own the jog and the sprint), fully by `RUN_FROM`.
 const WALK_TO: f32 = 2.3;
 const RUN_FROM: f32 = 3.6;
 
@@ -30,18 +31,16 @@ fn leg_len() -> f32 {
     rig.knee.length() + rig.foot.length()
 }
 
-/// 0 = the walk loop … 1 = the run loop, at a ground speed of `v` model m/s.
+
 pub(super) fn run_weight(v: f32) -> f32 {
     smoothstep((v - WALK_TO) / (RUN_FROM - WALK_TO))
 }
 
-/// Gait-phase advance (rad/s) at `v` model m/s: the foot-lock contract. A loop of `n` frames whose
-/// stance boot sweeps back at `native` leg-lengths/s plays at `v / (native × leg)` of its own speed.
+/// Walk-loop phase advance (rad/s) at `v` model m/s: the foot-lock contract. A loop of `n` frames
+/// whose stance boot sweeps back at `native` leg-lengths/s plays at `v / (native x leg)` of its own speed.
 pub(super) fn phase_rate(v: f32) -> f32 {
     let l = leg_len();
-    let cps = |native: f32, n: usize| v / (native * l) * mc::FPS / n as f32;
-    let w = run_weight(v);
-    TAU * (cps(mc::WALK_SPEED, mc::WALK.len()) * (1.0 - w) + cps(mc::RUN_SPEED, mc::RUN.len()) * w)
+    TAU * v / (mc::WALK_SPEED * l) * mc::FPS / mc::WALK.len() as f32
 }
 
 /// A looping clip at cycle phase `u` (0..1), Catmull-Rom between the baked keys.
@@ -161,27 +160,10 @@ fn dress(mut p: Pose, run: f32, armed: f32, shield_back: f32) -> Pose {
     p
 }
 
-/// The hero's foot-locked locomotion at ground speed `v` (model m/s), gait phase `c` (rad; the left
-/// heel strikes at 0 and the right at π): the Mixamo walk below a jog, the run above, blended between.
-pub(super) fn gait(c: f32, v: f32, armed: f32, shield_back: f32) -> Pose {
-    let u = c / TAU;
-    let w = run_weight(v);
-    let f = if w <= 1e-3 {
-        sample_loop(&mc::WALK, u)
-    } else if w >= 1.0 - 1e-3 {
-        sample_loop(&mc::RUN, u)
-    } else {
-        sample_loop(&mc::WALK, u).lerp(&sample_loop(&mc::RUN, u), w)
-    };
-    dress(solve(&f, true), w, armed, shield_back)
-}
-
-/// The airborne body for vertical speed `vy` (+ rising): the clip's take-off → landing reach, read
-/// off the arc (`jump_speed` up at the take-off … `jump_speed` down at the touchdown).
-pub(super) fn jump(vy: f32, jump_speed: f32) -> Pose {
-    let p = ((jump_speed - vy) / (2.0 * jump_speed)).clamp(0.0, 1.0);
-    let f = sample_once(&mc::JUMP, p * (mc::JUMP.len() - 1) as f32);
-    dress(solve(&f, false), 0.5, 1.0, 0.0)
+/// The Mixamo walk at gait phase `c` (rad; the left heel strikes at 0 and the right at pi), dressed
+/// with the knight's kit. The caller fades it into the run curves with [`run_weight`].
+pub(super) fn gait(c: f32, armed: f32, shield_back: f32) -> Pose {
+    dress(solve(&sample_loop(&mc::WALK, c / TAU), true), 0.0, armed, shield_back)
 }
 
 /// The somersault's limbs at progress `u` (0..1) through the roll: the dive, the tuck, the landing.
