@@ -1,4 +1,5 @@
-//! **Boot prints** — every footfall on soft ground (mud, sand, snow) presses a print that stays:
+//! **Boot prints** — every footfall on yielding ground presses a print that stays (deep reliefs in
+//! mud, sand and snow; a shallow scuff on packed earth; a bruised patch of crushed blades on grass):
 //! left / right boots alternate on the real planted foot (`footing::Footfall::side`), the toe
 //! points along the stride, and the print is a relief, not a stamp — `ground_mark.wesl`'s
 //! `KIND_BOOT` builds a pressed height field (heel deepest, the arch barely touching, spoil pushed
@@ -7,8 +8,9 @@
 //! the shortest.
 //!
 //! Cheap by construction: each print is one instanced quad on the shared `combat_marks` stain
-//! material (no per-print material; a fade only rewrites the `MeshTag`), and the pool is capped at
-//! [`MAX_PRINTS`] — the oldest print is lifted when a new one would overflow it.
+//! material (no per-print material; a fade only rewrites the `MeshTag`), and the pools are capped —
+//! the oldest print is lifted when a new one would overflow. The hero's trail has its own pool
+//! ([`MAX_HERO_PRINTS`]) so a muddy village full of walkers ([`MAX_NPC_PRINTS`]) can't erase it.
 //!
 //! Spawn + fade are sim-gated: a frozen world neither takes steps nor dries its prints.
 
@@ -22,8 +24,10 @@ use crate::footing::{Footfall, FootfallSet, Stepper, Surface};
 use crate::game_state::SimAppExt;
 use crate::worldmap;
 
-/// Hard cap on live prints (hero + NPCs) — the oldest is lifted to make room.
-const MAX_PRINTS: usize = 256;
+/// Hard caps on live prints — the oldest is lifted to make room. Separate pools: the hero's own
+/// trail must survive a crowd walking the same mud.
+const MAX_HERO_PRINTS: usize = 192;
+const MAX_NPC_PRINTS: usize = 160;
 /// Print quad footprint (world units): width across the sole × length heel→toe. The shader's sole
 /// fills ~80% of it, leaving room for the spoil rim.
 const PRINT_W: f32 = 0.2;
@@ -42,16 +46,22 @@ struct BootPrint {
     sprint: bool,
 }
 
-/// Spawn order of live prints, oldest first (may hold already-faded ids; pruned lazily).
+/// Spawn order of live prints, oldest first (may hold already-faded ids; pruned lazily):
+/// `.0` the hero's, `.1` everyone else's.
 #[derive(Resource, Default)]
-struct PrintPool(VecDeque<Entity>);
+struct PrintPool(VecDeque<Entity>, VecDeque<Entity>);
 
-/// (shader ground code, hold s, fade s, strength) per soft surface.
+/// (shader ground code, hold s, fade s, strength) per yielding surface.
 fn ground_params(s: Surface) -> Option<(u32, f32, f32, f32)> {
     match s {
         Surface::Mud => Some((0, 35.0, 15.0, 0.95)),
         Surface::Sand => Some((1, 22.0, 12.0, 0.85)),
         Surface::Snow => Some((2, 45.0, 15.0, 1.0)),
+        // Packed earth / roads: a dusty scuff that the next cart wheel would erase.
+        Surface::Dirt => Some((3, 22.0, 10.0, 0.8)),
+        // The sward springs back: a short-lived bruise where the blades were crushed (the blades
+        // themselves lie flat a while too, `grass_trample`).
+        Surface::Grass => Some((4, 12.0, 8.0, 0.6)),
         _ => None,
     }
 }
@@ -99,11 +109,15 @@ fn spawn_prints(
             Stepper::HeroLanding { .. } => &[(right * 0.1, 1.0), (right * -0.1, -1.0)],
             _ => &[(Vec2::ZERO, f.side)],
         };
+        let (q, cap) = match f.who {
+            Stepper::Npc { .. } => (&mut pool.1, MAX_NPC_PRINTS),
+            _ => (&mut pool.0, MAX_HERO_PRINTS),
+        };
         for &(off, side) in feet {
-            if pool.0.len() >= MAX_PRINTS {
-                pool.0.retain(|e| live.contains(*e));
-                while pool.0.len() >= MAX_PRINTS {
-                    if let Some(old) = pool.0.pop_front() {
+            if q.len() >= cap {
+                q.retain(|e| live.contains(*e));
+                while q.len() >= cap {
+                    if let Some(old) = q.pop_front() {
                         commands.entity(old).try_despawn();
                     }
                 }
@@ -133,7 +147,7 @@ fn spawn_prints(
                     crate::biome::BiomeEntity,
                 ))
                 .id();
-            pool.0.push_back(e);
+            q.push_back(e);
         }
     }
 }
@@ -155,7 +169,8 @@ fn fade_prints(time: Res<Time>, mut commands: Commands, mut q: Query<(Entity, &m
     }
 }
 
-/// `FOREST_PRINTTEST="x,z"`: once the world is up, park rows of boot prints (mud / sand / snow,
+/// `FOREST_PRINTTEST="x,z"`: once the world is up, park rows of boot prints (mud / sand / snow /
+/// packed earth / grass,
 /// left + right + a sprint push-off) and a blood-pool control mark on the ground at a world XZ,
 /// so a still (`FOREST_SHOT` + `FOREST_CAM`) frames the print look without a walk. Rows run +X,
 /// toes point -Z.
@@ -179,7 +194,7 @@ fn print_test(
     let dir = Vec2::new(0.0, -1.0);
     // `FOREST_PRINTTEST_SCALE=<k>` blows the test prints up k× to inspect the shader's shape.
     let k: f32 = std::env::var("FOREST_PRINTTEST_SCALE").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0);
-    for ground in 0..3u32 {
+    for ground in 0..5u32 {
         for (i, (left, sprint)) in [(true, false), (false, false), (true, true), (false, true)].into_iter().enumerate() {
             let p = c + Vec2::new(i as f32 * 0.32 - 0.5, ground as f32 * 0.6) * k;
             let y = worldmap::ground_at_world(p.x, p.y).unwrap_or(0.0) + 0.012;

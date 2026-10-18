@@ -23,6 +23,7 @@ pub mod foliage;
 pub mod impostor;
 pub mod load;
 pub mod reskin;
+pub mod far_cover;
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -121,6 +122,7 @@ pub fn begin_scatter() {
     SPLATS.lock().expect("splats poisoned").clear();
     COVER_SPLATS.lock().expect("splats poisoned").clear();
     SCATTER_DONE.store(false, std::sync::atomic::Ordering::Release);
+    far_cover::reset();
 }
 
 /// Register a contact-darkening splat (world XZ + radius in world units).
@@ -221,6 +223,12 @@ pub struct Kit {
     pub ground: GroundTextures,
     /// Far-tree impostor atlases (`impostor`), `None` when disabled / not packed.
     pub impostors: Option<impostor::Atlas>,
+    /// (canopy material index, its range-dissolving twin): the LOD0 crown of a tree that hands
+    /// over to an impostor thins out leaf clump by leaf clump over the last
+    /// [`impostor::IMP_FADE_IN`] units of its range while the impostor thins in.
+    canopy_fade: Option<(usize, KitMat)>,
+    /// Per model: how it reads from afar (`far_cover`), computed on first placement.
+    cover: Vec<OnceLock<Option<far_cover::Swatch>>>,
 }
 
 /// Material sets by the names Blender exported: (name, PBR set file stem, foliage card?).
@@ -686,7 +694,10 @@ impl Kit {
                         // The hand-off stretches with the render distance's ground factor only.
                         c.insert(crate::quality::SmallDetail);
                     }
-                    self.mat(part.mat, snow).insert(&mut c);
+                    match &self.canopy_fade {
+                        Some((i, twin)) if imp.is_some() && !snow && *i == part.mat => twin.insert(&mut c),
+                        _ => self.mat(part.mat, snow).insert(&mut c),
+                    }
                     if Some(part.mat) == fruit {
                         c.insert((fruit_tag.clone(), Visibility::Visible));
                     }
@@ -1074,6 +1085,9 @@ impl Chunks {
         if keep_clear(world.x, world.z, kit.models[model].half.max_element() * scale) {
             return false;
         }
+        if far_cover::enabled() {
+            far_cover::record(far_cover::swatch_for(kit, model), world, scale, tier);
+        }
         let key = chunk_key(world.x, world.z);
         let t = Transform { translation: world - chunk_center(key), rotation: rot, scale: Vec3::splat(scale) };
         let slice = density_slice(tier, world);
@@ -1355,7 +1369,8 @@ impl Plugin for RealForestPlugin {
         }
         // Before the world build (Startup) reads the kit inside `biome::scatter_region`.
         app.add_plugins(impostor::ImpostorPlugin);
-        app.add_systems(PreStartup, build_kit).add_systems(Update, (patch_terrain, drive_forest_look, apply_undergrowth));
+        app.add_systems(PreStartup, build_kit)
+            .add_systems(Update, (patch_terrain, drive_forest_look, apply_undergrowth, bind_far_cover.after(patch_terrain)));
     }
 }
 
@@ -1462,6 +1477,7 @@ fn try_build(
     images: &mut Assets<Image>,
 ) -> Result<Kit, String> {
     let mut mats = Vec::new();
+    let mut canopy_fade = None;
     let mut snow_twins = Vec::new();
     let mut mat_index = HashMap::new();
     for (name, set, card) in MATERIALS {
@@ -1485,6 +1501,10 @@ fn try_build(
         });
         // Leaf cards sway a little at the crown edge, undergrowth blades more at the tips; plus
         // crown / undergrowth colour variety (see `foliage`).
+        if name == "canopy" {
+            let twin = foliage::dissolve(foliage::material(m.clone(), 0.025, 1.2, 0.6), impostor::IMP_FADE_IN);
+            canopy_fade = Some((mats.len(), KitMat::Foliage(foliage_mats.add(twin))));
+        }
         mats.push(match name {
             "canopy" => KitMat::Foliage(foliage_mats.add(foliage::material(m, 0.025, 1.2, 0.6))),
             "undergrowth" => KitMat::Foliage(foliage_mats.add(foliage::dissolve(
@@ -1574,7 +1594,8 @@ fn try_build(
     } else {
         None
     };
-    Ok(Kit { mats, snow_mats: snow_twins, models, by_name, ground, impostors })
+    let cover = (0..models.len()).map(|_| OnceLock::new()).collect();
+    Ok(Kit { mats, snow_mats: snow_twins, models, by_name, ground, impostors, canopy_fade, cover })
 }
 
 /// (XZ half-extent, trunk-base radius) of a model from its CPU meshes. The trunk radius is the
@@ -1621,6 +1642,43 @@ pub(crate) fn build_kit(
 /// Bind the forest-floor layers + the forest/road mask into every world terrain material once.
 /// Terrain materials are minted inside the world build (and again on every in-process rebuild),
 /// so this watches for unpatched ones instead of hooking each creation site.
+/// Once the world is built (each `WorldReady` edge — boot and every in-process rebuild), bake the
+/// far-cover map from the placed cover (`far_cover`) and bind it to the terrain; keep its blend
+/// band on the cover cards' render-distance-scaled range.
+fn bind_far_cover(
+    ready: Option<Res<crate::biome::WorldReady>>,
+    mut mats: ResMut<Assets<TerrainMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    mut state: Local<(bool, Option<Handle<Image>>, f32)>,
+) {
+    let Some(ready) = ready else { return };
+    let (was_ready, baked, band_for) = &mut *state;
+    if ready.0 && !*was_ready {
+        if let Some(old) = baked.take() {
+            images.remove(&old);
+        }
+        *baked = if far_cover::enabled() { far_cover::bake(&mut images) } else { None };
+        *band_for = -1.0;
+    }
+    *was_ready = ready.0;
+    let Some(h) = baked.clone() else { return };
+    // Lush carpet ends at LUSH_FAR, sparse cover at COVER_FAR (both stretched by the ground
+    // factor): fade in from just inside the carpet's end to the cover's end.
+    let gf = crate::quality::ground_factor(crate::quality::view_scale());
+    if (gf - *band_for).abs() < 1e-3 {
+        return;
+    }
+    *band_for = gf;
+    let (start, end) = ((LUSH_FAR - 10.0) * gf, COVER_FAR * gf);
+    let ids: Vec<_> = mats.iter().filter(|(_, m)| m.extension.params.pbr.x > 0.0).map(|(id, _)| id).collect();
+    for id in ids {
+        let Some(mut m) = mats.get_mut(id) else { continue };
+        m.extension.far_cover = h.clone();
+        let p = &mut m.extension.params.pbr;
+        *p = Vec4::new(p.x, far_cover::shader_strength(), start, end);
+    }
+}
+
 fn patch_terrain(
     mut mats: ResMut<Assets<TerrainMaterial>>,
     mut images: ResMut<Assets<Image>>,

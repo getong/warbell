@@ -144,11 +144,18 @@ fn boot_sd(w: vec2<f32>) -> f32 {
 }
 
 // Print height (normalised: -1 = full depth, + = spoil pushed up round the rim) at boot-space `w`.
-// `ground` 0 mud / 1 sand / 2 snow; `sprint` digs the toe in and throws the spoil back.
+// `ground` 0 mud / 1 sand / 2 snow / 3 packed earth / 4 grass sward; `sprint` digs the toe in and
+// throws the spoil back.
 fn boot_height(w: vec2<f32>, seed: f32, ground: u32, sprint: bool) -> f32 {
     let sd = boot_sd(w);
     // Wall width (m): snow cuts crisp, mud slumps a little, dry sand pours back in.
-    let wall = select(select(0.010, 0.022, ground == 1u), 0.006, ground == 2u);
+    // Packed earth takes a shallow scuff with soft walls; on the sward it's crushed blades, not a cut.
+    var wall = select(select(0.010, 0.022, ground == 1u), 0.006, ground == 2u);
+    if ground == 3u {
+        wall = 0.014;
+    } else if ground == 4u {
+        wall = 0.030;
+    }
     let inside = 1.0 - smoothstep(-wall, 0.001, sd);
     // Weight distribution: the heel strikes deepest, the ball next, the arch barely touches.
     let heel_w = 1.0 - smoothstep(-0.10, -0.04, w.y);
@@ -162,6 +169,11 @@ fn boot_height(w: vec2<f32>, seed: f32, ground: u32, sprint: bool) -> f32 {
     var h = -inside * min(press, 1.0) * floor_n;
     // Spoil pushed up round the rim (more behind the push-off when sprinting), broken by noise.
     var lip_amt = select(select(0.30, 0.20, ground == 1u), 0.40, ground == 2u);
+    if ground == 3u {
+        lip_amt = 0.12;
+    } else if ground == 4u {
+        lip_amt = 0.0;
+    }
     if sprint {
         lip_amt = lip_amt * (0.7 + 1.2 * (1.0 - smoothstep(-0.14, -0.04, w.y)));
     }
@@ -191,7 +203,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     if kind == KIND_BOOT {
         // ── Boot print: a pressed height field, shaded against the sun as relief ──
         let bits = (tag >> 20u) & 0xffu;
-        let ground = bits & 3u;
+        let ground = (bits & 3u) | ((bits >> 2u) & 4u);
         let left = (bits & 4u) != 0u;
         let sprint = (bits & 8u) != 0u;
         var q = p * vec2<f32>(0.1, 0.18); // boot space (metres at the design size)
@@ -213,6 +225,14 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
             amp = 0.040;
             tint_deep = vec3<f32>(0.68, 0.76, 0.92); // snow: a blue shadowed plug
             lip_lift = 0.04;
+        } else if ground == 3u {
+            amp = 0.010;
+            tint_deep = vec3<f32>(0.74, 0.66, 0.58); // packed earth: a dusty, darker scuff
+            lip_lift = 0.05;
+        } else if ground == 4u {
+            amp = 0.006;
+            tint_deep = vec3<f32>(0.80, 0.84, 0.64); // crushed sward: bruised, a touch yellower
+            lip_lift = 0.0;
         }
         let e = 0.003;
         let h = boot_height(q, seed, ground, sprint);

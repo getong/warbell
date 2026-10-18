@@ -1,8 +1,10 @@
 //! **Footstep feedback** — the visual twin of [`audio::footsteps`](crate::audio). Each hero
-//! [`Footfall`] (from [`crate::footing`], shared with the step sound and the boot prints) kicks up
-//! a small puff of motes tinted by the surface underfoot (dust / sand / snow powder / mud clods;
-//! nothing off grass, stone or planks). Wading the shallows swaps the puff for a splash + an
-//! expanding ripple ring. Pure spawn-and-fade — the world answers your feet.
+//! [`Footfall`] (from [`crate::footing`], shared with the step sound and the boot prints) throws
+//! what the ground underfoot would: a soft, drifting **dust** cloud off packed earth and sand
+//! (camera-facing soft sprites that billow out, hang and thin away — not shrinking balls), powder
+//! plus tumbling clumps off snow, heavy clods off mud, flecks of chaff and seed off the grass,
+//! grit off stone at a run. Wading the shallows swaps it for a splash + an expanding ripple ring.
+//! Pure spawn-and-fade — the world answers your feet.
 //!
 //! Fades run **ungated** (like the combat sparks) so a frozen scene still settles its dust; the
 //! emitter is gated on `Modal::None` so panels/pauses don't spawn steps.
@@ -41,11 +43,38 @@ struct Ripple {
     mat: Handle<StandardMaterial>,
 }
 
+/// A soft dust cloud: billows out from the boot, slows (air drag), grows and thins away. Fades by
+/// stepping through its kind's [`DUST_STEPS`] shared alpha materials (no per-mote material).
+#[derive(Component)]
+struct Dust {
+    vel: Vec3,
+    age: f32,
+    life: f32,
+    size0: f32,
+    size1: f32,
+    kind: usize,
+    step: usize,
+}
+
+/// Alpha steps a dust cloud fades through (shared materials per dust kind).
+const DUST_STEPS: usize = 5;
+/// Dust kinds (index into `FxAssets::dust`).
+const DUST_EARTH: usize = 0;
+const DUST_SAND: usize = 1;
+const DUST_SNOW: usize = 2;
+
 /// Shared footstep-fx assets, built once. `puff` + `mortar` are crate-visible so
 /// [`build_fx`](crate::build_fx) can reuse the mote pipeline for construction dust.
 #[derive(Resource)]
 pub(crate) struct FxAssets {
     pub(crate) puff: Handle<Mesh>,
+    /// Soft round sprite (`particles::soft_disc_mesh`) for the dust clouds.
+    disc: Handle<Mesh>,
+    /// Per dust kind: its alpha steps, opaque-most first.
+    dust: Vec<[Handle<StandardMaterial>; DUST_STEPS]>,
+    /// Chaff / seed flecks off the grass, grit off stone.
+    chaff: Handle<StandardMaterial>,
+    grit: Handle<StandardMaterial>,
     ring: Handle<Mesh>,
     dirt: Handle<StandardMaterial>,
     snow: Handle<StandardMaterial>,
@@ -63,7 +92,7 @@ impl Plugin for FootstepFxPlugin {
         app.add_systems(Startup, setup)
             .add_sim_systems(emit.after(FootfallSet))
             // Fades are visual — keep settling even while frozen.
-            .add_systems(Update, (fade_puffs, fade_ripples));
+            .add_systems(Update, (fade_puffs, fade_ripples, drift_dust));
     }
 }
 
@@ -72,6 +101,36 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    // Dust is LIT (it greys out at dusk instead of glowing) and fades by material steps.
+    let mut dust_set = |c: Color, a: f32| -> [Handle<StandardMaterial>; DUST_STEPS] {
+        std::array::from_fn(|i| {
+            let k = 1.0 - i as f32 / DUST_STEPS as f32;
+            materials.add(StandardMaterial {
+                base_color: c.with_alpha(a * k * k),
+                perceptual_roughness: 1.0,
+                reflectance: 0.0,
+                alpha_mode: AlphaMode::Blend,
+                cull_mode: None,
+                ..default()
+            })
+        })
+    };
+    let dust = vec![
+        // (Greyed and thin: lit from behind, a saturated tan sprite read as a glowing halo.)
+        dust_set(Color::srgb(0.55, 0.50, 0.42), 0.30), // packed earth
+        dust_set(Color::srgb(0.78, 0.71, 0.58), 0.32), // sand
+        dust_set(Color::srgb(0.95, 0.97, 1.0), 0.50),  // snow powder
+    ];
+    let chaff = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.52, 0.55, 0.30),
+        perceptual_roughness: 1.0,
+        ..default()
+    });
+    let grit = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.48, 0.45, 0.40),
+        perceptual_roughness: 1.0,
+        ..default()
+    });
     let mut mk = |c: Color, a: f32| {
         materials.add(StandardMaterial {
             base_color: c.with_alpha(a),
@@ -83,6 +142,10 @@ fn setup(
     };
     commands.insert_resource(FxAssets {
         puff: meshes.add(Sphere::new(0.12).mesh().ico(1).unwrap()),
+        disc: meshes.add(crate::particles::soft_disc_mesh()),
+        dust,
+        chaff,
+        grit,
         // Authored flat in XY (z=0) — laid into the ground plane with a -90° X tilt at spawn.
         ring: meshes.add(Annulus::new(0.5, 0.53).mesh().resolution(48).build()),
         dirt: mk(Color::srgb(0.62, 0.50, 0.34), 0.7),
@@ -94,8 +157,8 @@ fn setup(
     });
 }
 
-/// The kicked-up mote material for a surface; `None` = the step throws nothing (grass blades,
-/// hard stone / planks — the step SOUND carries those).
+/// The kicked-up mote material for a surface; `None` = no motes of its own (grass, stone, planks:
+/// a landing burst falls back to dirt; footfalls there throw chaff / grit / nothing instead).
 fn surf_mat(fx: &FxAssets, s: Surface) -> Option<Handle<StandardMaterial>> {
     match s {
         Surface::Dirt => Some(fx.dirt.clone()),
@@ -158,18 +221,101 @@ fn emit(
             ));
             continue;
         }
-        let Some(mat) = surf_mat(&fx, f.surface) else { continue };
-        // Sprinting (gait → 1) throws more, faster dust, kicked back behind the TRAVEL (velocity,
-        // not facing — a strafing combat stance would otherwise trail dust sideways). Mud throws
-        // a few heavy clods low instead of a drifting puff.
+        // Sprinting (gait → 1) throws more, faster, kicked back behind the TRAVEL (velocity, not
+        // facing — a strafing combat stance would otherwise trail dust sideways).
         let run = f.gait;
-        let kick = p - Vec3::new(f.dir.x, 0.0, f.dir.y) * (0.22 * run);
-        let (n, spd, sc) = match f.surface {
-            Surface::Mud => (2 + (run * 3.0) as u32, 0.7 + run * 1.0, 0.45 + run * 0.15),
-            Surface::Snow => (3 + (run * 4.0) as u32, 1.0 + run * 1.6, 0.6 + run * 0.3),
-            _ => (3 + (run * 3.0) as u32, 1.1 + run * 1.6, 0.65 + run * 0.25),
+        let back = Vec3::new(f.dir.x, 0.0, f.dir.y);
+        let kick = p - back * (0.22 * run);
+        let seed = (p.x * 13.1 + p.z * 7.7).to_bits();
+        match f.surface {
+            Surface::Dirt => {
+                spawn_dust(&mut commands, &fx, DUST_EARTH, kick, back, 2 + (run * 4.0) as u32, 0.5 + run * 1.1, 0.9 + run * 0.5, seed);
+                spawn_puffs(&mut commands, &fx.puff, &fx.dirt, kick, 1 + (run * 2.0) as u32, 0.9 + run * 1.2, 0.3 + run * 0.1, 0.0);
+            }
+            Surface::Sand => {
+                spawn_dust(&mut commands, &fx, DUST_SAND, kick, back, 2 + (run * 5.0) as u32, 0.6 + run * 1.3, 0.8 + run * 0.6, seed);
+                spawn_puffs(&mut commands, &fx.puff, &fx.sand, kick, 2 + (run * 3.0) as u32, 1.1 + run * 1.4, 0.22 + run * 0.08, 0.0);
+            }
+            Surface::Snow => {
+                // Powder that hangs + a few clumps that tumble back down.
+                spawn_dust(&mut commands, &fx, DUST_SNOW, kick, back, 2 + (run * 4.0) as u32, 0.5 + run * 1.2, 0.7 + run * 0.5, seed);
+                spawn_puffs(&mut commands, &fx.puff, &fx.snow, kick, 2 + (run * 4.0) as u32, 1.0 + run * 1.6, 0.4 + run * 0.25, 0.0);
+            }
+            Surface::Mud => {
+                // Heavy clods thrown low behind the boot.
+                spawn_puffs(&mut commands, &fx.puff, &fx.mud, kick, 3 + (run * 4.0) as u32, 0.8 + run * 1.2, 0.35 + run * 0.15, 0.0);
+            }
+            Surface::Grass => {
+                // Flecks of chaff / seed — no dust: living sward doesn't smoke. Mostly the grass
+                // itself answers (`grass_trample`); this is the bit that flies.
+                spawn_puffs(&mut commands, &fx.puff, &fx.chaff, kick, 1 + (run * 4.0) as u32, 0.9 + run * 1.3, 0.14 + run * 0.05, 0.0);
+            }
+            Surface::Stone => {
+                // A little grit skittering off flagstones at a run; a walk is just the sound.
+                if run > 0.4 {
+                    spawn_puffs(&mut commands, &fx.puff, &fx.grit, kick, 1 + (run * 3.0) as u32, 1.2 + run * 1.0, 0.1, 0.0);
+                }
+            }
+            Surface::Wood | Surface::Water => {}
+        }
+    }
+}
+
+/// Puff `n` soft dust clouds from the boot at `at`: a low, wide spread biased back along `back`
+/// (the push-off), each billowing out under drag, rising a touch, growing and thinning away.
+/// `spd` = launch speed, `size` = final cloud diameter (world units).
+#[allow(clippy::too_many_arguments)]
+fn spawn_dust(commands: &mut Commands, fx: &FxAssets, kind: usize, at: Vec3, back: Vec3, n: u32, spd: f32, size: f32, seed: u32) {
+    for i in 0..n {
+        let h = |k: u32| {
+            let v = (seed ^ i.wrapping_mul(0x9E37_79B9).wrapping_add(k.wrapping_mul(0x85EB_CA6B))).wrapping_mul(0x2C1B_3C6D);
+            ((v ^ (v >> 15)).wrapping_mul(0x297A_2D39) >> 8) as f32 / 16_777_216.0
         };
-        spawn_puffs(&mut commands, &fx.puff, &mat, kick, n, spd, sc, 0.0);
+        let a = h(1) * std::f32::consts::TAU;
+        let dir = (Vec3::new(a.cos(), 0.0, a.sin()) - back * 0.8).normalize_or(Vec3::X);
+        let vel = dir * spd * (0.55 + 0.6 * h(2)) + Vec3::Y * (0.25 + 0.35 * h(3));
+        let life = 0.9 + 0.8 * h(4);
+        let size1 = size * (0.7 + 0.6 * h(5));
+        commands.spawn((
+            Mesh3d(fx.disc.clone()),
+            MeshMaterial3d(fx.dust[kind][0].clone()),
+            Transform::from_translation(at + Vec3::Y * (0.06 + 0.08 * h(6))).with_scale(Vec3::splat(size1 * 0.25)),
+            Dust { vel, age: 0.0, life, size0: size1 * 0.25, size1, kind, step: 0 },
+            crate::particles::FaceCamera,
+            NotShadowCaster,
+        ));
+    }
+}
+
+/// Drift every dust cloud: drag bleeds its launch speed, it rises a little and grows, and its
+/// material steps down the alpha ladder as it ages; reaped at end of life.
+fn drift_dust(
+    time: Res<Time>,
+    mut commands: Commands,
+    fx: Option<Res<FxAssets>>,
+    mut q: Query<(Entity, &mut Dust, &mut Transform, &mut MeshMaterial3d<StandardMaterial>)>,
+) {
+    let Some(fx) = fx else { return };
+    let dt = time.delta_secs();
+    let drag = (-3.2 * dt).exp();
+    for (e, mut d, mut tf, mut mat) in &mut q {
+        d.age += dt;
+        let u = d.age / d.life;
+        if u >= 1.0 {
+            commands.entity(e).try_despawn();
+            continue;
+        }
+        d.vel *= drag;
+        d.vel.y += 0.15 * dt; // warm air: a dust cloud hangs, it doesn't fall
+        let v = d.vel;
+        tf.translation += v * dt;
+        let g = 1.0 - (1.0 - u) * (1.0 - u);
+        tf.scale = Vec3::splat(d.size0 + (d.size1 - d.size0) * g);
+        let step = (((u * u * 0.6 + u * 0.4) * DUST_STEPS as f32) as usize).min(DUST_STEPS - 1);
+        if step != d.step {
+            d.step = step;
+            mat.0 = fx.dust[d.kind][step].clone();
+        }
     }
 }
 

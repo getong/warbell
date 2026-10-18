@@ -521,15 +521,22 @@ pub fn fp_body_visibility(
     mut parts: Query<(&super::HeroPart, &mut Visibility), Without<super::HeroMesh>>,
     mut leaves: Query<(&ChildOf, &mut Visibility), With<super::HeroMesh>>,
     joints: Query<&super::HeroPart>,
+    mut running: Local<bool>,
 ) {
     use super::Joint;
     let want = if fp.blend > 0.5 { Visibility::Hidden } else { Visibility::Inherited };
-    // A sprint (weapons always sheathed) pumps the bare forearms forward and up toward the
-    // midline — straight through the eye, a dark slab filling the frame and smeared to grain by
-    // motion blur. KCD-style, the empty hands simply leave the view while sprinting: hide the
-    // whole elbow subtree (forearm, gauntlet, hand) past a third of the run blend.
-    let sprint = hero_q.single().is_ok_and(|h| h.run_amt > 0.3 || h.gait_speed > 3.0);
-    let want_fore = if fp.blend > 0.5 && sprint { Visibility::Hidden } else { Visibility::Inherited };
+    // At a run (weapons always sheathed) the body pumps through the bottom of the lens: the bare
+    // forearms swing forward and up toward the midline, and the cuirass / fauld plates bob up into
+    // the lower frame with every stride — dark slabs smeared to grain by motion blur. KCD-style,
+    // the body simply leaves the view while running: hide the elbow subtrees (forearm, gauntlet,
+    // hand) and the plates hung on the torso + hips. Hysteresis so a jog at the threshold doesn't
+    // flicker the chest in and out.
+    if let Ok(h) = hero_q.single() {
+        let pace = h.gait_speed.max(h.run_amt * 5.0);
+        *running = if *running { pace > 2.0 } else { pace > 2.6 };
+    }
+    let run_hide = fp.blend > 0.5 && *running;
+    let want_fore = if run_hide { Visibility::Hidden } else { Visibility::Inherited };
     for (p, mut vis) in &mut parts {
         let w = match p.joint {
             Joint::Head => want,
@@ -541,11 +548,16 @@ pub fn fp_body_visibility(
         }
     }
     // The upper arms + pauldrons swing right past the eye in the third-person clips (a dark slab
-    // across half the frame): drop them, keep the forearms / hands / sword / shield.
+    // across half the frame): always dropped in first person. The torso / hips plates only go at
+    // a run (see above) — walking, a glance down still finds your own chest.
     for (parent, mut vis) in &mut leaves {
-        let upper = joints.get(parent.parent()).is_ok_and(|j| matches!(j.joint, Joint::ShoulderL | Joint::ShoulderR));
-        if upper && *vis != want {
-            *vis = want;
+        let w = match joints.get(parent.parent()).map(|j| j.joint) {
+            Ok(Joint::ShoulderL | Joint::ShoulderR) => want,
+            Ok(Joint::Torso | Joint::Hips) => want_fore,
+            _ => continue,
+        };
+        if *vis != w {
+            *vis = w;
         }
     }
 }
@@ -900,3 +912,4 @@ mod tests {
         }
     }
 }
+

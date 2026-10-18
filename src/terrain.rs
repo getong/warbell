@@ -40,7 +40,8 @@ pub struct ForestParams {
     /// ground test have no roads).
     pub rut_region: Vec4,
     /// Realistic forest floor (`realforest`): x = 1 when the scanned layers + mask are bound
-    /// (0 = not yet patched, -1 = skipped); yzw reserved.
+    /// (0 = not yet patched, -1 = skipped); y = far-cover blend strength (0 = no cover map bound,
+    /// `realforest::far_cover`), z / w = far-cover blend start / full distance (world units).
     pub pbr: Vec4,
     /// World→UV mapping for the forest/road mask (`realforest::bake_mask`), same contract as
     /// `rut_region`.
@@ -87,6 +88,12 @@ pub struct ForestExtension {
     #[texture(116)]
     #[sampler(117)]
     pub alp_mask: Handle<Image>,
+    /// Far-cover map (`realforest::far_cover`): RGBA8 sRGB, rgb = mean colour of the undergrowth
+    /// growing there, a = coverage; same world→UV mapping as `pbr_region`. 1×1 placeholder until
+    /// the world is built.
+    #[texture(118)]
+    #[sampler(119)]
+    pub far_cover: Handle<Image>,
 }
 
 impl MaterialExtension for ForestExtension {
@@ -161,8 +168,24 @@ pub fn make_material(
             alp_normal: crate::alpine::layers_placeholder(images),
             alp_ormh: crate::alpine::layers_placeholder(images),
             alp_mask: crate::alpine::mask_placeholder(images),
+            far_cover: far_cover_placeholder(images),
         },
     })
+}
+
+fn far_cover_placeholder(images: &mut Assets<Image>) -> Handle<Image> {
+    static CACHE: std::sync::Mutex<Option<Handle<Image>>> = std::sync::Mutex::new(None);
+    let mut c = CACHE.lock().expect("far cover placeholder poisoned");
+    c.get_or_insert_with(|| {
+        images.add(Image::new(
+            Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            TextureDimension::D2,
+            vec![0u8, 0, 0, 0],
+            TextureFormat::Rgba8UnormSrgb,
+            RenderAssetUsages::default(),
+        ))
+    })
+    .clone()
 }
 
 /// 1×1×3 array bound before the forest-floor layers are (or when they never are). Process-cached

@@ -99,7 +99,9 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
     let wp = centre + (r * corner.x + u * corner.y) * rs + dir * (push * rs);
 
     let d = distance(view.lod_view_world_position, base);
-    let fade = 1.0 - smoothstep(ip.far.x, ip.far.y, d);
+    // Near hand-off: the impostor thins IN over the band where the LOD0 crown thins OUT
+    // (`foliage::dissolve` on the tree canopy), so the swap is a clump-by-clump cross-fade.
+    let fade = min(1.0 - smoothstep(ip.far.x, ip.far.y, d), smoothstep(ip.cfg.z, ip.cfg.z + IMP_FADE_IN, d));
     out.world_position = vec4<f32>(wp, 1.0);
     out.position = position_world_to_clip(wp);
     if d < ip.cfg.z || d > ip.far.y {
@@ -114,9 +116,15 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
     return out;
 }
 
+// Width of the LOD0 -> impostor cross-fade (world units). Keep in sync with
+// `realforest::impostor::IMP_FADE_IN`.
+const IMP_FADE_IN: f32 = 10.0;
+
 struct Imp {
     albedo: vec3<f32>,
     alpha: f32,
+    // coverage of the dominant view alone: what the alpha test reads (see `impostor_keep`)
+    cov: f32,
     // model-space normal (game axes)
     n: vec3<f32>,
     // reconstructed surface point, world space
@@ -157,7 +165,7 @@ fn impostor(wp: vec3<f32>, centre: vec3<f32>, rs: f32, yaw: f32, layer: i32, ful
     let frame_px = f32(textureDimensions(albedo_tex).x) / N;
     let lod = clamp(log2(max(frame_px / (2.0 * rs) * world_px, 1e-4)), 0.0, 4.0);
 
-    var acc = Imp(vec3<f32>(0.0), 0.0, vec3<f32>(0.0), vec3<f32>(0.0));
+    var acc = Imp(vec3<f32>(0.0), 0.0, 0.0, vec3<f32>(0.0), vec3<f32>(0.0));
     var best = -1.0;
     let shadow = is_ortho() && !full;
     let count = select(4, 1, shadow);
@@ -200,6 +208,7 @@ fn impostor(wp: vec3<f32>, centre: vec3<f32>, rs: f32, yaw: f32, layer: i32, ful
         if wa > best {
             best = wa;
             acc.surf = h;
+            acc.cov = a.a;
         }
     }
     acc.n = normalize(acc.n + vec3<f32>(0.0, 1e-4, 0.0));
@@ -207,6 +216,9 @@ fn impostor(wp: vec3<f32>, centre: vec3<f32>, rs: f32, yaw: f32, layer: i32, ful
     return acc;
 }
 
+/// The alpha test runs on the DOMINANT view's coverage, not the 4-view blend: the crown mass is
+/// the same in every view but the gaps aren't, so averaging then thresholding filled the holes and
+/// a far tree read fuller than the real crown it replaces (the "LOD pops thinner" swap).
 /// The alpha test, with the far-band dissolve: past the fade start whole leaf clumps (object-space
 /// value noise, not a screen pattern) drop out as `fade` falls to 0.
 fn impostor_keep(alpha: f32, fade: f32, surf: vec3<f32>, centre: vec3<f32>, rs: f32) -> bool {
@@ -226,7 +238,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let im = impostor(in.world_position.xyz, centre, rs, yaw, layer, true);
 @if(IMPOSTOR_ALPHA_TEST) {
     // No prepass (low presets): do the alpha test + far dissolve here, as the prepass would have.
-    if !impostor_keep(im.alpha, in.uv_b.y, im.surf, centre, rs) {
+    if !impostor_keep(im.cov, in.uv_b.y, im.surf, centre, rs) {
         discard;
     }
 }

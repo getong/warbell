@@ -20,8 +20,8 @@ pub type FoliageMaterial = ExtendedMaterial<StandardMaterial, FoliageExt>;
 
 #[derive(Clone, Copy, ShaderType, Debug)]
 pub struct FoliageWind {
-    /// x = blade-root ground match (see `ground_match`), y unused, z = amplitude (world units at
-    /// weight 1), w = ripple.
+    /// x = blade-root ground match (see `ground_match`), y = 1 on undergrowth (bends under feet,
+    /// `grass_trample`), z = amplitude (world units at weight 1), w = ripple.
     pub wind: Vec4,
     /// x = crown tint strength, y = snow amount (`alpine::snowkit` twins), z = range-dissolve band
     /// (world units, 0 = off; see [`dissolve`]), w = shading-normal lean toward world up (see
@@ -33,6 +33,9 @@ pub struct FoliageWind {
 pub struct FoliageExt {
     #[uniform(100)]
     pub wind: FoliageWind,
+    /// Who is walking through the grass (`crate::grass_trample`) — the one shared buffer.
+    #[storage(101, read_only)]
+    pub trample: Handle<bevy::render::storage::ShaderBuffer>,
 }
 
 /// Wind on? `FOREST_WIND=0` makes the forest static (amplitude 0, stock prepass). Read once.
@@ -104,6 +107,7 @@ pub fn material(base: StandardMaterial, amplitude: f32, ripple: f32, tint: f32) 
         base,
         extension: FoliageExt {
             wind: FoliageWind { wind: Vec4::new(0.0, 0.0, amplitude, ripple), tint: Vec4::new(tint, 0.0, 0.0, 0.0) },
+            trample: crate::grass_trample::TRAMPLE_BUF,
         },
     }
 }
@@ -125,6 +129,8 @@ pub fn ground_match(mut mat: FoliageMaterial, root: f32, up: f32) -> FoliageMate
     }
     mat.extension.wind.wind.x = v[0];
     mat.extension.wind.tint.w = v[1];
+    // Undergrowth: parts round passing legs and lies over where feet came down.
+    mat.extension.wind.wind.y = 1.0;
     mat
 }
 

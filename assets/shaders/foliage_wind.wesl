@@ -20,8 +20,8 @@ import bevy_pbr::{
 };
 
 struct FoliageWind {
-    // x = blade-root ground match (undergrowth only), y unused (the wind clock is `globals.time`,
-    // see the header), z = amplitude (world units at weight 1), w = ripple
+    // x = blade-root ground match (undergrowth only), y = 1 on undergrowth (reacts to feet,
+    // `trample_offset`; the wind clock is `globals.time`, see the header), z = amplitude (world units at weight 1), w = ripple
     wind: vec4<f32>,
     // x = crown tint strength (0..1); y = snow amount (`alpine::snowkit` twins); z unused;
     // w = shading-normal lean toward world up
@@ -41,6 +41,66 @@ fn wind_offset(wp: vec3<f32>, origin: vec3<f32>, w: f32, t: f32) -> vec3<f32> {
     let a = fw.wind.z * w * gust;
     let dir = vec2<f32>(0.86, 0.5);
     return vec3<f32>(dir.x * s * a, -abs(s) * a * 0.12, dir.y * s * a);
+}
+
+// ── Grass underfoot (`grass_trample.rs`) — undergrowth only (`fw.wind.y` = 1) ──
+// [0] = grid (min x, min z, cell, cells per side), [1..=8] = pushers (xyz, radius), then the
+// trample cells packed 4 per vec4 (0 = upright, >= 1 = flat). Keep in sync with the Rust side.
+@group(constants::MATERIAL_BIND_GROUP) @binding(101) var<storage, read> trample: array<vec4<f32>>;
+
+fn trample_cell(ix: i32, iz: i32, n: i32) -> f32 {
+    if ix < 0 || iz < 0 || ix >= n || iz >= n {
+        return 0.0;
+    }
+    let i = iz * n + ix;
+    return trample[9 + i / 4][i % 4];
+}
+
+/// Lean of an undergrowth vertex at world `wp` (wind freedom `w`) from the people walking through
+/// it: blades part round each pusher's legs and lie over where feet came down. Modelled as a rigid
+/// bend about the blade root (the vertex keeps its length), the height above the root estimated
+/// from `w` (`foliage::bake_weights`: ~0.8·(h/top)^1.4) for a ~0.45 u tuft.
+fn trample_offset(wp: vec3<f32>, w: f32) -> vec3<f32> {
+    if fw.wind.y < 0.5 || w <= 0.001 {
+        return vec3<f32>(0.0);
+    }
+    var lean = vec2<f32>(0.0);
+    for (var i = 1; i <= 8; i++) {
+        let p = trample[i];
+        if p.w <= 0.0 {
+            continue;
+        }
+        let d = wp.xz - p.xz;
+        let dist = length(d);
+        if dist >= p.w || abs(wp.y - p.y) > 1.6 {
+            continue;
+        }
+        let k = 1.0 - dist / p.w;
+        lean += d / max(dist, 0.04) * (k * k * (3.0 - 2.0 * k)) * 1.15;
+    }
+    let g = trample[0];
+    let n = i32(g.w);
+    let c = (wp.xz - g.xy) / g.z - 0.5;
+    let c0 = floor(c);
+    let f = c - c0;
+    let ix = i32(c0.x);
+    let iz = i32(c0.y);
+    let t = clamp(mix(mix(trample_cell(ix, iz, n), trample_cell(ix + 1, iz, n), f.x),
+                      mix(trample_cell(ix, iz + 1, n), trample_cell(ix + 1, iz + 1, n), f.x), f.y), 0.0, 1.0);
+    if t > 0.0 {
+        // Trodden blades lie over along a slowly wandering direction (a pressed patch, not a comb).
+        let a = (sin(wp.x * 1.3 + wp.z * 0.4) + sin(wp.z * 1.1 - wp.x * 0.7)) * 3.1416;
+        lean += vec2<f32>(cos(a), sin(a)) * t * 1.05;
+    }
+    // Bent over, never flat: a blade laid at the ground vanishes into it and reads as mown.
+    let ang = min(length(lean), 1.15);
+    if ang < 0.001 {
+        return vec3<f32>(0.0);
+    }
+    let dir = lean / max(length(lean), 1e-4);
+    let h = 0.45 * pow(clamp(w / 0.8, 0.0, 1.0), 0.714);
+    let s = sin(ang) * h;
+    return vec3<f32>(dir.x * s, -(1.0 - cos(ang)) * h, dir.y * s);
 }
 
 @vertex
@@ -65,7 +125,8 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
     out.world_normal = normalize(mix(nrm, vec3<f32>(0.0, 1.0, 0.0), fw.tint.w * (0.4 + 0.6 * root)));
 }
     out.world_position = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position, 1.0));
-    out.world_position = vec4<f32>(out.world_position.xyz + wind_offset(out.world_position.xyz, origin, w, globals.time), 1.0);
+    out.world_position = vec4<f32>(out.world_position.xyz + wind_offset(out.world_position.xyz, origin, w, globals.time)
+        + trample_offset(out.world_position.xyz, w), 1.0);
     out.position = position_world_to_clip(out.world_position.xyz);
 
 @if(VERTEX_UVS_A)

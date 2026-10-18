@@ -39,10 +39,10 @@ pub enum Surface {
 }
 
 impl Surface {
-    /// Soft ground that keeps a boot print (the rest — grass, packed earth, stone, wood, water —
-    /// takes none).
+    /// Ground that keeps a boot print: a deep relief in mud / snow / sand, a shallow scuff on packed
+    /// earth, a bruised patch of crushed blades on the sward (stone, planks and water take none).
     pub fn takes_prints(self) -> bool {
-        matches!(self, Surface::Mud | Surface::Snow | Surface::Sand)
+        matches!(self, Surface::Mud | Surface::Snow | Surface::Sand | Surface::Dirt | Surface::Grass)
     }
 }
 
@@ -376,11 +376,11 @@ mod tests {
     }
 
     #[test]
-    fn prints_only_on_soft_ground() {
-        for s in [Surface::Mud, Surface::Snow, Surface::Sand] {
+    fn prints_only_on_yielding_ground() {
+        for s in [Surface::Mud, Surface::Snow, Surface::Sand, Surface::Dirt, Surface::Grass] {
             assert!(s.takes_prints());
         }
-        for s in [Surface::Grass, Surface::Dirt, Surface::Water, Surface::Wood, Surface::Stone] {
+        for s in [Surface::Water, Surface::Wood, Surface::Stone] {
             assert!(!s.takes_prints());
         }
     }

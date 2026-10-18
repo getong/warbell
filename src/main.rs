@@ -80,6 +80,7 @@ mod fish;
 mod footing; // what's underfoot + when a foot lands: the shared Footfall stream (sound / dust / prints)
 mod footprints; // lingering boot-print decals in mud / snow / sand
 mod footstep_fx;
+mod grass_trample; // undergrowth parts round passing legs + lies flat where feet came down
 mod game_state;
 mod godrays;
 mod grade;
@@ -387,7 +388,7 @@ fn main() {
         .add_plugins(combat_marks::CombatMarksPlugin)
         // Footfalls (surface classifier + hero / NPC step events) and the boot prints they leave —
         // standalone for the same arity reason.
-        .add_plugins((footing::FootingPlugin, footprints::FootprintsPlugin))
+        .add_plugins((footing::FootingPlugin, footprints::FootprintsPlugin, grass_trample::GrassTramplePlugin))
         // Experimental photoreal trees (`FOREST_PHOTOTREES=1`) — builds the procedural tree meshes
         // + foliage atlas at PreStartup so the world build can spawn them. A no-op unless the env
         // var is set. Standalone call for the same reason as godrays: the tuples above are at the

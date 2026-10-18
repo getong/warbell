@@ -21,6 +21,9 @@ pub type SnowKitMaterial = ExtendedMaterial<StandardMaterial, SnowKitExt>;
 pub struct SnowKitExt {
     #[uniform(100)]
     pub wind: FoliageWind,
+    /// Bound only because the shared wind vertex stage declares it (`wind.y` = 0: no trampling).
+    #[storage(101, read_only)]
+    pub trample: Handle<bevy::render::storage::ShaderBuffer>,
 }
 
 impl MaterialExtension for SnowKitExt {
@@ -56,7 +59,10 @@ pub fn snow_amount(material: &str) -> Option<f32> {
 pub fn twin(base: &StandardMaterial, tint: f32, snow: f32) -> SnowKitMaterial {
     ExtendedMaterial {
         base: base.clone(),
-        extension: SnowKitExt { wind: FoliageWind { wind: Vec4::ZERO, tint: Vec4::new(tint, snow, 0.0, 0.0) } },
+        extension: SnowKitExt {
+            wind: FoliageWind { wind: Vec4::ZERO, tint: Vec4::new(tint, snow, 0.0, 0.0) },
+            trample: crate::grass_trample::TRAMPLE_BUF,
+        },
     }
 }
 

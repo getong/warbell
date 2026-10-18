@@ -28,9 +28,12 @@ pub type ImpostorMaterial = ExtendedMaterial<StandardMaterial, ImpostorExt>;
 
 /// LOD1 → impostor hand-off (base units, stretched by the render distance's ground factor).
 pub const IMP_NEAR: f32 = 62.0;
-/// The impostor starts this much before LOD1 ends, so float noise between the two distance
-/// tests (Bevy's range vs. the vertex shader) never opens a one-frame gap.
-const IMP_OVERLAP: f32 = 1.5;
+/// LOD0 → impostor cross-fade band (world units): over the last `IMP_FADE_IN` units of the LOD0
+/// range its crown drops leaf clumps (`foliage::dissolve` on the canopy twin) while the impostor
+/// gains them (`impostor.wesl`'s near keep, same constant there) — a clump-by-clump hand-off
+/// instead of a whole-tree pop. Without a depth prepass (low presets) the crown can't dissolve,
+/// so the two just overlap through the band.
+pub const IMP_FADE_IN: f32 = 10.0;
 /// Quads are pushed this many bounding radii toward the eye, so the ground at a tree's foot
 /// doesn't cut its trunk when seen from above (the quad plane would dip into the slope).
 const PUSH: f32 = 0.55;
@@ -210,7 +213,7 @@ impl Plugin for ImpostorPlugin {
 /// Distances for the current render-distance multiplier: (impostor start, far fade start, far end).
 fn distances() -> (f32, f32, f32) {
     let k = crate::quality::view_scale();
-    let near = IMP_NEAR * crate::quality::ground_factor(k) - IMP_OVERLAP;
+    let near = IMP_NEAR * crate::quality::ground_factor(k) - IMP_FADE_IN;
     let far = super::TREE_FAR * k;
     (near, far * (1.0 - FAR_FADE), far)
 }

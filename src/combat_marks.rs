@@ -136,7 +136,8 @@ pub fn tag(kind: MarkKind, alpha: f32, seed: u32, aux: f32) -> MeshTag {
 /// sole), bit 3 a sprinting push-off (toe dug in, spoil thrown back).
 pub fn boot_tag(alpha: f32, seed: u32, ground: u32, left: bool, sprint: bool) -> MeshTag {
     let a = (alpha.clamp(0.0, 1.0) * 255.0).round() as u32;
-    let aux = (ground & 3) | (left as u32) << 2 | (sprint as u32) << 3;
+    // ground: bits 0-1 + bit 4 (0 mud, 1 sand, 2 snow, 3 packed earth, 4 grass sward).
+    let aux = (ground & 3) | (left as u32) << 2 | (sprint as u32) << 3 | (ground & 4) << 2;
     MeshTag::new(a | (MarkKind::Boot as u32) << 8 | (seed & 0xff) << 12 | aux << 20)
 }
 

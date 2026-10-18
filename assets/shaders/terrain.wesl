@@ -30,7 +30,8 @@ struct ForestParams {
     params2: vec4<f32>,
     // Wheel-rut mask world→UV mapping: xy = world min corner, zw = 1/extent (0 = disabled).
     rut_region: vec4<f32>,
-    // Realistic forest floor: x = 1 when the scanned layers + mask are bound (`realforest`).
+    // Realistic forest floor: x = 1 when the scanned layers + mask are bound (`realforest`);
+    // y = far-cover strength (0 = unbound), z / w = far-cover blend start / full distance.
     pbr: vec4<f32>,
     // Forest/road mask world→UV mapping (same contract as rut_region).
     pbr_region: vec4<f32>,
@@ -54,6 +55,10 @@ struct ForestParams {
 // around trunks / solid props.
 @group(constants::MATERIAL_BIND_GROUP) @binding(109) var fp_mask: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(110) var fp_mask_samp: sampler;
+// Far-cover map (`realforest::far_cover`): rgb = mean colour of the undergrowth growing there,
+// a = coverage, 1 texel / unit, same world→UV as `pbr_region`.
+@group(constants::MATERIAL_BIND_GROUP) @binding(118) var far_cover_tex: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(119) var far_cover_samp: sampler;
 
 // World units covered by one repeat of each forest-floor layer (different on purpose so the
 // three repeats never line up), and the deepest parallax displacement in world units.
@@ -1278,6 +1283,28 @@ fn fragment(
     if forest.params2.y >= 2.0 {
         let r0 = pbr_input.material.perceptual_roughness;
         pbr_input.material.perceptual_roughness = mix(r0, r0 * 0.82, green * (1.0 - alp_k));
+    }
+
+    // ── Far cover (`realforest::far_cover`) ── past the undergrowth cards' draw range the ground
+    //    takes on the baked colour + coverage of the plants really growing there, so far meadows,
+    //    forest floors and scrub keep their green, their patchiness and their density instead of
+    //    going bald where the cards end. Broken into clumps by noise (blades and the shade between
+    //    them), and rougher, as a sward is.
+    if forest.pbr.y > 0.0 {
+        let fc_dist = distance(view.world_position.xyz, in.world_position.xyz);
+        let far_k = smoothstep(forest.pbr.z, forest.pbr.w, fc_dist);
+        if far_k > 0.001 {
+            let fc_uv = (in.world_position.xz - forest.pbr_region.xy) * forest.pbr_region.zw;
+            let fc = textureSampleLevel(far_cover_tex, far_cover_samp, fc_uv, 0.0);
+            let cn = ter_noise(in.world_position.xz * 2.3) * 0.6 + ter_noise(in.world_position.xz * 0.61 + vec2<f32>(7.0, 3.0)) * 0.4;
+            let k = clamp(fc.a * (0.7 + 0.6 * cn) * 1.6 * forest.pbr.y, 0.0, 1.0) * far_k;
+            let fc_base = pbr_input.material.base_color;
+            // A sward seen from afar is its blades AND the shade between them: darker than a card's
+            // albedo, deepest in the dense patches.
+            let blades = fc.rgb * mix(0.62, 0.95, cn) * (1.0 - 0.2 * fc.a);
+            pbr_input.material.base_color = vec4<f32>(mix(fc_base.rgb, blades, k), fc_base.a);
+            pbr_input.material.perceptual_roughness = mix(pbr_input.material.perceptual_roughness, 0.93, k);
+        }
     }
 
     var out: FragmentOutput;
