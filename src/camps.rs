@@ -269,10 +269,12 @@ fn drift_smoke(time: Res<Time>, mut q: Query<(&CampSmoke, &mut Transform, &ViewV
             continue;
         }
         let cycle = (t * s.speed + s.phase).rem_euclid(1.0);
-        tf.translation.x = s.base.x + (t * 0.7 + s.phase * 6.0).sin() * 0.18 * cycle;
-        tf.translation.z = s.base.z + (t * 0.6 + s.phase * 6.0).cos() * 0.18 * cycle;
-        tf.translation.y = s.base.y + cycle * 1.6;
-        let sc = (0.1 + cycle * 0.4) * (1.0 - cycle).max(0.0);
+        let billow = 0.25 + cycle * 0.55;
+        tf.translation.x = s.base.x + (t * 0.65 + s.phase * 9.0).sin() * billow - cycle * 0.35;
+        tf.translation.z = s.base.z + (t * 0.55 + s.phase * 9.0).cos() * billow - cycle * 0.45;
+        tf.translation.y = s.base.y + cycle * 5.2;
+        let env = (cycle / 0.14).min(1.0) * (1.0 - cycle.powf(1.30)).max(0.0);
+        let sc = (0.35 + cycle * 0.90) * env;
         tf.scale = Vec3::splat(sc.max(0.001));
     }
 }
@@ -1027,18 +1029,18 @@ pub fn build(
         let _ = images.insert(&crate::flame_fx::FLAME_CARD_TEX, crate::flame_fx::flame_card_image());
     }
     let flame_mat = crate::flame_fx::flame_card_material(materials);
-    let flame_cards = meshes.add(crate::flame_fx::flame_card_mesh(1.0));
+    let flame_cards = meshes.add(crate::flame_fx::flame_card_mesh(1.55));
     // Wood smoke: soft round camera-facing puffs, LIT by the scene (grey by day, warm at dusk, dark
     // at night — unlit grey glowed like a ghost after sunset), never faceted spheres.
     let smoke_mat = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.52, 0.51, 0.50, 0.38),
+        base_color: Color::srgba(0.24, 0.26, 0.30, 0.72),
         perceptual_roughness: 1.0,
         reflectance: 0.0,
         alpha_mode: AlphaMode::Blend,
         cull_mode: None,
         ..default()
     });
-    let smoke_puff = meshes.add(crate::particles::soft_disc_mesh().scaled_by(Vec3::splat(1.7)));
+    let smoke_puff = meshes.add(crate::particles::soft_disc_mesh().scaled_by(Vec3::splat(2.45)));
 
     let armory = orks::Armory::new(meshes, materials, mat.clone());
     commands.insert_resource(RoleFx { flame_cards: flame_cards.clone(), flame_mat: flame_mat.clone() });
@@ -1156,12 +1158,12 @@ pub fn build(
             // scale wobble doesn't move the light, and it shares the flame's BiomeEntity life.
             crate::firelight::campfire_light(phase),
         ));
-        for i in 0..5 {
+        for i in 0..18 {
             commands.spawn((
                 Mesh3d(smoke_puff.clone()),
                 MeshMaterial3d(smoke_mat.clone()),
                 Transform::from_translation(fire).with_scale(Vec3::splat(0.01)),
-                CampSmoke { base: fire + Vec3::Y * 0.4, phase: i as f32 / 5.0, speed: 0.3 },
+                CampSmoke { base: fire + Vec3::Y * 0.45, phase: i as f32 / 18.0, speed: 0.22 },
                 crate::particles::FaceCamera,
                 bevy::light::NotShadowCaster,
                 BiomeEntity,

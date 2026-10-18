@@ -263,9 +263,16 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         let sc = creature.pbr.x;
         let alb = ft_tri(ft_alb, ft_alb_s, obj, on, sc);
         let mr = ft_tri(ft_mr, ft_mr_s, obj, on, sc);
-        let rgb = pbr_input.material.base_color.rgb * alb.rgb;
+        let cavity = clamp(mr.r, 0.0, 1.0);
+        let is_metal = pbr_input.material.metallic > 0.5;
+        let alb_luma = dot(alb.rgb, vec3<f32>(0.299, 0.587, 0.114));
+        let alb_col = select(alb.rgb, mix(alb.rgb, vec3<f32>(alb_luma), 0.75), is_metal);
+        let n_up = clamp(pbr_input.N.y * 0.5 + 0.5, 0.0, 1.0);
+        let metal_contour = select(1.0, mix(0.46, 1.18, n_up * n_up), is_metal);
+        let rgb = pbr_input.material.base_color.rgb * alb_col * mix(0.62, 1.10, cavity) * metal_contour;
         pbr_input.material.base_color = vec4<f32>(max(rgb, vec3<f32>(0.0)), 1.0);
-        pbr_input.material.perceptual_roughness = clamp(mr.g * creature.pbr.z, 0.05, 1.0);
+        pbr_input.material.perceptual_roughness = clamp(mr.g * creature.pbr.z * mix(1.25, 0.80, cavity), 0.08, 1.0);
+        pbr_input.diffuse_occlusion *= mix(0.28, 1.0, cavity);
         let d_h = vec2<f32>(dpdx(mr.r), dpdy(mr.r)) * creature.pbr.y;
         pbr_input.N = ft_perturb(in.world_position.xyz, pbr_input.N, d_h);
     } else {

@@ -394,8 +394,16 @@ fn ork_brain(
         let near = o.pos.distance(hero.pos) < ORK_BRAIN_LOD_R;
 
         // ── Aggro: notice the hero near the camp → chase, then stand & strike; orks far
-        // from their home never engage (each warband stays local). ──
-        let see_hero = hero.alive
+        // from their home never engage (each warband stays local). When `FOREST_HERO` stages the
+        // knight next to a camp for a `FOREST_SHOT` / `FOREST_CLIP` capture, keep the warband in
+        // its peaceful camp routine so it doesn't kill the staged hero during pipeline warmup. ──
+        static STAGED_PEACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let staged_peace = *STAGED_PEACE.get_or_init(|| {
+            std::env::var("FOREST_HERO").is_ok()
+                && (std::env::var("FOREST_SHOT").is_ok() || std::env::var("FOREST_CLIP").is_ok())
+        });
+        let see_hero = !staged_peace
+            && hero.alive
             && o.pos.distance(hero.pos) < ORK_SIGHT
             && o.home.distance(hero.pos) < ORK_LEASH;
         let atk_range = if o.shaman { SHAMAN_CAST_RANGE } else { ORK_ATTACK_RANGE };

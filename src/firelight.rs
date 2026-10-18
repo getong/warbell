@@ -37,7 +37,7 @@ pub struct FireLight {
 /// A campfire's point light + flicker marker (big warm pool — camps sit in open dark biomes).
 /// Returned as a bundle so the caller can fold it straight into the flame's spawn tuple.
 pub fn campfire_light(phase: f32) -> (PointLight, FireLight) {
-    const BASE: f32 = 52_000.0;
+    const BASE: f32 = 85_000.0;
     (
         PointLight {
             color: FIRE_COLOR,
@@ -120,9 +120,8 @@ impl Plugin for FireLightPlugin {
 }
 
 // ── Rising embers ────────────────────────────────────────────────────────────────────────────────
-// At night every fire spits the odd ember that floats up, flickers and winks out — the diegetic
-// twin of the point-light pool, so a camp reads as a living fire rather than a static glow. Reuses
-// the cheap CPU-mote recipe (shared mesh + shared emissive material, fade by shrink, self-reaping).
+// Every fire spits hot embers/sparks that float up into the smoke column, flicker and wink out —
+// the diegetic twin of the point-light pool, so a camp reads as a living fire by day and night.
 
 /// A single rising ember mote: floats up (no gravity — embers rise), shrinks + flickers over its
 /// short life, then despawns. Shared material, so thousands still batch.
@@ -147,11 +146,10 @@ fn setup_embers(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     // Hot ember: a tiny soft round sprite (camera-facing), additive, HDR orange so the bloom kisses
-    // it into a glowing speck. (Unlit outputs base_color only — the old `emissive` never reached
-    // the frame.)
-    let mesh = meshes.add(crate::particles::soft_disc_mesh().scaled_by(Vec3::splat(0.09)));
+    // it into a glowing speck.
+    let mesh = meshes.add(crate::particles::soft_disc_mesh().scaled_by(Vec3::splat(0.135)));
     let mat = materials.add(StandardMaterial {
-        base_color: Color::LinearRgba(LinearRgba::rgb(2.6, 0.95, 0.25)),
+        base_color: Color::LinearRgba(LinearRgba::rgb(14.0, 4.8, 0.85)),
         unlit: true,
         alpha_mode: AlphaMode::Add,
         cull_mode: None,
@@ -166,9 +164,8 @@ fn hash01(x: f32) -> f32 {
     v - v.floor()
 }
 
-/// At night, each fire emits one ember whenever its `next_ember` deadline passes, then reschedules
-/// with a phase-jittered interval (so fires don't pulse in unison). Deeper into the night the
-/// interval shortens, so the embers thicken as the dark settles.
+/// Each fire emits rising sparks/embers whenever its `next_ember` deadline passes, then reschedules
+/// with a phase-jittered interval (so fires don't pulse in unison).
 fn spawn_embers(
     time: Res<Time>,
     clock: Option<Res<SkyClock>>,
@@ -177,32 +174,46 @@ fn spawn_embers(
     mut fires: Query<(&mut FireLight, &GlobalTransform)>,
 ) {
     let Some(assets) = assets else { return };
-    // No clock (start screen) → no embers; otherwise gate on nightfall.
-    let night = clock.map(|c| scene::night_of(c.t)).unwrap_or(0.0);
-    if night < 0.15 {
+    if clock.is_none() {
         return;
     }
+    let night = clock.map(|c| scene::night_of(c.t)).unwrap_or(0.0);
     let now = time.elapsed_secs();
     for (mut fl, gt) in &mut fires {
         if now < fl.next_ember {
             continue;
         }
-        // Reschedule: base cadence eased shorter as night deepens, jittered per-fire by phase.
-        let interval = (0.7 - 0.4 * night) * (0.6 + 0.8 * hash01(fl.phase + now));
-        fl.next_ember = now + interval.max(0.12);
+        // Campfires (`base >= 60_000`) throw a rich stream of sparks both day and night; smaller
+        // torches spit more gently by day.
+        let is_campfire = fl.base >= 60_000.0;
+        if !is_campfire && night < 0.15 {
+            continue;
+        }
+        let interval = if is_campfire {
+            (0.08 - 0.03 * night) * (0.6 + 0.8 * hash01(fl.phase + now))
+        } else {
+            (0.7 - 0.4 * night) * (0.6 + 0.8 * hash01(fl.phase + now))
+        };
+        fl.next_ember = now + interval.max(0.04);
 
-        let base = gt.translation() + Vec3::Y * 0.35; // just above the flame
-        let j = fl.phase + now;
-        let drift = Vec3::new((hash01(j) - 0.5) * 0.8, 0.0, (hash01(j + 3.1) - 0.5) * 0.8);
-        let up = 0.7 + hash01(j + 7.7) * 0.7;
-        commands.spawn((
-            Mesh3d(assets.mesh.clone()),
-            MeshMaterial3d(assets.mat.clone()),
-            Transform::from_translation(base).with_scale(Vec3::splat(0.7 + hash01(j + 1.3) * 0.6)),
-            Ember { vel: drift + Vec3::Y * up, life: 1.3, life0: 1.3, scale0: 0.7 + hash01(j + 1.3) * 0.6 },
-            crate::particles::FaceCamera,
-            NotShadowCaster,
-        ));
+        let count = if is_campfire { 3 } else { 1 };
+        for k in 0..count {
+            let j = fl.phase + now + k as f32 * 19.3;
+            let base = gt.translation()
+                + Vec3::new((hash01(j + 2.1) - 0.5) * 0.55, 0.22 + hash01(j + 4.7) * 0.55, (hash01(j + 6.3) - 0.5) * 0.55);
+            let drift = Vec3::new((hash01(j) - 0.5) * 0.95, 0.0, (hash01(j + 3.1) - 0.5) * 0.95);
+            let up = 1.15 + hash01(j + 7.7) * 1.45;
+            let sc0 = 0.52 + hash01(j + 1.3) * 0.72;
+            let life0 = 1.8 + hash01(j + 9.1) * 0.9;
+            commands.spawn((
+                Mesh3d(assets.mesh.clone()),
+                MeshMaterial3d(assets.mat.clone()),
+                Transform::from_translation(base).with_scale(Vec3::splat(sc0)),
+                Ember { vel: drift + Vec3::Y * up, life: life0, life0, scale0: sc0 },
+                crate::particles::FaceCamera,
+                NotShadowCaster,
+            ));
+        }
     }
 }
 
@@ -218,11 +229,11 @@ fn drift_embers(time: Res<Time>, mut commands: Commands, mut q: Query<(Entity, &
         }
         tf.translation += em.vel * dt;
         // Bleed the sideways drift but keep a touch of buoyancy so it keeps rising as it fades.
-        em.vel.x *= 1.0 - 1.4 * dt;
-        em.vel.z *= 1.0 - 1.4 * dt;
-        em.vel.y += 0.25 * dt;
+        em.vel.x *= 1.0 - 1.1 * dt;
+        em.vel.z *= 1.0 - 1.1 * dt;
+        em.vel.y += 0.30 * dt;
         let k = em.life / em.life0;
-        let flick = 0.82 + 0.18 * (t * 24.0 + em.scale0 * 30.0).sin();
+        let flick = 0.80 + 0.20 * (t * 26.0 + em.scale0 * 30.0).sin();
         tf.scale = Vec3::splat(em.scale0 * k * flick);
     }
 }
@@ -235,10 +246,10 @@ fn flicker_fire_lights(
     mut q: Query<(&FireLight, &mut PointLight)>,
 ) {
     let t = time.elapsed_secs();
-    // Faint by day, full after dark — the "reads from a distance at night" the lights are for.
-    // No clock yet (e.g. start screen, before the world is built) → treat the fire as lit.
+    // Warm pool around campfires by day too so drums, logs, and trampled earth around the firepit
+    // catch a diegetic orange glow; full intensity after dark.
     let night = clock.map(|c| scene::night_of(c.t)).unwrap_or(1.0);
-    let ramp = 0.12 + 0.88 * night;
+    let ramp = 0.58 + 0.42 * night;
     // Nightfall flare: the moment full dark lands, every fire ROARS up (~+55%) and settles back
     // over a few seconds — the torches answering the night, part of the nightfall beat. The
     // timestamp arms on the day→dark edge and clears when day returns.

@@ -96,8 +96,8 @@ const ACORN_NUT: u32 = 0x9a6536; // acorn nut body
 const ACORN_CAP: u32 = 0x5a3a1f; // darker acorn cap
 const LITTER_PEBBLE: u32 = 0x9a8f82; // small grey ground pebble
 const LITTER_PEBBLE_DK: u32 = 0x7d7466; // shadowed pebble
-const LEAF_RED: u32 = 0xc05a30; // fallen autumn leaf (rust)
-const LEAF_GOLD: u32 = 0xd0a440; // fallen autumn leaf (gold)
+const LEAF_RED: u32 = 0x8e4c2e; // fallen autumn leaf (rust)
+const LEAF_GOLD: u32 = 0xa68840; // fallen autumn leaf (gold)
 const LEAF_BROWN: u32 = 0x8a6a3a; // fallen leaf (brown)
 const TWIG_BARK: u32 = 0x6a4f33; // fallen twig bark
 

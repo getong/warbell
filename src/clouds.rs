@@ -135,7 +135,7 @@ fn spawn_cloud_sky(
     let coverage = std::env::var("FOREST_CLOUDCOVER")
         .ok()
         .and_then(|s| s.trim().parse::<f32>().ok())
-        .unwrap_or(0.46);
+        .unwrap_or(0.62);
     let mat = mats.add(CloudSkyMaterial {
         params: CloudParams {
             shape: Vec4::new(DECK_HEIGHT, DECK_TILE, coverage, 0.97),

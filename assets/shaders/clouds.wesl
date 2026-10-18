@@ -61,9 +61,9 @@ fn deck_density(p: vec2<f32>, detail_p: vec2<f32>) -> f32 {
     let w = textureSample(noise_tex, noise_samp, p / (tile * 3.7) + vec2<f32>(0.37, 0.11)).b;
     let coverage = clamp(params.shape.z + (w - 0.5) * 0.85, 0.0, 1.0);
     var d = clamp((n.r - (1.0 - coverage)) / max(coverage, 0.05), 0.0, 1.0);
-    // Erode the edges with the Worley detail: wispy fringes and little satellite puffs.
+    // Erode the edges with the Worley detail: sweeping banks with soft fringes.
     let det = textureSample(noise_tex, noise_samp, detail_p / params.wind.z).g;
-    let ero = (1.0 - det) * 0.42;
+    let ero = (1.0 - det) * 0.28;
     d = clamp((d - ero) / (1.0 - ero), 0.0, 1.0);
     return d;
 }
@@ -100,26 +100,26 @@ fn fragment(in: Vout) -> @location(0) vec4<f32> {
             continue;
         }
         // 2D self-shadow: how much cloud lies between this point and the light along the deck.
-        let reach = l.xz / max(abs(l.y), 0.2) * 70.0;
+        let reach = l.xz / max(abs(l.y), 0.2) * 75.0;
         let dl = deck_density(p + reach, pd + reach);
         let dl2 = deck_density(p + reach * 2.6, pd + reach * 2.6);
-        let tau = d * 1.6 + dl * 1.5 + dl2 * 0.9;
+        let tau = d * 2.1 + dl * 1.9 + dl2 * 1.1;
         let trans = exp(-tau);
         let cos_t = dot(dir, l);
         // Forward lobe = the silver lining on thin edges toward the sun; back lobe keeps the
         // sun-opposite sky readable. Normalised so an isotropic cloud ≈ albedo·E/π.
-        let phase = (0.55 * hg(cos_t, 0.65) + 0.45 * hg(cos_t, -0.15)) * 4.0 * PI;
-        // Multiple scattering floor: thick cores go grey, never black.
-        let ms = 0.28 * exp(-d * 0.9) + 0.10;
+        let phase = (0.58 * hg(cos_t, 0.65) + 0.42 * hg(cos_t, -0.18)) * 4.0 * PI;
+        // Multiple scattering floor: thick cores shade into slate-grey, never flat white.
+        let ms = 0.16 * exp(-d * 1.15) + 0.05;
         let radiance = light.color.rgb / PI * vis * (trans * phase + ms);
         col = col + radiance;
     }
-    // Skylight on the underside — the live ambient fill (cool by day, moonlit blue by night).
-    col = col + lights.ambient_color.rgb * (1.9 - 0.9 * d);
+    // Skylight on the underside — cool slate-blue in thick cloud bases, brighter at thin edges.
+    col = col + lights.ambient_color.rgb * vec3<f32>(0.76, 0.85, 0.98) * (1.18 - 0.68 * d);
     col = col * view.exposure;
 
     // ── Coverage → alpha, faded into the horizon haze ──
-    var a = smoothstep(0.0, 0.32, d) * params.shape.w;
+    var a = smoothstep(0.0, 0.28, d) * params.shape.w;
     let far_fade = exp(-t / params.wind.w) * (1.0 - smoothstep(params.wind.w * 2.2, params.wind.w * 4.0, t));
     let low_fade = smoothstep(0.015, 0.09, dir.y);
     // Deck fades away if a camera ever climbs to it (no camera pose does — belt and braces).

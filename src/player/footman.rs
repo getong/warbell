@@ -371,12 +371,28 @@ fn gpu(
             }
         }
         assert_eq!(r.i, BIN.len(), "footman.bin trailing bytes");
+        // The leather cuirass (the one leather material worn on the torso in the cuirass brown)
+        // is re-dressed as a steel breastplate: a plate harness reads as a knight at gameplay
+        // distance, where the brown leather torso between steel limbs read as a jerkin.
+        let breastplate: Vec<bool> = (0..model.mats.len())
+            .map(|i| {
+                let m = &model.mats[i];
+                m.tex == "leather"
+                    && m.color == 0x6b4128
+                    && model.meshes.iter().any(|ms| ms.mat == i && ms.joint == "Torso")
+            })
+            .collect();
+        let steel_tex = tex.get("steel").cloned();
         let mats = model
             .mats
             .iter()
-            .map(|m| {
+            .enumerate()
+            .map(|(mi, m)| {
+                let plate = breastplate[mi];
+                let tex_key = if plate { "steel" } else { m.tex.as_str() };
                 let (alb, mr) = if m.mode == 1 {
-                    tex.get(&m.tex).cloned().unwrap_or_else(|| {
+                    let found = if plate { steel_tex.clone() } else { tex.get(tex_key).cloned() };
+                    found.unwrap_or_else(|| {
                         let w = white_image(images);
                         (w.clone(), w)
                     })
@@ -385,11 +401,33 @@ fn gpu(
                     (w.clone(), w)
                 };
                 let mode = if m.mode == 1 { 1.0 } else { 0.0 };
+                let is_metal = plate || m.metal > 0.5;
+                let c = srgb_hex(m.color).to_srgba();
+                let base_color = if is_metal {
+                    // Steel must be truly NEUTRAL (a hair warm): the world's post chain (TonyMcMapface
+                    // + grade) amplifies any cool bias, so the asset's faintly blue greys rendered as
+                    // saturated teal plate. Greys keep their brightness (chain stays darker than plate);
+                    // a genuinely hued metal (the brass rivets / boss) keeps its hue.
+                    let luma = 0.299 * c.red + 0.587 * c.green + 0.114 * c.blue;
+                    let chroma = c.red.max(c.green).max(c.blue) - c.red.min(c.green).min(c.blue);
+                    if plate {
+                        Color::srgb(0.64, 0.63, 0.61)
+                    } else if chroma < 0.12 {
+                        let l = (luma * 1.04).min(1.0);
+                        Color::srgb(l, l * 0.99, l * 0.965)
+                    } else {
+                        c.into()
+                    }
+                } else {
+                    Color::srgb((c.red * 0.88).clamp(0.0, 1.0), (c.green * 0.85).clamp(0.0, 1.0), (c.blue * 0.82).clamp(0.0, 1.0))
+                };
+                let metallic = if plate { 0.9 } else { m.metal };
                 materials.add(ExtendedMaterial {
                     base: StandardMaterial {
-                        base_color: srgb_hex(m.color),
-                        metallic: m.metal,
+                        base_color,
+                        metallic,
                         perceptual_roughness: m.rough.clamp(0.05, 1.0),
+                        reflectance: if is_metal { 0.75 } else { 0.45 },
                         // FRONT: the hero root is mirrored (`HERO_SCALE_V`, negative X) and Bevy does not
                         // flip the winding for a negative determinant, so the outside faces wind backwards.
                         cull_mode: if m.double { None } else { Some(Face::Front) },
@@ -399,7 +437,7 @@ fn gpu(
                     extension: crate::creature::CreatureExt {
                         params: crate::creature::CreatureParams {
                             params: Vec4::ZERO,
-                            pbr: Vec4::new(m.scale, m.bump, m.rough_mul, mode),
+                            pbr: Vec4::new(m.scale, m.bump, if plate { 0.9 } else { m.rough_mul }, mode),
                         },
                         albedo: Some(alb),
                         mr: Some(mr),

@@ -614,12 +614,20 @@ fn spawn_hero(
     // biome region) so a capture shows that biome's reactive atmosphere/weather.
     let staged = std::env::var("FOREST_HERO").ok().and_then(|s| {
         let v: Vec<f32> = s.split(',').filter_map(|p| p.trim().parse().ok()).collect();
-        (v.len() == 2).then(|| Vec2::new(v[0], v[1]))
+        (v.len() >= 2).then(|| (Vec2::new(v[0], v[1]), v.get(2).copied()))
     });
     let (home, home_facing) = spawn_point();
-    let pos = staged.unwrap_or(home);
+    let pos = staged.map(|(p, _)| p).unwrap_or(home);
     let y = crate::steer::footing(pos.x, pos.y).unwrap_or(0.0); // a staged hero may stand on a deck (bridge, the wreck)
-    let facing = if staged.is_some() { 0.0 } else { home_facing };
+    let facing = match staged {
+        Some((_, Some(f))) => f,
+        Some((_, None)) => std::env::var("FOREST_TPS_AZ")
+            .ok()
+            .and_then(|s| s.trim().parse::<f32>().ok())
+            .map(|az| az + std::f32::consts::PI)
+            .unwrap_or(0.0),
+        None => home_facing,
+    };
 
     let root = commands
         .spawn((

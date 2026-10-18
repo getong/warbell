@@ -60,17 +60,20 @@ struct Isle {
     yaw: f32,
     /// Ash plume over this island's summit.
     plume: bool,
+    /// Paint alpine snowfields and granite crags onto the upper elevations.
+    snow_cap: bool,
 }
 
-/// The horizon: snow NW, granite ranges N, the desert volcano NE, Stromboli E, Gomera SW.
-const ISLES: [Isle; 7] = [
-    Isle { name: "beerenberg", angle: -2.35, dist: 14_000.0, hs: 0.55, vs: 0.65, yaw: 0.4, plume: false },
-    Isle { name: "lofoten", angle: -1.75, dist: 12_500.0, hs: 0.50, vs: 0.62, yaw: 1.1, plume: false },
-    Isle { name: "austvagoy", angle: -1.15, dist: 17_000.0, hs: 0.55, vs: 0.72, yaw: -0.5, plume: false },
-    Isle { name: "fogo", angle: -0.50, dist: 16_000.0, hs: 0.45, vs: 0.55, yaw: 0.0, plume: false },
-    Isle { name: "stromboli", angle: 0.38, dist: 10_000.0, hs: 1.00, vs: 1.10, yaw: 2.2, plume: true },
-    Isle { name: "lofoten", angle: 1.45, dist: 14_000.0, hs: 0.50, vs: 0.60, yaw: -2.0, plume: false },
-    Isle { name: "gomera", angle: 2.55, dist: 12_000.0, hs: 0.55, vs: 0.65, yaw: 2.9, plume: false },
+/// The horizon: snow NW, granite ranges N, snow-capped alpine peaks NE, Stromboli E, Gomera SW.
+const ISLES: [Isle; 8] = [
+    Isle { name: "beerenberg", angle: -2.35, dist: 14_000.0, hs: 0.55, vs: 0.65, yaw: 0.4, plume: false, snow_cap: false },
+    Isle { name: "lofoten", angle: -1.75, dist: 12_500.0, hs: 0.50, vs: 0.62, yaw: 1.1, plume: false, snow_cap: false },
+    Isle { name: "austvagoy", angle: -1.15, dist: 14_000.0, hs: 0.55, vs: 0.95, yaw: -0.5, plume: false, snow_cap: true },
+    Isle { name: "austvagoy", angle: -0.66, dist: 9_200.0, hs: 0.42, vs: 1.45, yaw: 0.8, plume: false, snow_cap: true },
+    Isle { name: "fogo", angle: -0.48, dist: 12_500.0, hs: 0.42, vs: 0.68, yaw: 0.3, plume: false, snow_cap: true },
+    Isle { name: "stromboli", angle: 0.38, dist: 10_000.0, hs: 1.00, vs: 1.10, yaw: 2.2, plume: false, snow_cap: false },
+    Isle { name: "lofoten", angle: 1.45, dist: 14_000.0, hs: 0.50, vs: 0.60, yaw: -2.0, plume: false, snow_cap: false },
+    Isle { name: "gomera", angle: 2.55, dist: 12_000.0, hs: 0.55, vs: 0.65, yaw: 2.9, plume: false, snow_cap: false },
 ];
 
 // ── Noise ────────────────────────────────────────────────────────────────────────
@@ -249,6 +252,73 @@ fn build_plume(seed: u32, wind: Vec3) -> Mesh {
     mesh
 }
 
+/// Paint crisp alpine snowfields and dark slate-granite crags onto an island's albedo image using
+/// its DEM height grid so snow-capped horizon ranges read with sunlit ridges and rock gullies.
+fn apply_alpine_snow(img: &mut Image, g: usize, raw: &[f32], width: f32, depth: f32, hs: f32, vs: f32) {
+    let (iw, ih) = (img.width() as usize, img.height() as usize);
+    let Some(data) = img.data.as_mut() else { return };
+    if data.len() < iw * ih * 4 || g < 2 {
+        return;
+    }
+    let top = raw.iter().cloned().fold(1.0f32, f32::max);
+    let (sx, sz) = ((width * hs) / (g - 1) as f32, (depth * hs) / (g - 1) as f32);
+    let at = |i: usize, j: usize| raw[j.min(g - 1) * g + i.min(g - 1)].max(0.0) * vs;
+    let snow_lo = top * vs * 0.24;
+    let snow_hi = top * vs * 0.52;
+    for py in 0..ih {
+        let v = py as f32 / (ih.saturating_sub(1).max(1)) as f32;
+        let j = ((v * (g - 1) as f32).round() as usize).min(g - 1);
+        for px in 0..iw {
+            let u = px as f32 / (iw.saturating_sub(1).max(1)) as f32;
+            let i = ((u * (g - 1) as f32).round() as usize).min(g - 1);
+            let h = at(i, j);
+            if h < snow_lo * 0.65 {
+                continue;
+            }
+            let dx = (at(i + 1, j) - at(i.saturating_sub(1), j)) / (2.0 * sx);
+            let dz = (at(i, j + 1) - at(i, j.saturating_sub(1))) / (2.0 * sz);
+            let ny = Vec3::new(-dx, 1.0, -dz).normalize().y;
+            let alt_w = smoothstep(snow_lo, snow_hi, h);
+            let rock_w = smoothstep(snow_lo * 0.65, snow_lo * 1.15, h);
+            // Snow clings to ridges and bowls (`ny` moderate-to-high) and high summits; steep cliff
+            // faces expose dark alpine slate-granite.
+            let snow_w = (alt_w * smoothstep(0.32, 0.64, ny) + smoothstep(snow_hi, top * vs * 0.82, h) * 0.65).clamp(0.0, 1.0);
+            let idx = (py * iw + px) * 4;
+            let (r0, g0, b0) = (data[idx] as f32, data[idx + 1] as f32, data[idx + 2] as f32);
+            // Neutral granite, and only partly over the satellite albedo so its ridges and gullies
+            // keep their detail: a blue-slate paint read as flat cobalt cut-outs once graded.
+            let rock_k = rock_w * 0.7;
+            let (rr, rg, rb) = (
+                r0 * (1.0 - rock_k) + 96.0 * rock_k,
+                g0 * (1.0 - rock_k) + 95.0 * rock_k,
+                b0 * (1.0 - rock_k) + 93.0 * rock_k,
+            );
+            data[idx] = (rr * (1.0 - snow_w) + 246.0 * snow_w).clamp(0.0, 255.0) as u8;
+            data[idx + 1] = (rg * (1.0 - snow_w) + 249.0 * snow_w).clamp(0.0, 255.0) as u8;
+            data[idx + 2] = (rb * (1.0 - snow_w) + 255.0 * snow_w).clamp(0.0, 255.0) as u8;
+        }
+    }
+}
+
+/// Tone a satellite albedo for a 10 km+ view: the raw imagery is dark teal (conifer, moor, sea
+/// inlets), which under the blue horizon haze read as saturated cobalt cut-outs. Distant ranges
+/// read as grey-green rock with the colour mostly scattered out, so pull most of the chroma and
+/// lift the darks (shadowed valleys stay darker than the ridges — the relief survives).
+fn tone_far_albedo(img: &mut Image) {
+    let Some(data) = img.data.as_mut() else { return };
+    for px in data.chunks_exact_mut(4) {
+        let (r, g, b) = (px[0] as f32, px[1] as f32, px[2] as f32);
+        let l = 0.299 * r + 0.587 * g + 0.114 * b;
+        let lifted = 28.0 + l * 1.25;
+        let k = 0.72; // share of chroma removed
+        let (r, g, b) = (r + (l - r) * k, g + (l - g) * k, b + (l - b) * k);
+        let gain = lifted / l.max(1.0);
+        px[0] = (r * gain * 1.03).clamp(0.0, 255.0) as u8;
+        px[1] = (g * gain * 1.01).clamp(0.0, 255.0) as u8;
+        px[2] = (b * gain * 0.96).clamp(0.0, 255.0) as u8;
+    }
+}
+
 // ── Spawn ────────────────────────────────────────────────────────────────────────
 /// Spawn the horizon islands. Called once from `worldmap::build`.
 pub fn build(
@@ -268,14 +338,24 @@ pub fn build(
             continue;
         };
         let tex = match crate::realforest::load::texture(&format!("isles/{key}_albedo.png"), true, None) {
-            Ok(img) => images.add(img),
+            Ok(mut img) => {
+                tone_far_albedo(&mut img);
+                if isle.snow_cap {
+                    apply_alpine_snow(&mut img, g, &raw, w, d, isle.hs, isle.vs);
+                }
+                images.add(img)
+            }
             Err(e) => {
                 warn!("distant isle albedo: {e}");
                 continue;
             }
         };
         let top = raw.iter().cloned().fold(0.0f32, f32::max) * isle.vs;
-        let haze = (0.06 + isle.dist / 60_000.0).min(0.45);
+        let haze = if isle.snow_cap {
+            0.10
+        } else {
+            (0.04 + isle.dist / 85_000.0).min(0.32)
+        };
         let mat = std_mats.add(StandardMaterial {
             base_color_texture: Some(tex),
             perceptual_roughness: 0.95,
